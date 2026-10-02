@@ -420,7 +420,8 @@ def _parse_judgment_observation(
         category=category,
         judgment_replay_identifier=judgment_replay_identifier,
     )
-    if observation.payload.replay_contract_fingerprint is None:
+    if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
+        # A current handler that opts out of replay is never overridden by a legacy contract.
         raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
     contract_matches = replay_contract_fingerprint == observation.payload.replay_contract_fingerprint
     if not contract_matches and not isinstance(evidence, Message):

@@ -331,7 +331,8 @@ class JsonSchemaResponseHandler(ResponseHandler):
         Returns:
             list[dict[str, Any]]: The old identifier, unless both the response and the argument give a category.
         """
-        if not self._prefer_response_category:
+        current = self._get_replay_identifier()
+        if not self._prefer_response_category or current is None:
             return []
         if category is not None:
             try:
@@ -340,8 +341,8 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 return []
             if not isinstance(parsed, dict) or parsed.get(self._category_output_key) is not None:
                 return []
-        legacy = self._replay_identifier()
-        del legacy["prefer_response_category"]
+        legacy = dict(current)
+        legacy.pop("prefer_response_category", None)
         return [legacy]
 
     def parse(
@@ -459,7 +460,8 @@ class TrueFalseResponseHandler(ResponseHandler):
         Returns:
             list[dict[str, Any]]: The wrapped legacy identifiers.
         """
-        if self._response_handler._get_replay_identifier() is None:
+        # The outer contract covers this wrapper's own opt-out as well as the inner handler's.
+        if self._get_replay_identifier() is None:
             return []
         return [
             {"handler": f"{type(self).__module__}.{type(self).__qualname__}", "version": 1, "wrapped": wrapped}
@@ -550,7 +552,8 @@ class NumericRangeResponseHandler(ResponseHandler):
         Returns:
             list[dict[str, Any]]: The wrapped legacy identifiers.
         """
-        if self._response_handler._get_replay_identifier() is None:
+        # The outer contract covers this wrapper's own opt-out as well as the inner handler's.
+        if self._get_replay_identifier() is None:
             return []
         return [
             {

@@ -63,6 +63,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
+from pyrit.score.response_handler import TrueFalseResponseHandler
 
 _INVALID_RESPONSE = "not valid json"
 _VALID_RESPONSE = '{"score_value":"true","description":"matched","rationale":"reason","metadata":"test"}'
@@ -1404,6 +1405,7 @@ async def test_general_scorer_replays_observations_from_before_prefer_response_c
         body["category"] = response_category
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.set_system_prompt_async = AsyncMock()
     target.send_prompt_async = AsyncMock(return_value=_response(json.dumps(body)))
     scorer = _general_scorer(scorer_type, target=target, category=configured_category)
     expectation = ScoringExpectation(objective="Judge this response")
@@ -1411,7 +1413,7 @@ async def test_general_scorer_replays_observations_from_before_prefer_response_c
         live = (
             await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
         )[0]
-    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
 
     replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
 
@@ -1429,6 +1431,7 @@ async def test_general_scorer_rejects_old_observation_when_both_categories_are_g
     body = json.dumps({"score_value": raw_score, "rationale": "r", "category": "violence"})
     target = MagicMock()
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.set_system_prompt_async = AsyncMock()
     target.send_prompt_async = AsyncMock(return_value=_response(body))
     scorer = _general_scorer(scorer_type, target=target, category="harm")
     expectation = ScoringExpectation(objective="Judge this response")
@@ -1436,8 +1439,39 @@ async def test_general_scorer_rejects_old_observation_when_both_categories_are_g
         live = (
             await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
         )[0]
-    observation = sqlite_instance.get_observations(observation_ids=live.observation_ids)[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
 
     # The old handler raised on this response, so the new precedence rule must not replay it silently.
     with pytest.raises(NonReplayableObservationError, match="handler or category"):
         await scorer.score_observation_async(observation=observation, expectation=expectation)
+
+
+class _NonReplayableTrueFalseHandler(TrueFalseResponseHandler):
+    """A custom wrapper whose parsing mode is not stable enough to replay."""
+
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        return None
+
+
+async def test_legacy_contract_does_not_override_a_handler_that_opts_out_of_replay_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.set_system_prompt_async = AsyncMock()
+    target.send_prompt_async = AsyncMock(return_value=_response(json.dumps({"score_value": "true", "rationale": "r"})))
+    scorer = SelfAskGeneralTrueFalseScorer(chat_target=target, system_prompt_format_string="Judge.", category="harm")
+    expectation = ScoringExpectation(objective="Judge this response")
+    with _pre_prefer_response_category_identifier():
+        live = (
+            await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
+        )[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+    # Without the opt-out this observation replays through the legacy contract.
+    opted_out = _NonReplayableTrueFalseHandler(response_handler=scorer._response_handler._response_handler)
+    assert opted_out._legacy_replay_identifiers(response_text="{}", category="harm") == []
+    scorer._response_handler = opted_out
+
+    with pytest.raises(NonReplayableObservationError, match="stable replay contract"):
+        await scorer.score_observation_async(observation=observation, expectation=expectation)
+    assert target.send_prompt_async.call_count == 1
