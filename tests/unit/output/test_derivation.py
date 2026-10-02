@@ -136,7 +136,7 @@ def _stored_score(*, owner: uuid.UUID | None, label: str, scorer: ComponentIdent
     )
 
 
-def _selected(pieces: list[MessagePiece], scores: list[Score]) -> dict[str, str]:
+def _selected(pieces: list[MessagePiece], scores: list[Score]) -> dict[str, str | None]:
     selected = select_objective_scores(pieces=pieces, scores=scores, objective_scorer_identifier=_OBJECTIVE)
     return {piece_id: score.score_rationale for piece_id, score in selected.items()}
 

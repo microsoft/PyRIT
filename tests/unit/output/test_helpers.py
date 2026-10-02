@@ -312,14 +312,14 @@ OBJECTIVE_SCORER = ComponentIdentifier(class_name="ObjectiveScorer", class_modul
 REFUSAL_SCORER = ComponentIdentifier(class_name="RefusalScorer", class_module="tests")
 
 
-def _seed_attack(memory: MemoryInterface, *, objective: str, response: str) -> AttackResult:
+async def _seed_attack_async(memory: MemoryInterface, *, objective: str, response: str) -> AttackResult:
     conversation_id = str(uuid.uuid4())
     user_piece = MessagePiece(role="user", original_value=objective, conversation_id=conversation_id)
     assistant_piece = MessagePiece(role="assistant", original_value=response, conversation_id=conversation_id)
-    memory.add_message_to_memory(request=Message(message_pieces=[user_piece]))
-    memory.add_message_to_memory(request=Message(message_pieces=[assistant_piece]))
+    await memory.add_message_to_memory_async(request=Message(message_pieces=[user_piece]))
+    await memory.add_message_to_memory_async(request=Message(message_pieces=[assistant_piece]))
     # The auxiliary score is stored first so selection can't rely on list order.
-    memory.add_scores_to_memory(
+    await memory.add_scores_to_memory_async(
         scores=[
             Score(
                 score_type="true_false",
@@ -341,13 +341,15 @@ def _seed_attack(memory: MemoryInterface, *, objective: str, response: str) -> A
 
 
 @pytest.fixture
-def seeded_attacks(sqlite_instance) -> dict[str, list[AttackResult]]:
+async def seeded_attacks(sqlite_instance) -> dict[str, list[AttackResult]]:
     return {
         "tech_a": [
-            _seed_attack(sqlite_instance, objective="objective one", response="response one"),
-            _seed_attack(sqlite_instance, objective="objective two", response="response two"),
+            await _seed_attack_async(sqlite_instance, objective="objective one", response="response one"),
+            await _seed_attack_async(sqlite_instance, objective="objective two", response="response two"),
         ],
-        "tech_b": [_seed_attack(sqlite_instance, objective="objective <b>three</b>", response="response three")],
+        "tech_b": [
+            await _seed_attack_async(sqlite_instance, objective="objective <b>three</b>", response="response three")
+        ],
     }
 
 
@@ -453,9 +455,9 @@ async def test_output_scenario_conversations_async_includes_every_attack_by_defa
 async def test_output_scenario_conversations_async_scores_duplicated_conversation(
     sqlite_instance, patch_central_database, capsys
 ):
-    original = _seed_attack(sqlite_instance, objective="objective one", response="response one")
+    original = await _seed_attack_async(sqlite_instance, objective="objective one", response="response one")
     duplicate = AttackResult(
-        conversation_id=sqlite_instance.duplicate_conversation(conversation_id=original.conversation_id),
+        conversation_id=await sqlite_instance.duplicate_conversation_async(conversation_id=original.conversation_id),
         objective="objective one",
     )
     result = make_scenario_result(attack_results={"tech_a": [duplicate]}, objective_scorer_identifier=OBJECTIVE_SCORER)
@@ -477,8 +479,8 @@ async def test_output_scenario_conversations_async_without_objective_scorer_omit
 
 
 async def test_output_conversation_async_json_still_shows_every_score(sqlite_instance, patch_central_database, capsys):
-    attack = _seed_attack(sqlite_instance, objective="objective one", response="response one")
-    messages = list(sqlite_instance.get_conversation_messages(conversation_id=attack.conversation_id))
+    attack = await _seed_attack_async(sqlite_instance, objective="objective one", response="response one")
+    messages = list(await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id))
 
     await output_conversation_async(messages, format="json", include_scores=True)
 

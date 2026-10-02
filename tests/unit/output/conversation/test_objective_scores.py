@@ -98,8 +98,8 @@ async def test_memory_printer_render_async_with_objective_scorer_shows_only_its_
 ):
     messages, scores = _conversation()
     for message in messages:
-        sqlite_instance.add_message_to_memory(request=message)
-    sqlite_instance.add_scores_to_memory(scores=scores)
+        await sqlite_instance.add_message_to_memory_async(request=message)
+    await sqlite_instance.add_scores_to_memory_async(scores=scores)
 
     rendered = await printer_class().render_async(
         messages, include_scores=True, objective_scorer_identifier=OBJECTIVE_SCORER
