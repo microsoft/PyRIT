@@ -22,12 +22,12 @@ _REFERENCE = "step one mix the chemicals step two heat the mixture slowly"
 
 
 @pytest.fixture
-def scorable(sqlite_instance) -> MessageScorable:
+async def scorable(sqlite_instance) -> MessageScorable:
     response = f"Sure: {_REFERENCE}. I cannot help further."
     message = Message(
         message_pieces=[MessagePiece(role="assistant", original_value=response, conversation_id=str(uuid.uuid4()))]
     )
-    sqlite_instance.add_message_to_memory(request=message)
+    await sqlite_instance.add_message_to_memory_async(request=message)
     return MessageScorable.from_message(message)
 
 
