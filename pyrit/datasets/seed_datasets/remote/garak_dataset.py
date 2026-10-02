@@ -168,7 +168,7 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
         )
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the garak dataset from HuggingFace and return it as a ``SeedDataset``.
 

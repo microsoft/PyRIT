@@ -3,7 +3,7 @@
 
 import logging
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -23,7 +23,7 @@ def patch_central_database():
     """Mock the central database to avoid database operations in tests."""
     with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance") as mock_memory:
         mock_instance = mock_memory.return_value
-        mock_instance.get_all_embeddings.return_value = []
+        mock_instance.get_all_embeddings_async = AsyncMock(return_value=[])
         mock_instance.get_all_prompt_pieces.return_value = []
         yield mock_memory
 

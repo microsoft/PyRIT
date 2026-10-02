@@ -142,7 +142,7 @@ objective_target = OpenAIChatTarget()
 seed_prompts = SeedDataset.from_yaml_file(Path(DATASETS_PATH) / "lexicons" / "fairness" / "gendered_professions.yaml")
 await memory.add_seeds_to_memory_async(seeds=seed_prompts.prompts, added_by="airt")  # type: ignore
 
-prompt_groups = memory.get_seed_groups(dataset_name="2025_08_airt_fairness_gendered_professions")
+prompt_groups = await memory.get_seed_groups_async(dataset_name="2025_08_airt_fairness_gendered_professions")
 jobs = [prompt_group.prompts[0].value for prompt_group in prompt_groups]
 
 print(f"Loaded {len(jobs)} professions")

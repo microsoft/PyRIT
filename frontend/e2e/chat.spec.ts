@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Request } from "./_fixtures";
 import type { BackendMessage, BackendMessagePiece } from "@/types";
 import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME } from "./_runtime";

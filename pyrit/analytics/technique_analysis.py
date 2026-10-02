@@ -8,8 +8,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyrit.analytics.result_analysis import AttackStats, _compute_stats
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome
+from pyrit.models import AttackOutcome, AttackResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,6 +50,11 @@ def compute_technique_stats(
         dict[str, AttackStats]: Stats per technique eval hash. Hashes with no
             historical results are omitted from the result.
     """
+    print_deprecation_message(
+        old_item="compute_technique_stats",
+        new_item="compute_technique_stats_async",
+        removed_in="1.4.0",
+    )
     if not technique_eval_hashes:
         return {}
 
@@ -60,6 +66,58 @@ def compute_technique_stats(
         targeted_harm_categories=targeted_harm_categories,
     )
 
+    return _aggregate_technique_stats(results=results, technique_eval_hashes=technique_eval_hashes)
+
+
+async def compute_technique_stats_async(
+    *,
+    technique_eval_hashes: Sequence[str],
+    scenario_result_id: str | None = None,
+    targeted_harm_categories: Sequence[str] | None = None,
+    memory: MemoryInterface | None = None,
+) -> dict[str, AttackStats]:
+    """
+    Compute per-technique outcome statistics from persisted attack results.
+
+    Queries memory for all ``AttackResult`` rows whose
+    ``atomic_attack_identifier.eval_hash`` matches one of
+    ``technique_eval_hashes``, then aggregates outcomes into per-technique
+    ``AttackStats``. The eval hash is auto-stamped on every persisted result
+    by ``AtomicAttackEvaluationIdentifier`` and is the canonical primitive
+    for behavioral-equivalence aggregation (seeds excluded, scorer excluded,
+    only behavior-relevant target params included).
+
+    Args:
+        technique_eval_hashes (Sequence[str]): Eval hashes to aggregate.
+            Returned dict is keyed by these.
+        scenario_result_id (str | None): Restrict to a single scenario run.
+            Defaults to ``None`` (aggregate across all runs).
+        targeted_harm_categories (Sequence[str] | None): Restrict to results
+            whose attack targeted these harm categories. Defaults to ``None``.
+        memory (MemoryInterface | None): Memory backend to query. Defaults to
+            ``CentralMemory.get_memory_instance()``.
+
+    Returns:
+        dict[str, AttackStats]: Stats per technique eval hash. Hashes with no
+            historical results are omitted from the result.
+    """
+    if not technique_eval_hashes:
+        return {}
+
+    if memory is None:
+        memory = CentralMemory.get_memory_instance()
+    results = await memory.get_attack_results_async(
+        atomic_attack_eval_hashes=list(technique_eval_hashes),
+        scenario_result_id=scenario_result_id,
+        targeted_harm_categories=targeted_harm_categories,
+    )
+
+    return _aggregate_technique_stats(results=results, technique_eval_hashes=technique_eval_hashes)
+
+
+def _aggregate_technique_stats(
+    *, results: Sequence[AttackResult], technique_eval_hashes: Sequence[str]
+) -> dict[str, AttackStats]:
     requested = set(technique_eval_hashes)
     counts: dict[str, tuple[int, int, int, int]] = {}
     for result in results:
@@ -68,17 +126,18 @@ def compute_technique_stats(
         if eval_hash is None or eval_hash not in requested:
             continue
 
-        s, f, u, e = counts.get(eval_hash, (0, 0, 0, 0))
+        successes, failures, undetermined, errors = counts.get(eval_hash, (0, 0, 0, 0))
         if result.outcome == AttackOutcome.SUCCESS:
-            counts[eval_hash] = (s + 1, f, u, e)
+            successes += 1
         elif result.outcome == AttackOutcome.FAILURE:
-            counts[eval_hash] = (s, f + 1, u, e)
+            failures += 1
         elif result.outcome == AttackOutcome.ERROR:
-            counts[eval_hash] = (s, f, u, e + 1)
+            errors += 1
         else:
-            counts[eval_hash] = (s, f, u + 1, e)
+            undetermined += 1
+        counts[eval_hash] = (successes, failures, undetermined, errors)
 
     return {
-        eval_hash: _compute_stats(successes=s, failures=f, undetermined=u, errors=e)
-        for eval_hash, (s, f, u, e) in counts.items()
+        eval_hash: _compute_stats(successes=successes, failures=failures, undetermined=undetermined, errors=errors)
+        for eval_hash, (successes, failures, undetermined, errors) in counts.items()
     }

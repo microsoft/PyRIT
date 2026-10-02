@@ -5,6 +5,7 @@ jest.mock("axios", () => ({
     post: jest.fn(),
     put: jest.fn(),
     delete: jest.fn(),
+    getUri: jest.fn((config: { url: string }) => config.url),
     interceptors: {
       request: { use: jest.fn() },
       response: { use: jest.fn() },
@@ -104,7 +105,7 @@ describe("api service", () => {
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
-      const config = { headers };
+      const config = { headers, url: '/health' };
       const result = await requestInterceptor(config);
       expect(result.headers["X-Request-ID"]).toBeDefined();
       expect(typeof result.headers["X-Request-ID"]).toBe("string");
@@ -116,7 +117,7 @@ describe("api service", () => {
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
-      const config = { headers };
+      const config = { headers, url: '/health' };
       const result = await requestInterceptor(config);
       // UUID v4 pattern: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
       expect(result.headers["X-Request-ID"]).toMatch(
@@ -773,6 +774,8 @@ describe("api service", () => {
     it("posts the exact estimate request and forwards cancellation", async () => {
       const mockResponse = {
         data: {
+          dataset_size: { kind: 'bounded', value: 4 },
+          dataset_limit: { state: 'scenario_default' },
           estimated_attack_count: 8,
           components: [],
           datasets: [],

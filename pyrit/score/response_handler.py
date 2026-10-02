@@ -441,6 +441,81 @@ class TrueFalseResponseHandler(ResponseHandler):
         return score
 
 
+class NumericRangeResponseHandler(ResponseHandler):
+    """Response-handler decorator that enforces a numeric score within ``[minimum_value, maximum_value]``."""
+
+    def __init__(self, *, response_handler: ResponseHandler, minimum_value: float, maximum_value: float) -> None:
+        """
+        Initialize the decorator.
+
+        Args:
+            response_handler (ResponseHandler): Handler that parses the target's wire format.
+            minimum_value (float): The lowest accepted score value (inclusive).
+            maximum_value (float): The highest accepted score value (inclusive).
+        """
+        self._response_handler = response_handler
+        self._minimum_value = minimum_value
+        self._maximum_value = maximum_value
+
+    @property
+    def json_response_config(self) -> JsonResponseConfig:
+        """The wrapped handler's JSON-response request."""
+        return self._response_handler.json_response_config
+
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        """Return the wrapped parser identity with the accepted numeric range."""
+        wrapped = self._response_handler._get_replay_identifier()
+        if wrapped is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
+            "wrapped": wrapped,
+            "minimum_value": self._minimum_value,
+            "maximum_value": self._maximum_value,
+        }
+
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        """
+        Parse a response and require a finite numeric score within the configured range.
+
+        Returns:
+            UnvalidatedScore: The parsed score.
+
+        Raises:
+            InvalidJsonException: If the parsed value is not numeric, not finite, or out of range.
+        """
+        score = self._response_handler.parse(
+            response_text=response_text,
+            scorer_identifier=scorer_identifier,
+            scored_prompt_id=scored_prompt_id,
+            category=category,
+            objective=objective,
+        )
+        try:
+            numeric_value = float(score.raw_score_value)
+        except ValueError:
+            raise InvalidJsonException(
+                message=f"score_value should be numeric, not {score.raw_score_value!r}."
+            ) from None
+        if not math.isfinite(numeric_value) or not self._minimum_value <= numeric_value <= self._maximum_value:
+            raise InvalidJsonException(
+                message=(
+                    f"score_value must be between {self._minimum_value} and {self._maximum_value}, "
+                    f"not {score.raw_score_value!r}."
+                )
+            )
+        return score
+
+
 class CallableResponseHandler(ResponseHandler):
     """
     ResponseHandler that delegates parsing to a user-supplied callable.

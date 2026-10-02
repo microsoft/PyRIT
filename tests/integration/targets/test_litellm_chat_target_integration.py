@@ -33,11 +33,30 @@ from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
+    discover_target_capabilities_async,
 )
 
 # Assets reused for multimodal parity checks.
 SAMPLE_IMAGE_FILE = HOME_PATH / "assets" / "pyrit_architecture.png"
 SAMPLE_AUDIO_FILE = HOME_PATH / "assets" / "converted_audio.wav"
+
+
+@pytest.mark.run_only_if_all_tests
+async def test_litellm_accepts_synthetic_tool_history(sqlite_instance, azure_gpt5_litellm_args) -> None:
+    target = LiteLLMChatTarget(**azure_gpt5_litellm_args)
+    target.apply_capabilities(
+        capabilities=target.capabilities.model_copy(
+            update={
+                "input_modalities": frozenset({frozenset({"text"})}),
+            }
+        )
+    )
+    capabilities = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[],
+        test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})},
+    )
+    assert {"function_call", "function_call_output"} <= set(capabilities.supported_input_modalities)
 
 
 def _azure_gpt5_credential():

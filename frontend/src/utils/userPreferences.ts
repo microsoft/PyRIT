@@ -5,6 +5,7 @@ const STORAGE_PREFIX = 'pyrit.userPreferences.v1.'
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   targets: { objective: null, adversarial: null },
+  hiddenTargetRegistryNames: [],
   labels: {},
   theme: 'system',
   chatMarkdown: false,
@@ -35,11 +36,19 @@ function parsePreferences(raw: string): UserPreferences {
     || !Object.values(value.labels).every((label: unknown) => label === null || typeof label === 'string')
     || !isThemeMode(value.theme)
     || typeof value.chatMarkdown !== 'boolean'
+    || (
+      value.hiddenTargetRegistryNames !== undefined
+      && (
+        !Array.isArray(value.hiddenTargetRegistryNames)
+        || !value.hiddenTargetRegistryNames.every((registryName: unknown) => typeof registryName === 'string')
+      )
+    )
   ) {
     throw new Error('Saved user preferences are invalid.')
   }
   return {
     targets: { objective: value.targets.objective, adversarial: value.targets.adversarial },
+    hiddenTargetRegistryNames: value.hiddenTargetRegistryNames ?? [],
     labels: Object.fromEntries(
       Object.entries(value.labels).map(([key, label]) => [key, typeof label === 'string' ? label : null]),
     ),
@@ -86,7 +95,8 @@ function readLegacyPreferences(accountKey: string): UserPreferences {
 
 export function readUserPreferences(accountKey: string): UserPreferences {
   const stored = window.localStorage.getItem(userPreferencesStorageKey(accountKey))
-  return stored === null ? readLegacyPreferences(accountKey) : parsePreferences(stored)
+  if (stored === null) return readLegacyPreferences(accountKey)
+  return parsePreferences(stored)
 }
 
 export function writeUserPreferences(accountKey: string, preferences: UserPreferences): void {

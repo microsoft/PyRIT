@@ -21,6 +21,7 @@ from pyrit.backend.services.service_lifecycle import (
     outstanding_estimates,
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
@@ -235,9 +236,13 @@ class RuntimeLifecycle:
         if self.apply_task and not self.apply_task.done():
             await asyncio.shield(self.apply_task)
         self.state = "stopping"
-        service = peek_scenario_run_service()
         try:
+            service = peek_scenario_run_service()
             if service:
                 await service.shutdown_async()
         finally:
-            await close_services_async()
+            try:
+                await close_services_async()
+            finally:
+                if CentralMemory._memory_instance is not None:
+                    await CentralMemory.get_memory_instance().dispose_engine_async()

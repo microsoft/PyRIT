@@ -215,9 +215,10 @@ class AnecdoctorGenerator(
         system_prompt = self._system_prompt_template.format(language=context.language, type=context.content_type)
 
         # Configure the target with the system prompt
-        self._objective_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=context.conversation_id,
+        (
+            await self._objective_target.set_system_prompt_async(
+                system_prompt=system_prompt, conversation_id=context.conversation_id
+            )
         )
 
     async def _perform_async(self, *, context: AnecdoctorContext) -> AnecdoctorResult:
@@ -374,9 +375,10 @@ class AnecdoctorGenerator(
         kg_conversation_id = str(uuid.uuid4())
 
         # Set system prompt on processing model
-        self._processing_model.set_system_prompt(
-            system_prompt=kg_system_prompt,
-            conversation_id=kg_conversation_id,
+        (
+            await self._processing_model.set_system_prompt_async(
+                system_prompt=kg_system_prompt, conversation_id=kg_conversation_id
+            )
         )
 
         # Format examples for knowledge graph extraction using few-shot format

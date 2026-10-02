@@ -11,7 +11,7 @@ from pyrit.exceptions.exception_classes import (
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.common.utils import limit_requests_per_minute, validate_temperature, validate_top_p
 from pyrit.prompt_target.openai._response_adapter import CompletionsResponseAdapter
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
@@ -72,8 +72,16 @@ class OpenAICompletionTarget(OpenAITarget):
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
             httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
                 constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
+
+        Raises:
+            PyritException: If temperature is not between 0 and 2 (inclusive), or top_p is not
+                between 0 and 1 (inclusive).
         """
         super().__init__(custom_configuration=custom_configuration, **kwargs)
+
+        # Validate temperature and top_p
+        validate_temperature(temperature)
+        validate_top_p(top_p)
 
         self._max_tokens = max_tokens
         self._temperature = temperature

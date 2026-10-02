@@ -1,6 +1,7 @@
 import type { APIRequestContext, Route } from "@playwright/test";
 
 import type { AddMessageResponse, BackendMessage, MessageSendRequest, MessageSendStatus, TargetResponseStatus } from "@/types";
+import { compatibilityHeaders } from "./_compatibility";
 
 export function makeAddMessageResponse(
   attackResultId: string,
@@ -71,13 +72,16 @@ export async function readMessageSendResult(
   while (!["completed", "failed", "interrupted"].includes(progress.state)) {
     const response = await request.get(
       `${attackPath}/message-sends/${encodeURIComponent(progress.send_id)}?wait_ms=1000`,
+      { headers: compatibilityHeaders() },
     );
     if (!response.ok()) { throw new Error(`Status read failed: ${response.status()}`); }
     progress = await response.json();
   }
   const [attack, messages] = await Promise.all([
-    request.get(attackPath),
-    request.get(`${attackPath}/messages?conversation_id=${encodeURIComponent(progress.conversation_id)}`),
+    request.get(attackPath, { headers: compatibilityHeaders() }),
+    request.get(`${attackPath}/messages?conversation_id=${encodeURIComponent(progress.conversation_id)}`, {
+      headers: compatibilityHeaders(),
+    }),
   ]);
   if (!attack.ok() || !messages.ok()) { throw new Error("Could not read completed send evidence"); }
   return { attack: await attack.json(), messages: await messages.json() };

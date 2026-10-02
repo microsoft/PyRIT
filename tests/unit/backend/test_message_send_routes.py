@@ -25,9 +25,9 @@ def sender() -> MagicMock:
 
 
 @pytest.fixture
-def client(sender: MagicMock) -> Iterator[TestClient]:
+def client(*, sender: MagicMock, compatibility_headers: dict[str, str]) -> Iterator[TestClient]:
     with patch("pyrit.backend.routes.message_sends.get_message_send_service", return_value=sender):
-        yield TestClient(app)
+        yield TestClient(app, headers=compatibility_headers)
 
 
 @pytest.fixture

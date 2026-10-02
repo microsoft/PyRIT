@@ -22,7 +22,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
-from pyrit.scenario.core import BaselineAttackPolicy
+from pyrit.scenario.core import BaselineAttackPolicy, DatasetAttackConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.scenarios.airt.jailbreak import (
     _DEFAULT_NUM_JAILBREAKS,
@@ -230,8 +230,8 @@ class TestJailbreakInitialization:
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
         assert estimate.estimated_attack_count == 8
         assert [component.label for component in estimate.components] == ["Inline jailbreak delivery"]
-        assert estimate.datasets[0].logical_seed_group_count == 4
-        assert estimate.datasets[0].selected_seed_group_count == 4
+        assert estimate.datasets[0].logical_seed_group_count is None
+        assert estimate.datasets[0].selected_seed_group_count is None
         assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [("per-dataset cap", 4)]
 
     async def test_run_size_is_conditional_when_system_delivery_target_is_not_selected(
@@ -252,8 +252,8 @@ class TestJailbreakInitialization:
 
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
         assert estimate.estimated_attack_count is None
-        assert estimate.minimum_attack_count == 2
-        assert estimate.maximum_attack_count == 4
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count == 16
         assert [component.label for component in estimate.components] == [
             "Inline jailbreak delivery",
             "Native system-prompt jailbreak delivery",
@@ -261,7 +261,7 @@ class TestJailbreakInitialization:
         assert "native system-prompt delivery is supported" in (estimate.note or "")
 
     async def test_system_only_run_size_excludes_incompatible_target_outcome(self, mock_objective_scorer) -> None:
-        """The targetless range includes only outcomes that can produce a valid run."""
+        """The targetless upper bound does not imply that the dataset fills its cap."""
         seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
         technique_class = _build_jailbreak_technique()
         with _patch_seed_groups(seed_groups):
@@ -277,9 +277,42 @@ class TestJailbreakInitialization:
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
 
         assert estimate.estimated_attack_count is None
-        assert estimate.minimum_attack_count == 2
-        assert estimate.maximum_attack_count == 2
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count == 8
         assert "incompatible targets cannot run it" in (estimate.note or "")
+
+    @pytest.mark.parametrize("supports_system", [False, True])
+    async def test_conditional_estimate_does_not_use_cap_as_minimum_async(
+        self,
+        *,
+        mock_objective_scorer: TrueFalseInverterScorer,
+        mock_objective_target: PromptTarget,
+        supports_system: bool,
+    ) -> None:
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+        args = {
+            "scenario_techniques": [_technique_class()("default")],
+            "include_baseline": False,
+            "num_jailbreaks": 1,
+            "dataset_config": DatasetAttackConfiguration(
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="one objective")])],
+                max_dataset_size=5,
+            ),
+        }
+        scenario.set_params_from_args(args=args)
+        estimate = await scenario.get_run_size_estimate_async()
+        assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count == 10
+        assert [component.count for component in estimate.components] == [5, 5]
+
+        mock_objective_target.configuration.includes.return_value = supports_system
+        scenario.set_params_from_args(args={**args, "objective_target": mock_objective_target})
+        await scenario.initialize_async()
+        plan = scenario._build_run_plan()
+        actual_count = sum(len(group.seed_group_ids) for group in plan.atomic_groups)
+        assert actual_count == (2 if supports_system else 1)
+        assert actual_count <= estimate.maximum_attack_count
 
     async def test_mutually_exclusive_selectors_raise(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
@@ -669,7 +702,7 @@ class TestJailbreakSystemPromptDelivery:
             await scenario.initialize_async()
             await scenario._atomic_attacks[0].run_async()
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces()
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async()
         system_values = [p.converted_value for p in pieces if p.role == "system"]
         user_values = [p.converted_value for p in pieces if p.role == "user"]
         objectives = {g.objective.value for g in mock_memory_seed_groups}
@@ -714,7 +747,7 @@ class TestJailbreakSystemPromptDelivery:
             # Must not raise a same-sequence role collision.
             await scenario._atomic_attacks[0].run_async()
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces()
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async()
         system_values = [p.converted_value for p in pieces if p.role == "system"]
         user_values = [p.converted_value for p in pieces if p.role == "user"]
         assert any("Niccolo" in v for v in system_values), "jailbreak framing not delivered as a system prompt"
@@ -746,8 +779,8 @@ class TestJailbreakResumePersistence:
             persisted = ["persisted_a.yaml", "persisted_b.yaml"]
             stored = MagicMock()
             stored.metadata = {_JAILBREAK_TEMPLATES_METADATA_KEY: persisted}
-            with patch.object(scenario._memory, "get_scenario_results", return_value=[stored]):
-                assert scenario._resolve_templates() == persisted
+            with patch.object(scenario._memory, "get_scenario_results_async", return_value=[stored]):
+                assert (await scenario._resolve_templates_async()) == persisted
 
 
 @pytest.mark.usefixtures(*FIXTURES)
