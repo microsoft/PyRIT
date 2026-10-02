@@ -11,7 +11,8 @@ They do NOT require Azure credentials — all tests use in-memory fixtures.
 import asyncio
 import os
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 from unittest.mock import patch
 
 import pytest
@@ -46,23 +47,20 @@ def _restore_central_memory():
 
 
 @pytest.fixture
-def sqlite_instance() -> Generator[SQLiteMemory, None, None]:
+async def sqlite_instance() -> AsyncGenerator[SQLiteMemory, None]:
     """Provide an in-memory SQLite database for partner integration tests."""
-    sqlite_memory = SQLiteMemory(db_path=":memory:")
-    temp_dir = tempfile.TemporaryDirectory()
-    sqlite_memory.results_path = temp_dir.name
-    sqlite_memory.disable_embedding()
-    sqlite_memory.reset_database()
-
-    inspector = inspect(sqlite_memory.engine)
-    assert "PromptMemoryEntries" in inspector.get_table_names()
-    assert "ScoreEntries" in inspector.get_table_names()
-    assert "SeedPromptEntries" in inspector.get_table_names()
-
-    CentralMemory.set_memory_instance(sqlite_memory)
-    yield sqlite_memory
-    temp_dir.cleanup()
-    sqlite_memory.dispose_engine()
+    sqlite_memory = SQLiteMemory(db_path=":memory:", _defer_initialization=True)
+    async with AsyncExitStack() as cleanup:
+        sqlite_memory.results_path = cleanup.enter_context(tempfile.TemporaryDirectory())
+        cleanup.push_async_callback(sqlite_memory.dispose_engine_async)
+        sqlite_memory.disable_embedding()
+        await sqlite_memory.initialize_async()
+        async with await sqlite_memory.get_session_async() as session:
+            connection = await session.connection()
+            tables = await connection.run_sync(lambda sync_connection: inspect(sync_connection).get_table_names())
+        assert {"PromptMemoryEntries", "ScoreEntries", "SeedPromptEntries"} <= set(tables)
+        CentralMemory.set_memory_instance(sqlite_memory)
+        yield sqlite_memory
 
 
 @pytest.fixture

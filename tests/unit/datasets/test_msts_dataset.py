@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.datasets.seed_datasets.remote.msts_dataset import _MSTSDataset
+from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset
 
 
@@ -312,7 +313,7 @@ def test_infer_image_extension_defaults_to_jpg():
 
 async def test_fetch_and_save_image_raises_when_memory_not_configured():
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = None
     mock_memory.results_storage_io = None
     mock_serializer._memory = mock_memory
@@ -333,7 +334,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
 
 async def test_fetch_and_save_image_returns_cached_path():
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(return_value=True)
@@ -408,7 +409,7 @@ async def test_fetch_and_save_image_saves_pil_bytes_when_path_missing(tmp_path):
     from PIL import Image
 
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = str(tmp_path)
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(return_value=False)
@@ -440,7 +441,7 @@ async def test_fetch_and_save_image_saves_pil_bytes_when_path_missing(tmp_path):
 
 async def test_fetch_and_save_image_falls_back_to_url_when_pil_unavailable(tmp_path):
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = str(tmp_path)
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(return_value=False)
@@ -477,7 +478,7 @@ async def test_fetch_and_save_image_falls_back_to_url_when_pil_unavailable(tmp_p
 
 async def test_fetch_and_save_image_continues_when_path_exists_raises(tmp_path):
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = str(tmp_path)
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(side_effect=OSError("disk error"))

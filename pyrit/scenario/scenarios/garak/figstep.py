@@ -156,6 +156,10 @@ class FigStep(Scenario):
             if not {"text", "image_path"} <= data_types:
                 raise ValueError("FigStep seed groups must include text and image_path pieces in one next message.")
 
+    def _validate_runtime_configuration(self) -> None:
+        super()._validate_runtime_configuration()
+        self._get_dataset_label(dataset_config=self._dataset_config)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -165,8 +169,6 @@ class FigStep(Scenario):
         Returns:
             dict[str, list[AttackSeedGroup]]: Valid FigStep groups keyed by dataset.
         """
-        self._get_dataset_label(dataset_config=self._dataset_config)
-
         validate_before_sampling = apply_sampling and self._dataset_config.max_dataset_size is not None
         validation_sampling = apply_sampling and not validate_before_sampling
         groups_by_dataset = await super()._resolve_seed_groups_by_dataset_async(apply_sampling=validation_sampling)

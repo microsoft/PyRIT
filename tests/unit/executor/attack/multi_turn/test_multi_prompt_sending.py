@@ -5,7 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget
+from unit.mocks import MockPromptTarget, get_mock_prompt_normalizer
 
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.executor.attack import (
@@ -90,7 +90,7 @@ def mock_non_true_false_scorer():
 @pytest.fixture
 def mock_prompt_normalizer():
     """Create a mock prompt normalizer for testing"""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -772,7 +772,7 @@ class TestUserMessageReuse:
 
         assert first.conversation_id != second.conversation_id
         for result in (first, second):
-            conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+            conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=result.conversation_id)
             assert [message.get_value() for message in conversation] == ["turn one", "default", "turn two", "default"]
         # The caller's messages are left untouched.
         assert [piece.id for message in user_messages for piece in message.message_pieces] == original_ids

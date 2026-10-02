@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 _ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload
 
 
-def _scored_evidence_digest(
+async def _scored_evidence_digest_async(
     *,
     scorable: ScorableUnion,
     scored_piece_id: uuid.UUID,
@@ -55,10 +55,10 @@ def _scored_evidence_digest(
         NonReplayableObservationError: If the scored evidence cannot be resolved.
     """
     if isinstance(scorable, MessageScorable) and scored_message_piece is None:
-        pieces = memory.get_message_pieces(prompt_ids=[scored_piece_id])
+        pieces = await memory.get_message_pieces_async(prompt_ids=[scored_piece_id])
         scored_message_piece = next((piece for piece in pieces if piece.id == scored_piece_id), None)
     content_id = scorable.content_id if isinstance(scorable, ContentEntryScorable) else None
-    stored_content = _load_content_evidence(memory=memory, content_id=content_id)
+    stored_content = await _load_content_evidence_async(memory=memory, content_id=content_id)
     try:
         return _resolved_scored_evidence_digest(
             scorable=scorable,
@@ -70,7 +70,7 @@ def _scored_evidence_digest(
         raise NonReplayableObservationError(str(error)) from error
 
 
-def _load_content_evidence(
+async def _load_content_evidence_async(
     *, memory: MemoryInterface, content_id: uuid.UUID | None
 ) -> tuple[ContentScorable, str] | None:
     """
@@ -81,17 +81,37 @@ def _load_content_evidence(
     """
     if content_id is None:
         return None
-    content = memory.get_scorable_content(content_ids=[content_id]).get(content_id)
-    digest = memory.get_scorable_content_hashes(content_ids=[content_id]).get(content_id)
+    content = (await memory.get_scorable_content_async(content_ids=[content_id])).get(content_id)
+    digest = (await memory.get_scorable_content_hashes_async(content_ids=[content_id])).get(content_id)
     return (content, digest) if content is not None and digest is not None else None
 
 
-class _ObservationCollector:
-    """Observations created during one root scoring operation."""
+class _ScoringCollector:
+    """Observations and intermediate judgments created during one root scoring operation."""
 
     def __init__(self) -> None:
-        """Initialize an empty observation collection."""
+        """Initialize empty observation and intermediate-score collections."""
         self._observations: dict[uuid.UUID, Observation] = {}
+        self._scores: dict[str, Score] = {}
+
+    def add_scores(self, scores: Sequence[Score]) -> None:
+        """
+        Snapshot finalized nested results without changing caller-owned scores.
+
+        Raises:
+            ValueError: If an ID is reused for a different judgment.
+        """
+        for score in scores:
+            snapshot = score.model_copy(deep=True)
+            score_id = str(score.id)
+            if score_id in self._scores and self._scores[score_id] != snapshot:
+                raise ValueError(f"Intermediate score ID {score_id} was reused with different values.")
+            self._scores[score_id] = snapshot
+
+    @property
+    def intermediate_scores(self) -> list[Score]:
+        """The results of nested scorers at any depth, excluding the public call's returned results."""
+        return list(self._scores.values())
 
     def add(self, observation: Observation) -> None:
         """
@@ -114,10 +134,11 @@ class _ObservationCollector:
         ]
 
 
-_CURRENT_OBSERVATION_COLLECTOR: ContextVar[_ObservationCollector | None] = ContextVar(
+_CURRENT_OBSERVATION_COLLECTOR: ContextVar[_ScoringCollector | None] = ContextVar(
     "current_observation_collector",
     default=None,
 )
+_CURRENT_SCORE_COLLECTOR: ContextVar[_ScoringCollector | None] = ContextVar("current_score_collector", default=None)
 _CURRENT_SCORING_EXPECTATION: ContextVar[ScoringExpectation | None] = ContextVar(
     "current_scoring_expectation",
     default=None,
@@ -133,19 +154,28 @@ _CURRENT_SCORING_MESSAGE: ContextVar[Message | None] = ContextVar(
 
 
 @contextmanager
-def _observation_collection() -> Iterator[_ObservationCollector]:
+def _scoring_collection() -> Iterator[_ScoringCollector]:
     """
-    Create the observation collector for one public scoring call.
+    Collect observations and intermediate results for one public scoring call.
 
     Yields:
-        _ObservationCollector: The root operation's collector.
+        _ScoringCollector: The root operation's collector.
     """
-    collector = _ObservationCollector()
+    collector = _ScoringCollector()
     token = _CURRENT_OBSERVATION_COLLECTOR.set(collector)
+    score_token = _CURRENT_SCORE_COLLECTOR.set(collector)
     try:
         yield collector
     finally:
         _CURRENT_OBSERVATION_COLLECTOR.reset(token)
+        _CURRENT_SCORE_COLLECTOR.reset(score_token)
+
+
+def _collect_scores(scores: Sequence[Score]) -> None:
+    """Retain nested results even when observation capture is suppressed."""
+    collector = _CURRENT_SCORE_COLLECTOR.get()
+    if collector is not None:
+        collector.add_scores(scores)
 
 
 def _collect_observation(observation: Observation) -> None:
@@ -270,7 +300,7 @@ class _ObservationEvidenceResolver:
         """Initialize the resolver with the observation store."""
         self._memory = memory
 
-    def resolve(self, *, observation: Observation) -> _ObservationEvidence:
+    async def resolve_async(self, *, observation: Observation) -> _ObservationEvidence:
         """
         Resolve an observation's managed response references.
 
@@ -283,9 +313,11 @@ class _ObservationEvidenceResolver:
         payload = observation.payload
         if isinstance(payload, ToolEventsObservationPayload):
             return payload
-        pieces = self._memory.get_message_pieces(prompt_ids=list(observation.evidence_message_piece_ids))
+        pieces = await self._memory.get_message_pieces_async(prompt_ids=list(observation.evidence_message_piece_ids))
         pieces_by_id = {piece.id: piece for piece in pieces}
-        stored_content = _load_content_evidence(memory=self._memory, content_id=observation.scorable_content_id)
+        stored_content = await _load_content_evidence_async(
+            memory=self._memory, content_id=observation.scorable_content_id
+        )
         try:
             observation.validate_evidence(
                 message_pieces=pieces_by_id,

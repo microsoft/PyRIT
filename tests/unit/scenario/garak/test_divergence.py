@@ -124,7 +124,7 @@ class TestDivergence:
         await _initialize_async(
             scenario=scenario,
             corpus=corpus,
-            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"]),
+            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=None),
             techniques=techniques,
         )
         assert len(_groups(scenario)) == 36
@@ -266,7 +266,7 @@ class TestDivergence:
             scenario=scenario,
             corpus=corpus,
             target=target,
-            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"]),
+            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=None),
         )
         word_by_prompt = {seed.value: seed.metadata["repeat_word"] for seed in corpus}
 
@@ -287,7 +287,7 @@ class TestDivergence:
         ) as send:
             await scenario.run_async()
         assert send.call_count == 36
-        scores = sqlite_instance.get_scores(score_type="true_false")
+        scores = await sqlite_instance.get_scores_async(score_type="true_false")
         assert len(scores) == 36
         assert all(score.get_value() is diverged for score in scores)
         assert Counter(score.scored_expectation.conditions[0].text for score in scores) == {

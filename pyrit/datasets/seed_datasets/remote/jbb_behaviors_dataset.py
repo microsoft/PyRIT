@@ -94,7 +94,7 @@ class _JBBBehaviorsDataset(_RemoteDatasetLoader):
         return "jbb_behaviors"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch JBB-Behaviors dataset and return as SeedDataset.
 

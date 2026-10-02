@@ -11,7 +11,6 @@ constructs local media endpoint URLs for media content.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
@@ -345,7 +344,7 @@ async def _fetch_scores_by_piece_async(
         return {}
 
     memory = CentralMemory.get_memory_instance()
-    fetched = await asyncio.to_thread(memory.get_prompt_scores, prompt_ids=score_lookup_ids)
+    fetched = await memory.get_prompt_scores_async(prompt_ids=score_lookup_ids)
 
     grouped: dict[str, list[Score]] = {}
     for score in fetched:

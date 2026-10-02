@@ -120,7 +120,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         return "babelscape_alert"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Babelscape ALERT dataset and return as SeedDataset.
 

@@ -35,7 +35,13 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_progress_read_model import ResultUnitIdentity, ScenarioProgressReadModel
+from pyrit.backend.services.scenario_progress_read_model import (
+    ResultUnitIdentity,
+    ScenarioProgressReadModel,
+    ScenarioProgressSnapshot,
+)
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import (
     ScenarioHistoryAggregate,
@@ -46,6 +52,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_RUN_STARTED_AT_METADATA_KEY,
     AttackOutcome,
+    AttackResult,
     ComponentIdentifier,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
@@ -212,6 +219,7 @@ class ScenarioRunService:
         self._active_scenario_result_id: str | None = None
         self._queued_runs: deque[_ActiveTask] = deque()
         self._handoff_retry_tasks: set[asyncio.Task[None]] = set()
+        self._abandoned_prepare_tasks: set[asyncio.Task[None]] = set()
         self._scheduler_lock = asyncio.Lock()
         self._launch_lock = asyncio.Lock()
         self._preparing_run_ids: set[str] = set()
@@ -288,7 +296,7 @@ class ScenarioRunService:
             or any(run.scenario_result_id == scenario_result_id for run in self._queued_runs)
         ):
             raise ScenarioRunConflictError(f"Scenario run '{scenario_result_id}' is already scheduled or initializing.")
-        stored = await asyncio.to_thread(self._memory.get_scenario_result_header, scenario_result_id=scenario_result_id)
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
         if stored is None:
             raise ScenarioRunNotFoundError(f"Scenario run '{scenario_result_id}' was not found in this database.")
         eligible_states = {ScenarioRunState.FAILED}
@@ -375,9 +383,7 @@ class ScenarioRunService:
         """
         if self._stopping:
             raise RuntimeError("Scenario run scheduling is stopping.")
-        resumed_from_cancelled = await asyncio.to_thread(
-            self._is_run_cancelled, scenario_result_id=request.scenario_result_id
-        )
+        resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
         if request.scenario_result_id:
             self._preparing_run_ids.add(request.scenario_result_id)
         prepare_task = asyncio.get_running_loop().run_in_executor(
@@ -393,11 +399,11 @@ class ScenarioRunService:
         except asyncio.CancelledError:
             if prepare_task.done():
                 try:
-                    self._release_abandoned_prepare(prepare_task)
+                    (await self._release_abandoned_prepare_async(prepare_task))
                 except Exception as cleanup_error:
                     logger.warning(f"Could not clean up after a cancelled scenario preparation: {cleanup_error}")
             else:
-                prepare_task.add_done_callback(self._release_abandoned_prepare)
+                prepare_task.add_done_callback(self._schedule_abandoned_prepare_cleanup)
             raise
 
         scenario = prepared.scenario
@@ -406,15 +412,11 @@ class ScenarioRunService:
             raise ValueError("Scenario did not produce a scenario_result_id during initialization.")
         if request.scenario_result_id and scenario_result_id != request.scenario_result_id:
             raise ValueError("Scenario initialization changed the saved result ID; resume was not started.")
-        persisted = await asyncio.to_thread(
-            self._memory.get_scenario_results,
-            scenario_result_ids=[scenario_result_id],
-        )
+        persisted = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not persisted:
             raise RuntimeError(f"Scenario run {scenario_result_id} was not persisted during initialization.")
         if not resumed_from_cancelled and persisted[0].scenario_run_state == ScenarioRunState.CANCELLED:
-            response = await asyncio.to_thread(
-                self._build_response,
+            response = await self._build_response_async(
                 scenario_result_id=scenario_result_id,
                 active_error=None,
                 queue_position=None,
@@ -426,8 +428,7 @@ class ScenarioRunService:
                 )
             return response
         if (
-            await asyncio.to_thread(
-                self._build_response,
+            await self._build_response_async(
                 scenario_result_id=scenario_result_id,
                 active_error=None,
                 queue_position=None,
@@ -448,8 +449,7 @@ class ScenarioRunService:
         await self._enqueue_run_async(scheduled=scheduled)
 
         snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
-        response = await asyncio.to_thread(
-            self.get_run_from_storage,
+        response = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
             queue_position=snapshot.queue_position,
@@ -462,7 +462,7 @@ class ScenarioRunService:
     def _discard_preparation(self, preparation: asyncio.Future[_PreparedRun]) -> None:
         self._preparations.discard(preparation)
 
-    def _is_run_cancelled(self, *, scenario_result_id: str | None) -> bool:
+    async def _is_run_cancelled_async(self, *, scenario_result_id: str | None) -> bool:
         """
         Report whether a stored run is already in the CANCELLED state.
 
@@ -477,10 +477,10 @@ class ScenarioRunService:
         """
         if not scenario_result_id:
             return False
-        stored = self._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
         return stored is not None and stored.scenario_run_state == ScenarioRunState.CANCELLED
 
-    def _release_abandoned_prepare(self, prepare_task: "asyncio.Future[_PreparedRun]") -> None:
+    async def _release_abandoned_prepare_async(self, prepare_task: "asyncio.Future[_PreparedRun]") -> None:
         """
         Clean up after an abandoned preparation thread has finished.
 
@@ -504,17 +504,25 @@ class ScenarioRunService:
         scenario_result_id = prepare_task.result().scenario._scenario_result_id
         if scenario_result_id:
             try:
-                self._memory.try_update_scenario_run_state(
-                    scenario_result_id=scenario_result_id,
-                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
-                    scenario_run_state=ScenarioRunState.CANCELLED,
-                    error_message="The start request was cancelled while the scenario was being initialized.",
+                (
+                    await self._memory.try_update_scenario_run_state_async(
+                        scenario_result_id=scenario_result_id,
+                        expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+                        scenario_run_state=ScenarioRunState.CANCELLED,
+                        error_message="The start request was cancelled while the scenario was being initialized.",
+                    )
                 )
             except Exception as update_error:
                 logger.warning(
                     f"Could not mark abandoned scenario run {scenario_result_id} as cancelled: {update_error}"
                 )
         logger.warning("Abandoned scenario preparation completed after the request was cancelled.")
+
+    def _schedule_abandoned_prepare_cleanup(self, prepare_task: "asyncio.Future[_PreparedRun]") -> None:
+        """Keep async cleanup alive after a preparation request is cancelled."""
+        task = asyncio.create_task(self._release_abandoned_prepare_async(prepare_task))
+        self._abandoned_prepare_tasks.add(task)
+        task.add_done_callback(self._abandoned_prepare_tasks.discard)
 
     def _prepare_run_blocking(self, *, request: RunScenarioRequest) -> _PreparedRun:
         """
@@ -537,7 +545,7 @@ class ScenarioRunService:
             RuntimeError: If tasks are still running on the initialization loop after the drain.
         """
 
-        async def prepare_async() -> _PreparedRun:
+        async def prepare_and_drain_async() -> _PreparedRun:
             prepared = await self._prepare_run_async(request=request)
             try:
                 await self._drain_initialization_tasks_async()
@@ -548,17 +556,25 @@ class ScenarioRunService:
                 scenario_result_id = prepared.scenario._scenario_result_id
                 if scenario_result_id:
                     try:
-                        self._memory.try_update_scenario_run_state(
-                            scenario_result_id=scenario_result_id,
-                            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
-                            scenario_run_state=ScenarioRunState.FAILED,
-                            error_message=str(drain_error),
-                            error_type=type(drain_error).__name__,
+                        (
+                            await self._memory.try_update_scenario_run_state_async(
+                                scenario_result_id=scenario_result_id,
+                                expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+                                scenario_run_state=ScenarioRunState.FAILED,
+                                error_message=str(drain_error),
+                                error_type=type(drain_error).__name__,
+                            )
                         )
                     except Exception as update_error:
                         logger.warning(f"Could not mark scenario run {scenario_result_id} as failed: {update_error}")
                 raise
             return prepared
+
+        async def prepare_async() -> _PreparedRun:
+            try:
+                return await prepare_and_drain_async()
+            finally:
+                await self._memory.dispose_loop_resources_async()
 
         return asyncio.run(prepare_async())
 
@@ -644,8 +660,32 @@ class ScenarioRunService:
         Returns:
             ScenarioRunSummary if found, None otherwise.
         """
+        print_deprecation_message(
+            old_item="ScenarioRunService.get_run",
+            new_item="ScenarioRunService.get_run_async",
+            removed_in="1.4.0",
+        )
         snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
         return self.get_run_from_storage(
+            scenario_result_id=scenario_result_id,
+            active_error=snapshot.error,
+            queue_position=snapshot.queue_position,
+            active_scenario_result_id=snapshot.active_scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: ScenarioRunService.get_run)
+    async def get_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
+        """
+        Get the current status of a scenario run by querying the database.
+
+        Args:
+            scenario_result_id: The scenario result ID.
+
+        Returns:
+            ScenarioRunSummary if found, None otherwise.
+        """
+        snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+        return await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
             queue_position=snapshot.queue_position,
@@ -672,7 +712,40 @@ class ScenarioRunService:
         Returns:
             ScenarioRunSummary | None: The run summary when found.
         """
+        print_deprecation_message(
+            old_item="ScenarioRunService.get_run_from_storage",
+            new_item="ScenarioRunService.get_run_from_storage_async",
+            removed_in="1.4.0",
+        )
         return self._build_response(
+            scenario_result_id=scenario_result_id,
+            active_error=active_error,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: ScenarioRunService.get_run_from_storage)
+    async def get_run_from_storage_async(
+        self,
+        *,
+        scenario_result_id: str,
+        active_error: str | None,
+        queue_position: int | None = None,
+        active_scenario_result_id: str | None = None,
+    ) -> ScenarioRunSummary | None:
+        """
+        Build a run summary using database state plus an event-loop snapshot.
+
+        Args:
+            scenario_result_id: The scenario result ID.
+            active_error: Error copied from the active asyncio task, if any.
+            queue_position: Current 1-based waiting position, if queued.
+            active_scenario_result_id: Currently executing scenario result ID.
+
+        Returns:
+            ScenarioRunSummary | None: The run summary when found.
+        """
+        return await self._build_response_async(
             scenario_result_id=scenario_result_id,
             active_error=active_error,
             queue_position=queue_position,
@@ -701,6 +774,11 @@ class ScenarioRunService:
         Returns:
             ScenarioRunListResponse with runs.
         """
+        print_deprecation_message(
+            old_item="ScenarioRunService.list_runs",
+            new_item="ScenarioRunService.list_runs_async",
+            removed_in="1.4.0",
+        )
         normalized_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
         normalized_statuses = sorted(
             {
@@ -774,6 +852,102 @@ class ScenarioRunService:
             ),
         )
 
+    @legacy_sync_override(lambda: ScenarioRunService.list_runs)
+    async def list_runs_async(
+        self,
+        *,
+        scenario_names: Sequence[str] | None = None,
+        statuses: Sequence[ScenarioRunState | str] | None = None,
+        labels: Mapping[str, str | Sequence[str]] | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> ScenarioRunListResponse:
+        """
+        List scenario runs by querying the database (most recent first).
+
+        Args:
+            scenario_names: Registered or persisted scenario names to match.
+            statuses: Run states to match.
+            labels: Labels with OR-within-key and AND-across-key semantics.
+            limit: Maximum number of runs to return.
+            cursor: Opaque cursor from the previous page.
+
+        Returns:
+            ScenarioRunListResponse with runs.
+        """
+        normalized_names = sorted({name.strip() for name in scenario_names or [] if name.strip()})
+        normalized_statuses = sorted(
+            {
+                status.value if isinstance(status, ScenarioRunState) else str(status).strip().upper()
+                for status in statuses or []
+                if str(status).strip()
+            }
+        )
+        normalized_labels = normalize_label_filters(labels=labels)
+        fingerprint = fingerprint_filters(
+            filters={
+                "scenario_names": normalized_names,
+                "statuses": normalized_statuses,
+                "labels": normalized_labels,
+            }
+        )
+        decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
+        after = (
+            ScenarioHistoryKeysetCursor(
+                timestamp=decoded_cursor.timestamp,
+                scenario_result_id=decoded_cursor.identifier,
+            )
+            if decoded_cursor is not None
+            else None
+        )
+        records, aggregates, has_more = await self._memory.get_scenario_run_history_page_async(
+            scenario_names=normalized_names,
+            statuses=normalized_statuses,
+            labels=normalized_labels,
+            cursor=after,
+            limit=limit,
+        )
+        plans = {record.scenario_result_id: self._parse_history_plan(record=record) for record in records}
+        # Memory resolves units against every persisted plan. Runs whose plan this service
+        # rejects must fall back to legacy unit identity, which needs a plan-free aggregate.
+        unusable_plan_ids = [
+            record.scenario_result_id
+            for record in records
+            if record.plan_atomic_groups is not None and plans[record.scenario_result_id] is None
+        ]
+        if unusable_plan_ids:
+            aggregates = {
+                **aggregates,
+                **(await self._memory.get_scenario_history_aggregates_async(scenario_result_ids=unusable_plan_ids)),
+            }
+        items = [
+            self._build_history_summary(
+                record=record,
+                atomic_groups=plans[record.scenario_result_id],
+                aggregate=aggregates.get(record.scenario_result_id)
+                or ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
+            )
+            for record in records
+        ]
+        next_cursor = (
+            encode_keyset_cursor(
+                timestamp=records[-1].created_at,
+                identifier=records[-1].scenario_result_id,
+                fingerprint=fingerprint,
+            )
+            if has_more and records
+            else None
+        )
+        return ScenarioRunListResponse(
+            items=items,
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=next_cursor,
+                prev_cursor=cursor,
+            ),
+        )
+
     async def cancel_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary | None:
         """
         Cancel a running scenario.
@@ -787,10 +961,7 @@ class ScenarioRunService:
         Raises:
             ValueError: If the run is already in a terminal state or not active.
         """
-        results = await asyncio.to_thread(
-            self._memory.get_scenario_results,
-            scenario_result_ids=[scenario_result_id],
-        )
+        results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
 
@@ -805,8 +976,7 @@ class ScenarioRunService:
                 None,
             )
             if queued is not None:
-                await asyncio.to_thread(
-                    self._memory.try_update_scenario_run_state,
+                await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
                     scenario_run_state=ScenarioRunState.CANCELLED,
@@ -822,14 +992,10 @@ class ScenarioRunService:
                 active.cancellation_error_type = "CancelledError"
                 task = active.task
             else:
-                latest = await asyncio.to_thread(
-                    self._memory.get_scenario_results,
-                    scenario_result_ids=[scenario_result_id],
-                )
+                latest = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
                 if latest and self._is_terminal_state(latest[0].scenario_run_state):
                     raise ValueError(f"Cannot cancel run in '{latest[0].scenario_run_state}' state.")
-                await asyncio.to_thread(
-                    self._memory.try_update_scenario_run_state,
+                await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={
                         ScenarioRunState.CREATED,
@@ -847,8 +1013,7 @@ class ScenarioRunService:
                 await task
 
         snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
-        result = await asyncio.to_thread(
-            self.get_run_from_storage,
+        result = await self.get_run_from_storage_async(
             scenario_result_id=scenario_result_id,
             active_error=snapshot.error,
             queue_position=snapshot.queue_position,
@@ -904,21 +1069,16 @@ class ScenarioRunService:
         after_id = None
         reconciled = 0
         while True:
-            interrupted, has_more = await asyncio.to_thread(
-                self._memory.get_scenario_run_state_page,
-                states=states,
-                after_id=after_id,
-                limit=500,
+            interrupted, has_more = await self._memory.get_scenario_run_state_page_async(
+                states=states, after_id=after_id, limit=500
             )
             for result in interrupted:
-                header = await asyncio.to_thread(
-                    self._memory.get_scenario_result_header,
-                    scenario_result_id=result.scenario_result_id,
+                header = await self._memory.get_scenario_result_header_async(
+                    scenario_result_id=result.scenario_result_id
                 )
                 if header is None or header.metadata.get(_SCHEDULER_METADATA_KEY) != _SCHEDULER_METADATA_VALUE:
                     continue
-                await asyncio.to_thread(
-                    self._memory.update_scenario_run_state,
+                await self._memory.update_scenario_run_state_async(
                     scenario_result_id=result.scenario_result_id,
                     scenario_run_state=ScenarioRunState.FAILED,
                     error_message=_RESTART_INTERRUPTION_REASON,
@@ -948,8 +1108,7 @@ class ScenarioRunService:
                     self._queue_revision += 1
                 for run in queued:
                     try:
-                        await asyncio.to_thread(
-                            self._memory.update_scenario_run_state,
+                        await self._memory.update_scenario_run_state_async(
                             scenario_result_id=run.scenario_result_id,
                             scenario_run_state=ScenarioRunState.FAILED,
                             error_message=_SHUTDOWN_INTERRUPTION_REASON,
@@ -965,8 +1124,7 @@ class ScenarioRunService:
                     task = active.task
                     if task is None or task.done():
                         try:
-                            await asyncio.to_thread(
-                                self._memory.update_scenario_run_state,
+                            await self._memory.update_scenario_run_state_async(
                                 scenario_result_id=active.scenario_result_id,
                                 scenario_run_state=ScenarioRunState.FAILED,
                                 error_message=_SHUTDOWN_INTERRUPTION_REASON,
@@ -978,6 +1136,8 @@ class ScenarioRunService:
                         self._release_completed_task(scenario_result_id=active.scenario_result_id)
                         self._queue_revision += 1
         await asyncio.to_thread(self._prepare_executor.shutdown, wait=True)
+        if self._abandoned_prepare_tasks:
+            await asyncio.gather(*self._abandoned_prepare_tasks)
         if task is not None and not task.done():
             task.cancel()
             try:
@@ -1008,8 +1168,7 @@ class ScenarioRunService:
             if self._active_scenario_result_id is None:
                 await self._start_scheduled_run_locked_async(scheduled=scheduled)
                 return
-            await asyncio.to_thread(
-                self._memory.update_scenario_run_state_and_metadata_fields,
+            await self._memory.update_scenario_run_state_and_metadata_fields_async(
                 scenario_result_id=scheduled.scenario_result_id,
                 scenario_run_state=ScenarioRunState.QUEUED,
                 metadata_fields={
@@ -1023,8 +1182,7 @@ class ScenarioRunService:
     async def _start_scheduled_run_locked_async(self, *, scheduled: _ActiveTask) -> None:
         """Start one run while the scheduler lock guarantees exclusive ownership."""
         scheduled.started_at = datetime.now(UTC)
-        await asyncio.to_thread(
-            self._memory.update_scenario_run_state_and_metadata_fields,
+        await self._memory.update_scenario_run_state_and_metadata_fields_async(
             scenario_result_id=scheduled.scenario_result_id,
             scenario_run_state=ScenarioRunState.IN_PROGRESS,
             metadata_fields={
@@ -1049,9 +1207,8 @@ class ScenarioRunService:
                 return
             while self._queued_runs:
                 next_run = self._queued_runs[0]
-                persisted = await asyncio.to_thread(
-                    self._memory.get_scenario_results,
-                    scenario_result_ids=[next_run.scenario_result_id],
+                persisted = await self._memory.get_scenario_results_async(
+                    scenario_result_ids=[next_run.scenario_result_id]
                 )
                 if not persisted or persisted[0].scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
@@ -1113,8 +1270,7 @@ class ScenarioRunService:
                 async with self._scheduler_lock:
                     if not self._can_retry_active_run(scenario_result_id=active.scenario_result_id):
                         return
-                    await asyncio.to_thread(
-                        self._memory.try_update_scenario_run_state,
+                    await self._memory.try_update_scenario_run_state_async(
                         scenario_result_id=active.scenario_result_id,
                         expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                         scenario_run_state=active.cancellation_state,
@@ -1284,8 +1440,7 @@ class ScenarioRunService:
 
         except asyncio.CancelledError:
             try:
-                await asyncio.to_thread(
-                    self._memory.try_update_scenario_run_state,
+                await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=active.cancellation_state,
@@ -1307,8 +1462,7 @@ class ScenarioRunService:
             active.cancellation_error_type = type(e).__name__
             active.retain_error_on_terminalization = True
             try:
-                await asyncio.to_thread(
-                    self._memory.try_update_scenario_run_state,
+                await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=ScenarioRunState.FAILED,
@@ -1356,10 +1510,89 @@ class ScenarioRunService:
             active_scenario_result_id=active_scenario_result_id,
         )
 
+    async def _build_response_async(
+        self,
+        *,
+        scenario_result_id: str,
+        active_error: str | None,
+        queue_position: int | None,
+        active_scenario_result_id: str | None,
+    ) -> ScenarioRunSummary | None:
+        """
+        Build a ScenarioRunResponse by querying the database and merging active task state.
+
+        Args:
+            scenario_result_id: The scenario result ID.
+            active_error: Error copied from the active asyncio task, if any.
+            queue_position: Current 1-based waiting position, if queued.
+            active_scenario_result_id: Currently executing scenario result ID.
+
+        Returns:
+            ScenarioRunResponse if found in the database, None otherwise.
+        """
+        results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
+        if not results:
+            return None
+        return await self._build_response_from_db_async(
+            scenario_result=results[0],
+            active_error=active_error,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+        )
+
     def _build_response_from_db(
         self,
         *,
         scenario_result: ScenarioResult,
+        active_error: str | None = None,
+        queue_position: int | None = None,
+        active_scenario_result_id: str | None = None,
+    ) -> ScenarioRunSummary:
+        error_results = (
+            self._memory.get_attack_results(
+                scenario_result_id=str(scenario_result.id),
+                outcome=AttackOutcome.ERROR,
+            )
+            if not scenario_result.error_message and scenario_result.scenario_run_state == ScenarioRunState.FAILED
+            else []
+        )
+        return self._build_run_summary(
+            scenario_result=scenario_result,
+            error_results=error_results,
+            active_error=active_error,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+        )
+
+    async def _build_response_from_db_async(
+        self,
+        *,
+        scenario_result: ScenarioResult,
+        active_error: str | None = None,
+        queue_position: int | None = None,
+        active_scenario_result_id: str | None = None,
+    ) -> ScenarioRunSummary:
+        error_results = (
+            await self._memory.get_attack_results_async(
+                scenario_result_id=str(scenario_result.id),
+                outcome=AttackOutcome.ERROR,
+            )
+            if not scenario_result.error_message and scenario_result.scenario_run_state == ScenarioRunState.FAILED
+            else []
+        )
+        return self._build_run_summary(
+            scenario_result=scenario_result,
+            error_results=error_results,
+            active_error=active_error,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+        )
+
+    def _build_run_summary(
+        self,
+        *,
+        scenario_result: ScenarioResult,
+        error_results: Sequence[AttackResult],
         active_error: str | None = None,
         queue_position: int | None = None,
         active_scenario_result_id: str | None = None,
@@ -1369,6 +1602,7 @@ class ScenarioRunService:
 
         Args:
             scenario_result: A ScenarioResult retrieved from CentralMemory.
+            error_results: Failed attack results used when the scenario has no stored error message.
             active_error: Error copied from the active asyncio task, if any.
             queue_position: Current 1-based waiting position, if queued.
             active_scenario_result_id: Currently executing scenario result ID.
@@ -1385,10 +1619,7 @@ class ScenarioRunService:
 
         # Historical attack errors remain after a successful resume; only use them for failed runs.
         if not error and status == ScenarioRunState.FAILED:
-            error_ars = self._memory.get_attack_results(
-                scenario_result_id=scenario_result_id,
-                outcome=AttackOutcome.ERROR,
-            )
+            error_ars = error_results
             if error_ars:
                 error = error_ars[0].error_message
                 error_type = error_ars[0].error_type
@@ -1967,8 +2198,37 @@ class ScenarioRunService:
         Returns:
             ScenarioRunProgress | None: Compact progress when the run exists.
         """
+        print_deprecation_message(
+            old_item="ScenarioRunService.get_run_progress",
+            new_item="ScenarioRunService.get_run_progress_async",
+            removed_in="1.4.0",
+        )
         snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
         return self.get_run_progress_from_storage(
+            scenario_result_id=scenario_result_id,
+            since=since,
+            limit=limit,
+            active_group_ids=snapshot.active_group_ids,
+            queue_position=snapshot.queue_position,
+            active_scenario_result_id=snapshot.active_scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: ScenarioRunService.get_run_progress)
+    async def get_run_progress_async(
+        self,
+        *,
+        scenario_result_id: str,
+        since: str | None,
+        limit: int,
+    ) -> ScenarioRunProgress | None:
+        """
+        Snapshot live state and return compact incremental progress.
+
+        Returns:
+            ScenarioRunProgress | None: Compact progress when the run exists.
+        """
+        snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+        return await self.get_run_progress_from_storage_async(
             scenario_result_id=scenario_result_id,
             since=since,
             limit=limit,
@@ -1988,6 +2248,11 @@ class ScenarioRunService:
         active_scenario_result_id: str | None = None,
     ) -> ScenarioRunProgress | None:
         """Return compact database progress using a previously captured live-state snapshot."""
+        print_deprecation_message(
+            old_item="ScenarioRunService.get_run_progress_from_storage",
+            new_item="ScenarioRunService.get_run_progress_from_storage_async",
+            removed_in="1.4.0",
+        )
         header_result = self._memory.get_scenario_result_header(scenario_result_id=scenario_result_id)
         if header_result is None:
             return None
@@ -2018,6 +2283,88 @@ class ScenarioRunService:
             terminal=terminal,
             objective_scorer_identifier=objective_scorer_identifier,
         )
+        return self._build_progress_response(
+            header_result=header_result,
+            plan=plan,
+            progress_snapshot=progress_snapshot,
+            scenario_result_id=scenario_result_id,
+            since=since,
+            limit=limit,
+            cursor=cursor,
+            terminal=terminal,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: ScenarioRunService.get_run_progress_from_storage)
+    async def get_run_progress_from_storage_async(
+        self,
+        *,
+        scenario_result_id: str,
+        since: str | None,
+        limit: int,
+        active_group_ids: Sequence[str],
+        queue_position: int | None = None,
+        active_scenario_result_id: str | None = None,
+    ) -> ScenarioRunProgress | None:
+        """Return compact database progress using a previously captured live-state snapshot."""
+        header_result = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if header_result is None:
+            return None
+
+        try:
+            plan = self._load_run_plan(scenario_result=header_result)
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted plan metadata; treating the plan as unavailable.",
+                scenario_result_id,
+            )
+            plan = None
+        plan_complete = plan is not None
+        cursor = self._decode_progress_cursor(since=since, scenario_result_id=scenario_result_id)
+        terminal = header_result.scenario_run_state in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        )
+        objective_scorer_identifier = header_result.objective_scorer_identifier
+        if not isinstance(objective_scorer_identifier, ComponentIdentifier):
+            objective_scorer_identifier = None
+        progress_snapshot = await self._progress_read_model.get_snapshot_async(
+            scenario_result_id=scenario_result_id,
+            plan=plan,
+            plan_complete=plan_complete,
+            active_group_ids=active_group_ids,
+            terminal=terminal,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
+        return self._build_progress_response(
+            header_result=header_result,
+            plan=plan,
+            progress_snapshot=progress_snapshot,
+            scenario_result_id=scenario_result_id,
+            since=since,
+            limit=limit,
+            cursor=cursor,
+            terminal=terminal,
+            queue_position=queue_position,
+            active_scenario_result_id=active_scenario_result_id,
+        )
+
+    def _build_progress_response(
+        self,
+        *,
+        header_result: ScenarioResult,
+        plan: ScenarioRunPlan | None,
+        progress_snapshot: ScenarioProgressSnapshot,
+        scenario_result_id: str,
+        since: str | None,
+        limit: int,
+        cursor: AttackResultKeysetCursor | None,
+        terminal: bool,
+        queue_position: int | None,
+        active_scenario_result_id: str | None,
+    ) -> ScenarioRunProgress:
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
         for delta in progress_snapshot.deltas:
             overload_events.extend(delta.retry_events)
@@ -2071,7 +2418,7 @@ class ScenarioRunService:
             summary=progress_snapshot.summary,
             next_cursor=next_cursor,
             has_more=has_more,
-            plan_complete=plan_complete,
+            plan_complete=plan is not None,
         )
 
     @staticmethod
@@ -2123,12 +2470,43 @@ class ScenarioRunService:
         Raises:
             ValueError: If the run is not in a completed state.
         """
+        print_deprecation_message(
+            old_item="ScenarioRunService.get_run_results",
+            new_item="ScenarioRunService.get_run_results_async",
+            removed_in="1.4.0",
+        )
         results = self._memory.get_scenario_results(scenario_result_ids=[scenario_result_id])
         if not results:
             return None
 
         scenario_result = results[0]
         run_response = self._build_response_from_db(scenario_result=scenario_result)
+
+        if run_response.status != ScenarioRunState.COMPLETED:
+            raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
+
+        return scenario_result
+
+    @legacy_sync_override(lambda: ScenarioRunService.get_run_results)
+    async def get_run_results_async(self, *, scenario_result_id: str) -> ScenarioResult | None:
+        """
+        Get the ScenarioResult for a completed scenario run.
+
+        Args:
+            scenario_result_id: The scenario result ID.
+
+        Returns:
+            ScenarioResult if the run is completed and results exist, None if not found.
+
+        Raises:
+            ValueError: If the run is not in a completed state.
+        """
+        results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
+        if not results:
+            return None
+
+        scenario_result = results[0]
+        run_response = await self._build_response_from_db_async(scenario_result=scenario_result)
 
         if run_response.status != ScenarioRunState.COMPLETED:
             raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
