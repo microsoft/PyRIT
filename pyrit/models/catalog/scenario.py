@@ -21,6 +21,7 @@ from typing import Annotated, Any, Literal
 from pydantic import AliasChoices, BaseModel, Field, computed_field, field_validator, model_validator
 
 from pyrit.models.parameter import Parameter
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.scenario_dataset_size_estimate import (
@@ -29,27 +30,21 @@ from pyrit.models.scenario_dataset_size_estimate import (
     ScenarioDatasetSizeEstimate,
 )
 
-# Length and size limits for scenario run requests received over the REST API; the values
-# match the backend request limits in ``pyrit.backend.models.common``.
-_MAX_REQUEST_ITEMS = 100
-_MAX_REQUEST_NAME_LENGTH = 256
-_MAX_REQUEST_LABEL_KEY_LENGTH = 128
-_MAX_REQUEST_LABEL_VALUE_LENGTH = 1_024
 # Technique tokens can append converter modifiers (``technique:converter.<name>:...``).
 _MAX_REQUEST_TECHNIQUE_LENGTH = 4_096
-_RequestName = Annotated[str, Field(max_length=_MAX_REQUEST_NAME_LENGTH)]
-_RequestNames = Annotated[list[_RequestName], Field(max_length=_MAX_REQUEST_ITEMS)]
+_RequestName = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
+_RequestNames = Annotated[list[_RequestName], Field(max_length=MAX_ITEMS)]
 _RequestTechniques = Annotated[
-    list[Annotated[str, Field(max_length=_MAX_REQUEST_TECHNIQUE_LENGTH)]], Field(max_length=_MAX_REQUEST_ITEMS)
+    list[Annotated[str, Field(max_length=_MAX_REQUEST_TECHNIQUE_LENGTH)]], Field(max_length=MAX_ITEMS)
 ]
-_RequestFilters = Annotated[dict[_RequestName, _RequestNames], Field(max_length=_MAX_REQUEST_ITEMS)]
-_RequestParams = Annotated[dict[_RequestName, Any], Field(max_length=_MAX_REQUEST_ITEMS)]
+_RequestFilters = Annotated[dict[_RequestName, _RequestNames], Field(max_length=MAX_ITEMS)]
+_RequestParams = Annotated[dict[_RequestName, Any], Field(max_length=MAX_ITEMS)]
 _RequestLabels = Annotated[
     dict[
-        Annotated[str, Field(max_length=_MAX_REQUEST_LABEL_KEY_LENGTH)],
-        Annotated[str, Field(max_length=_MAX_REQUEST_LABEL_VALUE_LENGTH)],
+        Annotated[str, Field(max_length=MAX_LABEL_KEY_LENGTH)],
+        Annotated[str, Field(max_length=MAX_LABEL_VALUE_LENGTH)],
     ],
-    Field(max_length=_MAX_REQUEST_ITEMS),
+    Field(max_length=MAX_ITEMS),
 ]
 
 # Authoritative set of dataset seed filters exposed over the run request surface. Each entry
@@ -462,7 +457,7 @@ class RunScenarioRequest(BaseModel):
     )
     initializer_args: dict[_RequestName, _RequestParams] | None = Field(
         None,
-        max_length=_MAX_REQUEST_ITEMS,
+        max_length=MAX_ITEMS,
         description="Per-initializer arguments keyed by initializer name. "
         "Each value is a dict of args passed to that initializer's set_params_from_args(). "
         "Example: {'target': {'endpoint': 'https://...'}}.",

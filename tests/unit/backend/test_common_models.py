@@ -38,7 +38,6 @@ from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConve
 from pyrit.backend.models.initializers import RegisterInitializerRequest
 from pyrit.backend.models.scores import ManualScoreRequest
 from pyrit.backend.models.targets import CreateTargetRequest
-from pyrit.models.catalog import scenario as scenario_catalog
 
 
 class TestPaginationInfo:
@@ -493,13 +492,6 @@ def test_request_models_reject_values_over_limits(
         model.model_validate(payload)
 
     assert [item["loc"][0] for item in error.value.errors()] == [field]
-
-
-def test_scenario_request_limits_match_backend_limits() -> None:
-    assert scenario_catalog._MAX_REQUEST_ITEMS == MAX_ITEMS
-    assert scenario_catalog._MAX_REQUEST_NAME_LENGTH == MAX_IDENTIFIER_LENGTH
-    assert scenario_catalog._MAX_REQUEST_LABEL_KEY_LENGTH == MAX_LABEL_KEY_LENGTH
-    assert scenario_catalog._MAX_REQUEST_LABEL_VALUE_LENGTH == MAX_LABEL_VALUE_LENGTH
 
 
 def test_label_filter_limits_ignore_surrounding_whitespace() -> None:
