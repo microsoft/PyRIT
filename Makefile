@@ -72,10 +72,11 @@ integration-test:
 	$(CMD) pytest $(INTEGRATION_TESTS) --cov=$(PYMODULE) --cov-report xml --junitxml=$(JUNIT_XML) --doctest-modules
 
 end-to-end-test:
-	$(CMD) pytest $(END_TO_END_TESTS) -v --junitxml=junit/test-results.xml
+	$(CMD) pytest $(END_TO_END_TESTS) -v --junitxml=$(JUNIT_XML)
 
+partner-integration-test: JUNIT_XML=junit/test-results-partner.xml
 partner-integration-test:
-	$(CMD) pytest $(PARTNER_INTEGRATION_TESTS) -v --junitxml=junit/partner-test-results.xml
+	$(CMD) pytest $(PARTNER_INTEGRATION_TESTS) -v --junitxml=$(JUNIT_XML)
 
 #clean:
 #	git clean -Xdf # Delete all files in .gitignore
