@@ -816,11 +816,14 @@ class TestFrontendBackendCompatibilitySync:
                     continue
                 if metadata.class_name == "RoundRobinTarget" and parameter.name in {"targets", "weights"}:
                     continue
+                if parameter.reference_type or parameter.variants:
+                    unsupported_names.append(parameter.name)
+                    continue
                 if parameter.choices:
                     continue
                 if parameter.type_name in scalar_types or parameter.type_name in simple_list_types:
                     continue
-                if parameter.type_name.startswith("dict["):
+                if parameter.type_name == "dict" or parameter.type_name.startswith("dict["):
                     continue
                 unsupported_names.append(parameter.name)
             if unsupported_names:
