@@ -9,12 +9,13 @@ import pytest
 from pyrit.datasets.seed_datasets.remote._image_cache import (
     fetch_and_cache_image_async,
 )
+from pyrit.memory import MemoryInterface
 
 
 def _make_mock_serializer(*, exists: bool = False) -> MagicMock:
     """Build a MagicMock serializer with memory configured."""
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = "/results"
     mock_storage_io = AsyncMock()
     mock_storage_io.path_exists_async = AsyncMock(return_value=exists)
@@ -115,7 +116,7 @@ async def test_raises_value_error_when_neither_url_nor_bytes_provided():
 
 async def test_raises_runtime_error_when_memory_not_configured():
     mock_serializer = MagicMock()
-    mock_memory = MagicMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
     mock_memory.results_path = None
     mock_memory.results_storage_io = None
     mock_serializer._memory = mock_memory

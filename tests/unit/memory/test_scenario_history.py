@@ -10,12 +10,12 @@ delegation boundary and the component behaviors that suite does not reach direct
 """
 
 import uuid
-from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from pyrit.memory import MemoryInterface
@@ -53,6 +53,12 @@ def _get_page(component: _ScenarioHistoryQueries, **overrides: Any) -> tuple[lis
     return component.get_page(**kwargs)
 
 
+async def _get_page_async(
+    component: _ScenarioHistoryQueries, **overrides: Any
+) -> tuple[list[ScenarioHistoryRunRecord], bool]:
+    return await component._memory._run_database_operation_async(_get_page, component=component, **overrides)
+
+
 def _record(*, planned: bool) -> ScenarioHistoryRunRecord:
     return ScenarioHistoryRunRecord(
         scenario_result_id=str(uuid.uuid4()),
@@ -73,16 +79,16 @@ def _record(*, planned: bool) -> ScenarioHistoryRunRecord:
     )
 
 
-def test_get_scenario_run_history_page_delegates_to_component(sqlite_instance: MemoryInterface) -> None:
+async def test_get_scenario_run_history_page_delegates_to_component_async(sqlite_instance: MemoryInterface) -> None:
     """Public method forwards the component's records and has_more, then derives aggregate IDs itself."""
     planned, unplanned = _record(planned=True), _record(planned=False)
     records = [planned, unplanned]
 
     with (
         patch.object(_ScenarioHistoryQueries, "get_page", return_value=(records, True)) as mock_get_page,
-        patch.object(sqlite_instance, "get_scenario_history_aggregates", return_value={}) as mock_aggregates,
+        patch.object(sqlite_instance, "_execute_get_scenario_history_aggregates", return_value={}) as mock_aggregates,
     ):
-        result = sqlite_instance.get_scenario_run_history_page(scenario_names=["Test"], limit=50)
+        result = await sqlite_instance.get_scenario_run_history_page_async(scenario_names=["Test"], limit=50)
 
     mock_get_page.assert_called_once_with(scenario_names=["Test"], statuses=None, labels=None, cursor=None, limit=50)
     assert result[0] == records
@@ -103,7 +109,7 @@ def test_get_page_rejects_invalid_limit(sqlite_instance: MemoryInterface, limit:
     """Limit outside 1..100 raises before any session is opened."""
     component = _ScenarioHistoryQueries(memory=sqlite_instance)
     with (
-        patch.object(sqlite_instance, "get_session", side_effect=AssertionError("session opened before validation")),
+        patch.object(sqlite_instance, "_get_session", side_effect=AssertionError("session opened before validation")),
         pytest.raises(ValueError, match="between 1 and 100"),
     ):
         _get_page(component, limit=limit)
@@ -119,7 +125,9 @@ def test_get_page_rejects_invalid_limit(sqlite_instance: MemoryInterface, limit:
         ("valid.key-0", False),
     ],
 )
-def test_get_page_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, key: str, should_raise: bool) -> None:
+async def test_get_page_rejects_invalid_label_keys_async(
+    sqlite_instance: MemoryInterface, key: str, should_raise: bool
+) -> None:
     """Invalid label keys raise ValueError naming the key; valid keys pass through."""
     component = _ScenarioHistoryQueries(memory=sqlite_instance)
     if should_raise:
@@ -127,7 +135,7 @@ def test_get_page_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, k
             _get_page(component, labels={key: "value"})
         assert key in str(excinfo.value)
     else:
-        records, has_more = _get_page(component, labels={key: "value"})
+        records, has_more = await _get_page_async(component, labels={key: "value"})
         assert records == [] and has_more is False
 
 
@@ -153,12 +161,12 @@ def test_get_page_rejects_malformed_cursor(sqlite_instance: MemoryInterface) -> 
         ({"labels": {}}, {"Alpha", "Beta"}),
     ],
 )
-def test_get_page_normalizes_filters(
+async def test_get_page_normalizes_filters_async(
     sqlite_instance: MemoryInterface, filters: dict[str, Any], expected_names: set[str]
 ) -> None:
     """Name, status, and label filters keep their current normalization against real rows."""
     now = datetime.now(UTC)
-    sqlite_instance.add_scenario_results_to_memory(
+    await sqlite_instance.add_scenario_results_to_memory_async(
         scenario_results=[
             _make_history_scenario(result_id=str(uuid.uuid4()), timestamp=now, name="Alpha", labels={"op": "alpha"}),
             _make_history_scenario(
@@ -170,17 +178,17 @@ def test_get_page_normalizes_filters(
             ),
         ]
     )
-    records, _ = _get_page(_ScenarioHistoryQueries(memory=sqlite_instance), **filters)
+    records, _ = await _get_page_async(_ScenarioHistoryQueries(memory=sqlite_instance), **filters)
     assert {r.scenario_name for r in records} == expected_names
 
 
-def test_get_page_multi_page_walk_returns_every_row_once(sqlite_instance: MemoryInterface) -> None:
+async def test_get_page_multi_page_walk_returns_every_row_once_async(sqlite_instance: MemoryInterface) -> None:
     """Walking tied timestamps with limit=2 yields every row exactly once, in timestamp DESC, id DESC order."""
     now = datetime.now(UTC)
     earlier = now - timedelta(seconds=10)
     ids_now = [uuid.UUID(int=i) for i in (1, 2, 3, 4)]
     ids_earlier = [uuid.UUID(int=i) for i in (5, 6, 7)]
-    sqlite_instance.add_scenario_results_to_memory(
+    await sqlite_instance.add_scenario_results_to_memory_async(
         scenario_results=[
             _make_history_scenario(result_id=str(i), timestamp=ts, name=str(i))
             for ts, ids in ((now, ids_now), (earlier, ids_earlier))
@@ -192,7 +200,7 @@ def test_get_page_multi_page_walk_returns_every_row_once(sqlite_instance: Memory
     collected: list[str] = []
     cursor: ScenarioHistoryKeysetCursor | None = None
     for _ in range(10):  # cap so a non-advancing cursor fails instead of hanging
-        page, has_more = _get_page(component, cursor=cursor, limit=2)
+        page, has_more = await _get_page_async(component, cursor=cursor, limit=2)
         collected.extend(r.scenario_result_id for r in page)
         if not has_more:
             break
@@ -206,43 +214,44 @@ def test_get_page_multi_page_walk_returns_every_row_once(sqlite_instance: Memory
     assert collected == expected
 
 
-def test_get_page_empty_result(sqlite_instance: MemoryInterface) -> None:
+async def test_get_page_empty_result_async(sqlite_instance: MemoryInterface) -> None:
     """No rows, or a cursor past the last row, returns an empty list and has_more=False."""
     component = _ScenarioHistoryQueries(memory=sqlite_instance)
-    assert _get_page(component) == ([], False)
+    assert await _get_page_async(component) == ([], False)
 
-    sqlite_instance.add_scenario_results_to_memory(
+    await sqlite_instance.add_scenario_results_to_memory_async(
         scenario_results=[_make_history_scenario(result_id=str(uuid.uuid4()), timestamp=datetime.now(UTC), name="Only")]
     )
-    (only,), has_more = _get_page(component)
+    (only,), has_more = await _get_page_async(component)
     assert has_more is False
     cursor = ScenarioHistoryKeysetCursor(timestamp=only.created_at, scenario_result_id=only.scenario_result_id)
-    assert _get_page(component, cursor=cursor) == ([], False)
+    assert await _get_page_async(component, cursor=cursor) == ([], False)
 
 
-def test_get_page_null_json_columns_default_to_empty_dict(sqlite_instance: MemoryInterface) -> None:
+async def test_get_page_null_json_columns_default_to_empty_dict_async(sqlite_instance: MemoryInterface) -> None:
     """NULL scenario_identifier, objective_target_identifier, and labels columns map to {} on the record."""
     row_id = str(uuid.uuid4())
-    sqlite_instance.add_scenario_results_to_memory(
+    await sqlite_instance.add_scenario_results_to_memory_async(
         scenario_results=[_make_history_scenario(result_id=row_id, timestamp=datetime.now(UTC), name="NullJson")]
     )
-    with closing(sqlite_instance.get_session()) as session:
-        entry = session.query(ScenarioResultEntry).filter_by(id=uuid.UUID(row_id)).one()
-        entry.scenario_identifier = None
-        entry.objective_target_identifier = None
-        entry.labels = None
-        session.commit()
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
+            update(ScenarioResultEntry)
+            .where(ScenarioResultEntry.id == uuid.UUID(row_id))
+            .values(scenario_identifier=None, objective_target_identifier=None, labels=None)
+        )
+        await session.commit()
 
-    (record,), _ = _get_page(_ScenarioHistoryQueries(memory=sqlite_instance))
+    (record,), _ = await _get_page_async(_ScenarioHistoryQueries(memory=sqlite_instance))
     assert record.scenario_identifier == {}
     assert record.objective_target_identifier == {}
     assert record.labels == {}
 
 
-def test_get_page_single_query_execution(sqlite_instance: MemoryInterface) -> None:
+async def test_get_page_single_query_execution_async(sqlite_instance: MemoryInterface) -> None:
     """One page costs exactly one Session.execute call: no per-row queries and no ORM hydration."""
     now = datetime.now(UTC)
-    sqlite_instance.add_scenario_results_to_memory(
+    await sqlite_instance.add_scenario_results_to_memory_async(
         scenario_results=[
             _make_history_scenario(result_id=str(uuid.uuid4()), timestamp=now + timedelta(seconds=i), name=f"Row{i}")
             for i in range(3)
@@ -252,7 +261,7 @@ def test_get_page_single_query_execution(sqlite_instance: MemoryInterface) -> No
     real_execute = Session.execute
 
     with patch.object(Session, "execute", autospec=True, side_effect=real_execute) as spy:
-        records, has_more = _get_page(component, limit=2)
+        records, has_more = await _get_page_async(component, limit=2)
 
     assert spy.call_count == 1
     assert len(records) == 2 and has_more is True  # the query really ran and used limit + 1

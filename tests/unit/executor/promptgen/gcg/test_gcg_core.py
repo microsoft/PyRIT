@@ -46,6 +46,7 @@ default_implementations_mod = pytest.importorskip(
 )
 LengthPreservingFilter = default_implementations_mod.LengthPreservingFilter
 StandardGCGSampling = default_implementations_mod.StandardGCGSampling
+CrossEntropyLoss = default_implementations_mod.CrossEntropyLoss
 
 import numpy as np  # noqa: E402
 
@@ -1141,6 +1142,7 @@ def test_model_worker_task_payload_excludes_model() -> None:
     [
         (ModelWorkerOperation.GRAD, "grad"),
         (ModelWorkerOperation.LOGITS, "logits"),
+        (ModelWorkerOperation.LOSS, "loss"),
         (ModelWorkerOperation.CONTRAST_LOGITS, "contrast_logits"),
         (ModelWorkerOperation.TEST, "test"),
         (ModelWorkerOperation.TEST_LOSS, "test_loss"),
@@ -1191,6 +1193,9 @@ class _Queue:
     def get(self) -> Any:
         return self._items.pop(0)
 
+    def put(self, item: Any) -> None:
+        self._items.append(item)
+
 
 class _WorkerStub:
     def __init__(
@@ -1204,11 +1209,29 @@ class _WorkerStub:
         self.model = MagicMock()
         self.model.device = "cpu"
         self.tokenizer = tokenizer
-        self.results = _Queue([gradient, (logits, token_ids)])
+        self.results = _Queue([])
+        self._gradient = gradient
+        self._logits = logits
+        self._token_ids = token_ids
         self.calls: list[tuple] = []
 
     def __call__(self, *args: Any, **kwargs: Any) -> None:
         self.calls.append((args, kwargs))
+        prompt, operation, *operation_args = args
+        if operation is ModelWorkerOperation.GRAD:
+            self.results.put(self._gradient)
+        elif operation is ModelWorkerOperation.LOGITS:
+            self.results.put((self._logits, self._token_ids))
+        elif operation is ModelWorkerOperation.LOSS:
+            loss_function = operation_args[1]
+            self.results.put(
+                loss_function.compute_loss(
+                    logits=self._logits,
+                    token_ids=self._token_ids,
+                    target_slice=prompt._target_slice,
+                    control_slice=prompt._control_slice,
+                )
+            )
 
 
 class _PromptManagerStub:
@@ -1441,12 +1464,13 @@ class TestGCGMultiPromptAttackStepWiring:
         grad_args, grad_kwargs = worker.calls[0]
         assert grad_args == (prompt_manager, ModelWorkerOperation.GRAD)
         assert grad_kwargs == {}
-        logits_args, logits_kwargs = worker.calls[1]
-        assert logits_args[0] is prompt
-        assert logits_args[1] is ModelWorkerOperation.LOGITS
-        assert len(logits_args) == 3
-        assert all(argument is not worker.model for argument in logits_args)
-        assert logits_kwargs == {"return_ids": True}
+        loss_args, loss_kwargs = worker.calls[1]
+        assert loss_args[0] is prompt
+        assert loss_args[1] is ModelWorkerOperation.LOSS
+        assert loss_args[2] == legacy_controls
+        assert isinstance(loss_args[3], CrossEntropyLoss)
+        assert all(argument is not worker.model for argument in loss_args)
+        assert loss_kwargs == {"use_prefix_cache": False}
 
     def test_step_uses_custom_protocol_implementations_when_supplied(self) -> None:
         gradient = torch.randn(3, 6)
@@ -1682,6 +1706,23 @@ def test_attack_prompt_logits_builds_attention_mask() -> None:
 
     assert logits.shape == (1, 4, 8)
     assert torch.equal(model.call_args.kwargs["attention_mask"], torch.ones(1, 4, dtype=torch.long))
+
+
+def test_attack_prompt_logits_forwards_selected_positions() -> None:
+    prompt = object.__new__(AttackPrompt)
+    prompt._control_slice = slice(1, 3)
+    prompt.input_ids = torch.tensor([0, 1, 2, 3])
+    prompt.tokenizer = MagicMock()
+    prompt.tokenizer.return_value.input_ids = [5, 6]
+    model = MagicMock()
+    model.device = torch.device("cpu")
+    model.return_value.logits = torch.randn(1, 2, 8)
+    positions = torch.tensor([0, 2])
+
+    logits = prompt.logits(model, test_controls=["candidate"], logits_to_keep=positions)
+
+    assert logits.shape == (1, 2, 8)
+    assert torch.equal(model.call_args.kwargs["logits_to_keep"], positions)
 
 
 def test_prompt_manager_grad_streams_and_sums_prompt_gradients() -> None:

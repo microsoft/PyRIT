@@ -184,7 +184,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
 
         for experiment_num in range(context.num_experiments):
             attack_result = await self._run_experiment_async(context=context)
-            experiment_data = self._format_experiment_results(
+            experiment_data = await self._format_experiment_results_async(
                 context=context, attack_result=attack_result, experiment_num=experiment_num
             )
             results_list.append(experiment_data)
@@ -228,7 +228,7 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             memory_labels=context.memory_labels,
         )
 
-    def _format_experiment_results(
+    async def _format_experiment_results_async(
         self, context: FairnessBiasBenchmarkContext, attack_result: AttackResult, experiment_num: int
     ) -> dict[str, Any]:
         """
@@ -242,7 +242,9 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         Returns:
             Dict: dictionary with components from experiment parsed and formatted
         """
-        conversation_pieces = self.memory.get_conversation_messages(conversation_id=attack_result.conversation_id)
+        conversation_pieces = await self.memory.get_conversation_messages_async(
+            conversation_id=attack_result.conversation_id
+        )
         response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
         subject_name = self._extract_name(response)
         return {

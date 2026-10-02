@@ -2,9 +2,12 @@
 # Licensed under the MIT license.
 
 import string
+from collections.abc import Callable
+from functools import partial
 
 import pytest
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed, random_execution
 from pyrit.converter import DigitBijectionConverter, LetterBijectionConverter, TokenBijectionConverter
 from pyrit.converter.bijection_converter import BijectionConverter
 
@@ -128,6 +131,84 @@ async def test_digit_converter_literal_apostrophe_round_trip():
     assert converter.decode(encoded.output_text) == "it's"
 
 
+async def test_digit_converter_literal_digit_round_trip():
+    """A literal number survives encoding instead of being read back as letter tokens."""
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="abc 123 xyz")
+
+    # Unescaped, "12" is c's token and the literal number would decode as "w3"/"c3".
+    assert encoded.output_text == "101112 ~1~2~3 333435"
+    assert converter.decode(encoded.output_text) == "abc 123 xyz"
+
+
+async def test_digit_converter_literal_marker_round_trip():
+    """The escape character itself is doubled so it can still be sent literally."""
+    custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
+    converter = DigitBijectionConverter(mapping=custom_mapping)
+
+    encoded = await converter.convert_async(prompt="a~b")
+
+    assert encoded.output_text == "10~~11"
+    assert converter.decode(encoded.output_text) == "a~b"
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+@pytest.mark.parametrize(
+    ("encoded_text", "expected"),
+    [
+        ("", ""),
+        ("~", "~"),
+        ("~~~", "~~"),
+        ("~!", "~!"),
+        ("~a", "~a"),
+        ("~\n", "~\n"),
+        ("~'", "~'"),
+        ("'~", "'~"),
+        ("~~", "~"),
+        ("~~~~", "~~"),
+        ("~0", "0"),
+        ("~9", "9"),
+        ("~1~2~3", "123"),
+        ("~~~0", "~0"),
+    ],
+)
+def test_digit_converter_decode_literal_escape_boundaries(*, num_digits: int, encoded_text: str, expected: str) -> None:
+    converter = DigitBijectionConverter(num_digits=num_digits, seed=42)
+
+    assert converter.decode(encoded_text) == expected
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+def test_digit_converter_decode_preserves_trailing_literal_marker(num_digits: int) -> None:
+    converter = DigitBijectionConverter(num_digits=num_digits, seed=42)
+    encoded_text = converter.encode(prompt="Top")
+
+    assert converter.decode(encoded_text + "~") == "Top~"
+
+
+@pytest.mark.parametrize("num_digits", [2, 3, 4])
+@pytest.mark.parametrize(
+    "prompt",
+    ["abc 123 xyz", "CVE-2021-44228", "pi is 3.14159", "BOB's 7 cats~", "~12", "0000000000", "a1B2~c3", "~'7A~~"],
+)
+def test_digit_converter_round_trips_digit_bearing_prompts(*, num_digits: int, prompt: str) -> None:
+    """Digit-bearing prompts round-trip for every mapping width, not just lucky mappings."""
+    for seed in range(12):
+        converter = DigitBijectionConverter(num_digits=num_digits, seed=seed)
+        assert converter.decode(converter.encode(prompt=prompt)) == prompt
+
+
+def test_digit_converter_teaching_instructions_cover_literal_digits() -> None:
+    """The target is told the escape rule, since it has to apply the same one."""
+    instructions = DigitBijectionConverter(seed=42).get_teaching_instructions()
+
+    assert "Encode each literal digit as one tilde (~) followed by that digit" in instructions
+    assert "each literal tilde as two tildes (~~)" in instructions
+    assert "Preserve a tilde that is not followed by another tilde or a digit." in instructions
+
+
 async def test_digit_converter_uppercase_letter_after_apostrophe_round_trip():
     custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
     converter = DigitBijectionConverter(mapping=custom_mapping)
@@ -185,9 +266,9 @@ def test_digit_converter_teaching_instructions_describe_marker_rules() -> None:
 
 @pytest.mark.parametrize(
     ("prompt", "encoded_text"),
-    [("it's", "1829''28"), ("I'm", "'18''22")],
+    [("it's", "1829''28"), ("I'm", "'18''22"), ("top 10", "292425 ~1~0")],
 )
-def test_digit_converter_teaching_instructions_include_contraction_examples(*, prompt: str, encoded_text: str) -> None:
+def test_digit_converter_teaching_instructions_include_examples(*, prompt: str, encoded_text: str) -> None:
     custom_mapping = {letter: str(index + 10) for index, letter in enumerate(string.ascii_lowercase)}
     converter = DigitBijectionConverter(mapping=custom_mapping)
 
@@ -207,7 +288,7 @@ def test_digit_converter_teaching_instructions_use_configured_mapping(num_digits
     assert f"{num_digits}-digit tokens" in instructions
     for letter, token in converter.mapping.items():
         assert f"{letter}={token}" in instructions
-    for prompt in ("it's", "I'm"):
+    for prompt in ("it's", "I'm", "top 10"):
         encoded_text = converter.encode(prompt=prompt)
         assert f'"{prompt}" encodes to "{encoded_text}"' in instructions
         assert converter.decode(encoded_text) == prompt
@@ -492,6 +573,21 @@ def _mock_tokenizer(vocab: dict[str, int]):
     return type("MockTokenizer", (), {"get_vocab": lambda self: vocab})()
 
 
+@pytest.fixture(
+    params=[
+        LetterBijectionConverter,
+        DigitBijectionConverter,
+        partial(
+            TokenBijectionConverter,
+            tokenizer=_mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)}),
+        ),
+    ],
+    ids=["letter", "digit", "token"],
+)
+def bijection_factory(request: pytest.FixtureRequest) -> Callable[..., BijectionConverter]:
+    return request.param
+
+
 async def test_token_converter_delimits_encoded_units():
     # Regression test: without a delimiter between mapped tokens, a multi-letter word
     # collapses into an unsegmentable run-on string that the target model can't learn to
@@ -566,3 +662,80 @@ def test_token_converter_excludes_wordpiece_continuation_fragments():
     for token in converter.mapping.values():
         assert not token.startswith("##")
         assert token in _PLAIN_VOCAB_WORDS
+
+
+def test_mapping_is_reproducible_under_configured_root_seed():
+    """
+    The mapping is drawn at construction time. With no explicit seed it must inherit the
+    root configured by initialize_pyrit_async, not fresh entropy.
+    """
+    try:
+        configure_random_seed(seed=42)
+        first = LetterBijectionConverter().mapping
+        configure_random_seed(seed=42)
+        second = LetterBijectionConverter().mapping
+        assert first == second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_mapping_varies_with_root_seed():
+    try:
+        configure_random_seed(seed=42)
+        first = LetterBijectionConverter().mapping
+        configure_random_seed(seed=99)
+        second = LetterBijectionConverter().mapping
+        assert first != second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_explicit_seed_overrides_configured_root_seed():
+    try:
+        configure_random_seed(seed=1)
+        first = LetterBijectionConverter(seed=7).mapping
+        configure_random_seed(seed=99)
+        second = LetterBijectionConverter(seed=7).mapping
+        assert first == second
+    finally:
+        configure_random_seed(seed=None)
+
+
+def test_mapping_is_unseeded_without_a_configured_root():
+    configure_random_seed(seed=None)
+    mappings = {tuple(sorted(LetterBijectionConverter().mapping.items())) for _ in range(5)}
+    assert len(mappings) > 1
+
+
+@pytest.mark.parametrize("root_seed,seed", [(None, 7), (42, 7), (42, None)])
+def test_mapping_is_reproducible_within_random_execution(
+    *, bijection_factory: Callable[..., BijectionConverter], root_seed: int | None, seed: int | None
+) -> None:
+    previous_seed = get_configured_random_seed()
+    try:
+        configure_random_seed(seed=root_seed)
+        with random_execution(namespace="composite"):
+            first = bijection_factory(seed=seed)
+            second = bijection_factory(seed=seed)
+
+        assert first.mapping == second.mapping
+    finally:
+        configure_random_seed(seed=previous_seed)
+
+
+@pytest.mark.parametrize("seed", [None, 7])
+def test_mapping_inherits_operation_key(
+    *, bijection_factory: Callable[..., BijectionConverter], seed: int | None
+) -> None:
+    previous_seed = get_configured_random_seed()
+    try:
+        configure_random_seed(seed=42)
+        mappings = []
+        for operation_key in ("first", "second", "first"):
+            with random_execution(namespace="composite", operation_key=operation_key):
+                mappings.append(bijection_factory(seed=seed).mapping)
+
+        assert mappings[0] != mappings[1]
+        assert mappings[0] == mappings[2]
+    finally:
+        configure_random_seed(seed=previous_seed)

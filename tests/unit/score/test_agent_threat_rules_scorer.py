@@ -203,12 +203,12 @@ def _piece(*, value: str, role: ChatMessageRole = "assistant", data_type: Prompt
     return MessagePiece(role=role, original_value=value, original_value_data_type=data_type)
 
 
-def _message_scorable(*pieces: MessagePiece) -> MessageScorable:
+async def _message_scorable_async(*pieces: MessagePiece) -> MessageScorable:
     conversation_id = str(uuid.uuid4())
     for piece in pieces:
         piece.conversation_id = conversation_id
     message = Message(message_pieces=list(pieces))
-    CentralMemory.get_memory_instance().add_message_to_memory(request=message)
+    await CentralMemory.get_memory_instance().add_message_to_memory_async(request=message)
     return MessageScorable.from_message(message)
 
 
@@ -255,7 +255,7 @@ class TestScoring:
         self, *, role: ChatMessageRole, data_type: PromptDataType, value: str, expected_fields: set[str]
     ) -> None:
         scorer = AgentThreatRulesScorer(fields=sorted(AgentThreatRulesScorer._SUPPORTED_FIELDS), cache=False)
-        scorable = _message_scorable(_piece(value=value, role=role, data_type=data_type))
+        scorable = await _message_scorable_async(_piece(value=value, role=role, data_type=data_type))
         score = (await scorer.score_async(scorable=scorable))[0]
         assert score.get_value() is bool(expected_fields)
         for field in AgentThreatRulesScorer._SUPPORTED_FIELDS:
@@ -274,14 +274,15 @@ class TestScoring:
     )
     async def test_unreadable_call_is_undetermined_async(self, *, data_type: PromptDataType, value: str) -> None:
         scorer = AgentThreatRulesScorer(fields=["tool_name", "tool_args"], cache=False)
-        score = (await scorer.score_async(scorable=_message_scorable(_piece(value=value, data_type=data_type))))[0]
+        scorable = await _message_scorable_async(_piece(value=value, data_type=data_type))
+        score = (await scorer.score_async(scorable=scorable))[0]
         assert score.status is ScoreStatus.UNDETERMINED
         assert score.score_rationale
 
     @pytest.mark.parametrize("value", ["{invalid", "{}", '{"output":""}'])
     async def test_tool_output_missing_differs_from_empty_async(self, value: str) -> None:
         scorer = AgentThreatRulesScorer(fields=["tool_response"], cache=False)
-        scorable = _message_scorable(_piece(value=value, role="tool", data_type="function_call_output"))
+        scorable = await _message_scorable_async(_piece(value=value, role="tool", data_type="function_call_output"))
         score = (await scorer.score_async(scorable=scorable))[0]
         if value == '{"output":""}':
             assert score.get_value() is False
@@ -290,18 +291,18 @@ class TestScoring:
 
     async def test_known_match_settles_missing_arguments_async(self) -> None:
         scorer = AgentThreatRulesScorer(fields=["tool_name", "tool_args"], cache=False)
-        scorable = _message_scorable(_piece(value='{"name":"MARKER"}', data_type="function_call"))
+        scorable = await _message_scorable_async(_piece(value='{"name":"MARKER"}', data_type="function_call"))
         assert (await scorer.score_async(scorable=scorable))[0].get_value() is True
 
     async def test_missing_unselected_field_does_not_prevent_negative_async(self) -> None:
         scorer = AgentThreatRulesScorer(fields=["tool_name"], cache=False)
-        scorable = _message_scorable(_piece(value='{"name":"safe"}', data_type="function_call"))
+        scorable = await _message_scorable_async(_piece(value='{"name":"safe"}', data_type="function_call"))
         assert (await scorer.score_async(scorable=scorable))[0].get_value() is False
 
     @pytest.mark.parametrize("text", ["safe", "MARKER"])
     async def test_mixed_readable_and_malformed_pieces_async(self, text: str) -> None:
         scorer = AgentThreatRulesScorer(fields=["agent_output", "tool_args"], cache=False)
-        scorable = _message_scorable(
+        scorable = await _message_scorable_async(
             _piece(value=text),
             _piece(value="{invalid", data_type="function_call"),
         )
@@ -315,7 +316,8 @@ class TestScoring:
         scorer = AgentThreatRulesScorer(fields=["tool_args"], cache=False)
         piece = _piece(value='{"name":"safe","arguments":{}}', data_type="function_call")
         piece.converted_value = '{"name":"safe","arguments":{"query":"MARKER"}}'
-        assert (await scorer.score_async(scorable=_message_scorable(piece)))[0].get_value() is True
+        scorable = await _message_scorable_async(piece)
+        assert (await scorer.score_async(scorable=scorable))[0].get_value() is True
 
     @pytest.mark.parametrize("chat_format", [False, True])
     @pytest.mark.parametrize(
@@ -344,7 +346,7 @@ class TestScoring:
         scorer = AgentThreatRulesScorer(fields=["tool_args"], cache=False)
         call = {"name": "fetch", "arguments": arguments}
         payload = {"type": "function", "function": call} if chat_format else call
-        scorable = _message_scorable(_piece(value=json.dumps(payload), data_type="function_call"))
+        scorable = await _message_scorable_async(_piece(value=json.dumps(payload), data_type="function_call"))
         score = (await scorer.score_async(scorable=scorable))[0]
         assert score.get_value() is True
         assert score.score_rationale == "Matched: ATR-2026-01605#0"
@@ -369,18 +371,16 @@ class TestScoring:
         routed_digest.return_value.read.return_value = json.dumps(digest).encode()
         scorer = AgentThreatRulesScorer(fields=["tool_args"], cache=False)
         payload = json.dumps({"name": "safe", "arguments": arguments})
-        score = (
-            await scorer.score_async(scorable=_message_scorable(_piece(value=payload, data_type="function_call")))
-        )[0]
+        scorable = await _message_scorable_async(_piece(value=payload, data_type="function_call"))
+        score = (await scorer.score_async(scorable=scorable))[0]
         assert score.get_value() is expected
         assert score.score_rationale == ("Matched: args#0" if expected else "")
 
     async def test_decoded_arguments_do_not_match_other_fields_async(self) -> None:
         scorer = AgentThreatRulesScorer(fields=["tool_name", "content"], cache=False)
         payload = json.dumps({"name": "safe", "arguments": r'{"query":"\u004dARKER"}'})
-        score = (
-            await scorer.score_async(scorable=_message_scorable(_piece(value=payload, data_type="function_call")))
-        )[0]
+        scorable = await _message_scorable_async(_piece(value=payload, data_type="function_call"))
+        score = (await scorer.score_async(scorable=scorable))[0]
         assert score.get_value() is False
 
     @pytest.mark.parametrize("case", ["positive", "negative", "malformed", "mixed", "blocked", "error", "loose"])
@@ -403,7 +403,7 @@ class TestScoring:
                         response_error="blocked" if case == "blocked" else "processing",
                     )
                 ]
-            scorable = _message_scorable(*pieces)
+            scorable = await _message_scorable_async(*pieces)
         score = (await scorer.score_async(scorable=scorable))[0]
         expected = {
             "atr_ref": "main",
@@ -415,19 +415,22 @@ class TestScoring:
             "atr_version": _digest()["atr_version"],
         }
         assert score.score_metadata == expected
-        stored = CentralMemory.get_memory_instance().get_scores(score_ids=[str(score.id)])[0]
+        stored = (await CentralMemory.get_memory_instance().get_scores_async(score_ids=[str(score.id)]))[0]
         assert stored.score_metadata == expected
         assert Score.model_validate_json(stored.model_dump_json()).score_metadata == expected
 
     async def test_field_selection_does_not_relabel_text_async(self) -> None:
         scorer = AgentThreatRulesScorer(fields=["tool_response"], cache=False)
-        assert await scorer.score_async(scorable=_message_scorable(_piece(value="MARKER"))) == []
+        scorable = await _message_scorable_async(_piece(value="MARKER"))
+        assert await scorer.score_async(scorable=scorable) == []
         assert await scorer.score_text_async(text="MARKER") == []
 
     @pytest.mark.parametrize(
         ("role", "data_type", "value"),
         [
             ("simulated_assistant", "text", "MARKER"),
+            ("simulated_assistant", "function_call", '{"name":"MARKER","arguments":{}}'),
+            ("simulated_tool", "function_call_output", '{"output":"MARKER"}'),
             ("assistant", "reasoning", "MARKER"),
             ("user", "function_call", '{"name":"MARKER","arguments":{}}'),
             ("assistant", "tool_call", '{"type":"web_search_call","query":"MARKER"}'),
@@ -437,7 +440,7 @@ class TestScoring:
         self, *, role: ChatMessageRole, data_type: PromptDataType, value: str
     ) -> None:
         scorer = AgentThreatRulesScorer(fields=sorted(AgentThreatRulesScorer._SUPPORTED_FIELDS), cache=False)
-        scorable = _message_scorable(_piece(value=value, role=role, data_type=data_type))
+        scorable = await _message_scorable_async(_piece(value=value, role=role, data_type=data_type))
         assert await scorer.score_async(scorable=scorable) == []
 
     @pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
@@ -445,7 +448,7 @@ class TestScoring:
         scorer = AgentThreatRulesScorer(fields=["agent_output", "tool_args"], cache=False, score_aggregator=aggregator)
         first = _piece(value="safe")
         second = _piece(value='{"name":"safe","arguments":{"query":"MARKER"}}', data_type="function_call")
-        scorable = _message_scorable(first, second)
+        scorable = await _message_scorable_async(first, second)
         score = (await scorer.score_async(scorable=scorable))[0]
         assert score.get_value() is (aggregator is TrueFalseScoreAggregator.OR)
         assert "ATR-tool_args#0" in score.score_rationale
@@ -466,7 +469,8 @@ class TestScoring:
         request = _piece(value="hi", role="user")
         pieces = _build_tool_pieces(message=MagicMock(tool_calls=[tool_call]), request=request)
         scorer = AgentThreatRulesScorer(fields=["tool_name", "tool_args"], cache=False)
-        score = (await scorer.score_async(scorable=_message_scorable(*pieces)))[0]
+        scorable = await _message_scorable_async(*pieces)
+        score = (await scorer.score_async(scorable=scorable))[0]
         assert "ATR-tool_name#0" in score.score_rationale
         assert "ATR-tool_args#0" in score.score_rationale
 
@@ -474,8 +478,28 @@ class TestScoring:
         scorer = AgentThreatRulesScorer(
             cache=False, validator=ScorerPromptValidator(supported_data_types=["text"], supported_roles=["assistant"])
         )
-        scorable = _message_scorable(_piece(value="MARKER", role="user"))
+        scorable = await _message_scorable_async(_piece(value="MARKER", role="user"))
         assert await scorer.score_async(scorable=scorable) == []
+
+    @pytest.mark.parametrize(
+        ("role", "data_type", "value", "field"),
+        [
+            ("simulated_assistant", "function_call", '{"name":"MARKER","arguments":{}}', "tool_name"),
+            ("simulated_tool", "function_call_output", '{"output":"MARKER"}', "tool_response"),
+        ],
+    )
+    async def test_synthetic_artifacts_require_explicit_role_opt_in_async(
+        self, *, role: ChatMessageRole, data_type: PromptDataType, value: str, field: str
+    ) -> None:
+        scorer = AgentThreatRulesScorer(
+            cache=False,
+            fields=[field],
+            validator=ScorerPromptValidator(supported_data_types=[data_type], supported_roles=[role]),
+        )
+        scorable = await _message_scorable_async(_piece(value=value, role=role, data_type=data_type))
+        scores = await scorer.score_async(scorable=scorable)
+        assert scores[0].get_value() is True
+        assert "not proof of tool execution" in scores[0].score_value_description
 
 
 @pytest.mark.usefixtures("routed_digest")

@@ -282,6 +282,47 @@ def test_preparation_conversation_migration_upgrades_and_downgrades() -> None:
             engine.dispose()
 
 
+def test_conversation_attack_result_link_migration_upgrades_and_downgrades() -> None:
+    """The conversation's attack result link is added as a nullable indexed column and dropped again."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversation-attack-link.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "6767741d8c6f")
+                connection.execute(text('INSERT INTO "Conversations" (conversation_id) VALUES (:id)'), {"id": "legacy"})
+
+                command.upgrade(config, "6ea3eb4b61c3")
+                columns = {column["name"]: column for column in inspect(connection).get_columns("Conversations")}
+                assert columns["attack_result_id"]["nullable"] is True
+                indexes = {index["name"]: index for index in inspect(connection).get_indexes("Conversations")}
+                assert indexes["ix_Conversations_attack_result_id"]["column_names"] == ["attack_result_id"]
+                legacy_link = connection.execute(
+                    text('SELECT attack_result_id FROM "Conversations" WHERE conversation_id = :id'), {"id": "legacy"}
+                ).scalar_one()
+                assert legacy_link is None
+                attack_result_id = str(uuid.uuid4())
+                connection.execute(
+                    text('INSERT INTO "Conversations" (conversation_id, attack_result_id) VALUES (:id, :link)'),
+                    {"id": "linked", "link": attack_result_id},
+                )
+
+                command.downgrade(config, "6767741d8c6f")
+                assert "attack_result_id" not in {
+                    column["name"] for column in inspect(connection).get_columns("Conversations")
+                }
+                assert "ix_Conversations_attack_result_id" not in {
+                    index["name"] for index in inspect(connection).get_indexes("Conversations")
+                }
+                remaining = connection.execute(
+                    text('SELECT conversation_id FROM "Conversations" ORDER BY conversation_id')
+                ).scalars()
+                assert list(remaining) == ["legacy", "linked"]
+        finally:
+            engine.dispose()
+
+
 def test_migration_head_removes_additional_initializers_table():
     """The migration head removes the obsolete second initializer configuration source."""
     with tempfile.TemporaryDirectory() as temp_dir:

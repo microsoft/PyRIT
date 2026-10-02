@@ -6,8 +6,9 @@
 import asyncio
 import os
 from collections.abc import Generator
+from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -20,6 +21,8 @@ from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
@@ -69,6 +72,29 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     assert result["outcome"] == "accepted"
     assert runtime.apply_task is not None
     await runtime.apply_task
+
+
+@pytest.mark.parametrize("failure", [None, "scenarios", "services"])
+async def test_shutdown_disposes_memory_after_services_even_on_failure(
+    runtime: RuntimeLifecycle, failure: str | None
+) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    scenario_service = MagicMock(spec=ScenarioRunService)
+    order = MagicMock()
+    with (
+        patch.object(CentralMemory, "_memory_instance", memory),
+        patch.object(lifecycle_module, "peek_scenario_run_service", return_value=scenario_service),
+        patch.object(lifecycle_module, "close_services_async", new_callable=AsyncMock) as close_services,
+    ):
+        order.attach_mock(scenario_service.shutdown_async, "scenarios")
+        order.attach_mock(close_services, "services")
+        order.attach_mock(memory.dispose_engine_async, "memory")
+        if failure is not None:
+            getattr(order, failure).side_effect = RuntimeError("cleanup failed")
+        with pytest.raises(RuntimeError, match="cleanup failed") if failure else nullcontext():
+            await runtime.shutdown_async()
+
+    assert order.mock_calls == [call.scenarios(), call.services(), call.memory()]
 
 
 async def test_success_preflights_then_replaces_idle_runtime(runtime: RuntimeLifecycle) -> None:

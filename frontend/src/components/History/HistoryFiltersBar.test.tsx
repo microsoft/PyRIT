@@ -52,7 +52,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('should enable reset when a filter is active', () => {
@@ -64,7 +64,7 @@ describe('HistoryFiltersBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled')
   })
 
   it('should call onFiltersChange with defaults when reset is clicked', () => {

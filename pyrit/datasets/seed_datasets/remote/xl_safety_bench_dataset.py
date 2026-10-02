@@ -372,7 +372,7 @@ class _XLSafetyBenchJailbreakDataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "xl_safety_bench_jailbreak"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch XL-SafetyBench jailbreak prompts and return them as a SeedDataset.
 
@@ -548,7 +548,7 @@ class _XLSafetyBenchJailbreakObjectivesDataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "xl_safety_bench_jailbreak_objectives"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch XL-SafetyBench jailbreak objectives and return them as a SeedDataset.
 
@@ -728,7 +728,7 @@ class _XLSafetyBenchCulturalDataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "xl_safety_bench_cultural"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch XL-SafetyBench cultural scenarios and return them as a SeedDataset.
 

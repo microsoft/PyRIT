@@ -4,7 +4,7 @@
 import itertools
 import logging
 import os
-from collections.abc import Awaitable, Callable, MutableSequence
+from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
 from typing import Any, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
@@ -27,6 +27,7 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_content_filter_message,
@@ -42,6 +43,8 @@ from pyrit.prompt_target.common.target_capabilities import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.prompt_target.common.utils import (
     limit_requests_per_minute,
     validate_temperature,
@@ -103,6 +106,33 @@ def _build_output_modalities(*, audio: bool) -> frozenset[frozenset[PromptDataTy
     return frozenset(output)
 
 
+def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
+    """
+    Collect the headers from every ``provider_specific_header`` entry.
+
+    LiteLLM accepts one entry or a sequence of entries and merges the ``extra_headers`` of each
+    entry scoped to the resolved provider. Every entry is collected so a conflict check does
+    not depend on provider resolution.
+
+    Args:
+        provider_specific_header (Any): The ``provider_specific_header`` request value.
+
+    Returns:
+        dict[str, str]: The headers of all entries.
+    """
+    if isinstance(provider_specific_header, Mapping):
+        entries: Sequence[Any] = (provider_specific_header,)
+    elif isinstance(provider_specific_header, Sequence):
+        entries = provider_specific_header
+    else:
+        return {}
+    headers: dict[str, str] = {}
+    for entry in entries:
+        if isinstance(entry, Mapping):
+            headers.update(entry.get("extra_headers") or {})
+    return headers
+
+
 class LiteLLMChatTarget(PromptTarget):
     """
     Chat target that uses the LiteLLM SDK to access 100+ LLM providers.
@@ -161,10 +191,15 @@ class LiteLLMChatTarget(PromptTarget):
             lookup and identification when the provider/model string differs from a known model.
         max_requests_per_minute: Client-side request cap.
         custom_configuration: Override the derived target configuration.
+        trace_config: Request tracing configuration. Tracing is disabled by default because a
+            provider or gateway is not known to accept W3C trace context. Pass
+            ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
+            sends a fresh ``traceparent`` in ``extra_headers``.
     """
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -196,6 +231,7 @@ class LiteLLMChatTarget(PromptTarget):
         underlying_model: str | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize a LiteLLMChatTarget.
@@ -215,6 +251,7 @@ class LiteLLMChatTarget(PromptTarget):
             underlying_model=underlying_model,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
         )
 
         # Resolve api_key: explicit value/callable > LITELLM_API_KEY env var > None (LiteLLM
@@ -321,9 +358,16 @@ class LiteLLMChatTarget(PromptTarget):
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,
-            input_modalities=_build_input_modalities(image=supports_vision, audio=supports_audio_input),
+            input_modalities=_build_input_modalities(image=supports_vision, audio=supports_audio_input)
+            | (TOOL_CALL_INPUT_MODALITIES if _supports("supports_function_calling") else frozenset()),
             output_modalities=_build_output_modalities(audio=supports_audio_output),
         )
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history and Chat Completions tool-message constraints."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            validate_chat_tool_message(message)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -372,6 +416,19 @@ class LiteLLMChatTarget(PromptTarget):
         messages = await self._build_chat_messages_async(normalized_conversation)
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
+        # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
+        # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
+        # so all three are checked for manual values.
+        trace_headers = request_trace_headers(
+            request=message,
+            headers=body.get("extra_headers") or {},
+            default_headers={
+                **(body.get("headers") or {}),
+                **_provider_specific_headers(body.get("provider_specific_header")),
+            },
+        )
+        if trace_headers:
+            body["extra_headers"] = trace_headers
 
         try:
             response = await litellm.acompletion(**body)

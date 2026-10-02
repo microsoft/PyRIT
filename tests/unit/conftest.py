@@ -4,7 +4,7 @@
 import os
 import sqlite3
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import closing, contextmanager
 from unittest.mock import patch
 
@@ -75,7 +75,7 @@ def garak_api_key_service_patterns() -> dict[str, str | None]:
 
 
 @pytest.fixture
-def sqlite_instance(sqlite_template: sqlite3.Connection) -> Generator[SQLiteMemory, None, None]:
+async def sqlite_instance(sqlite_template: sqlite3.Connection) -> AsyncGenerator[SQLiteMemory, None]:
     """Give each test its own database, result directory, and scoped memory instance."""
     with tempfile.TemporaryDirectory() as results_path:
         sqlite_memory = SQLiteMemory.__new__(SQLiteMemory)
@@ -90,7 +90,7 @@ def sqlite_instance(sqlite_template: sqlite3.Connection) -> Generator[SQLiteMemo
             with _use_sqlite_memory(sqlite_memory):
                 yield sqlite_memory
         finally:
-            sqlite_memory.dispose_engine()
+            await sqlite_memory.dispose_engine_async()
 
 
 @pytest.fixture()

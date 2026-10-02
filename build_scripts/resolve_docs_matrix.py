@@ -3,8 +3,10 @@
 """Resolve the matrix and metadata outputs for the docs build workflow.
 
 Reads ``.github/docs-versions.yml`` and writes GitHub Actions step outputs
-(``matrix``, ``default``, ``stable``, ``versions_json``) to ``$GITHUB_OUTPUT``,
+(``matrix``, ``default``, ``stable``, ``versions_json``, ``compose``) to ``$GITHUB_OUTPUT``,
 or to stdout when ``--github-output`` is not provided (for local testing).
+PRs validate the tested merge commit under ``latest``. Only composition-input
+changes also build the release versions; non-PR runs retain the full matrix.
 
 Usage:
     python -m build_scripts.resolve_docs_matrix \\
@@ -21,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import IO, Any
@@ -54,10 +58,68 @@ def load_config(config_path: Path) -> dict[str, Any]:
     return cfg
 
 
-def build_outputs(cfg: dict[str, Any]) -> dict[str, str]:
-    """Return the four GitHub Actions step outputs (all values are strings)."""
+def _requires_composition(changed_files: list[str]) -> bool:
+    composition_inputs = {
+        ".github/docs-versions.yml",
+        ".github/workflows/docs.yml",
+        "build_scripts/resolve_docs_matrix.py",
+        "build_scripts/compose_docs_dist.py",
+        "build_scripts/generate_pages_manifest.py",
+        "build_scripts/inject_version_picker.py",
+    }
+    return any(
+        path in composition_inputs or path.startswith("build_scripts/version_picker_assets/") for path in changed_files
+    )
+
+
+def _changed_files(sha: str) -> list[str]:
+    """Compare against the tested merge's parent, not a moving base branch."""
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--no-renames", "-z", f"{sha}^1", sha, "--"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.split("\0")[:-1]
+
+
+def build_outputs(
+    *,
+    cfg: dict[str, Any],
+    event_name: str = "",
+    ref: str = "",
+    sha: str = "",
+    changed_files: list[str] | None = None,
+) -> dict[str, str]:
+    """Return matrix selection and site metadata as single-line Actions outputs."""
+    if event_name and not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("workflow builds require the full 40-character tested commit SHA")
+    if event_name and not ref:
+        raise ValueError("workflow builds require the triggering GITHUB_REF")
     versions = cfg["versions"]
-    matrix = {"include": [{"slug": v["slug"], "ref": v["ref"]} for v in versions]}
+    entries = [{"slug": v["slug"], "ref": v["ref"]} for v in versions]
+    compose = True
+    if event_name == "pull_request":
+        if changed_files is None:
+            raise ValueError("PR matrix selection requires the tested merge's changed files")
+        if sum(entry["slug"] == "latest" for entry in entries) != 1:
+            raise ValueError("PR validation requires exactly one 'latest' version")
+        compose = _requires_composition(changed_files)
+        entries = [
+            {"slug": entry["slug"], "ref": sha if entry["slug"] == "latest" else entry["ref"]}
+            for entry in entries
+            if compose or entry["slug"] == "latest"
+        ]
+    elif event_name:
+        tested_entries = [entry for entry in entries if entry["ref"] in (ref, ref.removeprefix("refs/heads/"))]
+        if not tested_entries and ref != "refs/heads/main":
+            # Newly cut releases are added to the version list on main later.
+            tested_entries = [entry for entry in entries if entry["slug"] == "latest"]
+            if len(tested_entries) != 1:
+                raise ValueError("unlisted-ref validation requires exactly one 'latest' version")
+        for entry in tested_entries:
+            entry["ref"] = sha
+    matrix = {"include": entries}
     versions_json = {
         "default": cfg["default"],
         "stable": cfg["stable"],
@@ -70,6 +132,7 @@ def build_outputs(cfg: dict[str, Any]) -> dict[str, str]:
         "default": cfg["default"],
         "stable": cfg["stable"],
         "versions_json": json.dumps(versions_json, separators=(",", ":")),
+        "compose": str(compose).lower(),
     }
 
 
@@ -95,15 +158,26 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Path to the $GITHUB_OUTPUT file. If omitted, outputs are written to stdout.",
     )
+    parser.add_argument("--event-name", choices=["pull_request", "push", "workflow_dispatch"])
+    parser.add_argument("--ref", default="", help="The workflow's GITHUB_REF.")
+    parser.add_argument("--sha", default="", help="The immutable tested GITHUB_SHA, not a branch or PR head ref.")
     args = parser.parse_args(argv)
 
     try:
         cfg = load_config(args.config.resolve())
+        outputs = build_outputs(
+            cfg=cfg,
+            event_name=args.event_name or "",
+            ref=args.ref,
+            sha=args.sha,
+            changed_files=_changed_files(args.sha) if args.event_name == "pull_request" else None,
+        )
     except (FileNotFoundError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-
-    outputs = build_outputs(cfg)
+    except subprocess.CalledProcessError as e:
+        print(f"error: cannot compare the tested PR merge with its first parent: {e.stderr.strip()}", file=sys.stderr)
+        return 1
 
     if args.github_output is not None:
         with args.github_output.open("a", encoding="utf-8") as f:

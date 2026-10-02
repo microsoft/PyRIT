@@ -111,7 +111,7 @@ async def test_payload_split_preserves_complete_prompt_population_async(
     ingredient_seeds: dict[str, list[Seed]],
 ) -> None:
     config = LatentInjectionDatasetConfiguration(
-        dataset_names=list(_FILES), families=LatentInjectionDatasetConfiguration.FAMILIES
+        dataset_names=list(_FILES), families=LatentInjectionDatasetConfiguration.FAMILIES, max_dataset_size=None
     )
     with patch.object(config, "_collect_named_seeds_async", return_value=ingredient_seeds):
         groups = await config.get_attack_seed_groups_async()
