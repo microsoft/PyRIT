@@ -415,7 +415,7 @@ class RunScenarioRequest(BaseModel):
     )
     techniques: list[str] | None = Field(None, description="Technique names to use (uses scenario default if omitted)")
     dataset_names: list[str] | None = Field(None, description="Dataset names to use (uses scenario default if omitted)")
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
+    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
     dataset_filters: dict[str, list[str]] | None = Field(
         None,
         description=(

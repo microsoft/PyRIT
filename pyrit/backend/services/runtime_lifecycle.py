@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.scenario_preset_service import get_scenario_preset_service
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.service_lifecycle import close_services_async, outstanding_estimates
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
@@ -88,6 +89,7 @@ class RuntimeLifecycle:
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
+        get_scenario_preset_service().configure_source(config.scenario_presets_source)
 
     def _publish(self, config: ConfigurationLoader) -> None:
         self.app.state.configured_initializers = [

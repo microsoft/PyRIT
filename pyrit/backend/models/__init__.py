@@ -62,6 +62,13 @@ if TYPE_CHECKING:
         ListRegisteredInitializersResponse,
         RegisterInitializerRequest,
     )
+    from pyrit.backend.models.scenario_presets import (
+        PresetIssue,
+        ResolveScenarioPresetRequest,
+        ScenarioPresetListResponse,
+        ScenarioPresetResponse,
+        UpdateScenarioPresetRequest,
+    )
     from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse, ScenarioRunListResponse
     from pyrit.backend.models.targets import CreateTargetRequest, TargetListResponse
 
@@ -106,6 +113,11 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PreviewStep": "pyrit.backend.models.converters",
     "DatasetInfo": "pyrit.backend.models.datasets",
     "DatasetListResponse": "pyrit.backend.models.datasets",
+    "PresetIssue": "pyrit.backend.models.scenario_presets",
+    "ResolveScenarioPresetRequest": "pyrit.backend.models.scenario_presets",
+    "ScenarioPresetListResponse": "pyrit.backend.models.scenario_presets",
+    "ScenarioPresetResponse": "pyrit.backend.models.scenario_presets",
+    "UpdateScenarioPresetRequest": "pyrit.backend.models.scenario_presets",
     "ListRegisteredScenariosResponse": "pyrit.backend.models.scenarios",
     "ScenarioRunListResponse": "pyrit.backend.models.scenarios",
     "ListRegisteredInitializersResponse": "pyrit.backend.models.initializers",
