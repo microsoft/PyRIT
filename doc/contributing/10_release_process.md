@@ -470,6 +470,10 @@ editing `.github/docs-versions.yml`:
 Once merged, the docs workflow rebuilds the site and the new version appears in the version picker on
 every page of every version.
 
+The behavior below applies only to branches with the updated `build-book` workflow.
+For PRs targeting a release branch, that target branch must contain the update;
+existing release branches continue using their older docs workflows until updated.
+
 The `build-book` workflow validates ordinary PRs with a single `Build latest` job.
 It checks out the PR's immutable tested merge commit, not `main` or the PR's moving
 head branch. This also applies to PRs targeting release branches; `latest` is only
