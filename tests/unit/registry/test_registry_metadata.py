@@ -3,6 +3,8 @@
 
 from dataclasses import dataclass, field
 
+from pyrit.common import REQUIRED_VALUE
+from pyrit.models import Parameter
 from pyrit.registry.registry import _matches_filters
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -223,3 +225,23 @@ class TestMatchesFilters:
             )
             is False
         )
+
+
+class TestConstructible:
+    """``constructible`` reports whether every required parameter takes JSON input."""
+
+    def test_optional_object_parameter_keeps_class_constructible(self) -> None:
+        parameters = (
+            Parameter(name="count", description="", default=REQUIRED_VALUE, param_type=int),
+            Parameter(name="handle", description="", default=None, param_type=object),
+        )
+
+        assert RegistryMetadata(class_name="C", class_module="m", parameters=parameters).constructible
+
+    def test_required_object_parameter_makes_class_not_constructible(self) -> None:
+        parameters = (
+            Parameter(name="count", description="", default=REQUIRED_VALUE, param_type=int),
+            Parameter(name="handle", description="", default=REQUIRED_VALUE, param_type=object),
+        )
+
+        assert not RegistryMetadata(class_name="C", class_module="m", parameters=parameters).constructible

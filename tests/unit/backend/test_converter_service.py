@@ -213,19 +213,21 @@ class TestListConverterTypes:
         assert "text" in base64_entry.supported_input_types
         assert "text" in base64_entry.supported_output_types
 
-    async def test_types_include_all_constructible_converters(self) -> None:
-        """The projection surfaces every constructible converter, including base/helper classes.
+    async def test_types_include_every_registered_converter(self) -> None:
+        """The projection surfaces every registered converter, including base/helper classes.
 
         Whether to display a given converter is left to the caller (e.g. the frontend),
-        so the service no longer hides anything.
+        so the service hides nothing and reports which ones the API can construct.
         """
         service = ConverterService()
 
         result = await service.list_converter_types_async()
 
-        converter_types = [item.converter_type for item in result.items]
-        assert "Base64Converter" in converter_types
-        assert "SelectiveTextConverter" in converter_types
+        constructible = {item.converter_type: item.constructible for item in result.items}
+        assert constructible["Base64Converter"] is True
+        assert constructible["SearchReplaceConverter"] is True
+        assert constructible["SelectiveTextConverter"] is False
+        assert constructible["TextJailbreakConverter"] is False
 
     async def test_types_serialize_parameter_type(self) -> None:
         """Type entries render the raw annotation into a human-readable type_name."""

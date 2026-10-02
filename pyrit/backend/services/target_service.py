@@ -152,9 +152,10 @@ class TargetService:
         """
         List all available target types from the target class registry.
 
-        Returns every constructible target with its derived constructor
-        parameters and the auth modes it supports, all projected from the
-        registry's ``TargetMetadata``. Deciding which entries to surface to a
+        Returns every registered target type with its derived constructor
+        parameters, whether its required parameters can be supplied through the
+        API (``constructible``), and the auth modes it supports, all projected from
+        the registry's ``TargetMetadata``. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -166,6 +167,7 @@ class TargetService:
             TargetTypeEntry(
                 target_type=metadata.class_name,
                 parameters=list(metadata.parameters),
+                constructible=metadata.constructible,
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )

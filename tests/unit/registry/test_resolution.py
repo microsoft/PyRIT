@@ -350,6 +350,7 @@ class TestResolveConstructorArgs:
             (_SimpleOnly, {"count": None}),
             (_SimpleOnly, {"ratio": {"value": 1}}),
             (_SimpleOnly, {"flag": 1}),
+            (_SimpleOnly, {"ratio": 10**400}),
             (_JsonShaped, {"note": 5}),
             (_JsonShaped, {"weights": [1, "2"]}),
             (_JsonShaped, {"extra": "not-an-object"}),
@@ -388,10 +389,16 @@ class TestResolveConstructorArgs:
     def test_json_array_becomes_tuple_for_tuple_parameter(self) -> None:
         assert _resolve(_JsonShaped, {"color": [10, 20, 30]})["color"] == (10, 20, 30)
 
-    @pytest.mark.parametrize("raw_args", [{"settings": {"level": 1}}, {"location": "fast"}, {"location": "/tmp/x"}])
-    def test_rejects_json_value_that_needs_an_object(self, raw_args: dict[str, object]) -> None:
-        with pytest.raises(ValueError, match="cannot be built from JSON"):
-            _resolve(_JsonShaped, raw_args)
+    def test_rejects_json_for_in_process_only_parameter(self) -> None:
+        with pytest.raises(ValueError, match="settings.*accepts only a Python object"):
+            _resolve(_JsonShaped, {"settings": {"level": 1}})
+
+    def test_union_takes_json_only_through_its_json_members(self) -> None:
+        assert _resolve(_JsonShaped, {"location": "fast"}) == {"location": _Speed.FAST}
+        with pytest.raises(ValueError, match="location"):
+            _resolve(_JsonShaped, {"location": "/tmp/x"})
+        path = Path("/tmp/x")
+        assert _resolve(_JsonShaped, {"location": path})["location"] is path
 
     def test_live_objects_pass_through_unchecked(self) -> None:
         color = object()
@@ -414,16 +421,23 @@ class TestResolveConstructorArgs:
         with pytest.raises(ValueError, match="expects"):
             _resolve(_SimpleOnly, {"count": nested})
 
-    def test_protocol_parameter_requires_protocol_members(self) -> None:
-        with pytest.raises(ValueError, match="provider"):
-            _resolve(_JsonShaped, {"provider": "anything"})
-        with pytest.raises(ValueError, match="sized"):
-            _resolve(_JsonShaped, {"sized": 7})
+    @pytest.mark.parametrize("raw_args", [{"provider": "anything"}, {"sized": 7}, {"sized": [1, 2]}])
+    def test_protocol_parameter_takes_only_live_objects(self, raw_args: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="accepts only a Python object"):
+            _resolve(_JsonShaped, raw_args)
 
-        assert _resolve(_JsonShaped, {"provider": None, "sized": [1, 2]}) == {"provider": None, "sized": [1, 2]}
+    def test_protocol_parameter_accepts_live_object_and_none(self) -> None:
+        sized = _Bag([1, 2])
 
-    def test_unresolved_annotation_is_left_to_constructor(self) -> None:
-        assert _resolve(_Unresolved, {"target": {"a": 1}}) == {"target": {"a": 1}}
+        assert _resolve(_JsonShaped, {"provider": None, "sized": sized}) == {"provider": None, "sized": sized}
+
+    def test_unresolved_annotation_rejects_json(self) -> None:
+        target = MockPromptTarget()
+
+        with pytest.raises(ValueError, match="does not support"):
+            _resolve(_Unresolved, {"target": {"a": 1}})
+        assert _resolve(_Unresolved, {"target": None}) == {"target": None}
+        assert _resolve(_Unresolved, {"target": target})["target"] is target
 
     def test_json_value_for_object_parameter_is_rejected(self) -> None:
         handle = _Handle()
@@ -434,20 +448,38 @@ class TestResolveConstructorArgs:
         assert _resolve(_JsonShaped, {"handle": handle})["handle"] is handle
 
     @pytest.mark.parametrize(
-        ("registry_type", "identifier_type", "type_name", "raw_args"),
+        ("registry_type", "identifier_type", "type_name", "raw_args", "message"),
         [
-            (TargetRegistry, TargetIdentifier, "TextTarget", {"custom_configuration": {}}),
-            (TargetRegistry, TargetIdentifier, "A2ATarget", {"auth_token": {"token": "x"}}),
-            (TargetRegistry, TargetIdentifier, "OpenAIResponseTarget", {"tool_providers": [{"name": "x"}]}),
-            (ConverterRegistry, ConverterIdentifier, "TokenBijectionConverter", {"tokenizer": "name"}),
+            (TargetRegistry, TargetIdentifier, "TextTarget", {"custom_configuration": {}}, "accepts only"),
+            (TargetRegistry, TargetIdentifier, "A2ATarget", {"auth_token": {"token": "x"}}, "expects"),
+            (
+                TargetRegistry,
+                TargetIdentifier,
+                "OpenAIResponseTarget",
+                {"tool_providers": [{"name": "x"}]},
+                "accepts only",
+            ),
+            (ConverterRegistry, ConverterIdentifier, "TokenBijectionConverter", {"tokenizer": "name"}, "accepts only"),
+            (
+                ConverterRegistry,
+                ConverterIdentifier,
+                "TextJailbreakConverter",
+                {"jailbreak_template": {}},
+                "accepts only",
+            ),
         ],
     )
     def test_registered_component_rejects_json_for_object_parameter(
-        self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
+        self,
+        registry_type: type,
+        identifier_type: type,
+        type_name: str,
+        raw_args: dict[str, object],
+        message: str,
     ) -> None:
         cls = registry_type.get_registry_singleton().get_class(type_name)
 
-        with pytest.raises(ValueError, match="expects"):
+        with pytest.raises(ValueError, match=message):
             _resolve(cls, raw_args, identifier_type=identifier_type)
 
     @pytest.mark.parametrize(
@@ -506,7 +538,7 @@ class TestResolveConstructorArgs:
         for type_name in registry.get_class_names():
             cls = registry.get_class(type_name)
             for parameter in derive_parameters(cls=cls, identifier_type=identifier_type):
-                if parameter.reference is not None or parameter.default is None:
+                if parameter.input_kind not in ("scalar", "collection") or parameter.default is None:
                     continue
                 try:
                     value = json.loads(json.dumps(parameter.default))
