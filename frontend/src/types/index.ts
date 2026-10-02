@@ -366,6 +366,10 @@ export interface Parameter {
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
   reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  /** Whether parameter controls must obscure the entered value. */
+  sensitive?: boolean
+  /** Whether parameter controls must preserve line breaks in the entered value. */
+  multiline?: boolean
   description?: string | null
 }
 

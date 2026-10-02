@@ -386,6 +386,25 @@ class TestClassMetadata:
         assert params["model_name"].type_name == "str"
         assert "api_key" in params
 
+    @pytest.mark.parametrize(
+        ("target_type", "parameter_name"),
+        [
+            ("AzureBlobStorageTarget", "sas_token"),
+            ("HuggingFaceChatTarget", "hf_access_token"),
+        ],
+    )
+    def test_credential_metadata_is_sensitive(
+        self, registry: TargetRegistry, target_type: str, parameter_name: str
+    ) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, target_type).parameters}
+
+        assert params[parameter_name].sensitive is True
+
+    def test_http_request_metadata_is_multiline(self, registry: TargetRegistry) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, "HTTPTarget").parameters}
+
+        assert params["http_request"].multiline is True
+
 
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every target."""

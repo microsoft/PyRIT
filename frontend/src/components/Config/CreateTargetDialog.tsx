@@ -46,7 +46,6 @@ import {
   conflictsWithIdentityAuth,
   getTargetParameterPolicy,
   isMetadataDrivenTargetParameter,
-  isSensitiveTargetParameter,
 } from './targetParameterPolicy'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
@@ -890,7 +889,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         showDefaultHint
                         allowEmptyList
                         testIdPrefix="target-param"
-                        sensitive={isSensitiveTargetParameter(parameter.name)}
                         extraHint={identityConflict
                           ? 'Ignored with Identity-based authentication.'
                           : undefined}
@@ -973,7 +971,6 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                               extraHint={identityConflict
                                 ? 'Ignored with Identity-based authentication.'
                                 : undefined}
-                              sensitive={isSensitiveTargetParameter(parameter.name)}
                               onChange={(name, value) => setParameterValues((current) => ({
                                 ...current,
                                 [name]: value,

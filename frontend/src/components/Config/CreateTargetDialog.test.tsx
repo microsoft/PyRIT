@@ -231,6 +231,7 @@ const TARGET_TYPES: TargetTypeListResponse = {
           type_name: "str",
           required: true,
           default: null,
+          multiline: true,
           description: "The HTTP request template containing the prompt placeholder.",
         },
         {
@@ -259,6 +260,7 @@ const TARGET_TYPES: TargetTypeListResponse = {
           type_name: "str",
           required: false,
           default: null,
+          sensitive: true,
           description: "The optional shared access signature.",
         },
       ],

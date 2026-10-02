@@ -62,3 +62,23 @@ class TargetIdentifier(ComponentIdentifier):
         Evaluate.Exclude(),
         Param.ClassAttr(attr_name="supported_auth_modes"),
     ] = None
+
+    @classmethod
+    def get_sensitive_parameter_names(cls) -> frozenset[str]:
+        """
+        Get target constructor parameters whose values must be obscured in user interfaces.
+
+        Returns:
+            frozenset[str]: Sensitive target constructor parameter names.
+        """
+        return frozenset({"hf_access_token", "sas_token"})
+
+    @classmethod
+    def get_multiline_parameter_names(cls) -> frozenset[str]:
+        """
+        Get target constructor parameters whose values require multiline controls.
+
+        Returns:
+            frozenset[str]: Multiline target constructor parameter names.
+        """
+        return frozenset({"http_request"})

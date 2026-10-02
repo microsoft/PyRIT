@@ -413,6 +413,26 @@ class ComponentIdentifier(BaseModel):
         return references
 
     @classmethod
+    def get_sensitive_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names whose values must be obscured in user interfaces.
+
+        Returns:
+            frozenset[str]: Sensitive constructor parameter names.
+        """
+        return frozenset[str]()
+
+    @classmethod
+    def get_multiline_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names whose values require multiline controls.
+
+        Returns:
+            frozenset[str]: Multiline constructor parameter names.
+        """
+        return frozenset[str]()
+
+    @classmethod
     def get_class_attribute_values(cls, target_cls: type) -> dict[str, Any]:
         """
         Read each ``Param.ClassAttr``-marked field's value off a target class.

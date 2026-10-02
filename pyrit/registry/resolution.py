@@ -261,6 +261,8 @@ def _parameters_from_signature(
     owner: type,
     signature: inspect.Signature,
     reference_overrides: dict[str, ComponentType],
+    sensitive_parameter_names: frozenset[str],
+    multiline_parameter_names: frozenset[str],
 ) -> list[Parameter]:
     """
     Build parameters declared by one constructor signature.
@@ -270,6 +272,10 @@ def _parameters_from_signature(
         signature (inspect.Signature): The constructor signature.
         reference_overrides (dict[str, ComponentType]): Identifier-declared
             registry references keyed by constructor parameter name.
+        sensitive_parameter_names (frozenset[str]): Identifier-declared names
+            whose values must be obscured in user interfaces.
+        multiline_parameter_names (frozenset[str]): Identifier-declared names
+            whose values require multiline controls.
 
     Returns:
         list[Parameter]: Parameters declared by the constructor.
@@ -303,6 +309,8 @@ def _parameters_from_signature(
                 default=_default_for(param),
                 param_type=param_type,
                 variants=_structured_variant_parameters(param_type),
+                sensitive=name in sensitive_parameter_names,
+                multiline=name in multiline_parameter_names,
             )
         )
     return parameters
@@ -333,6 +341,12 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
         ValueError: If the constructor signature cannot be inspected.
     """
     reference_overrides = identifier_type.get_reference_component_types() if identifier_type is not None else {}
+    sensitive_parameter_names = (
+        identifier_type.get_sensitive_parameter_names() if identifier_type is not None else frozenset[str]()
+    )
+    multiline_parameter_names = (
+        identifier_type.get_multiline_parameter_names() if identifier_type is not None else frozenset[str]()
+    )
     parameters: list[Parameter] = []
     seen: set[str] = set()
     for owner, signature in _constructor_sources(cls):
@@ -340,6 +354,8 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             owner=owner,
             signature=signature,
             reference_overrides=reference_overrides,
+            sensitive_parameter_names=sensitive_parameter_names,
+            multiline_parameter_names=multiline_parameter_names,
         ):
             if parameter.name in seen:
                 continue

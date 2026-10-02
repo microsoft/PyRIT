@@ -87,6 +87,8 @@ class TestParameterSerialization:
             "is_list": False,
             "reference_type": None,
             "variants": None,
+            "sensitive": False,
+            "multiline": False,
         }
 
     def test_excludes_live_only_fields(self) -> None:
@@ -110,6 +112,14 @@ class TestParameterSerialization:
         assert dumped["is_list"] is False
         assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=str)
         assert restored.reference_type == "target"
+
+    def test_sensitive_round_trips(self) -> None:
+        parameter = Parameter(name="token", description="d", param_type=str, sensitive=True, multiline=True)
+
+        restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+        assert restored.sensitive is True
+        assert restored.multiline is True
 
     def test_list_reference_shape_round_trips(self) -> None:
         parameter = Parameter(

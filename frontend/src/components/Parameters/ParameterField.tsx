@@ -34,8 +34,6 @@ export interface ParameterFieldProps {
   testIdPrefix?: string
   /** Extra guidance appended to the field's hint, e.g. explaining why it's disabled. */
   extraHint?: string
-  /** Mask the value like a password field. For a `text`-kind credential (e.g. a SAS token). */
-  sensitive?: boolean
 }
 
 /**
@@ -59,7 +57,6 @@ export default function ParameterField({
   showRequiredError = false,
   testIdPrefix = 'param',
   extraHint,
-  sensitive = false,
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
@@ -262,7 +259,7 @@ export default function ParameterField({
         <Input
           className={styles.control}
           value={stringValue}
-          type={sensitive ? 'password' : kind === 'number' ? 'number' : 'text'}
+          type={parameter.sensitive ? 'password' : kind === 'number' ? 'number' : 'text'}
           placeholder={placeholder}
           disabled={disabled || emptyListSelected}
           onChange={(_, data) => onChange(parameter.name, data.value)}

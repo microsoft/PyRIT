@@ -84,9 +84,10 @@ class Parameter(BaseModel):
     value's live Python type and its allowed set (a ``Literal[...]`` or ``Enum``
     *is* the allowed set) and drives ``coerce_value`` / ``validate``; it is **not**
     serialized. Serialization instead projects the type into the display fields
-    ``type_name``, ``choices``, and ``is_list`` (plus ``required`` from the
-    ``REQUIRED_VALUE`` sentinel), so a consumer can rebuild a usable contract from
-    the registry without the live type travelling on the wire.
+    ``type_name``, ``choices``, ``is_list``, ``sensitive``, and ``multiline``
+    (plus ``required`` from the ``REQUIRED_VALUE`` sentinel), so a consumer can
+    rebuild a usable contract from the registry without the live type travelling
+    on the wire.
 
     ``reference``, when set, marks the parameter as a registry reference: its value
     is supplied *by name* and resolved to a registered instance by the registry
@@ -123,6 +124,14 @@ class Parameter(BaseModel):
     variants: dict[str, list[Parameter]] | None = Field(
         default=None,
         description="Named structured-input variants and their constructor parameters, supplied by the registry.",
+    )
+    sensitive: bool = Field(
+        default=False,
+        description="Whether user interfaces must obscure this parameter's value.",
+    )
+    multiline: bool = Field(
+        default=False,
+        description="Whether user interfaces must preserve line breaks in this parameter's value.",
     )
     destination: ParameterDestination = Field(
         default=ParameterDestination.CONSTRUCTOR,

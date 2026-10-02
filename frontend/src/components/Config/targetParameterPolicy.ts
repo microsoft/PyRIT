@@ -37,18 +37,6 @@ export function conflictsWithIdentityAuth(parameterName: string): boolean {
   return IDENTITY_CONFLICTING_PARAMETER_NAMES.has(parameterName)
 }
 
-/**
- * Credential-bearing parameters that must render masked (like the dedicated
- * `api_key` field's `type="password"`) instead of as plain text, wherever
- * they're offered as a generic metadata-driven parameter.
- */
-const SENSITIVE_PARAMETER_NAMES = new Set(['sas_token'])
-
-/** Whether a metadata-driven parameter's value is a credential and must be masked. */
-export function isSensitiveTargetParameter(parameterName: string): boolean {
-  return SENSITIVE_PARAMETER_NAMES.has(parameterName)
-}
-
 export function getTargetParameterPolicy(
   targetType: string,
   parameterName: string,

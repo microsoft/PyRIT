@@ -49,11 +49,11 @@ describe('getParameterControlKind', () => {
   })
 
   it('returns multiline for a raw HTTP request template', () => {
-    expect(getParameterControlKind(makeParameter({ name: 'http_request' }))).toBe('multiline')
+    expect(getParameterControlKind(makeParameter({ name: 'request_template', multiline: true }))).toBe('multiline')
   })
 
-  it('does not treat a non-str http_request-named parameter as multiline', () => {
-    expect(getParameterControlKind(makeParameter({ name: 'http_request', type_name: 'int' }))).toBe('number')
+  it('does not infer multiline behavior from a parameter name', () => {
+    expect(getParameterControlKind(makeParameter({ name: 'http_request' }))).toBe('text')
   })
 
   it('returns json for dictionary parameters', () => {
@@ -174,7 +174,7 @@ describe('buildParametersFromForm', () => {
   })
 
   it('preserves a multiline value verbatim, including a significant trailing blank line', () => {
-    const params = [makeParameter({ name: 'http_request' })]
+    const params = [makeParameter({ name: 'http_request', multiline: true })]
     // The trailing "\n\n" is the CRLF-CRLF boundary that ends the headers
     // section of a bodyless raw HTTP request; it must not be trimmed away.
     const template = 'GET /health HTTP/1.1\nHost: example.com\n\n'
@@ -183,13 +183,13 @@ describe('buildParametersFromForm', () => {
   })
 
   it('omits an optional multiline value left blank', () => {
-    const params = [makeParameter({ name: 'http_request' })]
+    const params = [makeParameter({ name: 'http_request', multiline: true })]
     const result = buildParametersFromForm(params, { http_request: '   \n  ' })
     expect(result).toEqual({ ok: true, parameters: null })
   })
 
   it('reports a required multiline value left blank', () => {
-    const params = [makeParameter({ name: 'http_request', required: true })]
+    const params = [makeParameter({ name: 'http_request', required: true, multiline: true })]
     const result = buildParametersFromForm(params, { http_request: '' })
     expect(result).toEqual({ ok: false, error: 'http_request is required.' })
   })
