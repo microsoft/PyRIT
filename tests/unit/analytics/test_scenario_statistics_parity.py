@@ -192,7 +192,7 @@ _EXPECTED_OVERALL = {
 }
 
 
-def _persist(memory: MemoryInterface, history: _History) -> str:
+async def _persist(memory: MemoryInterface, history: _History) -> str:
     scenario_result_id = uuid.uuid4()
     metadata = {SCENARIO_RUN_PLAN_METADATA_KEY: history.plan.model_dump(mode="json")} if history.plan else {}
     scenario_result = make_scenario_result(
@@ -205,7 +205,7 @@ def _persist(memory: MemoryInterface, history: _History) -> str:
         display_group_map=history.display_group_map,
         metadata=metadata,
     )
-    memory.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    await memory.add_scenario_results_to_memory_async(scenario_results=[scenario_result])
     attack_results = []
     for index, attempt in enumerate(history.attempts):
         attribution_data: dict[str, str] = {"parent_collection": attempt.atomic_attack_name}
@@ -233,26 +233,27 @@ def _persist(memory: MemoryInterface, history: _History) -> str:
             )
         )
     if attack_results:
-        memory.add_attack_results_to_memory(attack_results=attack_results)
+        await memory.add_attack_results_to_memory_async(attack_results=attack_results)
     return str(scenario_result_id)
 
 
 @pytest.mark.parametrize("history_name", sorted(_HISTORIES))
 async def test_sdk_api_and_reports_report_identical_statistics(history_name: str, sqlite_instance) -> None:
     history = _HISTORIES[history_name]
-    scenario_result_id = _persist(sqlite_instance, history)
+    scenario_result_id = await _persist(sqlite_instance, history)
     expected = _EXPECTED_OVERALL[history_name]
 
     # SDK
-    [scenario_result] = sqlite_instance.get_scenario_results(scenario_result_ids=[scenario_result_id])
+    [scenario_result] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
     sdk = compute_scenario_statistics(scenario_result)
     assert sdk.overall.success_percentage == expected
 
     # API: run detail, history list (SQL aggregate), and live progress
     service = ScenarioRunService()
-    detail = service.get_run_from_storage(scenario_result_id=scenario_result_id, active_error=None)
-    [list_item] = [item for item in service.list_runs().items if item.scenario_result_id == scenario_result_id]
-    progress = service.get_run_progress_from_storage(
+    detail = await service.get_run_from_storage_async(scenario_result_id=scenario_result_id, active_error=None)
+    runs = await service.list_runs_async()
+    [list_item] = [item for item in runs.items if item.scenario_result_id == scenario_result_id]
+    progress = await service.get_run_progress_from_storage_async(
         scenario_result_id=scenario_result_id, since=None, limit=500, active_group_ids=[]
     )
     assert detail is not None
@@ -293,9 +294,9 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
         assert progress_groups == sdk_groups
 
 
-def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> None:
-    scenario_result_id = _persist(sqlite_instance, _HISTORIES["retry_and_resume_recovered"])
-    [scenario_result] = sqlite_instance.get_scenario_results(scenario_result_ids=[scenario_result_id])
+async def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> None:
+    scenario_result_id = await _persist(sqlite_instance, _HISTORIES["retry_and_resume_recovered"])
+    [scenario_result] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
 
     statistics = compute_scenario_statistics(scenario_result)
 
@@ -312,7 +313,7 @@ def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> 
     reason="The history list rejects plans with two seed groups sharing an objective and falls back to legacy "
     "totals, while run detail keeps using the plan. Known gap that predates the shared statistics.",
 )
-def test_ambiguous_objective_within_group_agrees_between_list_and_detail(sqlite_instance) -> None:
+async def test_ambiguous_objective_within_group_agrees_between_list_and_detail(sqlite_instance) -> None:
     history = _History(
         plan=_plan(
             _group(name="attack", eval_hash="eval", seed_ids=["a", "b"]),
@@ -320,11 +321,12 @@ def test_ambiguous_objective_within_group_agrees_between_list_and_detail(sqlite_
         ),
         attempts=[_Attempt("attack", "A", AttackOutcome.SUCCESS)],
     )
-    scenario_result_id = _persist(sqlite_instance, history)
+    scenario_result_id = await _persist(sqlite_instance, history)
 
     service = ScenarioRunService()
-    detail = service.get_run_from_storage(scenario_result_id=scenario_result_id, active_error=None)
-    [list_item] = [item for item in service.list_runs().items if item.scenario_result_id == scenario_result_id]
+    detail = await service.get_run_from_storage_async(scenario_result_id=scenario_result_id, active_error=None)
+    runs = await service.list_runs_async()
+    [list_item] = [item for item in runs.items if item.scenario_result_id == scenario_result_id]
 
     assert detail is not None
     assert list_item.objective_achieved_rate == detail.objective_achieved_rate
