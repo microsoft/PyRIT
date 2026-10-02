@@ -27,6 +27,8 @@ from pyrit.registry import TargetRegistry
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
 )
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.scenarios.airt.psychosocial import (
@@ -122,10 +124,51 @@ FIXTURES = ["patch_central_database"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+@pytest.mark.parametrize("total, expected", [(None, 8), (3, 3)])
+async def test_unequal_source_caps_and_total_estimate(total: int | None, expected: int) -> None:
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "dataset_config": DatasetAttackConfiguration(
+                sources=[
+                    DatasetSource(name=_SUB_HARMS[0].dataset_name, max_size=1),
+                    DatasetSource(name=_SUB_HARMS[1].dataset_name, max_size=7),
+                ],
+                max_total=total,
+            ),
+            "scenario_techniques": [PsychosocialTechnique.NoConverter],
+            "include_baseline": True,
+        }
+    )
+    with (
+        patch.object(CentralMemory.get_memory_instance(), "get_seeds_async", side_effect=AssertionError("No reads")),
+        patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
+    ):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.estimated_attack_count == expected * 2
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+async def test_compound_sources_require_explicit_migration() -> None:
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "dataset_config": CompoundDatasetAttackConfiguration(
+                configurations=[
+                    DatasetAttackConfiguration(sources=[DatasetSource(name=harm.dataset_name)]) for harm in _SUB_HARMS
+                ]
+            ),
+        }
+    )
+    with pytest.raises(DatasetConstraintError, match="compound children"):
+        await scenario.get_run_size_estimate_async()
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 @pytest.mark.parametrize("outer_limit", [3, None])
 @pytest.mark.parametrize("sub_harm", ["all", "imminent_crisis"])
 @pytest.mark.parametrize("include_baseline", [False, True])
-async def test_compound_estimate_uses_initialization_cap_async(
+async def test_total_estimate_uses_initialization_cap_async(
     *,
     mock_objective_target: PromptTarget,
     outer_limit: int | None,
@@ -142,11 +185,11 @@ async def test_compound_estimate_uses_initialization_cap_async(
     def get_seeds(*, dataset_name: str, **_: object) -> list[SeedObjective]:
         return list(seeds_by_dataset[dataset_name])
 
-    config = CompoundDatasetAttackConfiguration.per_dataset(
-        dataset_names=list(seeds_by_dataset),
-        max_dataset_size=1 if outer_limit is not None else 2,
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name=name) for name in seeds_by_dataset],
+        max_per_dataset="all",
+        max_total=outer_limit,
     )
-    config.max_dataset_size = outer_limit
     scenario = _scenario_with_mock_scorers()
     scenario.set_params_from_args(
         args={
@@ -158,8 +201,8 @@ async def test_compound_estimate_uses_initialization_cap_async(
         }
     )
     harm_count = 2 if sub_harm == "all" else 1
-    per_harm_count = outer_limit if outer_limit is not None else 6
-    expected_count = per_harm_count * harm_count * (1 + include_baseline)
+    selected_count = outer_limit if outer_limit is not None else 6 * harm_count
+    expected_count = selected_count * (1 + include_baseline)
     memory = CentralMemory.get_memory_instance()
     with patch.object(
         memory,
@@ -173,20 +216,23 @@ async def test_compound_estimate_uses_initialization_cap_async(
     if outer_limit is None:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
         assert estimate.estimated_attack_count is None
-        assert estimate.dataset_size == scenario_dataset_size_from_limit(None)
+        assert estimate.dataset_size == scenario_dataset_size_from_limit("all")
         assert all(dataset.configured_caps == [] for dataset in estimate.datasets)
     else:
-        assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit * harm_count)
+        assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit)
         assert estimate.dataset_limit.value == outer_limit
         assert [dataset.configured_caps[0].count for dataset in estimate.datasets] == [outer_limit] * harm_count
         assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
         assert estimate.estimated_attack_count == expected_count
 
-    with patch.object(memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds:
+    with (
+        patch.object(memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+        patch.object(memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds,
+    ):
         await scenario.initialize_async()
     read_seeds.assert_awaited()
     plan = scenario._build_run_plan()
-    assert len(plan.seed_groups) == per_harm_count * harm_count
+    assert len(plan.seed_groups) == selected_count
     assert sum(len(group.seed_group_ids) for group in plan.atomic_groups) == expected_count
 
 
@@ -333,7 +379,7 @@ class TestPsychosocialConstruction:
         assert Psychosocial().uses_default_adversarial_target is True
 
     def test_version_is_3(self):
-        assert Psychosocial.VERSION == 4
+        assert Psychosocial.VERSION == 5
 
     def test_default_technique_is_default(self):
         assert _scenario_with_mock_scorers()._default_technique == PsychosocialTechnique.DEFAULT
@@ -493,9 +539,9 @@ class TestPsychosocialCrossProduct:
             await scenario.initialize_async()
         assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
 
-    async def test_max_dataset_size_applied_per_sub_harm_when_hard_binding(self, mock_objective_target):
+    async def test_unrelated_source_is_rejected(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
-        with _patch_base_seed_groups(_make_seed_groups()):
+        with pytest.raises(DatasetConstraintError, match="sub-harm datasets"):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
@@ -503,18 +549,9 @@ class TestPsychosocialCrossProduct:
                 }
             )
             await scenario.initialize_async()
-        # --max-dataset-size is a PER-sub-harm budget: each child caps at 7 and the parent cap is
-        # 7 x 2 sub-harms (never trims the union, yet stays non-None so resume pinning survives).
-        assert isinstance(scenario._dataset_config, CompoundDatasetAttackConfiguration)
-        assert all(child.max_dataset_size == 7 for child in scenario._dataset_config._configurations)
-        assert scenario._dataset_config.max_dataset_size == 14
-        assert set(scenario._dataset_config.dataset_names) == {
-            "airt_imminent_crisis",
-            "airt_licensed_therapist",
-        }
 
-    async def test_max_dataset_size_one_keeps_both_sub_harms(self, mock_objective_target):
-        """A global budget of 1 starves a sub-harm; the per-sub-harm compound keeps both.
+    async def test_per_dataset_limit_one_keeps_both_sub_harms(self, mock_objective_target):
+        """A cap of one per source keeps both sub-harms.
 
         Patches only the seed source so the REAL dataset resolver/sampler runs -- the starvation
         regression cannot hide behind a mocked base resolver.
@@ -535,24 +572,26 @@ class TestPsychosocialCrossProduct:
 
         memory = CentralMemory.get_memory_instance()
         scenario = _scenario_with_mock_scorers()
-        with patch.object(memory, "get_seeds_async", side_effect=_get_seeds):
+        with (
+            patch.object(memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+            patch.object(memory, "get_seeds_async", side_effect=_get_seeds),
+        ):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,
                     "sub_harm": "all",
                     "scenario_techniques": [PsychosocialTechnique.NoConverter],
                     "dataset_config": DatasetAttackConfiguration(
-                        dataset_names=["ignored"], max_dataset_size=1, auto_fetch=False
+                        sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
+                        max_per_dataset=1,
+                        auto_fetch=False,
                     ),
                 }
             )
             await scenario.initialize_async()
 
-        # Per-sub-harm compound: each child budget is 1, parent cap = 1 x 2 (non-None so the base
-        # still pins the sampled objective subset for resume).
-        assert isinstance(scenario._dataset_config, CompoundDatasetAttackConfiguration)
-        assert scenario._dataset_config.max_dataset_size == 2
-        # Both sub-harms survive the budget-of-1 (the global-budget bug dropped one entirely).
+        assert scenario._dataset_config.max_per_dataset == 1
+        assert scenario._dataset_config.max_total == "all"
         assert {a.display_group for a in _non_baseline(scenario)} == {"imminent_crisis", "licensed_therapist"}
         assert {a.atomic_attack_name for a in _baselines(scenario)} == {
             "imminent_crisis_baseline",
@@ -575,16 +614,21 @@ class TestPsychosocialCrossProduct:
             args={
                 "objective_target": mock_objective_target,
                 "scenario_techniques": [PsychosocialTechnique.NoConverter],
-                "dataset_config": DatasetAttackConfiguration(dataset_names=["ignored"], max_dataset_size=None),
+                "dataset_config": DatasetAttackConfiguration(
+                    sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
+                    max_per_dataset="all",
+                ),
             }
         )
-        with patch.object(
-            CentralMemory.get_memory_instance(), "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds
-        ) as read_seeds:
+        memory = CentralMemory.get_memory_instance()
+        with (
+            patch.object(memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+            patch.object(memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds,
+        ):
             await scenario.initialize_async()
         read_seeds.assert_awaited()
 
-        assert scenario._dataset_config.max_dataset_size is None
+        assert scenario._dataset_config.max_dataset_size == "all"
         assert len(scenario._atomic_attacks) == 4
         assert all(len(attack.seed_groups) == 6 for attack in scenario._atomic_attacks)
         plan = scenario._build_run_plan()

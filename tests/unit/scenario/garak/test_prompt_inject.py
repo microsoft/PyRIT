@@ -176,7 +176,7 @@ class TestPromptInjectAtomicAttacks:
             target=mock_objective_target,
             dataset_config=PromptInjectDatasetConfiguration(
                 dataset_names=PromptInject.required_datasets(),
-                max_dataset_size=None,
+                max_dataset_size="all",
             ),
         )
 
@@ -236,7 +236,7 @@ class TestPromptInjectAtomicAttacks:
             target=mock_objective_target,
             goal_texts=[goal],
             dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=PromptInject.required_datasets(), max_dataset_size=None
+                dataset_names=PromptInject.required_datasets(), max_dataset_size="all"
             ),
         )
 
@@ -403,11 +403,14 @@ class TestPromptInjectAtomicAttacks:
         scenario = PromptInject()
         config = PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), auto_fetch=False)
 
-        with patch.object(config, "_fetch_dataset_async") as fetch:
-            with pytest.raises(DatasetConstraintError, match="auto_fetch is disabled"):
+        with patch(
+            "pyrit.datasets.seed_datasets.seed_dataset_provider.SeedDatasetProvider.get_providers_by_name_async"
+        ) as fetch:
+            with pytest.raises(DatasetConstraintError, match="fetch is 'never'"):
                 await _initialize_async(scenario, target=mock_objective_target, dataset_config=config)
         fetch.assert_not_called()
-        assert scenario._dataset_config is config
+        assert scenario._dataset_config is not config
+        assert type(scenario._dataset_config) is type(config)
 
     async def test_unsupported_dataset_configuration_type_raises(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
@@ -455,15 +458,24 @@ class TestPromptInjectAtomicAttacks:
 class TestPromptInjectDatasetSampling:
     @pytest.mark.parametrize(
         ("kwargs", "expected"),
-        [({}, 12), ({"max_dataset_size": None}, 210), ({"max_dataset_size": 6}, 6)],
+        [
+            ({}, 12),
+            ({"max_dataset_size": None}, 12),
+            ({"max_total": "default"}, 12),
+            ({"max_total": ""}, 12),
+            ({"max_dataset_size": "all"}, 210),
+            ({"max_total": "all"}, 210),
+            ({"max_dataset_size": 6}, 6),
+        ],
     )
     async def test_configuration_default_covers_custom_goals_async(
-        self, *, kwargs: dict[str, int | None], expected: int
+        self, *, kwargs: dict[str, int | str | None], expected: int
     ) -> None:
         goals = [f"goal {index}" for index in range(6)]
         config = PromptInjectDatasetConfiguration(
             dataset_names=PromptInject.required_datasets(), goal_texts=goals, **kwargs
         )
+        await config.prepare_async()
         groups = await config.get_attack_seed_groups_async()
         assert len(groups) == expected
         assert {group.objective.metadata["goal_text"] for group in groups} == set(goals)
@@ -474,6 +486,7 @@ class TestPromptInjectDatasetSampling:
         config = PromptInjectDatasetConfiguration(
             dataset_names=PromptInject.required_datasets(), goal_texts=goals, max_dataset_size=3
         )
+        await config.prepare_async()
         with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(0)):
             if grouped:
                 by_dataset = await config.get_attack_groups_by_dataset_async()

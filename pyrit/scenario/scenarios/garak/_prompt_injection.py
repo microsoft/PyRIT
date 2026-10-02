@@ -8,6 +8,7 @@ from collections.abc import Callable, Hashable, Sequence
 from typing import TypeVar
 
 from pyrit.models import AttackSeedGroup
+from pyrit.models.dataset_limit import ResolvedDatasetLimit
 from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
 
 _Key = TypeVar("_Key", bound=Hashable)
@@ -16,7 +17,7 @@ _Key = TypeVar("_Key", bound=Hashable)
 def sample_with_coverage(
     *,
     groups_by_dataset: dict[str, list[AttackSeedGroup]],
-    cap: int | None,
+    cap: ResolvedDatasetLimit,
     required_keys: Sequence[_Key],
     key: Callable[[AttackSeedGroup], _Key],
 ) -> dict[str, list[AttackSeedGroup]]:
@@ -29,7 +30,7 @@ def sample_with_coverage(
     Raises:
         DatasetConstraintError: If a coverage key is missing or the budget is too small.
     """
-    if cap is not None and cap < max(1, len(required_keys)):
+    if cap != "all" and cap < max(1, len(required_keys)):
         raise DatasetConstraintError(
             f"max_dataset_size ({cap}) must be at least the number of coverage groups ({len(required_keys)})."
         )
@@ -40,7 +41,7 @@ def sample_with_coverage(
     missing = [value for value, indices in indices_by_key.items() if not indices]
     if missing:
         raise DatasetConstraintError(f"No contexts for coverage groups: {missing}.")
-    if cap is None or len(pairs) <= cap:
+    if cap == "all" or len(pairs) <= cap:
         return groups_by_dataset
     selected = {random.choice(indices) for indices in indices_by_key.values()}
     remaining = [index for index in range(len(pairs)) if index not in selected]

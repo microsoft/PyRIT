@@ -31,6 +31,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
+    DatasetSource,
     ResolvedDataset,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
@@ -83,14 +84,20 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
     DEFAULT_MAX_DATASET_SIZE: ClassVar[int] = 20
 
     @forward_init_parameters
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, sampling_scope: Literal["total_only"] = "total_only", **kwargs: Any) -> None:
         """
         Initialize the configuration.
 
         Args:
+            sampling_scope (Literal["total_only"]): Sample assembled groups, not ingredient rows.
             **kwargs (Any): Arguments for ``DatasetAttackConfiguration``.
+
+        Raises:
+            DatasetConstraintError: If sampling_scope is not total_only.
         """
-        super().__init__(**kwargs)
+        if sampling_scope != "total_only":
+            raise DatasetConstraintError("ApiKey requires total_only sampling.")
+        super().__init__(sampling_scope=sampling_scope, **kwargs)
         self._techniques: list[ApiKeyTechnique] = [ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey]
         self.excluded_values: tuple[str, ...] = ()
 
@@ -105,10 +112,10 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
         Returns:
             dict: Technique names mapped to their shared configuration cap.
         """
-        if self.max_dataset_size is None:
+        if self.max_total == "all":
             return {}
         return {
-            str(technique.value): [("combined configuration cap", self.max_dataset_size, "configuration")]
+            str(technique.value): [("combined configuration cap", self.max_total, "configuration")]
             for technique in self._techniques
         }
 
@@ -229,8 +236,9 @@ class ApiKey(Scenario):
             version=self.VERSION,
             technique_class=ApiKeyTechnique,
             default_dataset_config=ApiKeyDatasetConfiguration(
-                dataset_names=self.required_datasets(),
-                max_dataset_size=ApiKeyDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
+                sources=[DatasetSource(name=name) for name in self.required_datasets()],
+                max_per_dataset="all",
+                max_total=ApiKeyDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
             ),
             objective_scorer=objective_scorer or CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS),
             scenario_result_id=scenario_result_id,

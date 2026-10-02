@@ -28,7 +28,7 @@ class MyScenario(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=MyTechnique,
-            default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
+            default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="my_dataset")]),
             objective_scorer=objective_scorer or self._get_default_objective_scorer(),
             scenario_result_id=scenario_result_id,
         )
@@ -68,7 +68,7 @@ def __init__(
     super().__init__(
         version=self.VERSION,
         technique_class=MyTechnique,
-        default_dataset_config=DatasetConfiguration(dataset_names=["my_dataset"]),
+        default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="my_dataset")]),
         objective_scorer=objective_scorer,
     )
 ```
@@ -113,30 +113,43 @@ Dropping a common input is not silent: `set_params_from_args` rejects any value 
 
 ## Dataset Loading
 
-Datasets are read from `CentralMemory`.
+Datasets are read from `CentralMemory`. New runs call `prepare_async()` before
+reading. Reads, discovery, estimates, and resume must never fetch or store datasets.
+Resolve parameter-dependent source names before preparation, not during seed reads.
 
 ### Basic — named datasets:
 ```python
-DatasetConfiguration(
-    dataset_names=["airt_hate", "airt_violence"],
-    max_dataset_size=10,  # optional: sample up to N per dataset
+DatasetAttackConfiguration(
+    sources=[DatasetSource(name="airt_hate"), DatasetSource(name="airt_violence")],
+    max_per_dataset=5,
+    max_total=10,
 )
 ```
 
 ### Advanced — custom subclass for filtering:
 ```python
-class MyDatasetConfiguration(DatasetConfiguration):
-    def get_seed_groups(self) -> dict[str, list[SeedGroup]]:
-        result = super().get_seed_groups()
-        # Filter by selected techniques via self._scenario_techniques
-        return filtered_result
+class MyDatasetConfiguration(DatasetAttackConfiguration):
+    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+        return build_custom_groups(seeds)
 ```
 
 Options:
-- `dataset_names` — load by name from memory
-- `seed_groups` — pass explicit groups (mutually exclusive with `dataset_names`)
-- `max_dataset_size` — cap per dataset
-- Override `_load_seed_groups_for_dataset()` for custom loading
+- `sources` selects datasets by name. Source `max_size` overrides `max_per_dataset`;
+  omitted, `None`, empty, and `"default"` mean inherit; `"all"` means no cap.
+- All dataset limits use the same rule: omitted, `None`, empty, and `"default"` use the
+  default; `"all"` removes that limit; a positive integer sets a cap.
+- `max_per_dataset=5` is the named-objective default. `max_total="all"` leaves the
+  combined selection uncapped. Apply source limits before the total limit.
+- `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent registered datasets.
+  `NEVER` requires stored data. A filter miss must never fetch.
+- `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
+- Validators run on full filtered populations before any sampling.
+- Ingredients must remain complete. Use `sampling_scope="total_only"` on their
+  dataset configuration; cap the combined attack groups, not each ingredient dataset.
+- Use `with_overrides()` instead of reconstructing a subclass or mutating its defaults.
+- Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
+  Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
+- `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
 
 ## Technique Enum
 

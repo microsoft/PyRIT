@@ -734,10 +734,8 @@ class Scenario(ABC):
         """Return the editable limit, never an aggregate population budget."""
         if not self.USES_DATASET_SIZE_LIMIT:
             return DatasetLimitInput(state=DatasetLimitState.NotApplicable)
-        limit = self._dataset_config.max_dataset_size
-        return (
-            DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit is not None else DatasetLimitInput()
-        )
+        limit = self._dataset_config.max_total
+        return DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit != "all" else DatasetLimitInput()
 
     def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """Return the scenario's configured population budget."""
@@ -813,7 +811,7 @@ class Scenario(ABC):
 
         dataset_config = params.get("dataset_config")
         self._dataset_config_provided = dataset_config is not None
-        self._dataset_config = dataset_config if dataset_config else self._default_dataset_config
+        self._dataset_config = (dataset_config if dataset_config else self._default_dataset_config).with_overrides()
         self._max_concurrency = params.get("max_concurrency", 4)
         self._max_retries = params.get("max_retries", 0)
         self._memory_labels = params.get("memory_labels") or {}
@@ -837,8 +835,17 @@ class Scenario(ABC):
         self._validate_runtime_configuration()
 
     def _validate_runtime_configuration(self) -> None:
-        """Check resolved parameters for preview and launch without reading datasets."""
+        """
+        Check resolved parameters for preview and launch without reading datasets.
+
+        Raises:
+            ValueError: If an ingredient-only scenario receives per-dataset limits.
+        """
         self._dataset_config.validate_configuration()
+        if not self.USES_DATASET_SIZE_LIMIT and any(
+            self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
+        ):
+            raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
 
     @final
     async def initialize_async(self) -> None:
@@ -859,8 +866,8 @@ class Scenario(ABC):
 
         If a scenario_result_id was provided in __init__, this method will check if it exists
         in memory and validate that the stored scenario matches the current configuration.
-        If it matches, the scenario will resume from prior progress. If it doesn't match or
-        doesn't exist, a new scenario result will be created.
+        If it matches, the scenario will resume from prior progress without preparation.
+        If it does not match or does not exist, initialization raises an error.
 
         The common run inputs read from the bag are ``objective_target`` (a ``PromptTarget``
         instance or a registered target name resolved against ``TargetRegistry``),
@@ -889,6 +896,18 @@ class Scenario(ABC):
         # replayed by _apply_persisted_objectives. Re-drawing a fresh random.sample here would
         # diverge from the persisted hashes and abort resume whenever max_dataset_size is set.
         is_resume = self._scenario_result_id is not None
+        existing_results = []
+        if is_resume:
+            existing_results = await self._memory.get_scenario_results_async(
+                scenario_result_ids=[self._scenario_result_id]
+            )
+            if not existing_results:
+                raise ValueError(
+                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
+                    "Drop scenario_result_id to start a new scenario."
+                )
+        else:
+            await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
@@ -902,16 +921,6 @@ class Scenario(ABC):
         # rather than a silent restart, so the original progress isn't orphaned without
         # the user knowing.
         if self._scenario_result_id:
-            existing_results = await self._memory.get_scenario_results_async(
-                scenario_result_ids=[self._scenario_result_id]
-            )
-
-            if not existing_results:
-                raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
-                    f"Drop scenario_result_id to start a new scenario."
-                )
-
             self._validate_stored_scenario(
                 stored_result=existing_results[0],
                 current_identifier=scenario_identifier,
@@ -962,20 +971,20 @@ class Scenario(ABC):
         """
         Build the metadata dict persisted with a freshly-created ``ScenarioResult``.
 
-        When ``max_dataset_size`` is in effect, the dataset config draws an
+        When a source or total limit is in effect, the dataset config draws an
         unseeded ``random.sample`` and the chosen subset would silently change
         on the next run (e.g. a resume). To make resume reliable, snapshot the
         chosen objective hashes here so the next ``_setup_scenario_async`` can
         replay them via ``keep_seed_groups_with_hashes``.
 
-        The normalized run plan is always stored. When ``max_dataset_size`` is not
-        set, only the run plan is needed because the full dataset is deterministic.
+        The normalized run plan is always stored. When no sampling limits are set,
+        only the run plan is needed because the full dataset is deterministic.
 
         Returns:
             dict[str, Any]: Metadata payload for the new ScenarioResult.
         """
         metadata: dict[str, Any] = {}
-        if getattr(self._dataset_config, "max_dataset_size", None) is not None:
+        if self._dataset_config.has_sampling_limits:
             hashes: list[str] = []
             seen: set[str] = set()
             for aa in self._atomic_attacks:

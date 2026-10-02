@@ -35,7 +35,7 @@ from pyrit.models import (
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     resolve_technique_factories,
@@ -262,8 +262,9 @@ class AdversarialBenchmark(Scenario):
             objective_scorer=self._objective_scorer,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=["harmbench"],
-                max_dataset_size=8,
+                sources=[DatasetSource(name=name) for name in ["harmbench"]],
+                max_per_dataset="all",
+                max_total=8,
             ),
             scenario_result_id=scenario_result_id,
         )
@@ -284,9 +285,19 @@ class AdversarialBenchmark(Scenario):
             return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
 
         groups_by_dataset = await super()._resolve_seed_groups_by_dataset_async(apply_sampling=False)
-        max_dataset_size = self._dataset_config.max_dataset_size
+        if self._dataset_config.sources:
+            for name, groups in groups_by_dataset.items():
+                limit = self._dataset_config.source_limit(name)
+                if limit != "all" and len(groups) > limit:
+                    groups_by_dataset[name] = [
+                        group
+                        for _, group in self._select_stable_sample(
+                            pairs=[(name, group) for group in groups], max_dataset_size=limit
+                        )
+                    ]
+        max_dataset_size = self._dataset_config.max_total
         pairs = [(name, group) for name, groups in groups_by_dataset.items() for group in groups]
-        if max_dataset_size is None or len(pairs) <= max_dataset_size:
+        if max_dataset_size == "all" or len(pairs) <= max_dataset_size:
             return groups_by_dataset
 
         selected = self._select_stable_sample(pairs=pairs, max_dataset_size=max_dataset_size)
@@ -377,7 +388,9 @@ class AdversarialBenchmark(Scenario):
         Returns:
             ScenarioDatasetSizeEstimate: Global cap or all available benchmark data.
         """
-        return scenario_dataset_size_from_limit(self._dataset_config.max_dataset_size)
+        if self._dataset_config.sources:
+            return self._dataset_config.get_size_budget()
+        return scenario_dataset_size_from_limit(self._dataset_config.max_total)
 
     def _get_estimate_dataset_configuration(self) -> DatasetAttackConfiguration:
         """
@@ -386,9 +399,12 @@ class AdversarialBenchmark(Scenario):
         Returns:
             DatasetAttackConfiguration: Cap metadata without ignored child limits.
         """
+        if self._dataset_config.sources:
+            return self._dataset_config
         return DatasetAttackConfiguration(
-            dataset_names=self._dataset_config.dataset_names or None,
-            max_dataset_size=self._dataset_config.max_dataset_size,
+            sources=[DatasetSource(name=name) for name in self._dataset_config.dataset_names],
+            max_per_dataset="all",
+            max_total=self._dataset_config.max_total,
         )
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:

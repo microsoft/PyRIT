@@ -25,7 +25,7 @@ from pyrit.models import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score.true_false.regex.package_hallucination_scorer import (
@@ -86,20 +86,6 @@ _LANGUAGE_SPECS: dict[str, _LanguageSpec] = {
     "perl": _LanguageSpec(language_name="Perl", dataset_name="garak_perl_packages", ecosystem=PackageEcosystem.PERL),
     "raku": _LanguageSpec(language_name="Raku", dataset_name="garak_raku_packages", ecosystem=PackageEcosystem.RAKU),
 }
-
-
-class _PackageHallucinationDatasetConfiguration(DatasetConfiguration):
-    """Dataset configuration that exposes raw values for prompt and registry datasets."""
-
-    async def get_values_by_dataset_async(self) -> dict[str, list[str]]:
-        """
-        Resolve configured datasets, fetching missing datasets from their providers.
-
-        Returns:
-            dict[str, list[str]]: Seed values keyed by dataset name.
-        """
-        seeds_by_dataset = await self._collect_named_seeds_async()
-        return {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
 
 
 class PackageHallucinationTechnique(ScenarioTechnique):
@@ -205,7 +191,10 @@ class PackageHallucination(Scenario):
             # Preload only the Rust registry and prompt corpus. Other registries are fetched
             # on demand when their techniques are selected.
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[_LANGUAGE_SPECS["rust"].dataset_name, *_CORPUS_DATASETS]
+                sampling_scope="total_only",
+                sources=[
+                    DatasetSource(name=name) for name in [_LANGUAGE_SPECS["rust"].dataset_name, *_CORPUS_DATASETS]
+                ],
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -214,6 +203,14 @@ class PackageHallucination(Scenario):
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
 
     def _validate_runtime_configuration(self) -> None:
+        names = [
+            *_CORPUS_DATASETS,
+            *(_LANGUAGE_SPECS[technique.value].dataset_name for technique in self._scenario_techniques),
+        ]
+        by_name = {source.name: source for source in self._dataset_config.sources}
+        self._dataset_config = self._dataset_config.with_overrides(
+            sources=[by_name.get(name, DatasetSource(name=name)) for name in dict.fromkeys(names)]
+        )
         super()._validate_runtime_configuration()
         if self._max_prompts_per_language < 1:
             raise ValueError("max_prompts_per_language must be greater than zero")
@@ -342,13 +339,8 @@ class PackageHallucination(Scenario):
             if not isinstance(technique, PackageHallucinationTechnique):
                 raise TypeError(f"Unexpected package hallucination technique: {type(technique).__name__}")
             specs_by_technique[technique.value] = _LANGUAGE_SPECS[technique.value]
-        dataset_names = [
-            *_CORPUS_DATASETS,
-            *(spec.dataset_name for spec in specs_by_technique.values()),
-        ]
-        dataset_values = await _PackageHallucinationDatasetConfiguration(
-            dataset_names=list(dict.fromkeys(dataset_names))
-        ).get_values_by_dataset_async()
+        seeds_by_dataset = await self._dataset_config._collect_named_seeds_async()
+        dataset_values = {name: [seed.value for seed in seeds] for name, seeds in seeds_by_dataset.items()}
 
         rng = random.Random(self._random_seed)
         stubs, tasks = self._load_corpus(dataset_values=dataset_values)

@@ -41,7 +41,7 @@ from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
 from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite, FoundryTechnique, RedTeamAgent
-from pyrit.scenario.scenarios.garak.api_key import ApiKey
+from pyrit.scenario.scenarios.garak.api_key import ApiKey, ApiKeyDatasetConfiguration
 from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.exploitation import Exploitation
 from pyrit.scenario.scenarios.garak.figstep import FigStep
@@ -184,8 +184,6 @@ async def test_default_estimate_uses_five_without_population_or_persistence_asyn
         ),
         (Exploitation, {}, {"prompt_cap": 0}, "prompt_cap must be greater than zero"),
         (Exploitation, {}, {"prompt_cap": -1}, "prompt_cap must be greater than zero"),
-        (SystemPromptExtraction, {"prompt_cap": 0}, {}, "prompt_cap must be greater than zero"),
-        (SystemPromptExtraction, {"prompt_cap": -1}, {}, "prompt_cap must be greater than zero"),
         (SystemPromptExtraction, {"system_prompt_subsample": 0}, {}, "system_prompt_subsample"),
         (PackageHallucination, {"max_prompts_per_language": 0}, {}, "max_prompts_per_language"),
         (PackageHallucination, {"max_prompts_per_language": -1}, {}, "max_prompts_per_language"),
@@ -223,8 +221,22 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("cap", [3, 12, None])
-async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_previews_async(cap: int | None) -> None:
+@pytest.mark.parametrize(
+    "configuration_class",
+    [ApiKeyDatasetConfiguration, PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
+)
+def test_ingredient_configurations_accept_explicit_sampling_scope(
+    configuration_class: type[DatasetAttackConfiguration],
+) -> None:
+    config = configuration_class(sampling_scope="total_only")
+    assert config.max_per_dataset == "all"
+    with pytest.raises(ValueError, match="requires total_only"):
+        configuration_class(sampling_scope="per_dataset")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("cap", [3, 12, "all"])
+async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_previews_async(cap: int | str) -> None:
     scenario = PromptInject()
     scenario.set_params_from_args(
         args={
@@ -234,7 +246,7 @@ async def test_prompt_inject_valid_coverage_caps_still_have_configuration_only_p
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
-    if cap is None:
+    if cap == "all":
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
     else:
         assert estimate.estimated_attack_count == cap * 5
@@ -275,7 +287,7 @@ async def test_unavailable_formula_preserves_known_budget_async() -> None:
         estimate = await scenario.get_run_size_estimate_async()
     assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
     assert estimate.dataset_size == BoundedDatasetSize(value=5)
-    assert estimate.dataset_limit.value == 5
+    assert estimate.dataset_limit.value is None
     assert estimate.note == "No formula."
 
 
@@ -287,7 +299,9 @@ async def test_configured_estimate_uses_selected_techniques_and_limit_async(*, b
         args={
             "scenario_techniques": [_TwoTechniqueDefault.ONE],
             "include_baseline": baseline,
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["also-missing"], max_dataset_size=7),
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=["also-missing"], max_per_dataset="all", max_total=7
+            ),
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
@@ -303,7 +317,9 @@ async def test_estimate_expands_aggregate_and_applies_combined_cap_once_async() 
         args={
             "scenario_techniques": [_TwoTechniqueDefault.ALL],
             "include_baseline": False,
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["one", "two"], max_dataset_size=3),
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=["one", "two"], max_per_dataset="all", max_total=3
+            ),
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
@@ -330,7 +346,11 @@ async def test_estimate_combines_independent_child_limits_async() -> None:
 async def test_unlimited_estimate_does_not_load_data_or_invent_a_count_async() -> None:
     scenario = _MatrixEstimateScenario()
     scenario.set_params_from_args(
-        args={"dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=None)}
+        args={
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=["missing"], max_per_dataset="all", max_total="all"
+            )
+        }
     )
     estimate = await scenario.get_run_size_estimate_async()
     assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
@@ -517,7 +537,9 @@ async def test_web_injection_capped_techniques_use_generation_limits_async(
                 WebInjectionTechnique.TaskXSS,
             ],
             "include_baseline": baseline,
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=["missing"], max_per_dataset="all", max_total=dataset_limit
+            ),
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
@@ -539,7 +561,9 @@ async def test_package_hallucination_uses_per_language_generation_cap_async(
     scenario.set_params_from_args(
         args={
             "scenario_techniques": [technique],
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=["missing"], max_per_dataset="all", max_total=dataset_limit
+            ),
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
@@ -552,29 +576,32 @@ async def test_package_hallucination_uses_per_language_generation_cap_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize("prompt_cap", [256, 7, None])
+@pytest.mark.parametrize("prompt_cap", [256, 7, None, "", "default", "all"])
 @pytest.mark.parametrize(
     "technique", [SystemPromptExtractionTechnique.ALL, SystemPromptExtractionTechnique.DirectRequests]
 )
 @pytest.mark.parametrize("dataset_limit", [1, None])
 async def test_system_prompt_extraction_uses_one_shared_generation_cap_async(
-    *, prompt_cap: int | None, technique: SystemPromptExtractionTechnique, dataset_limit: int | None
+    *, prompt_cap: int | str | None, technique: SystemPromptExtractionTechnique, dataset_limit: int | None
 ) -> None:
     scenario = SystemPromptExtraction(objective_scorer=_scorer(), prompt_cap=prompt_cap)
     scenario.set_params_from_args(
         args={
             "scenario_techniques": [technique],
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=["missing"], max_per_dataset="all", max_total=dataset_limit
+            ),
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
-    assert estimate.estimated_attack_count == prompt_cap
-    assert estimate.dataset_size == scenario_dataset_size_from_limit(prompt_cap)
-    if prompt_cap is None:
+    expected = 256 if prompt_cap in (None, "", "default") else prompt_cap
+    assert estimate.estimated_attack_count == (None if expected == "all" else expected)
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(expected)
+    if expected == "all":
         assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
     else:
         assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-        assert estimate.effective_parameters == {"prompt_cap": prompt_cap}
+        assert estimate.effective_parameters == {"prompt_cap": expected}
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -583,7 +610,8 @@ async def test_psychosocial_keeps_per_harm_limits_and_baselines_async() -> None:
     estimate = await scenario.get_default_run_size_estimate_async()
     assert estimate.estimated_attack_count == 40
     assert estimate.dataset_size == scenario_dataset_size_from_limit(10)
-    assert [component.count for component in estimate.components] == [15, 5, 15, 5]
+    assert [component.count for component in estimate.components] == [30, 10]
+    assert [dataset.configured_caps[0].count for dataset in estimate.datasets] == [5, 5]
 
 
 @pytest.mark.usefixtures("patch_central_database")

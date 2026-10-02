@@ -6,7 +6,48 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest
+from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest, ScenarioRunSizeEstimateRequest
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        (None, "default"),
+        ("", "default"),
+        ("  ", "default"),
+        ("default", "default"),
+        (" DEFAULT ", "default"),
+        ("all", "all"),
+        (" ALL ", "all"),
+        (7, 7),
+        ("7", 7),
+    ],
+)
+def test_dataset_limit_values(
+    *, model: type[RunScenarioRequest] | type[ScenarioRunSizeEstimateRequest], limit: object, expected: object
+) -> None:
+    request = model.model_validate({"scenario_name": "s", "target_name": "t", "max_dataset_size": limit})
+    assert request.max_dataset_size == expected
+    assert request.model_dump(mode="json")["max_dataset_size"] == expected
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+@pytest.mark.parametrize("limit", [0, -1, True, False, 1.0, 1.5, "unlimited", [], {}])
+def test_dataset_limit_rejects_invalid_values(
+    *, model: type[RunScenarioRequest] | type[ScenarioRunSizeEstimateRequest], limit: object
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate({"scenario_name": "s", "target_name": "t", "max_dataset_size": limit})
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_omitted_limit_uses_explicit_default(
+    model: type[RunScenarioRequest] | type[ScenarioRunSizeEstimateRequest],
+) -> None:
+    request = model.model_validate({"scenario_name": "s", "target_name": "t"})
+    assert request.max_dataset_size == "default"
+    assert request.model_dump(mode="json")["max_dataset_size"] == "default"
 
 
 def _make_request(*, dataset_filters: dict[str, list[str]] | None) -> RunScenarioRequest:
