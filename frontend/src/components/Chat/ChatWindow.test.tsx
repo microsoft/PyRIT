@@ -373,6 +373,7 @@ describe("ChatWindow Integration", () => {
 
   const defaultProps = {
     onNewAttack: jest.fn(),
+    defaultsReady: true,
     activeTarget: mockTarget,
     availableTargets: [mockTarget],
     targetsLoading: false,
@@ -6120,4 +6121,59 @@ describe("ChatWindow Integration", () => {
       );
     });
   });
-});
+
+  describe('defaults readiness gating scope', () => {
+    it('allows sending a reply in an existing attack while defaults are loading', async () => {
+      const user = userEvent.setup()
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] })
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([])
+      mockedMapper.buildMessagePieces.mockResolvedValue([
+        { data_type: "text", original_value: "replying in an existing attack" },
+      ])
+      mockedAttacksApi.addMessage.mockResolvedValue({
+        ...makeTextResponse("Reply back!"),
+        attack: {
+          attack_result_id: "existing-attack",
+          conversation_id: "conv-1",
+          outcome: "undetermined",
+          last_response: { id: "p-resp" },
+        },
+      } as never)
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            defaultsReady={false}
+            attackResultId="existing-attack"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      )
+      const input = await screen.findByRole('textbox')
+      await user.type(input, 'replying in an existing attack')
+      await user.keyboard('{Enter}')
+
+      // The reply goes through: addMessage is called, no createAttack is issued.
+      await waitFor(() => {
+        expect(mockedAttacksApi.addMessage).toHaveBeenCalled()
+      }, { timeout: 8000 })
+      expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled()
+    })
+  
+    it('blocks the first message of a new attack while defaults are loading', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><ChatWindow {...defaultProps} defaultsReady={false} attackResultId={null} /></TestWrapper>)
+      const input = await screen.findByRole('textbox')
+      await user.type(input, 'starting a brand new attack')
+      await user.keyboard('{Enter}')
+  
+      // Neither createAttack nor addMessage fires while the new attack's
+      // attribution source (server defaults) is still loading.
+      await waitFor(() => {
+        expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled()
+      })
+      expect(mockedAttacksApi.addMessage).not.toHaveBeenCalled()
+    })
+  })
+})

@@ -218,6 +218,8 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
+  /** False while the current generation's server defaults are still loading; launching is gated. */
+  defaultsReady?: boolean
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -261,6 +263,7 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
+  defaultsReady = false,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -564,6 +567,7 @@ export default function ChatWindow({
   ): Promise<ChatSendOutcome> => {
     if (
       !runtime.ready
+      || (!attackResultId && !defaultsReady)  // new attacks only; replies use the attack's saved labels
       || !activeTarget
       || isLoadingAttack
       || isLoadingMessages
@@ -1035,7 +1039,7 @@ export default function ChatWindow({
   ])
 
   const confirmBranch = async (): Promise<void> => {
-    if (!branchRequest || !branchTarget || branchingRef.current || targetsLoading || targetsError) return
+    if (!branchRequest || !branchTarget || branchingRef.current || targetsLoading || targetsError || !defaultsReady) return
     if (!isBranchTargetAvailable) {
       setBranchError('The destination target changed or is no longer registered. Select a target again.')
       return
@@ -1331,7 +1335,7 @@ export default function ChatWindow({
                 appearance="primary"
                 onClick={confirmBranch}
                 disabled={!branchTarget || targetsLoading || Boolean(targetsError) || isBranching
-                  || !isBranchTargetAvailable}
+                  || !isBranchTargetAvailable || !defaultsReady}
               >
                 Create attack
               </Button>
@@ -1423,7 +1427,7 @@ export default function ChatWindow({
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
-          sendDisabled={isLoadingMessages || awaitingConversationLoad}
+          sendDisabled={(!attackResultId && !defaultsReady) || isLoadingMessages || awaitingConversationLoad}
           conversionRevisionKey={conversionRevisionKey}
           showSystemPrompt={!attackResultId}
           supportsSystemPrompt={supportsSystemPrompt}

@@ -346,4 +346,66 @@ describe('Shared new run labels', () => {
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
     expect(within(currentLabels()).getByRole('button', { name: /currently future_op$/ })).toBeInTheDocument()
   })
+
+  describe('Runtime generation changes refetch server defaults (#2866)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    window.localStorage.clear()
+    mockGetActiveAccount.mockReturnValue(null)
+  })
+
+  it('refetches default labels when the readiness poll reports a new generation, and keeps user overrides', async () => {
+    // First render: server default operation is config_op.
+    const { runtimeApi } = jest.requireMock('@/services/api')
+    runtimeApi.getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'gen-1' })
+    jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
+
+    const app = renderApp()
+    const user = userEvent.setup()
+
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+    const callsAfterFirstLoad = jest.mocked(versionApi.getVersion).mock.calls.length
+
+    // User overrides the operation — stored separately from backend defaults.
+    await chooseOperation(user, 'user_op')
+
+    // Runtime reinitializes: the poll now reports a new generation.
+    runtimeApi.getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'gen-2' })
+    jest.mocked(versionApi.getVersion).mockResolvedValue({
+      version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
+    })
+
+    await waitFor(() => {
+      expect(jest.mocked(versionApi.getVersion).mock.calls.length).toBeGreaterThan(callsAfterFirstLoad)
+    })
+    // The refreshed backend default must not clobber the stored override.
+    await waitFor(() => {
+      expect(jest.mocked(versionApi.getVersion).mock.calls.length).toBe(callsAfterFirstLoad + 1)
+    })
+    expect(screen.queryByRole('button', { name: 'Edit operation, currently config_op_v2' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+    app.unmount()
+  })
+})
+
+  it('shows the refreshed default on a connected client that has not overridden it', async () => {
+    // First render: gen-1, server default operation is config_op.
+    const { runtimeApi } = jest.requireMock('@/services/api')
+    runtimeApi.getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'gen-1' })
+    jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
+
+    const app = renderApp()
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+
+    // Runtime reinitializes to gen-2 with a changed default operation. This
+    // client never set an override, so it must inherit the new default once
+    // the readiness poll advances and /version is re-fetched.
+    runtimeApi.getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'gen-2' })
+    jest.mocked(versionApi.getVersion).mockResolvedValue({
+      version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
+    })
+
+    await screen.findByRole('button', { name: 'Edit operation, currently config_op_v2' }, { timeout: 8000 })
+    app.unmount()
+  })
 })

@@ -211,6 +211,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }, [generation])
 
   const [defaultLabels, setDefaultLabels] = useState<Record<string, string>>(DEFAULT_GLOBAL_LABELS)
+  // Server defaults are generation-scoped: while a refresh is in flight the
+  // previous generation's defaults must not back new attacks, so launching
+  // stays blocked until the current generation's labels are loaded.
+  const [defaultsReady, setDefaultsReady] = useState(false)
   const globalLabels = useMemo<Record<string, string>>(() => Object.fromEntries(
     Object.entries({
       ...defaultLabels,
@@ -292,6 +296,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     let ignore = false
 
     async function initLabels() {
+      setDefaultsReady(false)
       try {
         const data = await versionApi.getVersion()
         if (ignore) return
@@ -299,15 +304,18 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         if (data.display || data.version) {
           if (!ignore) setAppVersion(data.display ?? data.version ?? '')
         }
+        if (!ignore) setDefaultsReady(true)
       } catch {
-        /* version fetch handled elsewhere */
+        // Leave defaults not-ready so launches block instead of stamping new
+        // attacks with the previous generation's operation. The readiness poll
+        // keeps running, and the next generation change retries this fetch.
       }
 
     }
 
     initLabels()
     return () => { ignore = true }
-  }, [])
+  }, [generation])
 
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
@@ -569,6 +577,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onHumanScoreChange={handleHumanScoreChange}
       onAttackChange={handleAttackChange}
       labels={globalLabels}
+      defaultsReady={defaultsReady}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -689,6 +698,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.adversarialTarget}
                     labels={globalLabels}
+                    defaultsReady={defaultsReady}
                     onNavigate={handleNavigate}
                   />
                 }

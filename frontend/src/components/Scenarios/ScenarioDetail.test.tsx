@@ -162,6 +162,7 @@ function renderDetail(
     defaultObjectiveTarget: makeTarget('target-a'),
     defaultAdversarialTarget: null,
     labels: { operator: 'roakey' },
+    defaultsReady: true,
     onNavigate: jest.fn(),
   }
   const merged = { ...defaultProps, ...props }
@@ -1378,5 +1379,19 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByText('crescendo')).toBeInTheDocument()
     expect(within(preview).getByText('harmbench')).toBeInTheDocument()
     expect(within(preview).getByText('attempts').parentElement).toHaveTextContent('attempts3')
+  })
+})
+
+describe('launch gating while generation defaults load (#2866)', () => {
+  it('disables Launch scan while defaultsReady is false', async () => {
+    renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: false })
+    const launch = await screen.findByRole('button', { name: 'Launch scan' })
+    expect(launch).toBeDisabled()
+  })
+
+  it('enables Launch scan once defaults are ready', async () => {
+    renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: true })
+    const launch = await screen.findByRole('button', { name: 'Launch scan' })
+    await waitFor(() => expect(launch).toBeEnabled())
   })
 })
