@@ -167,7 +167,7 @@ async def test_setup_async_persists_prepended_conversation_to_memory(vad_target)
     )
 
     add_calls: list[Any] = []
-    with patch.object(attack._conversation_manager._memory, "add_message_to_memory") as mock_add:
+    with patch.object(attack._conversation_manager._memory, "add_message_to_memory_async") as mock_add:
         mock_add.side_effect = lambda **kw: add_calls.append(kw["request"])
         await attack._setup_async(context=ctx)
 
@@ -203,7 +203,7 @@ async def test_converted_system_prompt_is_passed_to_streaming_session(vad_target
     with patch.object(RealtimeTarget, "open_streaming_session", return_value=fake_session) as factory:
         await attack._perform_async(context=ctx)
 
-    persisted = attack._conversation_manager.get_conversation(ctx.conversation_id)
+    persisted = await attack._conversation_manager.get_conversation_async(ctx.conversation_id)
     passed_to_session = factory.call_args.kwargs["prepended_conversation"]
     assert passed_to_session == persisted
     assert passed_to_session[0].get_piece().converted_value == "WW91IGFyZSBzdHJpY3Qu"
@@ -229,7 +229,9 @@ async def test_setup_reusing_conversation_passes_only_new_prepended_messages(vad
     await attack._setup_async(context=ctx)
 
     assert [message.get_value() for message in ctx.prepended_conversation] == ["new system"]
-    assert [message.get_value() for message in attack._conversation_manager.get_conversation(conversation_id)] == [
+    assert [
+        message.get_value() for message in (await attack._conversation_manager.get_conversation_async(conversation_id))
+    ] == [
         "old system",
         "new system",
     ]
@@ -249,7 +251,7 @@ async def test_setup_async_clears_unused_normalization_context_when_prepended_em
     )
 
     add_calls: list[Any] = []
-    with patch.object(attack._conversation_manager._memory, "add_message_to_memory") as mock_add:
+    with patch.object(attack._conversation_manager._memory, "add_message_to_memory_async") as mock_add:
         mock_add.side_effect = lambda **kw: add_calls.append(kw["request"])
         await attack._setup_async(context=ctx)
 

@@ -1,7 +1,11 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./_fixtures";
 import { makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
+import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+
+const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
@@ -45,6 +49,18 @@ const TARGETS = [
       supports_system_prompt: true,
       supported_input_modalities: ["text", "image_path"],
       supported_output_modalities: ["text"],
+    },
+  }),
+  makeTarget({
+    target_registry_name: "mobile-speech-target",
+    target_type: "OpenAITTSTarget",
+    endpoint: "https://speech.example.test",
+    model_name: "tts-mobile",
+    capabilities: {
+      supports_multi_turn: false,
+      supports_system_prompt: false,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["audio_path"],
     },
   }),
 ];
@@ -151,6 +167,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
     if (apiPath === "/version") {
       await route.fulfill(
         jsonResponse({
+          ...mockVersion(),
           version: "touch-target-test",
           display: "touch-target-test",
           default_labels: {
@@ -339,6 +356,31 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
+    if (apiPath === "/scenarios/catalog" || apiPath === "/scenarios/runs") {
+      await route.fulfill(
+        jsonResponse({
+          items: [],
+          pagination: {
+            limit: 50,
+            has_more: false,
+            next_cursor: null,
+            prev_cursor: null,
+          },
+        })
+      );
+      return;
+    }
+    if (apiPath === "/scenarios/runs/queue") {
+      await route.fulfill(
+        jsonResponse({
+          revision: 0,
+          snapshot_at: "2026-07-22T13:10:00.000Z",
+          active: null,
+          queued: [],
+        })
+      );
+      return;
+    }
 
     throw new Error(`Unhandled touch-target API request: ${method} ${apiPath}`);
   });
@@ -369,6 +411,14 @@ async function expectCompactDesktopTarget(locator: Locator): Promise<void> {
     throw new Error("Expected a visible desktop target");
   }
   expect(box.height).toBeLessThan(MINIMUM_TOUCH_TARGET_SIZE);
+}
+
+async function expectCompactDesktopTargets(locator: Locator): Promise<void> {
+  const count = await locator.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await expectCompactDesktopTarget(locator.nth(index));
+  }
 }
 
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
@@ -470,6 +520,26 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "Expand inner targets" })
     );
     await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
+    for (const filter of ["type", "input", "output", "capability"]) {
+      await expectMinimumTouchTarget(page.getByRole("button", { name: `Open Filter by ${filter}:`, exact: true }));
+    }
+    const capabilityFilter = page.getByRole("combobox", { name: "Filter by capability:", exact: true });
+    await capabilityFilter.click();
+    await expectMinimumTouchTargets(page.getByRole("menuitemcheckbox"));
+    await page.getByRole("menuitemcheckbox", { name: "System Prompt", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Multi-turn", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+    await expect(capabilityFilter).toHaveValue("Capabilities: System Prompt (+1)");
+    const capabilityWidths = await capabilityFilter.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(capabilityWidths.scrollWidth).toBeLessThanOrEqual(capabilityWidths.clientWidth);
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
     await page.goto("/history");
@@ -665,34 +735,42 @@ test.describe("Mobile touch targets", () => {
     await page.goto("/");
     await page.getByTestId("start-tour").click();
 
-    await expect(page.getByText("1 of 5")).toBeVisible();
+    // Scope to the tooltip: the views the tour visits have their own
+    // "Next" controls, such as History's pagination.
+    const tooltip = page.getByTestId("tour-tooltip-card");
+
+    await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
     await expectMinimumTouchTargets(
-      page.getByRole("button", {
+      tooltip.getByRole("button", {
         name: /^(Close|Skip tour|Next)$/,
       })
     );
 
-    for (const step of [2, 3, 4]) {
-      await page
+    for (let step = 2; step < TOUR_STEP_COUNT; step += 1) {
+      await tooltip
         .getByRole("button", { name: "Next", exact: true })
         .click({ force: true });
-      await expect(page.getByText(`${step} of 5`)).toBeVisible();
+      await expect(
+        page.getByText(`${step} of ${TOUR_STEP_COUNT}`)
+      ).toBeVisible();
       await expectMinimumTouchTargets(
-        page.getByRole("button", {
+        tooltip.getByRole("button", {
           name: /^(Close|Skip tour|Back|Next)$/,
         })
       );
     }
 
-    await page
+    await tooltip
       .getByRole("button", { name: "Next", exact: true })
       .click({ force: true });
-    await expect(page.getByText("5 of 5")).toBeVisible();
+    await expect(
+      page.getByText(`${TOUR_STEP_COUNT} of ${TOUR_STEP_COUNT}`)
+    ).toBeVisible();
     await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Back", exact: true })
+      tooltip.getByRole("button", { name: "Back", exact: true })
     );
     await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Anchors Away!", exact: true })
+      tooltip.getByRole("button", { name: "Anchors Away!", exact: true })
     );
   });
 });
@@ -728,6 +806,14 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
     page.getByRole("button", { name: "Refresh", exact: true })
   );
   await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
+  await page.getByRole("combobox", { name: "Filter by capability:", exact: true }).click();
+  await expectCompactDesktopTargets(page.getByRole("menuitemcheckbox"));
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+  await expectCompactDesktopTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
   await expectCompactDesktopTarget(
     page.getByRole("combobox", { name: "Default objective target", exact: true })
   );
@@ -762,7 +848,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await page.getByTestId("start-tour").click();
-  await expect(page.getByText("1 of 5")).toBeVisible();
+  await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Close", exact: true })
   );

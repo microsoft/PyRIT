@@ -210,7 +210,7 @@ class _VLGuardDataset(_RemoteDatasetLoader):
         return "vlguard"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch VLGuard multimodal examples and return as SeedDataset.
 

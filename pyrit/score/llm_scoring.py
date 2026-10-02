@@ -36,7 +36,7 @@ from pyrit.score.observation.execution import (
     _get_current_scoring_expectation,
     _has_observation_collection,
     _ObservationEvidence,
-    _scored_evidence_digest,
+    _scored_evidence_digest_async,
 )
 
 if TYPE_CHECKING:
@@ -178,11 +178,13 @@ async def _run_llm_scoring_async(
         else None
     )
     scored_evidence_digest = (
-        _scored_evidence_digest(
-            scorable=observation_scorable,
-            scored_piece_id=cast("uuid.UUID", scored_piece_id),
-            memory=resolved_normalizer.memory,
-            scored_message_piece=scored_message_piece,
+        (
+            await _scored_evidence_digest_async(
+                scorable=observation_scorable,
+                scored_piece_id=cast("uuid.UUID", scored_piece_id),
+                memory=resolved_normalizer.memory,
+                scored_message_piece=scored_message_piece,
+            )
         )
         if observation_scorable is not None
         and (not isinstance(observation_scorable, MessageScorable) or scored_message_piece is not None)
@@ -194,10 +196,7 @@ async def _run_llm_scoring_async(
     )
 
     if system_prompt is not None:
-        chat_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=conversation_id,
-        )
+        (await chat_target.set_system_prompt_async(system_prompt=system_prompt, conversation_id=conversation_id))
     # Forward the JSON-response request (format and any schema together) via the handler's
     # canonical config; the target's normalization pipeline omits the schema when it cannot
     # natively enforce one.

@@ -106,7 +106,11 @@ async def test_azure_blob_storage_validate_prev_convs(
 ):
     mock_upload_async.return_value = None
     message_piece = sample_entries[0]
-    azure_blob_storage_target._memory.add_message_to_memory(request=Message(message_pieces=[message_piece]))
+    (
+        await azure_blob_storage_target._memory.add_message_to_memory_async(
+            request=Message(message_pieces=[message_piece])
+        )
+    )
     request = Message(message_pieces=[message_piece])
 
     with pytest.raises(

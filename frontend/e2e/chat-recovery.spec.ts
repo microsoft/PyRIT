@@ -8,7 +8,8 @@ import {
   type Page,
   type Request,
   type Route,
-} from "@playwright/test";
+} from "./_fixtures";
+import { compatibilityHeaders } from "./_compatibility";
 import type {
   AddMessageRequest,
   AddMessageResponse,
@@ -27,6 +28,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
   imageConverterId: async ({ request }, runTest) => {
     const name = `recovery-image-${randomUUID()}`;
     const created = await request.post("/api/converters", {
+      headers: compatibilityHeaders(),
       data: {
         name,
         type: "ImageRotationConverter",
@@ -37,7 +39,9 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
     try {
       await runTest(name);
     } finally {
-      const deleted = await request.delete(`/api/converters/${encodeURIComponent(name)}`);
+      const deleted = await request.delete(`/api/converters/${encodeURIComponent(name)}`, {
+        headers: compatibilityHeaders(),
+      });
       expect(deleted.status()).toBe(204);
     }
   },
@@ -89,6 +93,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
         throw new Error("Expected a loopback provider port");
       }
       const created = await request.post("/api/targets", {
+        headers: compatibilityHeaders(),
         data: {
           type: "OpenAIChatTarget",
           auth_mode: "api_key",
@@ -141,7 +146,9 @@ async function sendFromComposer(page: Page, text?: string): Promise<AddMessageRe
 }
 
 async function createConversation(request: APIRequestContext, attackId: string): Promise<string> {
-  const response = await request.post(`/api/attacks/${attackId}/conversations`, { data: {} });
+  const response = await request.post(`/api/attacks/${attackId}/conversations`, {
+    data: {}, headers: compatibilityHeaders(),
+  });
   expect(response.status()).toBe(201);
   const created: CreateConversationResponse = await response.json();
   return created.conversation_id;
@@ -209,6 +216,7 @@ test.describe("Chat processing recovery @seeded", () => {
       const attackId = first.attack.attack_result_id;
       const sourceId = first.attack.conversation_id;
       const later = await request.post(`/api/attacks/${attackId}/messages`, {
+        headers: compatibilityHeaders(),
         data: {
           role: "user",
           pieces: [{ data_type: "text", original_value: "Latest failed draft" }],
@@ -243,6 +251,7 @@ test.describe("Chat processing recovery @seeded", () => {
       await expect(recover).toHaveCount(0);
       const historyResponse = await request.get(
         `/api/attacks/${attackId}/messages?conversation_id=${cloned.conversation_id}`,
+        { headers: compatibilityHeaders() },
       );
       expect(historyResponse.ok()).toBeTruthy();
       const history: ConversationMessagesResponse = await historyResponse.json();
@@ -276,6 +285,7 @@ test.describe("Chat processing recovery @seeded", () => {
     const attackId = first.attack.attack_result_id;
     const otherId = await createConversation(request, attackId);
     const stored = await request.post(`/api/attacks/${attackId}/messages`, {
+      headers: compatibilityHeaders(),
       data: {
         role: "user",
         pieces: [{ data_type: "text", original_value: "Only conversation B history" }],

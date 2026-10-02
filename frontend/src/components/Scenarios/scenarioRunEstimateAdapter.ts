@@ -57,16 +57,20 @@ export function mapScenarioRunEstimate(
     return {
       status: 'unavailable',
       scope,
-      label: scope === 'default'
-        ? 'Default run size unavailable'
-        : 'Configured run size unavailable',
-      note: response.note ?? undefined,
+      label: scope === 'default' ? 'Default run size unavailable' : 'Configured run size unavailable',
+      note: response.note
+        ?? (response.dataset_size.kind === 'indeterminate'
+          ? response.dataset_size.detail
+          : undefined),
     }
   }
 
   const componentOccurrences = new Map<string, number>()
   const estimate: ScenarioRunEstimate = {
     scope,
+    datasetSize: response.dataset_size,
+    approximate: response.status === 'approximate'
+      || response.status === 'conditional',
     total: response.estimated_attack_count,
     minimum: response.minimum_attack_count ?? null,
     maximum: response.maximum_attack_count ?? null,

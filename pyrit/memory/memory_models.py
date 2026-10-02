@@ -68,6 +68,7 @@ from pyrit.models import (
     Seed,
     SeedIdentifier,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
     SeedSimulatedConversation,
     SeedType,
@@ -298,7 +299,13 @@ class PromptMemoryEntry(Base):
 
     scores: Mapped[list["ScoreEntry"]] = relationship(
         "ScoreEntry",
-        primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
+        primaryjoin="and_(ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id, "
+        "ScoreEntry.is_intermediate == False)",
+        viewonly=True,
+        foreign_keys="ScoreEntry.prompt_request_response_id",
+    )
+    all_scores: Mapped[list["ScoreEntry"]] = relationship(
+        "ScoreEntry",
         back_populates="prompt_request_piece",
         foreign_keys="ScoreEntry.prompt_request_response_id",
     )
@@ -1002,11 +1009,11 @@ class ConversationEntry(Base):
     """
     Conversation-scoped metadata, persisted once per ``conversation_id``.
 
-    Holds identifiers that belong to the conversation as a whole -- currently the
-    target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
-    row. The target is captured once when the conversation's pieces are written and
-    read back via ``MemoryInterface._get_conversation`` (it is not stamped
-    onto individual pieces).
+    Holds identifiers that belong to the conversation as a whole, namely the target
+    identifier and the owning attack execution's result ID, so they are not
+    duplicated onto every ``PromptMemoryEntry`` row. The target is captured once when
+    the conversation's pieces are written and read back via
+    ``MemoryInterface._get_conversation`` (it is not stamped onto individual pieces).
 
     The target is dual-written: the full identifier stays in the ``target_identifier``
     JSON column (still the read source), and ``target_identifier_hash`` references the
@@ -1028,6 +1035,11 @@ class ConversationEntry(Base):
     # this conversation). Nullable for backwards compatibility with existing databases.
     retries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
+    #: ID of the attack result whose execution owns this conversation. It matches
+    #: ``AttackResultEntries.id`` by value rather than by foreign key, because the result
+    #: row is written when the execution finishes. Null outside an attack execution.
+    attack_result_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
+
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
     pyrit_version = mapped_column(String, nullable=True)
@@ -1043,6 +1055,7 @@ class ConversationEntry(Base):
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
         self.retries = [retry.model_dump(mode="json") for retry in conversation.retries] or None
+        self.attack_result_id = uuid.UUID(conversation.attack_result_id) if conversation.attack_result_id else None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -1058,6 +1071,7 @@ class ConversationEntry(Base):
         return Conversation(
             conversation_id=self.conversation_id,
             target_identifier=target_id,
+            attack_result_id=str(self.attack_result_id) if self.attack_result_id else None,
             retries=retries,
         )
 
@@ -1239,6 +1253,8 @@ class ScoreEntry(Base):
 
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     score_value = mapped_column(String, nullable=True)
+    # Marks nested scorer results, not the public call's returned results.
+    is_intermediate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     score_value_description = mapped_column(String, nullable=True)
     # "complete" or "undetermined"; an undetermined score carries no score_value.
     status = mapped_column(String(16), nullable=False, default=ScoreStatus.COMPLETE.value)
@@ -1265,7 +1281,7 @@ class ScoreEntry(Base):
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
-    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
+    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="all_scores")
     observation_links: Mapped[list["ScoreObservationEntry"]] = relationship(
         "ScoreObservationEntry",
         back_populates="score",
@@ -1274,15 +1290,17 @@ class ScoreEntry(Base):
         lazy="selectin",
     )
 
-    def __init__(self, *, entry: Score) -> None:
+    def __init__(self, *, entry: Score, is_intermediate: bool = False) -> None:
         """
         Initialize a ScoreEntry from a Score object.
 
         Args:
             entry (Score): The score object to convert into a database entry.
+            is_intermediate (bool): Whether this result came from a nested scoring call.
         """
         entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
         self.id = entry.id
+        self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description
         self.status = entry.status.value
@@ -1353,6 +1371,7 @@ class ScoreEntry(Base):
         """
         return {
             "id": str(self.id),
+            "is_intermediate": self.is_intermediate,
             "score_value": self.score_value,
             "score_value_description": self.score_value_description,
             "status": self.status,
@@ -1492,6 +1511,9 @@ class SeedEntry(Base):
     sequence: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     role: Mapped[ChatMessageRole | None] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
+    )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: Seed) -> None:
@@ -1525,6 +1547,7 @@ class SeedEntry(Base):
         self.prompt_metadata = self._pack_seed_metadata(entry)
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
+        self.origin = entry.origin.value
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
@@ -1638,6 +1661,7 @@ class SeedEntry(Base):
         if self.seed_type == "objective":
             return SeedObjective(
                 id=self.id,
+                origin=SeedOrigin(self.origin),
                 value=self.value,
                 value_sha256=self.value_sha256,
                 name=self.name,
@@ -1675,6 +1699,7 @@ class SeedEntry(Base):
             try:
                 return SeedSimulatedConversation(
                     id=self.id,
+                    origin=SeedOrigin(self.origin),
                     value_sha256=None if is_legacy_record else self.value_sha256,
                     name=self.name,
                     dataset_name=self.dataset_name,
@@ -1702,6 +1727,7 @@ class SeedEntry(Base):
                 ) from exc
         return SeedPrompt(
             id=self.id,
+            origin=SeedOrigin(self.origin),
             value=self.value,
             value_sha256=self.value_sha256,
             data_type=self.data_type,

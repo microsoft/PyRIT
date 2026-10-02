@@ -281,17 +281,76 @@ async def test_score_video_float_scale(video_converter_sample_video):
     assert "Video scored by analyzing" in scores[0].score_rationale
 
 
+class MockMultiCategoryFloatScaleScorer(MessageFloatScaleScorer):
+    """FloatScaleScorer that returns one score per category per frame, like AzureContentFilterScorer."""
+
+    CATEGORIES = ("Hate", "SelfHarm", "Sexual", "Violence")
+
+    def __init__(self):
+        validator = ScorerPromptValidator(supported_data_types=["image_path"])
+        super().__init__(validator=validator)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """Build the scorer evaluation identifier for this mock scorer.
+
+        Returns:
+            ComponentIdentifier: The identifier for this scorer.
+        """
+        return self._create_identifier()
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        return [
+            Score(
+                score_type="float_scale",
+                score_value="0.1",
+                score_rationale=f"Test rationale for {message_piece.converted_value} / {category}",
+                score_category=[category],
+                score_metadata={},
+                score_value_description="test_description",
+                message_piece_id=message_piece.id or uuid.uuid4(),
+                objective=objective,
+                scorer_class_identifier=get_mock_scorer_identifier(),
+            )
+            for category in self.CATEGORIES
+        ]
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+async def test_score_video_float_scale_rationale_counts_frames_not_scores(video_converter_sample_video):
+    """The frame count in the rationale must not be inflated by scores-per-frame.
+
+    A frame scorer that returns one score per category per frame produces four
+    times as many scores as frames, and FloatScaleScorerByCategory.MAX - the
+    documented default, chosen for exactly this kind of scorer - is the one
+    that reports it.
+    """
+    image_scorer = MockMultiCategoryFloatScaleScorer()
+    num_frames = 3
+    scorer = VideoFloatScaleScorer(image_capable_scorer=image_scorer, num_sampled_frames=num_frames)
+
+    scores = await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)
+
+    assert len(scores) == len(MockMultiCategoryFloatScaleScorer.CATEGORIES)
+    for score in scores:
+        assert score.score_rationale.startswith(f"Video scored by analyzing {num_frames} frames."), (
+            f"rationale reports the wrong frame count: {score.score_rationale!r}"
+        )
+
+
 async def test_score_video_true_false_propagates_undetermined_frame_result(video_converter_sample_video):
     image_scorer = MockTrueFalseScorer()
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer)
     scorer._video_helper._score_frames_async = AsyncMock(
-        return_value=[
-            _make_score(
-                score_type="true_false",
-                score_value=None,
-                message_piece_id=video_converter_sample_video.id,
-            )
-        ]
+        return_value=(
+            [
+                _make_score(
+                    score_type="true_false",
+                    score_value=None,
+                    message_piece_id=video_converter_sample_video.id,
+                )
+            ],
+            1,
+        )
     )
 
     scores = await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)
@@ -308,13 +367,16 @@ async def test_score_video_true_false_propagates_undetermined_final_result(video
     audio_scorer = MockAudioTrueFalseScorer()
     scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer, audio_scorer=audio_scorer)
     scorer._video_helper._score_frames_async = AsyncMock(
-        return_value=[
-            _make_score(
-                score_type="true_false",
-                score_value="true",
-                message_piece_id=video_converter_sample_video.id,
-            )
-        ]
+        return_value=(
+            [
+                _make_score(
+                    score_type="true_false",
+                    score_value="true",
+                    message_piece_id=video_converter_sample_video.id,
+                )
+            ],
+            1,
+        )
     )
     scorer._video_helper._score_video_audio_async = AsyncMock(
         return_value=[
@@ -337,13 +399,16 @@ async def test_score_video_float_scale_propagates_undetermined_result(video_conv
     image_scorer = MockFloatScaleScorer()
     scorer = VideoFloatScaleScorer(image_capable_scorer=image_scorer)
     scorer._video_helper._score_frames_async = AsyncMock(
-        return_value=[
-            _make_score(
-                score_type="float_scale",
-                score_value=None,
-                message_piece_id=video_converter_sample_video.id,
-            )
-        ]
+        return_value=(
+            [
+                _make_score(
+                    score_type="float_scale",
+                    score_value=None,
+                    message_piece_id=video_converter_sample_video.id,
+                )
+            ],
+            1,
+        )
     )
 
     scores = await scorer._score_piece_with_expectation_async(video_converter_sample_video, expectation=None)

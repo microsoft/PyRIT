@@ -270,7 +270,7 @@ export default function AttackHistory({
 
   return (
     <div className={styles.root}>
-      <div className={styles.header} data-tour="history-filters">
+      <div className={styles.header}>
         <div className={styles.headerRow}>
           {showTitle && <Text as="h1" size={500} weight="semibold">Attack History</Text>}
           <Button

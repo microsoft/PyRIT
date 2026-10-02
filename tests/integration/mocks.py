@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 
 from sqlalchemy import inspect
 
@@ -10,28 +11,25 @@ from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, limit_requests_per_minute
 
 
-def get_memory_interface() -> Generator[MemoryInterface, None, None]:
-    yield from get_sqlite_memory()
+async def get_memory_interface_async() -> AsyncGenerator[MemoryInterface, None]:
+    async with aclosing(get_sqlite_memory_async()) as memories:
+        async for memory in memories:
+            yield memory
 
 
-def get_sqlite_memory() -> Generator[SQLiteMemory, None, None]:
-    # Create an in-memory SQLite engine
-    sqlite_memory = SQLiteMemory(db_path=":memory:")
-
-    sqlite_memory.disable_embedding()
-
-    # Reset the database to ensure a clean state
-    sqlite_memory.reset_database()
-    inspector = inspect(sqlite_memory.engine)
-
-    # Verify that tables are created as expected
-    assert "PromptMemoryEntries" in inspector.get_table_names(), "PromptMemoryEntries table not created."
-    assert "EmbeddingData" in inspector.get_table_names(), "EmbeddingData table not created."
-    assert "ScoreEntries" in inspector.get_table_names(), "ScoreEntries table not created."
-    assert "SeedPromptEntries" in inspector.get_table_names(), "SeedPromptEntries table not created."
-
-    yield sqlite_memory
-    sqlite_memory.dispose_engine()
+async def get_sqlite_memory_async() -> AsyncGenerator[SQLiteMemory, None]:
+    sqlite_memory = SQLiteMemory.__new__(SQLiteMemory)
+    sqlite_memory.__init__(db_path=":memory:", _defer_initialization=True)
+    try:
+        sqlite_memory.disable_embedding()
+        await sqlite_memory.initialize_async()
+        async with await sqlite_memory.get_session_async() as session:
+            connection = await session.connection()
+            tables = await connection.run_sync(lambda sync_connection: inspect(sync_connection).get_table_names())
+        assert {"PromptMemoryEntries", "EmbeddingData", "ScoreEntries", "SeedPromptEntries"} <= set(tables)
+        yield sqlite_memory
+    finally:
+        await sqlite_memory.dispose_engine_async()
 
 
 class MockPromptTarget(PromptTarget):
@@ -51,7 +49,7 @@ class MockPromptTarget(PromptTarget):
         self.id = id
         self.prompt_sent = []
 
-    def set_system_prompt(
+    async def set_system_prompt_async(
         self,
         *,
         system_prompt: str,
@@ -61,13 +59,15 @@ class MockPromptTarget(PromptTarget):
     ) -> None:
         self.system_prompt = system_prompt
         if self._memory:
-            self._memory.add_message_to_memory(
-                request=MessagePiece(
-                    role="system",
-                    original_value=system_prompt,
-                    converted_value=system_prompt,
-                    conversation_id=conversation_id,
-                ).to_message()
+            (
+                await self._memory.add_message_to_memory_async(
+                    request=MessagePiece(
+                        role="system",
+                        original_value=system_prompt,
+                        converted_value=system_prompt,
+                        conversation_id=conversation_id,
+                    ).to_message()
+                )
             )
 
     @limit_requests_per_minute

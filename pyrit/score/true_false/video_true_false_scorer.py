@@ -129,7 +129,7 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
         piece_id = message_piece.id
 
         # Get scores for all frames and aggregate with OR (True if ANY frame matches)
-        frame_scores = await self._video_helper._score_frames_async(
+        frame_scores, num_frames = await self._video_helper._score_frames_async(
             message_piece=message_piece, expectation=expectation
         )
         frame_result = TrueFalseScoreAggregator.OR(frame_scores)
@@ -142,7 +142,9 @@ class VideoTrueFalseScorer(MessageTrueFalseScorer):
             score_type="true_false",
             score_category=frame_result.category,
             score_metadata=frame_result.metadata,
-            score_rationale=f"Frames ({len(frame_scores)}): {frame_result.rationale}",
+            # num_frames, not len(frame_scores): a true/false scorer returns one
+            # score per frame today, but the count should not depend on that.
+            score_rationale=f"Frames ({num_frames}): {frame_result.rationale}",
             scorer_class_identifier=self.get_identifier(),
             message_piece_id=piece_id,
             objective=objective,
