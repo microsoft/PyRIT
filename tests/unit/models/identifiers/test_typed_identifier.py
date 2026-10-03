@@ -249,6 +249,18 @@ class TestComponentType:
     def test_base_identifier_has_no_reference_args(self):
         assert ComponentIdentifier.get_reference_component_types() == {}
 
+    def test_target_sensitive_parameter_names(self):
+        assert TargetIdentifier.get_sensitive_parameter_names() == frozenset({"hf_access_token", "sas_token"})
+
+    def test_base_identifier_has_no_sensitive_parameters(self):
+        assert ComponentIdentifier.get_sensitive_parameter_names() == frozenset()
+
+    def test_target_multiline_parameter_names(self):
+        assert TargetIdentifier.get_multiline_parameter_names() == frozenset({"http_request"})
+
+    def test_base_identifier_has_no_multiline_parameters(self):
+        assert ComponentIdentifier.get_multiline_parameter_names() == frozenset()
+
 
 class TestClassAttributeValues:
     """``get_class_attribute_values`` reads Param.ClassAttr fields off a target class."""
