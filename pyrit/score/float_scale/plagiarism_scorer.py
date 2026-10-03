@@ -48,12 +48,26 @@ class PlagiarismScorer(MessageFloatScaleScorer):
             metric (PlagiarismMetric): The plagiarism detection metric to use. Defaults to PlagiarismMetric.LCS.
             n (int): The n-gram size for n-gram similarity. Defaults to 5.
             validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
+
+        Raises:
+            ValueError: If ``reference_text`` is not a non-empty string or contains no word tokens,
+                if ``metric`` is not an instance of PlagiarismMetric, or if ``n`` is not an integer >= 1.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
+        if not isinstance(reference_text, str) or not reference_text.strip():
+            raise ValueError("reference_text must be a non-empty string.")
+        if not isinstance(metric, PlagiarismMetric):
+            raise ValueError(f"metric must be an instance of PlagiarismMetric, got {metric!r}.")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValueError(f"n must be an integer >= 1, got {n!r}.")
 
         self.reference_text = reference_text
         self.metric = metric
         self.n = n
+
+        if not self._tokenize(reference_text):
+            raise ValueError("reference_text must contain at least one word token.")
+
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -152,6 +166,11 @@ class PlagiarismScorer(MessageFloatScaleScorer):
         metric: PlagiarismMetric = PlagiarismMetric.LCS,
         n: int = 5,
     ) -> float:
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValueError(f"n must be an integer >= 1, got {n!r}.")
+        if not hasattr(metric, "value"):
+            raise ValueError("metric must be 'lcs', 'levenshtein', or 'jaccard'")
+
         tokens_response = self._tokenize(response)
         tokens_reference = self._tokenize(reference)
         response_len = len(tokens_response)
