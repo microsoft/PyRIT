@@ -78,8 +78,8 @@ class TestIntermediateScores:
         add.assert_awaited_once()
         assert children == originals
         assert result.get_value() is False
-        # Float feedback semantics are a separate change from retaining judgments.
-        assert result.score_metadata["original_float_value"] == 0.8
+        # The threshold's float describes the uninverted verdict, so only the retained threshold result keeps it.
+        assert "original_float_value" not in (result.score_metadata or {})
         entries = sqlite_instance._query_entries(ScoreEntry)
         stored = [entry.get_score() for entry in entries]
         assert len(stored) == 4
@@ -99,6 +99,7 @@ class TestIntermediateScores:
             score for score in stored if score.scorer_class_identifier.class_name == "FloatScaleThresholdScorer"
         )
         assert threshold_result.get_value() is True
+        assert threshold_result.score_metadata["original_float_value"] == 0.8
         assert threshold_result.id != result.id
         assert await sqlite_instance.get_scores_async(score_type="float_scale") == []
         assert len(await sqlite_instance.get_scores_async(score_type="float_scale", include_intermediate=True)) == 2
