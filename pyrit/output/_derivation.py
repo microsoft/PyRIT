@@ -5,9 +5,10 @@
 Shared *derivation* helpers for the output printers.
 
 These compute values from models (target fields, success rates, score display,
-attack selection) so the pretty / markdown / json printers derive them **once**
-instead of each keeping its own copy. Presentation (color, fallback strings) stays
-in the printers; these return raw values with an optional ``none_value`` fallback.
+attack and objective-score selection) so the pretty / markdown / json printers
+derive them **once** instead of each keeping its own copy. Presentation (color,
+fallback strings) stays in the printers; these return raw values with an optional
+``none_value`` fallback.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from pyrit.analytics.scenario_statistics import combine_execution_counts, compute_scenario_statistics
 
 if TYPE_CHECKING:
-    from pyrit.models import AttackResult, ComponentIdentifier, ScenarioResult, Score
+    from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
 
 
 class TargetInfo(NamedTuple):
@@ -160,3 +161,45 @@ def resolve_scorer_name(score: Score, *, none_value: str | None = None) -> str |
     """
     identifier = score.scorer_class_identifier
     return identifier.class_name if identifier else none_value
+
+
+def select_objective_scores(
+    *,
+    pieces: list[MessagePiece],
+    scores: list[Score],
+    objective_scorer_identifier: ComponentIdentifier,
+) -> dict[str, Score]:
+    """
+    Pick the objective scorer's score for each message piece.
+
+    A score only counts for the piece it is stored on: a duplicated piece's scores are stored on
+    its original, and a message-level score is stored on one piece of the message. The identity
+    hash is matched before the class name.
+
+    Args:
+        pieces (list[MessagePiece]): The pieces to pick scores for.
+        scores (list[Score]): The scores read for those pieces.
+        objective_scorer_identifier (ComponentIdentifier): The objective scorer to match.
+
+    Returns:
+        dict[str, Score]: The objective score of each piece that has one, keyed by piece id.
+    """
+    hash_matches: dict[str, Score] = {}
+    class_name_matches: dict[str, Score] = {}
+    for score in scores:
+        identifier = score.scorer_class_identifier
+        if identifier is None or score.message_piece_id is None:
+            continue
+        owner_id = str(score.message_piece_id)
+        if identifier.hash == objective_scorer_identifier.hash:
+            hash_matches.setdefault(owner_id, score)
+        elif identifier.class_name == objective_scorer_identifier.class_name:
+            class_name_matches.setdefault(owner_id, score)
+
+    selected: dict[str, Score] = {}
+    for piece in pieces:
+        owner_id = str(piece.original_prompt_id or piece.id)
+        score = hash_matches.get(owner_id, class_name_matches.get(owner_id))
+        if score is not None:
+            selected[str(piece.id)] = score
+    return selected
