@@ -5,11 +5,12 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import NumericRange
+from pyrit.score import NumericRange, NumericRubric
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
     SelfAskGeneralFloatScaleScorer,
 )
@@ -223,6 +224,28 @@ async def test_general_float_scorer_retries_out_of_range_score(patch_central_dat
 def test_general_float_scorer_init_invalid_min_max():
     with pytest.raises(ValueError):
         NumericRange(minimum_value=10, maximum_value=5, category="test")
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        {"minimum_value": True, "maximum_value": 10},
+        {"minimum_value": 0, "maximum_value": True},
+    ],
+)
+def test_numeric_range_rejects_bool_bounds(bounds):
+    # `bool` is a subclass of `int`, so a bool bound has to be rejected rather than coerced to 0 or 1.
+    with pytest.raises(ValidationError, match="not a bool"):
+        NumericRange(**bounds)
+
+
+def test_numeric_rubric_from_yaml_rejects_bool_bounds(tmp_path):
+    # The YAML path is how a user actually supplies these bounds.
+    rubric = tmp_path / "rubric.yaml"
+    rubric.write_text("category: test\nminimum_value: true\nmaximum_value: 10\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="not a bool"):
+        NumericRubric.from_yaml(rubric)
 
 
 def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
