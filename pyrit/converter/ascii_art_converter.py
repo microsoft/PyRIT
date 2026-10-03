@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 
+from functools import cache
+
 from art import ASCII_FONTS, text2art
 
 from pyrit.converter.converter import Converter, ConverterResult
@@ -28,6 +30,28 @@ _ART_RANDOM_EXCLUDED_ASCII_FONTS = {
     "tsalagi",
 }
 _ART_RANDOM_FONTS = sorted(set(ASCII_FONTS) - _ART_RANDOM_EXCLUDED_ASCII_FONTS)
+
+
+@cache
+def _font_renders_character(character: str, font: str) -> bool:
+    """
+    Return whether ``font`` has a glyph for ``character``.
+
+    ``text2art`` silently omits characters without a glyph, so renderability
+    is detected by rendering the single character and checking for any
+    non-whitespace output. Whitespace characters are layout for ``text2art``
+    and always pass.
+
+    Args:
+        character (str): The character to check.
+        font (str): The art font to render with.
+
+    Returns:
+        bool: True if the font renders the character or it is whitespace.
+    """
+    if character.isspace():
+        return True
+    return bool(text2art(character, font=font).strip())
 
 
 class AsciiArtConverter(Converter):
@@ -72,7 +96,9 @@ class AsciiArtConverter(Converter):
             ConverterResult: The result containing the ASCII art representation of the prompt.
 
         Raises:
-            ValueError: If the input type is not supported.
+            ValueError: If the input type is not supported, or if the prompt contains
+                characters the selected font has no glyph for. Such characters would
+                otherwise be silently dropped from the converted prompt.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
@@ -80,5 +106,15 @@ class AsciiArtConverter(Converter):
         font = self._font
         if font == "rand":
             font = self._get_random_generator(stream="font").choice(_ART_RANDOM_FONTS)
+
+        unrenderable = [char for char in prompt if not _font_renders_character(char, font)]
+        if unrenderable:
+            characters = "".join(sorted(set(unrenderable)))
+            raise ValueError(
+                f"Cannot convert {len(unrenderable)} character(s) to ASCII art with font {font!r}: "
+                f"{characters!r}. The font has no glyph for them and they would be silently "
+                f"dropped from the converted prompt; remove them, transliterate them, or pick "
+                f"another font."
+            )
 
         return ConverterResult(output_text=text2art(prompt, font=font), output_type="text")
