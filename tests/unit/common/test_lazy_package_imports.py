@@ -23,6 +23,18 @@ _EAGER_PACKAGE_EXCEPTIONS = frozenset(
 
 _LAZY_IMPORT_SPOT_CHECKS = [
     (
+        "pyrit.registry",
+        "AttackRegistry",
+        "pyrit.registry.components.attack_registry",
+        "pyrit.executor.attack",
+    ),
+    (
+        "pyrit.registry.components",
+        "AttackRegistry",
+        "pyrit.registry.components.attack_registry",
+        "pyrit.executor.attack",
+    ),
+    (
         "pyrit.models",
         "Message",
         "pyrit.models.messages.message",

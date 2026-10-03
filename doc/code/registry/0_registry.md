@@ -20,14 +20,17 @@ PyRIT has two registry patterns for different use cases:
 
 ## Common API
 
-Registries share a consistent interface for discovery and introspection:
+Class catalogs share an interface for discovery and metadata:
 
 | Method | Description |
 |--------|-------------|
 | `get_registry_singleton()` | Get the singleton registry instance |
-| `get_names()` | List all registered names |
-| `list_metadata()` | Get descriptive metadata for all items |
-| `reset_instance()` | Reset the singleton (useful for testing) |
+| `get_class_names()` | List all registered class names |
+| `get_all_registered_class_metadata()` | Get constructor metadata for registered classes |
+| `reset_registry_singleton()` | Reset the singleton (useful for testing) |
+
+Registries that also store configured objects expose `get_names()` and
+`list_metadata()` through `.instances`.
 
 This makes it easy to write code that inspects any registry:
 
@@ -36,7 +39,7 @@ from pyrit.registry import ScenarioRegistry
 
 
 def show_registry_contents(registry) -> None:
-    for name in registry.get_names():
+    for name in registry.get_class_names():
         print(name)
 
 
@@ -83,6 +86,46 @@ as it does for other optional parameters.
 The backend owns file-upload handling and cleanup, not the registry. See the
 [registry API migration notes](../../gui/0_gui.md#registry-api-migration-notes)
 for the REST contract and temporary compatibility behavior.
+
+## Attack Class Registry
+
+`AttackRegistry` discovers concrete `AttackStrategy` classes from
+`pyrit.executor.attack`. It stores classes, not live attack instances, and has no
+`.instances` property. Discovery works when `AttackTechniqueRegistry` is empty.
+Discovery and constructor metadata do not construct attacks or call targets.
+
+Use `get_class_names()`, `get_class()`, and
+`get_all_registered_class_metadata()` to inspect the class catalog. Use
+`register_class(CustomAttack, name="custom")` to add a custom class.
+`get_registry_singleton()` returns the shared registry;
+`reset_registry_singleton()` clears it. PyRIT setup also resets this registry.
+
+After PyRIT initialization, build an attack with constructor arguments:
+
+```python
+from pyrit.executor.attack import AttackConverterConfig
+from pyrit.registry import AttackRegistry, TargetRegistry
+
+# objective_target is an existing configured target.
+TargetRegistry.get_registry_singleton().instances.register(objective_target, name="objective")
+attack = AttackRegistry.get_registry_singleton().create_instance(
+    "PromptSendingAttack",
+    objective_target="objective",
+    attack_converter_config=AttackConverterConfig(),
+    max_attempts_on_failure=1,
+)
+```
+
+`objective_target` accepts a registered target name or a live target object.
+Simple scalar inputs use the shared resolver. Pass live Python configuration
+objects, such as `AttackAdversarialConfig`, `AttackConverterConfig`, and
+`AttackScoringConfig`, for nested components. Advanced Python values, such as a
+prompt normalizer or a parameter class, pass through unchanged. Nested JSON
+attack recipes are not supported.
+
+An attack class implements the conversation algorithm. An attack technique
+factory selects and configures that class, converters, scorers, and seeds.
+`AttackTechniqueRegistry` continues to store those factories separately.
 
 ## See Also
 
