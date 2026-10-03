@@ -256,9 +256,36 @@ class SeedDatasetFilter:
         Warn about contradictory filter configurations.
 
         Raises:
-            ValueError: If strict_match is True and any criterion has multiple
-                values for a singular field (size, source_type).
+            ValueError: If a criterion requests a filter axis with an empty set, or if
+                strict_match is True and any criterion has multiple values for a singular
+                field (size, source_type). The empty-axis check is skipped when any criterion
+                carries the 'all' tag, since 'all' bypasses every other field.
         """
+        # An empty set is not a filter. Without strict_match nothing can overlap with it,
+        # and with strict_match nothing can be outside it, so the same filter would match
+        # either no dataset at all or every dataset, depending on one flag. None is how a
+        # criterion says "this axis is not requested", so keep the empty set out.
+        #
+        # The 'all' tag is the documented escape hatch: it bypasses every other field, so
+        # an axis passed alongside it is ignored rather than applied. Rejecting it here
+        # would make `tags={"all"}` fail on a field it is documented to ignore, and the
+        # caller explicitly asked for every dataset. The warnings below still run.
+        empty_axes = (
+            []
+            if self.has_all_tag
+            else sorted(
+                f.name
+                for criterion in self.criteria
+                for f in fields(SeedDatasetMetadata)
+                if getattr(criterion, f.name) is not None and len(getattr(criterion, f.name)) == 0
+            )
+        )
+        if empty_axes:
+            raise ValueError(
+                f"Filter axes {empty_axes} were given an empty set, which matches no dataset. "
+                f"Pass None to leave an axis unfiltered, or drop the argument."
+            )
+
         # strict_match with multi-valued singular fields is logically impossible.
         # A dataset can't be both "small" AND "large" — these are mutually exclusive.
         if self.strict_match:
