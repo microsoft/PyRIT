@@ -420,9 +420,11 @@ def _parse_judgment_observation(
         category=category,
         judgment_replay_identifier=judgment_replay_identifier,
     )
-    if observation.payload.replay_contract_fingerprint is None:
+    if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
+        # A current handler that opts out of replay is never overridden by a legacy contract.
         raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
-    if replay_contract_fingerprint != observation.payload.replay_contract_fingerprint:
+    contract_matches = replay_contract_fingerprint == observation.payload.replay_contract_fingerprint
+    if not contract_matches and not isinstance(evidence, Message):
         raise NonReplayableObservationError(
             "The judgment configuration, response handler or category differs from the acquisition contract."
         )
@@ -432,6 +434,19 @@ def _parse_judgment_observation(
         (piece for piece in evidence.message_pieces if piece.converted_value_data_type == "text"),
         None,
     )
+    if not contract_matches and not (
+        text_piece is not None
+        and observation.payload.replay_contract_fingerprint
+        in _legacy_replay_contract_fingerprints(
+            response_handler=response_handler,
+            response_text=text_piece.converted_value,
+            category=category,
+            judgment_replay_identifier=judgment_replay_identifier,
+        )
+    ):
+        raise NonReplayableObservationError(
+            "The judgment configuration, response handler or category differs from the acquisition contract."
+        )
     if text_piece is None:
         raise NonReplayableObservationError(f"Observation {observation.id} contains no text judgment.")
     anchor_id = observation.payload.scored_piece_id
@@ -461,7 +476,49 @@ def _replay_contract_fingerprint(
     Returns:
         str | None: The replay contract digest, or None when the handler is not stable.
     """
-    handler_identifier = response_handler._get_replay_identifier()
+    return _contract_fingerprint(
+        handler_identifier=response_handler._get_replay_identifier(),
+        category=category,
+        judgment_replay_identifier=judgment_replay_identifier,
+    )
+
+
+def _legacy_replay_contract_fingerprints(
+    *,
+    response_handler: ResponseHandler,
+    response_text: str,
+    category: Sequence[str] | str | None,
+    judgment_replay_identifier: Mapping[str, object] | None,
+) -> set[str]:
+    """
+    Fingerprints of older handler contracts that parse this stored response the same way.
+
+    Returns:
+        set[str]: The digests an observation acquired under an older contract may carry.
+    """
+    fingerprints = {
+        _contract_fingerprint(
+            handler_identifier=legacy,
+            category=category,
+            judgment_replay_identifier=judgment_replay_identifier,
+        )
+        for legacy in response_handler._legacy_replay_identifiers(response_text=response_text, category=category)
+    }
+    return {fingerprint for fingerprint in fingerprints if fingerprint is not None}
+
+
+def _contract_fingerprint(
+    *,
+    handler_identifier: Mapping[str, object] | None,
+    category: Sequence[str] | str | None,
+    judgment_replay_identifier: Mapping[str, object] | None,
+) -> str | None:
+    """
+    Digest one handler contract together with the category and judgment identity.
+
+    Returns:
+        str | None: The digest, or None when the contract is not stable.
+    """
     if handler_identifier is None or judgment_replay_identifier is None:
         return None
     normalized_category = [category] if isinstance(category, str) else list(category) if category else None

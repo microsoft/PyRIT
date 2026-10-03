@@ -47,7 +47,12 @@ if TYPE_CHECKING:
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
-    from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
+    from pyrit.score.response_handler import (
+        CallableResponseHandler,
+        CategoryConflictPolicy,
+        JsonSchemaResponseHandler,
+        ResponseHandler,
+    )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
     from pyrit.score.scorer import Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
@@ -157,6 +162,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AzureContentFilterScorer": "pyrit.score.float_scale.azure_content_filter_scorer",
     "BatchScorer": "pyrit.score.batch_scorer",
     "CallableResponseHandler": "pyrit.score.response_handler",
+    "CategoryConflictPolicy": "pyrit.score.response_handler",
     "ContentScorable": "pyrit.score.scorable",
     "ContentClassifier": "pyrit.score.true_false.self_ask_category_scorer",
     "ContentClassifierCategory": "pyrit.score.true_false.self_ask_category_scorer",
