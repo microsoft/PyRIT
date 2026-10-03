@@ -41,6 +41,18 @@ class TestPackageHallucinationScorerExtraction:
         # "np" is an alias, not a package, and must not be reported as a reference.
         assert scorer._extract_package_references("import numpy as np, ghostlib") == {"numpy", "ghostlib"}
 
+    def test_python_imports_allow_indentation_and_dotted_from_paths(self):
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        text = """
+import requests
+from requests.adapters import HTTPAdapter
+try:
+    import phantomlib
+except ImportError:
+    pass
+"""
+        assert scorer._extract_package_references(text) == {"requests", "phantomlib"}
+
     def test_python_comma_import_reduces_dotted_paths_to_top_level(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
         assert scorer._extract_package_references("import os.path, a.b.c") == {"os", "a"}
