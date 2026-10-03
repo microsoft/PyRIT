@@ -19,8 +19,10 @@ responsibilities:
 - **Resolve from a constructor** (``resolve_constructor_args``): derive the
   contract for a class and turn a flat dict of raw arguments into
   constructor-ready keyword arguments — coercing simple string values via
-  ``Parameter.coerce_value`` and resolving registry-reference parameters by name
-  from the owning domain's registry. Defaults are left to the constructor.
+  ``Parameter.coerce_value``, converting other JSON values under the registry
+  input contract (``Parameter.input_kind`` / ``Parameter.coerce_json_value``),
+  and resolving registry-reference parameters by name from the owning domain's
+  registry. Defaults are left to the constructor.
 - **Resolve from a declared list** (``resolve_declared_params``): the sibling for
   a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
   ``supported_parameters()``). It has no references, coerces every supplied
@@ -42,7 +44,6 @@ import logging
 import re
 import types
 from collections.abc import Collection, Sequence
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
 
 from pydantic import TypeAdapter, ValidationError
@@ -409,7 +410,8 @@ def _resolve_single_reference(
     Resolve a single registry-reference value to a stored instance.
 
     A string value is looked up by name in the paired registry. An already-built
-    instance passes through unchanged.
+    instance passes through unchanged. Other JSON data (a number or an object) can
+    never name an instance, so it is rejected instead of reaching the constructor.
 
     Args:
         value (Any): The raw value (a registry name, or an instance to pass through).
@@ -421,9 +423,15 @@ def _resolve_single_reference(
         Any: The resolved instance.
 
     Raises:
-        ValueError: If the name is not registered.
+        ValueError: If the name is not registered, or the value is JSON data rather than a name
+            or instance.
     """
     if not isinstance(value, str):
+        if value is not None and _is_json_data(value):
+            raise ValueError(
+                f"{owner}.{name}: expected a registry name or instance for this reference, "
+                f"but got {type(value).__name__}."
+            )
         return value
 
     registry = getter()
@@ -478,8 +486,9 @@ def _resolve_registry_reference(
         Any: The resolved instance, or a list of resolved instances.
 
     Raises:
-        ValueError: If a name is not registered, or the value's shape (list vs.
-            scalar) does not match the reference's arity.
+        ValueError: If a name is not registered, a value is JSON data rather than a
+            name or instance, or the value's shape (list vs. scalar) does not match the
+            reference's arity.
     """
     if get_origin(annotation) is list:
         if not isinstance(value, list):
@@ -522,7 +531,8 @@ def resolve_reference_value(
         Any: The resolved instance, or the value unchanged when already an instance.
 
     Raises:
-        ValueError: If no registry is wired for ``component_type``, or the name is not registered.
+        ValueError: If no registry is wired for ``component_type``, the name is not registered,
+            or the value is JSON data rather than a name or instance.
     """
     getter = _registry_getter_for_component_type(component_type)
     if getter is None:
@@ -541,8 +551,11 @@ def resolve_constructor_args(
 
     Derives the ``Parameter`` contract for ``cls`` and applies it to
     ``raw_args``. For each raw argument: validate it is a declared parameter;
-    resolve registry-reference parameters by name; coerce simple string values
-    via ``Parameter.coerce_value``; pass everything else through unchanged.
+    resolve registry-reference parameters by name; build structured inputs from
+    their declared variants; coerce simple string values via
+    ``Parameter.coerce_value``; convert other JSON values via
+    ``Parameter.coerce_json_value``, which rejects JSON for parameters that take
+    only Python objects; pass live Python objects through unchanged.
 
     Args:
         cls (type): The class being built.
@@ -556,7 +569,8 @@ def resolve_constructor_args(
 
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
-            reference cannot be resolved, or a simple value cannot be coerced.
+            reference cannot be resolved, a simple value cannot be coerced, or a
+            JSON value is not accepted for the parameter.
     """
     by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
 
@@ -568,7 +582,6 @@ def resolve_constructor_args(
                 f"Unknown parameter '{name}' for '{cls.__name__}'. Valid parameters: {sorted(by_name.keys())}"
             )
 
-        value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
             getter = _registry_getter_for_component_type(param.reference.component_type)
             if getter is None:
@@ -585,17 +598,44 @@ def resolve_constructor_args(
             )
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
-        elif (isinstance(value, str) and param.is_string_coercible) or (
-            isinstance(value_type, type) and issubclass(value_type, Enum)
-        ):
+        elif isinstance(value, str) and param.is_string_coercible:
             try:
                 resolved[name] = param.coerce_value(value)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Parameter '{name}' of '{cls.__name__}': {e}") from e
+        elif _is_json_data(value):
+            resolved[name] = param.coerce_json_value(value, owner=cls.__name__)
         else:
             resolved[name] = value
 
     return resolved
+
+
+def _is_json_data(value: Any) -> bool:
+    """
+    Return whether a value holds only JSON data rather than live Python objects.
+
+    Returns:
+        bool: True for None, strings, numbers, booleans, and lists or string-keyed dicts of
+            them (exact built-in types, so subclasses and enums count as live objects), without
+            cycles.
+    """
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        item = pending.pop()
+        if item is None or type(item) in (str, int, float, bool):
+            continue
+        if id(item) in seen or type(item) not in (dict, list):
+            return False
+        seen.add(id(item))
+        if type(item) is dict:
+            if not all(type(key) is str for key in item):
+                return False
+            pending.extend(item.values())
+        else:
+            pending.extend(item)
+    return True
 
 
 def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:

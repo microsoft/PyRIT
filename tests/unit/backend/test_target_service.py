@@ -247,6 +247,16 @@ class TestListTargetTypes:
         assert "OpenAIChatTarget" in target_types
         assert "AzureMLChatTarget" in target_types
 
+    async def test_types_report_whether_required_parameters_can_be_supplied(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        constructible = {item.target_type: item.constructible for item in result.items}
+        assert constructible["OpenAIChatTarget"] is True
+        assert constructible["WebsocketTarget"] is False
+        assert constructible["PlaywrightTarget"] is False
+
     async def test_types_include_declarative_auth_facts(self) -> None:
         """Type entries surface the per-class auth facts the frontend needs."""
         service = TargetService()

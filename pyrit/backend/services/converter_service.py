@@ -112,9 +112,10 @@ class ConverterService:
         """
         List all available converter types from the converter class registry.
 
-        Returns every constructible converter. Deciding which entries to surface
-        to a user is a presentation concern owned by the caller (e.g. the
-        frontend), not this service.
+        Returns every registered converter type. ``constructible`` is False when a
+        required parameter cannot be supplied through the API. Deciding which
+        entries to surface to a user is a presentation concern owned by the caller
+        (e.g. the frontend), not this service.
 
         Returns:
             ConverterTypeResponse containing all available converter classes.
@@ -125,6 +126,7 @@ class ConverterService:
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
                 parameters=list(metadata.parameters),
+                constructible=metadata.constructible,
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )

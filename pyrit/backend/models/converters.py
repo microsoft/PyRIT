@@ -44,6 +44,9 @@ class ConverterTypeEntry(BaseModel):
     parameters: list[Parameter] = Field(
         default_factory=list, description="Constructor parameters for dynamic form generation"
     )
+    constructible: bool = Field(
+        True, description="Whether every required parameter can be supplied through this API (see input_kind)"
+    )
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
     description: str | None = Field(None, description="Short description of the converter from its docstring")
 

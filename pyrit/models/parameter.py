@@ -8,15 +8,36 @@ from __future__ import annotations
 import copy
 import types
 from abc import ABC, abstractmethod
+from collections.abc import Collection, Iterable, Mapping, MutableMapping, MutableSequence, MutableSet, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, ForwardRef, Literal, TypeAlias, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE
 
+#: How registry callers supply a parameter; see ``Parameter.input_kind``.
+ParameterInputKind: TypeAlias = Literal[
+    "scalar", "collection", "reference", "structured", "in_process_only", "unsupported"
+]
+_JSON_INPUT_KINDS: frozenset[str] = frozenset({"scalar", "collection", "reference", "structured"})
+_SEQUENCE_ORIGINS: tuple[Any, ...] = (
+    list,
+    tuple,
+    set,
+    frozenset,
+    Collection,
+    Sequence,
+    MutableSequence,
+    Iterable,
+    AbstractSet,
+    MutableSet,
+)
+_SET_ORIGINS: tuple[Any, ...] = (set, frozenset, AbstractSet, MutableSet)
+_MAPPING_ORIGINS: tuple[Any, ...] = (dict, Mapping, MutableMapping)
 _SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool, Path)
 _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
     "Path": Path,
@@ -85,7 +106,8 @@ class Parameter(BaseModel):
     *is* the allowed set) and drives ``coerce_value`` / ``validate``; it is **not**
     serialized. Serialization instead projects the type into the display fields
     ``type_name``, ``choices``, and ``is_list`` (plus ``required`` from the
-    ``REQUIRED_VALUE`` sentinel), so a consumer can rebuild a usable contract from
+    ``REQUIRED_VALUE`` sentinel and ``input_kind``, which says how registry callers
+    supply the value), so a consumer can rebuild a usable contract from
     the registry without the live type travelling on the wire.
 
     ``reference``, when set, marks the parameter as a registry reference: its value
@@ -129,6 +151,14 @@ class Parameter(BaseModel):
         exclude=True,
         description="Where the parameter is consumed at build time; not serialized.",
     )
+    wire_input_kind: ParameterInputKind | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "The ``input_kind`` read from a serialized payload. A ``param_type`` rebuilt from display "
+            "fields cannot always express it, so the serialized value is kept. Not serialized."
+        ),
+    )
     opaque: bool = Field(
         default=False,
         exclude=True,
@@ -171,6 +201,7 @@ class Parameter(BaseModel):
                 choices=data.get("choices"),
                 is_list=bool(data.get("is_list")),
             )
+            data.setdefault("wire_input_kind", data.get("input_kind"))
         if needs_reference:
             data["reference"] = RegistryReference(
                 component_type=ComponentType(data["reference_type"]),
@@ -226,6 +257,33 @@ class Parameter(BaseModel):
     def reference_type(self) -> str | None:
         """Registry component family this parameter references, or None."""
         return self.reference.component_type.value if self.reference is not None else None
+
+    @computed_field
+    @property
+    def input_kind(self) -> ParameterInputKind:
+        """
+        How registry callers supply this parameter.
+
+        ``scalar`` and ``collection`` parameters take JSON values of their declared type,
+        ``reference`` parameters take registry names, and ``structured`` parameters take one of
+        their declared variants. ``in_process_only`` parameters take only live Python objects,
+        and ``unsupported`` parameters have a type the registry cannot describe; neither takes
+        JSON.
+        """
+        if self.wire_input_kind is not None:
+            return self.wire_input_kind
+        if self.reference is not None:
+            return "reference"
+        if self.variants is not None:
+            return "structured"
+        if self.opaque:
+            return "in_process_only"
+        return _annotation_input_kind(self.param_type)
+
+    @property
+    def is_json_configurable(self) -> bool:
+        """Whether registry callers can supply this parameter as JSON."""
+        return self.input_kind in _JSON_INPUT_KINDS
 
     @field_serializer("default")
     def _serialize_default(self, value: Any) -> str | list[str] | None:
@@ -318,6 +376,43 @@ class Parameter(BaseModel):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
         return raw_value
 
+    def coerce_json_value(self, value: Any, *, owner: str) -> Any:
+        """
+        Convert a JSON value to this parameter's declared type under the registry contract.
+
+        A ``scalar`` or ``collection`` parameter takes JSON of its declared type: arrays become
+        the declared list, tuple, or set, and enum or literal choices become their members. A
+        path is accepted only where the parameter is itself a ``Path`` or ``Path | str``. Other
+        parameters take no JSON. ``None`` is accepted wherever the parameter allows it.
+
+        Args:
+            value (Any): JSON data: None, a string, number, boolean, list, or string-keyed dict.
+            owner (str): The class name used in error messages.
+
+        Returns:
+            Any: The value converted to the declared type.
+
+        Raises:
+            ValueError: If the parameter cannot be supplied as JSON, or the value does not match
+                its declared type.
+        """
+        if value is None and (self.default is None or type(None) in _union_members(self.param_type)):
+            return None
+        input_kind = self.input_kind
+        if input_kind == "in_process_only":
+            raise ValueError(
+                f"Parameter '{self.name}' of '{owner}' accepts only a Python object ({self.type_name}), not JSON."
+            )
+        if input_kind not in ("scalar", "collection"):
+            raise ValueError(
+                f"Parameter '{self.name}' of '{owner}' has a type the registry does not support "
+                f"({self.type_name}), so it cannot be set from JSON."
+            )
+        try:
+            return _convert_json_value(self.param_type, value, allow_path=True)
+        except _JsonMismatchError:
+            raise ValueError(f"Parameter '{self.name}' of '{owner}' expects {self.type_name}.") from None
+
     def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
         Reject a declaration with an unsupported ``param_type``.
@@ -396,6 +491,235 @@ def _is_scalar_param_type(annotation: Any) -> bool:
     if get_origin(annotation) is Literal:
         return True
     return _is_enum_type(annotation)
+
+
+class _JsonMismatchError(Exception):
+    """Raised when a JSON value does not match a declared type."""
+
+
+def _union_members(annotation: Any) -> tuple[Any, ...]:
+    """
+    Return the members of a union annotation, or the annotation alone.
+
+    Returns:
+        tuple[Any, ...]: The union's members, including ``NoneType`` when present.
+    """
+    if get_origin(annotation) in (Union, types.UnionType):
+        return get_args(annotation)
+    return (annotation,)
+
+
+def _is_unresolved(annotation: Any) -> bool:
+    """
+    Return whether an annotation is, or contains, a forward reference that was never resolved.
+
+    Returns:
+        bool: True when a string or ``ForwardRef`` stands in for a type.
+    """
+    if isinstance(annotation, (str, ForwardRef)):
+        return True
+    if get_origin(annotation) is Literal:
+        return False
+    return any(_is_unresolved(arg) for arg in get_args(annotation))
+
+
+def _is_json_scalar_type(annotation: Any) -> bool:
+    """
+    Return whether JSON expresses the annotation as one string, number, or boolean.
+
+    Returns:
+        bool: True for ``str``, ``int``, ``float``, ``bool``, an ``Enum``, or a ``Literal`` of those values.
+    """
+    if annotation in (str, int, float, bool) or _is_enum_type(annotation):
+        return True
+    return get_origin(annotation) is Literal and all(
+        arg is None or type(arg) in (str, int, float, bool) for arg in get_args(annotation)
+    )
+
+
+def _is_json_element_type(annotation: Any) -> bool:
+    """
+    Return whether a collection element type can be expressed in JSON.
+
+    Paths are not, so a collection cannot carry server file paths.
+
+    Returns:
+        bool: True for JSON scalars, JSON collections, ``Any``, ``None``, and unions of those.
+    """
+    if annotation is Any or annotation is type(None):
+        return True
+    if get_origin(annotation) in (Union, types.UnionType):
+        return all(_is_json_element_type(member) for member in get_args(annotation))
+    return _is_json_scalar_type(annotation) or _is_json_collection_type(annotation)
+
+
+def _is_json_collection_type(annotation: Any) -> bool:
+    """
+    Return whether the annotation is a list, tuple, set, or string-keyed mapping of JSON values.
+
+    Returns:
+        bool: True when a JSON array or object can express the annotation.
+    """
+    origin = get_origin(annotation) or annotation
+    args = [arg for arg in get_args(annotation) if arg is not Ellipsis]
+    if origin in _MAPPING_ORIGINS:
+        key_type, value_type = args if len(args) == 2 else (str, Any)
+        return key_type in (str, Any) and _is_json_element_type(value_type)
+    if origin in _SEQUENCE_ORIGINS:
+        return all(_is_json_element_type(arg) for arg in args)
+    return False
+
+
+def _member_input_kind(annotation: Any, *, in_union: bool) -> ParameterInputKind:
+    """
+    Classify one member of a value parameter's annotation.
+
+    A ``Path`` is a scalar only when it is the whole type; inside a wider union it can only be
+    passed as a live object.
+
+    Returns:
+        ParameterInputKind: ``scalar``, ``collection``, ``in_process_only``, or ``unsupported``.
+    """
+    if annotation is Any:
+        return "unsupported"
+    if annotation is Path:
+        return "in_process_only" if in_union else "scalar"
+    if _is_json_scalar_type(annotation):
+        return "scalar"
+    if _is_json_collection_type(annotation):
+        return "collection"
+    return "in_process_only"
+
+
+def _annotation_input_kind(annotation: Any) -> ParameterInputKind:
+    """
+    Classify a value parameter's annotation under the registry input contract.
+
+    A union takes JSON when any member does; its other members can still be passed as live
+    objects. Unannotated parameters, ``Any``, and unresolved annotations are unsupported.
+
+    Returns:
+        ParameterInputKind: ``scalar``, ``collection``, ``in_process_only``, or ``unsupported``.
+    """
+    if annotation is None or _is_unresolved(annotation):
+        return "unsupported"
+    if _is_path_or_str(annotation):
+        return "scalar"
+    members = [member for member in _union_members(annotation) if member is not type(None)]
+    kinds = {_member_input_kind(member, in_union=len(members) > 1) for member in members}
+    precedence: tuple[ParameterInputKind, ...] = ("unsupported", "collection", "scalar", "in_process_only")
+    return next((kind for kind in precedence if kind in kinds), "unsupported")
+
+
+def _convert_json_value(annotation: Any, value: Any, *, allow_path: bool) -> Any:
+    """
+    Convert a JSON value to ``annotation``.
+
+    A union takes the value as its first member that matches. ``allow_path`` is True only
+    for the parameter's own type, so paths are never read from inside a union or collection,
+    except for an explicit ``Path | str``.
+
+    Returns:
+        Any: The converted value.
+
+    Raises:
+        _JsonMismatchError: If the value does not match the annotation.
+    """
+    if annotation is Any:
+        return value
+    all_members = _union_members(annotation)
+    members = [member for member in all_members if member is not type(None)]
+    if value is None:
+        if len(members) < len(all_members):
+            return None
+        raise _JsonMismatchError
+    if allow_path and _is_path_or_str(annotation):
+        if type(value) is str:
+            return value
+        raise _JsonMismatchError
+    if len(members) == 1:
+        return _convert_json_member(members[0], value, allow_path=allow_path)
+    for member in members:
+        try:
+            return _convert_json_member(member, value, allow_path=False)
+        except _JsonMismatchError:
+            continue
+    raise _JsonMismatchError
+
+
+def _convert_json_member(annotation: Any, value: Any, *, allow_path: bool) -> Any:
+    """
+    Convert a non-null JSON value to one non-union type.
+
+    Choices match the way ``coerce_value`` matches them, so their display strings are accepted.
+
+    Returns:
+        Any: The converted value.
+
+    Raises:
+        _JsonMismatchError: If the value does not match the type.
+    """
+    if annotation is Any:
+        return value
+    if annotation in (str, bool):
+        if type(value) is annotation:
+            return value
+    elif annotation is int:
+        if type(value) is int:
+            return value
+    elif annotation is float:
+        if type(value) in (int, float):
+            try:
+                return float(value)
+            except OverflowError:
+                pass
+    elif annotation is Path:
+        if allow_path and type(value) is str:
+            return Path(value)
+    elif get_origin(annotation) is Literal or _is_enum_type(annotation):
+        if type(value) in (str, int, float, bool):
+            try:
+                return _coerce_simple_value(param_name="", annotation=annotation, raw_value=value)
+            except ValueError:
+                pass
+    else:
+        return _convert_json_collection(annotation, value)
+    raise _JsonMismatchError
+
+
+def _convert_json_collection(annotation: Any, value: Any) -> Any:
+    """
+    Convert a JSON array or object to a declared collection type.
+
+    Returns:
+        Any: A list, tuple, set, frozenset, or dict holding the converted items.
+
+    Raises:
+        _JsonMismatchError: If the value does not match the collection type.
+    """
+    origin = get_origin(annotation) or annotation
+    args = get_args(annotation)
+    if origin in _MAPPING_ORIGINS:
+        key_type, value_type = args if len(args) == 2 else (str, Any)
+        if type(value) is not dict or key_type not in (str, Any):
+            raise _JsonMismatchError
+        return {key: _convert_json_value(value_type, item, allow_path=False) for key, item in value.items()}
+    if origin not in _SEQUENCE_ORIGINS or type(value) is not list:
+        raise _JsonMismatchError
+    if origin is tuple and args and not (len(args) == 2 and args[1] is Ellipsis):
+        if len(args) != len(value):
+            raise _JsonMismatchError
+        return tuple(_convert_json_value(arg, item, allow_path=False) for arg, item in zip(args, value, strict=True))
+    element_type = args[0] if args else Any
+    items = [_convert_json_value(element_type, item, allow_path=False) for item in value]
+    if origin is tuple:
+        return tuple(items)
+    if origin in _SET_ORIGINS:
+        try:
+            return frozenset(items) if origin is frozenset else set(items)
+        except TypeError as exc:
+            raise _JsonMismatchError from exc
+    return items
 
 
 def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) -> Any:

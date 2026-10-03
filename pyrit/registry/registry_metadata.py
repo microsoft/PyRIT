@@ -51,6 +51,11 @@ class RegistryMetadata:
     parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
     class_attributes: Mapping[str, Any] = field(kw_only=True, default_factory=dict)
 
+    @property
+    def constructible(self) -> bool:
+        """Whether registry callers can supply every required parameter as JSON (see ``Parameter.input_kind``)."""
+        return all(parameter.is_json_configurable for parameter in self.parameters if parameter.required)
+
     @staticmethod
     def description_from_docstring(cls: type, *, fallback: str = "") -> str:
         """
