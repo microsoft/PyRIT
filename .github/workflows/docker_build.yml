@@ -214,28 +214,72 @@ jobs:
             exit 1
           fi
 
-  pypi-checks:
-    name: ${{ matrix.name }}
+  # Literal names remain visible when PyPI is disabled. Job-level conditions
+  # preserve skipped conclusions without starting runners for disabled gates.
+  pypi-production-check:
+    name: Build Production (PyPI)
     needs: build-and-test-pypi
     if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Build Production (PyPI)
-            output: production
-          - name: Test Import (PyPI)
-            output: import
-          - name: Test GUI (PyPI)
-            output: gui
-          - name: Test Jupyter (PyPI)
-            output: jupyter
     steps:
       - name: Check execution and stage results
         env:
           JOB_RESULT: ${{ needs.build-and-test-pypi.result }}
-          STAGE_RESULT: ${{ needs.build-and-test-pypi.outputs[matrix.output] }}
+          STAGE_RESULT: ${{ needs.build-and-test-pypi.outputs.production }}
+        run: |
+          echo "Docker execution: $JOB_RESULT"
+          echo "Requested stage: $STAGE_RESULT"
+          if [[ "$JOB_RESULT" != success || "$STAGE_RESULT" != success ]]; then
+            echo "::error::Both the Docker execution job and this stage must succeed. See Build and test (PyPI)."
+            exit 1
+          fi
+
+  pypi-import-check:
+    name: Test Import (PyPI)
+    needs: build-and-test-pypi
+    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check execution and stage results
+        env:
+          JOB_RESULT: ${{ needs.build-and-test-pypi.result }}
+          STAGE_RESULT: ${{ needs.build-and-test-pypi.outputs.import }}
+        run: |
+          echo "Docker execution: $JOB_RESULT"
+          echo "Requested stage: $STAGE_RESULT"
+          if [[ "$JOB_RESULT" != success || "$STAGE_RESULT" != success ]]; then
+            echo "::error::Both the Docker execution job and this stage must succeed. See Build and test (PyPI)."
+            exit 1
+          fi
+
+  pypi-gui-check:
+    name: Test GUI (PyPI)
+    needs: build-and-test-pypi
+    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check execution and stage results
+        env:
+          JOB_RESULT: ${{ needs.build-and-test-pypi.result }}
+          STAGE_RESULT: ${{ needs.build-and-test-pypi.outputs.gui }}
+        run: |
+          echo "Docker execution: $JOB_RESULT"
+          echo "Requested stage: $STAGE_RESULT"
+          if [[ "$JOB_RESULT" != success || "$STAGE_RESULT" != success ]]; then
+            echo "::error::Both the Docker execution job and this stage must succeed. See Build and test (PyPI)."
+            exit 1
+          fi
+
+  pypi-jupyter-check:
+    name: Test Jupyter (PyPI)
+    needs: build-and-test-pypi
+    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check execution and stage results
+        env:
+          JOB_RESULT: ${{ needs.build-and-test-pypi.result }}
+          STAGE_RESULT: ${{ needs.build-and-test-pypi.outputs.jupyter }}
         run: |
           echo "Docker execution: $JOB_RESULT"
           echo "Requested stage: $STAGE_RESULT"

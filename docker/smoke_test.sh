@@ -40,6 +40,7 @@ esac
 container_id=""
 cleanup() {
     local status=$?
+    trap '' INT TERM
     trap - EXIT
     if [[ -n "$container_id" ]]; then
         if (( status != 0 )); then

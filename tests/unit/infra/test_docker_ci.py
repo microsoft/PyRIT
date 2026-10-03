@@ -17,6 +17,12 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docker_build.yml"
 PYPI_CONDITION = "github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'"
+PYPI_GATES = {
+    "pypi-production-check": ("Build Production (PyPI)", "production"),
+    "pypi-import-check": ("Test Import (PyPI)", "import"),
+    "pypi-gui-check": ("Test GUI (PyPI)", "gui"),
+    "pypi-jupyter-check": ("Test Jupyter (PyPI)", "jupyter"),
+}
 
 
 @pytest.fixture(scope="module")
@@ -53,13 +59,13 @@ def _run_bash(*, bash_path: str, script: str, environment: dict[str, str | None]
         )
 
 
-@pytest.mark.parametrize("source", ["local", "pypi"])
+@pytest.mark.parametrize("gate_id", ["local-checks", *PYPI_GATES])
 @pytest.mark.parametrize("job_result", ["success", "failure", "cancelled", "skipped", "", None])
 @pytest.mark.parametrize("stage_result", ["success", "failure", "cancelled", "skipped", "", None])
 def test_result_gate_fails_closed(
-    *, workflow: dict[str, Any], bash_path: str, source: str, job_result: str | None, stage_result: str | None
+    *, workflow: dict[str, Any], bash_path: str, gate_id: str, job_result: str | None, stage_result: str | None
 ) -> None:
-    gate = workflow["jobs"][f"{source}-checks"]["steps"][0]
+    gate = workflow["jobs"][gate_id]["steps"][0]
     result = _run_bash(
         bash_path=bash_path,
         script=gate["run"],
@@ -87,21 +93,31 @@ def test_result_gate_fails_closed(
     ],
 )
 def test_gate_names_and_outputs_follow_real_stages(*, workflow: dict[str, Any], source: str, names: list[str]) -> None:
-    gate = workflow["jobs"][f"{source}-checks"]
     execution_id = f"build-and-test-{source}"
     execution = workflow["jobs"][execution_id]
-    assert gate["name"] == "${{ matrix.name }}"
-    assert gate["needs"] == execution_id
-    assert gate["strategy"]["fail-fast"] == "false"
-    entries = gate["strategy"]["matrix"]["include"]
-    assert [entry["name"] for entry in entries] == names
-    assert gate["steps"][0]["env"] == {
-        "JOB_RESULT": "${{ needs." + execution_id + ".result }}",
-        "STAGE_RESULT": "${{ needs." + execution_id + ".outputs[matrix.output] }}",
-    }
+    if source == "local":
+        gate = workflow["jobs"]["local-checks"]
+        assert gate["name"] == "${{ matrix.name }}"
+        assert gate["strategy"]["fail-fast"] == "false"
+        entries = gate["strategy"]["matrix"]["include"]
+        assert [entry["name"] for entry in entries] == names
+        gates = [(gate, entry["output"]) for entry in entries]
+    else:
+        gates = [(workflow["jobs"][gate_id], stage) for gate_id, (_, stage) in PYPI_GATES.items()]
+        assert [gate["name"] for gate, _ in gates] == names
     steps = {step["id"]: step for step in execution["steps"] if "id" in step}
-    for entry in entries:
-        stage = entry["output"]
+    for gate, stage in gates:
+        assert gate["needs"] == execution_id
+        assert "continue-on-error" not in gate
+        assert len(gate["steps"]) == 1
+        check = gate["steps"][0]
+        assert "if" not in check
+        assert "continue-on-error" not in check
+        output = "[matrix.output]" if source == "local" else f".{stage}"
+        assert check["env"] == {
+            "JOB_RESULT": "${{ needs." + execution_id + ".result }}",
+            "STAGE_RESULT": "${{ needs." + execution_id + ".outputs" + output + " }}",
+        }
         assert execution["outputs"][stage] == "${{ steps." + stage + ".outcome }}"
         assert "continue-on-error" not in steps[stage]
     for mode in ("import", "gui", "jupyter"):
@@ -111,20 +127,27 @@ def test_gate_names_and_outputs_follow_real_stages(*, workflow: dict[str, Any], 
 
 
 @pytest.mark.parametrize("failed_source", ["local", "pypi"])
+@pytest.mark.parametrize("gate_id", ["local-checks", *PYPI_GATES])
 def test_source_failures_do_not_cross_gate_dependencies(
-    *, workflow: dict[str, Any], bash_path: str, failed_source: str
+    *, workflow: dict[str, Any], bash_path: str, failed_source: str, gate_id: str
 ) -> None:
     results = {
         f"build-and-test-{source}": "failure" if source == failed_source else "success" for source in ("local", "pypi")
     }
-    for source in ("local", "pypi"):
-        gate = workflow["jobs"][f"{source}-checks"]
-        result = _run_bash(
-            bash_path=bash_path,
-            script=gate["steps"][0]["run"],
-            environment={"JOB_RESULT": results[gate["needs"]], "STAGE_RESULT": "success"},
-        )
-        assert (result.returncode == 0) == (source != failed_source)
+    gate = workflow["jobs"][gate_id]
+    source = "local" if gate_id == "local-checks" else "pypi"
+    result = _run_bash(
+        bash_path=bash_path,
+        script=gate["steps"][0]["run"],
+        environment={"JOB_RESULT": results[gate["needs"]], "STAGE_RESULT": "success"},
+    )
+    assert (result.returncode == 0) == (source != failed_source)
+
+
+def test_pypi_gates_have_literal_names_for_intentional_skips(workflow: dict[str, Any]) -> None:
+    gates = [job for job in workflow["jobs"].values() if job.get("needs") == "build-and-test-pypi"]
+    assert [gate["name"] for gate in gates] == [name for name, _ in PYPI_GATES.values()]
+    assert all("strategy" not in gate for gate in gates)
 
 
 def test_workflow_events_and_fork_concurrency_are_preserved(workflow: dict[str, Any]) -> None:
@@ -139,10 +162,11 @@ def test_workflow_events_and_fork_concurrency_are_preserved(workflow: dict[str, 
     assert "if" not in workflow["jobs"]["build-and-test-local"]
     assert workflow["jobs"]["local-checks"]["if"] == "${{ always() }}"
     assert workflow["jobs"]["build-and-test-pypi"]["if"] == PYPI_CONDITION
-    assert workflow["jobs"]["pypi-checks"]["if"] == "${{ always() && (" + PYPI_CONDITION + ") }}"
+    for gate_id in PYPI_GATES:
+        assert workflow["jobs"][gate_id]["if"] == "${{ always() && (" + PYPI_CONDITION + ") }}"
 
 
-@pytest.mark.parametrize("job_id", ["build-and-test-pypi", "pypi-checks"])
+@pytest.mark.parametrize("job_id", ["build-and-test-pypi", *PYPI_GATES])
 @pytest.mark.parametrize(
     ("event", "ref", "enabled"),
     [
@@ -263,6 +287,11 @@ SMOKE_MOCKS = r"""
 record_call() { printf '%s\n' "$*" >> "$CI_TEST_TRACE"; }
 docker() {
     record_call docker "$@"
+    if [[ "$1" == "${CI_TEST_CLEANUP_STAGE:-}" ]]; then
+        record_call cleanup-signal "$CI_TEST_CLEANUP_SIGNAL"
+        kill "-$CI_TEST_CLEANUP_SIGNAL" "$$"
+        record_call cleanup-signal-ignored "$CI_TEST_CLEANUP_SIGNAL"
+    fi
     case "$1" in
         run) [[ "$CI_TEST_CASE" != import-failure ]] ;;
         create)
@@ -271,7 +300,7 @@ docker() {
             ;;
         start)
             [[ "$CI_TEST_CASE" != start-failure ]] || return 42
-            if [[ "$CI_TEST_CASE" == signal ]]; then kill -TERM "$$"; fi
+            if [[ "$CI_TEST_CASE" == signal ]]; then kill "-$CI_TEST_SIGNAL" "$$"; fi
             ;;
         port) echo 127.0.0.1:49153 ;;
         inspect)
@@ -329,7 +358,16 @@ exec bash docker/smoke_test.sh "$CI_TEST_IMAGE" "$CI_TEST_MODE" "$CI_TEST_TIMEOU
 
 
 def _run_smoke(
-    *, bash_path: str, tmp_path: Path, case: str, mode: str, source: str = "local", timeout: str = "120"
+    *,
+    bash_path: str,
+    tmp_path: Path,
+    case: str,
+    mode: str,
+    source: str = "local",
+    timeout: str = "120",
+    signal: str = "TERM",
+    cleanup_signal: str = "",
+    cleanup_stage: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     trace = tmp_path / "commands.txt"
     result = _run_bash(
@@ -341,6 +379,9 @@ def _run_smoke(
             "CI_TEST_IMAGE": f"pyrit:{source}-test",
             "CI_TEST_MODE": mode,
             "CI_TEST_TIMEOUT": timeout,
+            "CI_TEST_SIGNAL": signal,
+            "CI_TEST_CLEANUP_SIGNAL": cleanup_signal,
+            "CI_TEST_CLEANUP_STAGE": cleanup_stage,
         },
     )
     return result, trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
@@ -423,6 +464,40 @@ def test_smoke_failures_dump_diagnostics_and_remove_container(*, bash_path: str,
         assert result.stdout.count("::warning::") == 2
     if case == "signal":
         assert result.returncode == 143
+
+
+@pytest.mark.parametrize("cleanup_stage", ["logs", "rm"])
+@pytest.mark.parametrize("cleanup_signal", ["INT", "TERM"])
+@pytest.mark.parametrize(
+    ("case", "signal", "expected_status"),
+    [("start-failure", "TERM", 42), ("signal", "INT", 130), ("signal", "TERM", 143)],
+)
+def test_smoke_cleanup_ignores_repeated_signals(
+    *,
+    bash_path: str,
+    tmp_path: Path,
+    case: str,
+    signal: str,
+    expected_status: int,
+    cleanup_signal: str,
+    cleanup_stage: str,
+) -> None:
+    result, commands = _run_smoke(
+        bash_path=bash_path,
+        tmp_path=tmp_path,
+        case=case,
+        mode="gui",
+        signal=signal,
+        cleanup_signal=cleanup_signal,
+        cleanup_stage=cleanup_stage,
+    )
+    assert result.returncode == expected_status, result.stdout + result.stderr
+    signal_index = commands.index(f"cleanup-signal {cleanup_signal}")
+    assert commands[signal_index - 1].startswith(f"docker {cleanup_stage} ")
+    assert f"cleanup-signal-ignored {cleanup_signal}" in commands
+    assert "docker inspect --format {{json .State}} test-container" in commands
+    assert "docker logs --tail 200 test-container" in commands
+    assert commands.count("docker rm --force test-container") == 1
 
 
 @pytest.mark.parametrize(

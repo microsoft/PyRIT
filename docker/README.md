@@ -27,11 +27,13 @@ fails rather than selecting an arbitrary latest release.
 
 The existing `Build Devcontainer`, `Build Production (local)`, `Test Import (local)`,
 `Test GUI (local)`, and `Test Jupyter (local)` check names are retained as result
-gates, along with the four PyPI check names. Each enabled gate requires both its
+gates, along with `Build Production (PyPI)`, `Test Import (PyPI)`, `Test GUI (PyPI)`,
+and `Test Jupyter (PyPI)`. Each enabled gate requires both its
 execution job and its corresponding stage to succeed. A failed or cancelled
 execution job fails all its enabled gates, even if an earlier stage succeeded;
 missing or skipped stage results also fail. The two sources are independent, and
-PyPI checks remain intentionally skipped on PRs and merge-queue runs. Look at
+PyPI gates use literal job names so all four remain visible as intentionally
+skipped checks on PRs and merge-queue runs, without starting gate runners. Look at
 `Build and test (local)` or `Build and test (PyPI)` for the actual build/test logs
 and step timings.
 
