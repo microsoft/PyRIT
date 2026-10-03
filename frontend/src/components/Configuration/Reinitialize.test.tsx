@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { configurationApi } from '@/services/api'
@@ -120,5 +120,124 @@ describe('Reinitialize', () => {
     )
     expect(await screen.findByText(/Restart the backend/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeDisabled()
+  })
+
+  it('clears a transient status error when polling recovers', async () => {
+    jest.useFakeTimers()
+    try {
+      api.getRuntimeStatus
+        .mockResolvedValueOnce(ready)
+        .mockRejectedValueOnce(new Error('Runtime status temporarily unavailable.'))
+        .mockResolvedValue(ready)
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Runtime status temporarily unavailable.')).toBeInTheDocument()
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.queryByText('Runtime status temporarily unavailable.')).not.toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps a polling error visible until the next serialized request succeeds', async () => {
+    jest.useFakeTimers()
+    try {
+      let resolveRecovery!: (value: RuntimeStatus) => void
+      api.getRuntimeStatus
+        .mockResolvedValueOnce(ready)
+        .mockRejectedValueOnce(new Error('Runtime status unavailable.'))
+        .mockImplementationOnce(() => new Promise(resolve => { resolveRecovery = resolve }))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_200) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(3)
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+      await act(async () => { resolveRecovery(ready); await Promise.resolve() })
+      expect(screen.queryByText('Runtime status unavailable.')).not.toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('applies a slow successful poll and waits before starting the next poll', async () => {
+    jest.useFakeTimers()
+    try {
+      let resolveFirst!: (value: RuntimeStatus) => void
+      api.getRuntimeStatus
+        .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+        .mockResolvedValue(ready)
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_200) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(1)
+      await act(async () => { resolveFirst(ready); await Promise.resolve() })
+      expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled()
+      await act(async () => { await jest.advanceTimersByTimeAsync(999) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(1)
+      await act(async () => { await jest.advanceTimersByTimeAsync(1) })
+      expect(api.getRuntimeStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps a polling error after a successful apply request', async () => {
+    jest.useFakeTimers()
+    try {
+      api.getRuntimeStatus
+        .mockResolvedValueOnce(ready)
+        .mockRejectedValueOnce(new Error('Runtime status unavailable.'))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+      await act(async () => Promise.resolve())
+      expect(screen.getByText('Runtime status unavailable.')).toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps an apply error after an unrelated successful status poll', async () => {
+    jest.useFakeTimers()
+    try {
+      api.reinitialize.mockRejectedValue(new Error('Configuration apply failed.'))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await act(async () => Promise.resolve())
+      fireEvent.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+      await act(async () => Promise.resolve())
+      expect(screen.getByText('Configuration apply failed.')).toBeInTheDocument()
+      await act(async () => { await jest.advanceTimersByTimeAsync(1_000) })
+      expect(screen.getByText('Configuration apply failed.')).toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
