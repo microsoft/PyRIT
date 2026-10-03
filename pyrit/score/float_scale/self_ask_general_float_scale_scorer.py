@@ -72,18 +72,22 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
         - score_value: a numeric value in the model's native scale (e.g., 0-100)
         - rationale: a short explanation
 
-        Optionally it can include description, metadata, and category. If category is not provided
-        in the response, the category from ``scale`` will be applied.
+        Optionally it can include description, metadata, and category. With the default response
+        handler, the category from ``scale`` takes precedence over a category in the response.
+        The response category is used only when the scale category is None. A caller-supplied
+        response handler controls its own category policy.
 
         Args:
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
-            scale (NumericRange): The required native score range and optional category.
+            scale (NumericRange): The required native score range and optional category. Its category
+                takes precedence over the response category with the default response handler.
             chat_target (PromptTarget | None): The chat target used to score. Must satisfy
                 CHAT_TARGET_REQUIREMENTS.
             prompt_format_string (str | None): User prompt template with the same placeholders.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
-                to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments.
+                to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments that
+                prefers the configured category.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
                 validator will be used requiring text input and an objective.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
@@ -117,8 +121,7 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             description_output_key=description_output_key,
             metadata_output_key=metadata_output_key,
             category_output_key=category_output_key,
-            # As documented, a category in the response wins and the configured one is the fallback.
-            prefer_response_category=True,
+            prefer_configured_category=True,
             response_schema=response_json_schema,
             numeric_value=True,
         )

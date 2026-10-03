@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
+from collections.abc import Sequence
+
 import pytest
 
 from pyrit.exceptions import InvalidJsonException
@@ -94,12 +97,13 @@ def test_true_false_response_handler_rejects_value_outside_domain() -> None:
         )
 
 
-def test_json_schema_response_handler_rejects_category_in_both_by_default() -> None:
+@pytest.mark.parametrize("response_category", ["harm", "violence"])
+def test_json_schema_response_handler_rejects_category_in_both_by_default(response_category: str) -> None:
     handler = JsonSchemaResponseHandler()
 
     with pytest.raises(ValueError, match="Category is present in the response and an argument"):
         handler.parse(
-            response_text='{"score_value": "1", "rationale": "r", "category": "violence"}',
+            response_text=json.dumps({"score_value": "1", "rationale": "r", "category": response_category}),
             scorer_identifier=SCORER_IDENTIFIER,
             scored_prompt_id="test-id",
             category="harm",
@@ -126,14 +130,104 @@ def test_json_schema_response_handler_prefer_response_category() -> None:
     assert fallback.score_category == ["harm"]
 
 
+def test_json_schema_response_handler_rejects_conflicting_category_preferences() -> None:
+    with pytest.raises(ValueError, match="Only one category preference"):
+        JsonSchemaResponseHandler(prefer_response_category=True, prefer_configured_category=True)
+
+
+@pytest.mark.parametrize("category_output_key", ["category", "label"])
+@pytest.mark.parametrize(
+    ("response_category", "configured_category", "expected_category"),
+    [
+        ("violence", "harm", ["harm"]),
+        ("harm", "harm", ["harm"]),
+        (["violence", "privacy"], "harm", ["harm"]),
+        (None, "harm", ["harm"]),
+        ("violence", None, ["violence"]),
+        (["violence", "privacy"], None, ["violence", "privacy"]),
+        (None, None, None),
+        ("violence", ["harm", "abuse"], ["harm", "abuse"]),
+        ("violence", [], []),
+        ("violence", "", [""]),
+        (123, "harm", ["harm"]),
+    ],
+)
+def test_json_schema_response_handler_prefers_configured_category(
+    category_output_key: str,
+    response_category: object,
+    configured_category: Sequence[str] | str | None,
+    expected_category: list[str] | None,
+) -> None:
+    handler = JsonSchemaResponseHandler(
+        category_output_key=category_output_key,
+        prefer_configured_category=True,
+    )
+
+    score = handler.parse(
+        response_text=json.dumps({"score_value": "1", "rationale": "r", category_output_key: response_category}),
+        scorer_identifier=SCORER_IDENTIFIER,
+        scored_prompt_id="test-id",
+        category=configured_category,
+    )
+
+    assert score.score_category == expected_category
+
+
+@pytest.mark.parametrize("response_category", [123, {"label": "harm"}, [123]])
+def test_json_schema_response_handler_validates_response_category_without_configuration(
+    response_category: object,
+) -> None:
+    handler = JsonSchemaResponseHandler(prefer_configured_category=True)
+
+    with pytest.raises(InvalidJsonException, match="'category' must be"):
+        handler.parse(
+            response_text=json.dumps({"score_value": "1", "rationale": "r", "category": response_category}),
+            scorer_identifier=SCORER_IDENTIFIER,
+            scored_prompt_id="test-id",
+        )
+
+
 def test_json_schema_response_handler_replay_identifier_unchanged_by_default() -> None:
     default = JsonSchemaResponseHandler()._get_replay_identifier()
-    preferring = JsonSchemaResponseHandler(prefer_response_category=True)._get_replay_identifier()
+    response_first = JsonSchemaResponseHandler(prefer_response_category=True)._get_replay_identifier()
+    configured_first = JsonSchemaResponseHandler(prefer_configured_category=True)._get_replay_identifier()
 
     assert default is not None
     assert "prefer_response_category" not in default
-    assert preferring is not None
-    assert preferring["prefer_response_category"] is True
+    assert "prefer_configured_category" not in default
+    assert response_first == {**default, "prefer_response_category": True}
+    assert configured_first == {**default, "prefer_configured_category": True}
+
+
+@pytest.mark.parametrize("prefer_response_category", [False, True])
+@pytest.mark.parametrize(
+    ("response_text", "configured_category", "compatible"),
+    [
+        ('{"category": "violence"}', None, True),
+        ("{}", "harm", True),
+        ('{"category": null}', "harm", True),
+        ('{"category": "violence"}', "harm", False),
+        ('{"category": "harm"}', "harm", False),
+        ('{"category": []}', "harm", False),
+        ("[]", "harm", False),
+        ("invalid json", "harm", False),
+    ],
+)
+def test_json_schema_response_handler_legacy_contract_requires_unchanged_category_parsing(
+    prefer_response_category: bool,
+    response_text: str,
+    configured_category: str | None,
+    compatible: bool,
+) -> None:
+    handler = JsonSchemaResponseHandler(
+        prefer_response_category=prefer_response_category,
+        prefer_configured_category=not prefer_response_category,
+    )
+
+    legacy = handler._legacy_replay_identifiers(response_text=response_text, category=configured_category)
+
+    expected = [JsonSchemaResponseHandler()._get_replay_identifier()] if compatible else []
+    assert legacy == expected
 
 
 @pytest.mark.parametrize("score_value", ["1", "5.5", "10"])

@@ -5,6 +5,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -1367,20 +1368,37 @@ async def test_blocked_judgment_fallback_retains_error_observation_async(
 _LEGACY_GENERAL_SCORERS = [(SelfAskGeneralFloatScaleScorer, "5"), (SelfAskGeneralTrueFalseScorer, "true")]
 
 
-def _general_scorer(scorer_type: type[Scorer], *, target: MagicMock, category: str | None) -> Scorer:
+def _general_scorer(
+    scorer_type: type[Scorer],
+    *,
+    target: MagicMock,
+    category: str | None,
+    response_handler: ResponseHandler | None = None,
+) -> Scorer:
     if scorer_type is SelfAskGeneralFloatScaleScorer:
         scale = NumericRange(minimum_value=0, maximum_value=10, category=category)
-        return SelfAskGeneralFloatScaleScorer(chat_target=target, system_prompt_format_string="Judge.", scale=scale)
-    return SelfAskGeneralTrueFalseScorer(chat_target=target, system_prompt_format_string="Judge.", category=category)
+        return SelfAskGeneralFloatScaleScorer(
+            chat_target=target,
+            system_prompt_format_string="Judge.",
+            scale=scale,
+            response_handler=response_handler,
+        )
+    return SelfAskGeneralTrueFalseScorer(
+        chat_target=target,
+        system_prompt_format_string="Judge.",
+        category=category,
+        response_handler=response_handler,
+    )
 
 
-def _pre_prefer_response_category_identifier():
-    """Mimic the handler contract from before prefer_response_category existed."""
+def _pre_category_preference_identifier() -> AbstractContextManager[Any]:
+    """Mimic the handler contract from before category preferences existed."""
     current = JsonSchemaResponseHandler._replay_identifier
 
     def legacy(self: JsonSchemaResponseHandler) -> dict[str, Any]:
         identifier = current(self)
         identifier.pop("prefer_response_category", None)
+        identifier.pop("prefer_configured_category", None)
         return identifier
 
     return patch.object(JsonSchemaResponseHandler, "_replay_identifier", legacy)
@@ -1392,7 +1410,7 @@ def _pre_prefer_response_category_identifier():
     [(None, "harm", ["harm"]), ("violence", None, ["violence"])],
     ids=["no_response_category", "no_configured_category"],
 )
-async def test_general_scorer_replays_observations_from_before_prefer_response_category_async(
+async def test_general_scorer_replays_observations_from_before_category_preferences_async(
     sqlite_instance: MemoryInterface,
     scorer_type: type[Scorer],
     raw_score: str,
@@ -1403,13 +1421,13 @@ async def test_general_scorer_replays_observations_from_before_prefer_response_c
     body = {"score_value": raw_score, "rationale": "r"}
     if response_category:
         body["category"] = response_category
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.set_system_prompt_async = AsyncMock()
     target.send_prompt_async = AsyncMock(return_value=_response(json.dumps(body)))
     scorer = _general_scorer(scorer_type, target=target, category=configured_category)
     expectation = ScoringExpectation(objective="Judge this response")
-    with _pre_prefer_response_category_identifier():
+    with _pre_category_preference_identifier():
         live = (
             await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
         )[0]
@@ -1420,6 +1438,60 @@ async def test_general_scorer_replays_observations_from_before_prefer_response_c
     assert replay.score_value == live.score_value
     assert replay.score_category == expected_category
     assert target.send_prompt_async.call_count == 1
+
+
+@pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
+@pytest.mark.parametrize("prefer_response_category", [False, True], ids=["default_handler", "response_first_handler"])
+async def test_general_scorer_category_precedence_is_preserved_in_replay_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[Scorer],
+    raw_score: str,
+    prefer_response_category: bool,
+) -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.set_system_prompt_async = AsyncMock()
+    body = json.dumps({"score_value": raw_score, "rationale": "r", "category": "violence"})
+    target.send_prompt_async = AsyncMock(return_value=_response(body))
+    handler = JsonSchemaResponseHandler(prefer_response_category=True) if prefer_response_category else None
+    scorer = _general_scorer(scorer_type, target=target, category="harm", response_handler=handler)
+    expectation = ScoringExpectation(objective="Judge this response")
+
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+    replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+
+    expected_category = ["violence"] if prefer_response_category else ["harm"]
+    assert live.score_category == expected_category
+    assert replay.score_category == expected_category
+    assert replay.score_value == live.score_value
+    target.send_prompt_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
+@pytest.mark.parametrize("prefer_response_category", [False, True])
+async def test_general_scorer_rejects_replay_when_category_preference_changes_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[Scorer],
+    raw_score: str,
+    prefer_response_category: bool,
+) -> None:
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.set_system_prompt_async = AsyncMock()
+    body = json.dumps({"score_value": raw_score, "rationale": "r", "category": "violence"})
+    target.send_prompt_async = AsyncMock(return_value=_response(body))
+    handler = JsonSchemaResponseHandler(prefer_response_category=True) if prefer_response_category else None
+    scorer = _general_scorer(scorer_type, target=target, category="harm", response_handler=handler)
+    expectation = ScoringExpectation(objective="Judge this response")
+    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+    changed_handler = None if prefer_response_category else JsonSchemaResponseHandler(prefer_response_category=True)
+    changed = _general_scorer(scorer_type, target=target, category="harm", response_handler=changed_handler)
+
+    with pytest.raises(NonReplayableObservationError, match="handler or category"):
+        await changed.score_observation_async(observation=observation, expectation=expectation)
+    target.send_prompt_async.assert_awaited_once()
 
 
 @pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
@@ -1435,7 +1507,7 @@ async def test_general_scorer_rejects_old_observation_when_both_categories_are_g
     target.send_prompt_async = AsyncMock(return_value=_response(body))
     scorer = _general_scorer(scorer_type, target=target, category="harm")
     expectation = ScoringExpectation(objective="Judge this response")
-    with _pre_prefer_response_category_identifier():
+    with _pre_category_preference_identifier():
         live = (
             await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
         )[0]
@@ -1462,7 +1534,7 @@ async def test_legacy_contract_does_not_override_a_handler_that_opts_out_of_repl
     target.send_prompt_async = AsyncMock(return_value=_response(json.dumps({"score_value": "true", "rationale": "r"})))
     scorer = SelfAskGeneralTrueFalseScorer(chat_target=target, system_prompt_format_string="Judge.", category="harm")
     expectation = ScoringExpectation(objective="Judge this response")
-    with _pre_prefer_response_category_identifier():
+    with _pre_category_preference_identifier():
         live = (
             await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
         )[0]
@@ -1517,7 +1589,7 @@ async def test_legacy_contract_keeps_a_changed_wrapper_version_async(
     target.send_prompt_async = AsyncMock(return_value=_response(body))
     scorer = _general_scorer(scorer_type, target=target, category="harm")
     expectation = ScoringExpectation(objective="Judge this response")
-    with _pre_prefer_response_category_identifier():
+    with _pre_category_preference_identifier():
         live = (
             await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
         )[0]
