@@ -72,31 +72,39 @@ await output_attack_async(result)
 # }
 # ```
 #
-# Start the standalone notes server in a separate terminal:
+# To try the HTTP configuration, start the standalone notes server from the
+# repository root in a separate terminal:
 #
 # ```bash
 # uv run python doc/code/targets/supporting_assets/notes_mcp_server.py --port 8000
 # ```
 #
 # The HTTP example configuration points to `http://127.0.0.1:8000/mcp/notes`.
-# To use stdio instead, load
-# `doc/code/targets/supporting_assets/notes_mcp_stdio_config.json`;
-# the provider will start and stop the same notes server automatically.
+# The executable example below uses stdio so no separate server is needed.
+# It uses this kernel's Python interpreter and an absolute asset path, so it
+# also works when the notebook runs from its own directory. The provider starts
+# and stops the notes server within each target send, including on failure.
 
 # %%
 import os
+import sys
 
 from pyrit.auth import get_azure_openai_auth
+from pyrit.common.path import DOCS_CODE_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.output import output_attack_async
-from pyrit.prompt_target import MCPToolProvider, OpenAIResponseTarget
+from pyrit.prompt_target import MCPStdioServerConfig, MCPToolProvider, OpenAIResponseTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-mcp_tools = MCPToolProvider.from_config_file(
-    config_path="doc/code/targets/supporting_assets/notes_mcp_config.json",
+notes_server = DOCS_CODE_PATH / "targets" / "supporting_assets" / "notes_mcp_server.py"
+mcp_tools = MCPToolProvider(
     server_name="notes",
+    server_config=MCPStdioServerConfig(
+        command=sys.executable,
+        args=[str(notes_server), "--transport", "stdio"],
+    ),
 )
 
 endpoint = os.environ["OPENAI_RESPONSES_ENDPOINT"]
