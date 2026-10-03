@@ -10,7 +10,7 @@ Converter types are set at app startup - you cannot add new types at runtime.
 
 from fastapi import APIRouter, HTTPException, status
 
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr, ProblemDetail
 from pyrit.backend.models.converters import (
     ConverterInstance,
     ConverterInstanceListResponse,
@@ -97,7 +97,7 @@ async def create_converter(request: CreateConverterRequest) -> ConverterInstance
         404: {"model": ProblemDetail, "description": "Converter not found"},
     },
 )
-async def get_converter(converter_id: str) -> ConverterInstance:  # pyrit-async-suffix-exempt
+async def get_converter(converter_id: IdentifierStr) -> ConverterInstance:  # pyrit-async-suffix-exempt
     """
     Get a converter instance by ID.
 
@@ -123,7 +123,7 @@ async def get_converter(converter_id: str) -> ConverterInstance:  # pyrit-async-
         404: {"model": ProblemDetail, "description": "Converter not found"},
     },
 )
-async def delete_converter(converter_id: str) -> None:  # pyrit-async-suffix-exempt
+async def delete_converter(converter_id: IdentifierStr) -> None:  # pyrit-async-suffix-exempt
     """Delete a converter instance by registry name."""
     service = get_converter_service()
     if not await service.delete_converter_async(converter_id=converter_id):
