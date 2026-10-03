@@ -27,6 +27,8 @@ import type {
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
+  MessageSendRequest,
+  MessageSendStatus,
   AttackConversationsResponse,
   CreateConversationRequest,
   CreateConversationResponse,
@@ -138,7 +140,10 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
     const originalRequest = error?.config
-    if (error?.response?.status === 401 && originalRequest && !originalRequest._retried) {
+    if (
+      error?.response?.status === 401 && originalRequest && !originalRequest._retried
+      && !originalRequest.url?.endsWith('/message-sends')
+    ) {
       originalRequest._retried = true
       const freshToken = await getAccessToken(true)
       if (freshToken) {
@@ -346,6 +351,23 @@ export const attacksApi = {
     const response = await apiClient.post(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
       request
+    )
+    return response.data
+  },
+
+  submitMessageSend: async (attackResultId: string, request: MessageSendRequest): Promise<MessageSendStatus> => {
+    const response = await apiClient.post(
+      `/attacks/${encodeURIComponent(attackResultId)}/message-sends`, request,
+    )
+    return response.data
+  },
+
+  getMessageSend: async (
+    attackResultId: string, sendId: string, signal?: AbortSignal,
+  ): Promise<MessageSendStatus> => {
+    const response = await apiClient.get(
+      `/attacks/${encodeURIComponent(attackResultId)}/message-sends/${encodeURIComponent(sendId)}`,
+      { params: { wait_ms: 1000 }, signal },
     )
     return response.data
   },

@@ -40,6 +40,16 @@ def test_add_text_image_converter_invalid_font():
         AddTextImageConverter(text_to_add="Sample text", font_name="helvetica.otf")  # Invalid font extension
 
 
+def test_add_text_image_converter_invalid_color():
+    with pytest.raises(ValueError, match="color must be a tuple of three integers between 0 and 255"):
+        AddTextImageConverter(text_to_add="Sample text", color=(0, 0))
+
+
+def test_add_text_image_converter_invalid_font_size():
+    with pytest.raises(ValueError, match="font_size must be greater than 0"):
+        AddTextImageConverter(text_to_add="Sample text", font_size=0)
+
+
 def test_add_text_image_converter_invalid_text_to_add():
     with pytest.raises(ValueError):
         AddTextImageConverter(text_to_add="")

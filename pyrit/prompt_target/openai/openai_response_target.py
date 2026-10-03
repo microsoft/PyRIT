@@ -360,18 +360,6 @@ class OpenAIResponseTarget(OpenAITarget):
             "output": output,
         }
 
-    def validate_tool_history(self, messages: Sequence[Message]) -> None:
-        """Check replayed tool payloads through the same pure serializers used to send them."""
-        super().validate_tool_history(messages)
-        for message in messages:
-            for piece in message.message_pieces:
-                if piece.converted_value_data_type == "tool_call":
-                    self._serialize_tool_call(piece)
-                elif piece.converted_value_data_type == "function_call":
-                    self._serialize_function_call(piece)
-                elif piece.converted_value_data_type == "function_call_output":
-                    self._serialize_function_call_output(piece)
-
     async def _serialize_piece_async(self, *, piece: MessagePiece, message_index: int) -> _SerializedPiece | None:
         data_type = piece.converted_value_data_type
         if data_type == "reasoning":

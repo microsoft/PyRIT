@@ -100,15 +100,22 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
     FAMILIES: ClassVar[tuple[str, ...]] = (*DEFAULT_FAMILIES, HARM_SCORED_FAMILY)
 
     @forward_init_parameters
-    def __init__(self, *, families: Sequence[str] | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        families: Sequence[str] | None = None,
+        max_dataset_size: int | None = DEFAULT_MAX_DATASET_SIZE,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the source configuration.
 
         Args:
             families (Sequence[str] | None): Selected families, excluding latent jailbreak by default.
+            max_dataset_size (int | None): Maximum selected groups. Defaults to 92; None selects all groups.
             **kwargs (Any): Standard dataset settings. An explicit uncapped configuration uses all groups.
         """
-        super().__init__(**kwargs)
+        super().__init__(max_dataset_size=max_dataset_size, **kwargs)
         self._set_families(families=self.DEFAULT_FAMILIES if families is None else families)
         self.coverage_keys: list[tuple[str, str]] = []
 
@@ -132,11 +139,20 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
             raise ValueError(f"families must be a non-empty selection from {self.FAMILIES}.")
         self._families = [family for family in self.FAMILIES if family in families]
 
-    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
+    def validate_configuration(self) -> None:
+        """
+        Check the ingredient dataset selection without reading its contents.
+
+        Raises:
+            DatasetConstraintError: If the required ingredient datasets are not selected.
+        """
+        super().validate_configuration()
         if set(self.dataset_names) != set(LatentInjection.required_datasets()):
             raise DatasetConstraintError(
                 "LatentInjection requires exactly its five ingredient datasets; inline seeds are not supported."
             )
+
+    async def _build_groups_by_dataset_async(self) -> tuple[dict[str, list[AttackSeedGroup]], ResolvedDataset]:
         sources = await self._collect_named_seeds_async()
         all_seeds = [seed for seeds in sources.values() for seed in seeds]
         if any(self.START_MARKER in seed.value or self.END_MARKER in seed.value for seed in all_seeds):
@@ -337,9 +353,7 @@ class LatentInjection(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    async def _resolve_seed_groups_by_dataset_async(
-        self, *, apply_sampling: bool = True
-    ) -> dict[str, list[AttackSeedGroup]]:
+    def _validate_runtime_configuration(self) -> None:
         config = self._dataset_config
         if type(config) is not LatentInjectionDatasetConfiguration:
             raise DatasetConstraintError("LatentInjection only supports LatentInjectionDatasetConfiguration.")
@@ -348,6 +362,12 @@ class LatentInjection(Scenario):
             config._set_families(families=families)
         if config.HARM_SCORED_FAMILY in config.families and self._harm_scorer is None:
             raise ValueError("The latent_jailbreak family requires an explicit harm_scorer.")
+        super()._validate_runtime_configuration()
+
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        config = cast("LatentInjectionDatasetConfiguration", self._dataset_config)
         groups = await config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
         scorers = [self._scorer_for_trigger(family=family, trigger=trigger) for family, trigger in config.coverage_keys]
         self._objective_scorer = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=scorers)

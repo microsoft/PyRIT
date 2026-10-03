@@ -53,8 +53,13 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
-from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
+from pyrit.backend.services.message_send_service import (
+    MessageSendService,
+    get_message_send_service,
+    resolve_applied_converter_identifiers,
+)
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -120,10 +125,12 @@ class AttackService:
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, message_send_service: MessageSendService | None = None) -> None:
         """Initialize the attack service."""
         self._memory = CentralMemory.get_memory_instance()
-        self._message_send_service = MessageSendService()
+        self._message_send_service = (
+            message_send_service if message_send_service is not None else get_message_send_service()
+        )
 
     # ========================================================================
     # Public API Methods
@@ -1054,12 +1061,7 @@ class AttackService:
         Returns:
             AddMessageResponse: Updated attack and messages after sending or storing.
         """
-        if request.send:
-            results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
-            if results and results[0].metadata.get("target_unbound") is True:
-                if request.target_conversation_id not in results[0].get_active_conversation_ids():
-                    raise ValueError(f"Conversation '{request.target_conversation_id}' is not part of this attack")
-                await self._bind_manual_target_async(attack=results[0], registry_name=request.target_registry_name)
+        await self._bind_requested_target_async(attack_result_id=attack_result_id, request=request)
         async with self._message_send_service.add_message_context_async(
             attack_result_id=attack_result_id, request=request
         ):
@@ -1075,6 +1077,28 @@ class AttackService:
                 raise ValueError(f"Attack '{attack_result_id}' messages not found after update")
 
             return AddMessageResponse(attack=attack_detail, messages=attack_messages)
+
+    async def submit_message_send_async(
+        self, *, attack_result_id: str, request: MessageSendRequest
+    ) -> MessageSendStatus:
+        """
+        Bind saved draft history before admitting an asynchronous manual send.
+
+        Returns:
+            The sending service's transient progress handle.
+        """
+        await self._bind_requested_target_async(attack_result_id=attack_result_id, request=request)
+        return await self._message_send_service.submit_async(attack_result_id=attack_result_id, request=request)
+
+    async def _bind_requested_target_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
+        """Apply the same first-send target binding to both manual-message endpoints."""
+        if not request.send:
+            return
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+        if results and results[0].metadata.get("target_unbound") is True:
+            if request.target_conversation_id not in results[0].get_active_conversation_ids():
+                raise ValueError(f"Conversation '{request.target_conversation_id}' is not part of this attack")
+            await self._bind_manual_target_async(attack=results[0], registry_name=request.target_registry_name)
 
     async def _bind_manual_target_async(self, *, attack: AttackResult, registry_name: str | None) -> AttackResult:
         """

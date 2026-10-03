@@ -549,7 +549,7 @@ async def test_audio_transcript_scoring_retains_child_without_observation_async(
     child = next(item for item in stored if item.id != score.id)
     assert child.scorer_class_identifier.class_name == "SelfAskTrueFalseScorer"
     assert isinstance(child.scorable, ContentEntryScorable)
-    content = sqlite_instance.get_scorable_content(content_ids=[child.scorable.content_id])
+    content = await sqlite_instance.get_scorable_content_async(content_ids=[child.scorable.content_id])
     assert content[child.scorable.content_id].value == "transcript"
     assert child.observation_ids == []
     assert child.id != score.id

@@ -612,6 +612,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     resolved === 'dark',
     currentView,
     targetDefaults.objectiveTarget !== null,
+    canManageConfiguration,
   )
 
   return (

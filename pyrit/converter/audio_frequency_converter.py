@@ -19,6 +19,7 @@ class AudioFrequencyConverter(Converter):
     """
     Shifts the frequency of an audio file by a specified value.
     By default, it will shift it above the human hearing range (=20 kHz).
+    Floating-point WAV input retains its sample dtype and amplitude scale.
     """
 
     SUPPORTED_INPUT_TYPES = ("audio_path",)
@@ -89,15 +90,16 @@ class AudioFrequencyConverter(Converter):
                 phase = phase[:, np.newaxis]
             shifted_data = data * phase
 
-            # Convert the real part of the shifted data to int16
-            shifted_data_int16 = shifted_data.real.astype(np.int16)
+            # Floating-point WAV samples already use a normalized amplitude scale.
+            output_dtype = data.dtype if np.issubdtype(data.dtype, np.floating) else np.dtype(np.int16)
+            output_data = shifted_data.real.astype(output_dtype)
 
-            # Reset buffer and write shifted data as a new WAV file
-            bytes_io.seek(0)
-            wavfile.write(bytes_io, sample_rate, shifted_data_int16)
+            # Write to a fresh buffer so a shorter output cannot retain input bytes.
+            output_bytes_io = io.BytesIO()
+            wavfile.write(output_bytes_io, sample_rate, output_data)
 
             # Retrieve the WAV bytes and save them using the serializer
-            converted_bytes = bytes_io.getvalue()
+            converted_bytes = output_bytes_io.getvalue()
             await audio_serializer.save_data_async(data=converted_bytes)
             audio_serializer_file = str(audio_serializer.value)
             logger.info(f"Speech synthesized for text [{prompt}], and the audio was saved to [{audio_serializer_file}]")

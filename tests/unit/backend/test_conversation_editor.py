@@ -23,6 +23,7 @@ from pyrit.backend.models.attacks import (
     UpdateAttackRequest,
 )
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
 from pyrit.backend.models.targets import TargetListResponse
 from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.target_service import TargetService
@@ -168,8 +169,9 @@ class TestConversationEditor:
         ]
 
     @pytest.mark.parametrize("change", ["related", "append", "edit", "delete"])
+    @pytest.mark.parametrize("asynchronous", [False, True])
     async def test_binding_rejects_history_changed_after_validation_async(
-        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget, change: str
+        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget, change: str, asynchronous: bool
     ) -> None:
         service = AttackService()
         saved = await service.save_conversation_async(request=draft())
@@ -213,14 +215,18 @@ class TestConversationEditor:
             ) as send,
         ):
             with pytest.raises(AttackStateConflictError, match="changed"):
-                await service.add_message_async(
-                    attack_result_id=saved.attack.attack_result_id,
-                    request=AddMessageRequest(
-                        target_conversation_id=conversation_id,
-                        target_registry_name="selected",
-                        pieces=[ConversationPieceRequest(data_type="text", original_value="Next")],
-                    ),
+                request = AddMessageRequest(
+                    target_conversation_id=conversation_id,
+                    target_registry_name="selected",
+                    pieces=[ConversationPieceRequest(data_type="text", original_value="Next")],
                 )
+                if asynchronous:
+                    await service.submit_message_send_async(
+                        attack_result_id=saved.attack.attack_result_id,
+                        request=MessageSendRequest(**request.model_dump(), submission_id="history-check"),
+                    )
+                else:
+                    await service.add_message_async(attack_result_id=saved.attack.attack_result_id, request=request)
             send.assert_not_awaited()
         check.assert_awaited_once()
         assert (await service.get_attack_async(attack_result_id=saved.attack.attack_result_id)).target_unbound
@@ -824,6 +830,45 @@ class TestConversationEditor:
                 )
         bind.assert_not_awaited()
         assert (await service.get_attack_async(attack_result_id=saved.attack.attack_result_id)).target_unbound
+
+    async def test_async_first_send_binds_all_saved_conversations_async(
+        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget
+    ) -> None:
+        service = AttackService()
+        first = await service.save_conversation_async(request=draft())
+        related = await service.save_conversation_async(
+            request=SaveConversationRequest(
+                save_id=uuid.uuid4(),
+                destination="same_attack",
+                attack_result_id=first.attack.attack_result_id,
+                operator="owner",
+            )
+        )
+        with patch.object(service._message_send_service, "_send_and_store_message_async", new_callable=AsyncMock):
+            accepted = await service.submit_message_send_async(
+                attack_result_id=first.attack.attack_result_id,
+                request=MessageSendRequest(
+                    submission_id="first-send",
+                    target_conversation_id=related.messages.conversation_id,
+                    target_registry_name="selected",
+                    pieces=[ConversationPieceRequest(original_value="Next")],
+                ),
+            )
+            progress = await service._message_send_service.get_status_async(
+                attack_result_id=first.attack.attack_result_id, send_id=accepted.send_id, wait_ms=1000
+            )
+        assert progress.state == MessageSendState.COMPLETED
+        current = await service.get_attack_async(attack_result_id=first.attack.attack_result_id)
+        assert current is not None
+        assert not current.target_unbound
+        owned = await sqlite_instance.get_attack_result_conversations_async(
+            attack_result_id=first.attack.attack_result_id
+        )
+        assert {conversation.conversation_id for conversation in owned} == {
+            first.messages.conversation_id,
+            related.messages.conversation_id,
+        }
+        assert all(conversation.target_identifier == editor_target.get_identifier() for conversation in owned)
 
     async def test_competing_binding_cannot_replace_target_async(self, sqlite_instance: SQLiteMemory) -> None:
         service = AttackService()

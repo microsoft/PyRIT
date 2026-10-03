@@ -252,7 +252,14 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # For a remote agent, use the normal HTTP transport. The agent must accept W3C
 # trace context and export its tool spans. Supply a `TraceClient` that can read
 # those spans; sending a header does not create a trace-store connection.
-# Provider-specific SDK targets are not changed by this example.
+#
+# `LiteLLMChatTarget` accepts the same `trace_config` and also disables tracing by
+# default. When enabled, each request sends a fresh `traceparent` through LiteLLM's
+# `extra_headers`, and PyRIT saves the same context on the request. Enable it only
+# when the provider or gateway accepts W3C trace context. While it is enabled, manual
+# trace headers in `headers`, `extra_headers` or `provider_specific_header` are
+# rejected. A model-call span is not tool evidence; the scorer still needs execution
+# spans for the named tool.
 
 # %% [markdown]
 # ## Use another trace source
