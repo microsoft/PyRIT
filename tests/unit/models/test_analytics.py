@@ -59,6 +59,13 @@ def test_analytics_value_rejects_ambiguous_keys(data: dict[str, object]) -> None
         AttackAnalyticsValue.model_validate(data)
 
 
+def test_analytics_value_bounds_exact_filter_keys() -> None:
+    value = "x" * AttackAnalyticsValue.MAX_VALUE_LENGTH
+    assert AttackAnalyticsValue(value=value).value == value
+    with pytest.raises(ValidationError, match="at most 4096 characters"):
+        AttackAnalyticsValue(value="x" * (AttackAnalyticsValue.MAX_VALUE_LENGTH + 1))
+
+
 @pytest.mark.parametrize("label", ["", "Unknown", "missing", "no_converters"])
 def test_real_labels_are_distinct_from_absence_buckets(label: str) -> None:
     value = AttackAnalyticsValue(value=label)
