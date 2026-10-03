@@ -35,6 +35,7 @@ from pyrit.backend.routes import (
     initializers,
     labels,
     media,
+    message_sends,
     scenarios,
     scores,
     targets,
@@ -115,6 +116,7 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 # Include API routes
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
+app.include_router(message_sends.router, prefix="/api", tags=["attacks"])
 app.include_router(configuration.router, prefix="/api", tags=["config"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])

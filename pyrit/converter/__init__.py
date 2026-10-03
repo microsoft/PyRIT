@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from pyrit.converter.emoji_converter import EmojiConverter
     from pyrit.converter.first_letter_converter import FirstLetterConverter
     from pyrit.converter.flip_converter import FlipConverter
+    from pyrit.converter.grid_composite_converter import GridCompositeConverter
     from pyrit.converter.image_color_saturation_converter import ImageColorSaturationConverter
     from pyrit.converter.image_compression_converter import ImageCompressionConverter
     from pyrit.converter.image_overlay_converter import ImageOverlayConverter
@@ -183,6 +184,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "EmojiConverter": "pyrit.converter.emoji_converter",
     "FirstLetterConverter": "pyrit.converter.first_letter_converter",
     "FlipConverter": "pyrit.converter.flip_converter",
+    "GridCompositeConverter": "pyrit.converter.grid_composite_converter",
     "ImageColorSaturationConverter": "pyrit.converter.image_color_saturation_converter",
     "ImageCompressionConverter": "pyrit.converter.image_compression_converter",
     "ImageOverlayConverter": "pyrit.converter.image_overlay_converter",

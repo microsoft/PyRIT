@@ -3,12 +3,15 @@
 
 """Tests for TechniqueInitializer and the technique group catalogs."""
 
+import hashlib
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
-from pyrit.common.path import EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.common.path import DOCS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import CharNoiseConverter, CharSwapConverter, RandomCapitalLettersConverter
 from pyrit.executor.attack import (
     CrescendoAttack,
@@ -624,6 +627,48 @@ class TestViolentDurianTechnique:
 
 class TestGoatTechnique:
     """Tests for the opt-in goat entry in the extra catalog."""
+
+    def test_paper_citation_resolves_in_bibliography(self) -> None:
+        references = (DOCS_PATH / "references.bib").read_text(encoding="utf-8")
+        bibliography = (DOCS_PATH / "bibliography.md").read_text(encoding="utf-8")
+        reference_keys = re.findall(r"(?m)^@\w+\s*\{\s*([^,\s]+)\s*,", references)
+        hidden_keys = re.findall(r"@([A-Za-z0-9_:-]+)", bibliography)
+        assert reference_keys.count("pavlova2024goat") == 1
+        assert hidden_keys == sorted(set(hidden_keys))
+        assert set(hidden_keys) == set(reference_keys)
+        entry = re.search(r"(?ms)^@article\{pavlova2024goat,\n(.*?)^\}", references)
+        assert entry is not None
+        assert re.search(r"url\s*=\s*\{https://arxiv\.org/abs/2410\.01606\}", entry.group(1))
+        assert re.search(r"year\s*=\s*\{2024\}", entry.group(1))
+
+    @pytest.mark.parametrize(
+        ("filename", "expected_value_sha256"),
+        [
+            ("goat.yaml", "c27e79aaf99a7a2f79f2739ff99890114fb46df82c4a3ec89722d8d961bfb6fa"),
+            ("goat_initial_prompt.yaml", "37838e0267f6cd18d03a532e063281a2fc35dd1868a2a3b919aed337e1d9a387"),
+            ("goat_follow_up_prompt.yaml", "b2a50f66dea6c763d3f3bc7f457e398790452b914bf798e6d7b60ffa53cc39db"),
+        ],
+    )
+    def test_prompt_credits_paper_and_adaptation(self, *, filename: str, expected_value_sha256: str) -> None:
+        seed_prompt = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / filename)
+        assert "[@pavlova2024goat]" in (seed_prompt.description or "")
+        assert "Adapted for PyRIT by AI Red Team" in (seed_prompt.description or "")
+        assert seed_prompt.source == "https://arxiv.org/abs/2410.01606"
+        assert seed_prompt.groups == ["Meta"]
+        assert seed_prompt.authors == [
+            "Maya Pavlova",
+            "Erik Brinkman",
+            "Krithika Iyer",
+            "V\u00edtor Albiero",
+            "Joanna Bitton",
+            "Hailey Nguyen",
+            "Joe Li",
+            "Cristian Canton Ferrer",
+            "Ivan Evtimov",
+            "Aaron Grattafiori",
+        ]
+        prompt_data = yaml.safe_load((EXECUTOR_RED_TEAM_PATH / filename).read_text(encoding="utf-8"))
+        assert hashlib.sha256(prompt_data["value"].encode("utf-8")).hexdigest() == expected_value_sha256
 
     @staticmethod
     def _goat_factory():
