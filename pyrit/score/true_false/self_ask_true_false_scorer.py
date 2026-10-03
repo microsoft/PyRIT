@@ -5,11 +5,11 @@ import enum
 from collections.abc import Mapping
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.models import (
     ComponentIdentifier,
     JsonSchemaDefinition,
@@ -91,7 +91,7 @@ class TrueFalseQuestion(BaseModel):
             ValueError: If the file does not contain a YAML mapping.
         """
         resolved_path = verify_and_resolve_path(path)
-        loaded = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        loaded = safe_load_yaml(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, Mapping):
             raise ValueError("Failed to load true_false_question YAML")
         known = {
