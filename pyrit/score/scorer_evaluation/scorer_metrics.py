@@ -50,6 +50,8 @@ class ScorerMetrics:
 
     Args:
         num_responses (int): Total number of responses evaluated.
+        num_input_responses (int | None): Number of responses supplied before excluding scores that
+            could not reach a verdict. None for metrics recorded before this field existed.
         num_human_raters (int): Number of human raters who scored the responses.
         num_scorer_trials (int): Number of times the model scorer was run. Defaults to 1.
         dataset_name (str, optional): Name of the dataset used for evaluation.
@@ -60,6 +62,7 @@ class ScorerMetrics:
 
     num_responses: int
     num_human_raters: int
+    num_input_responses: int | None = field(default=None, kw_only=True)
     num_scorer_trials: int = field(default=1, kw_only=True)
     dataset_name: str | None = field(default=None, kw_only=True)
     dataset_version: str | None = field(default=None, kw_only=True)

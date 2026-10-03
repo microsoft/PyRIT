@@ -101,6 +101,7 @@ class TestScorerMetricsSerialization:
         metrics = ObjectiveScorerMetrics(
             num_responses=2,
             num_human_raters=1,
+            num_input_responses=3,
             accuracy=0.9,
             accuracy_standard_error=0.05,
             f1_score=0.8,
@@ -118,6 +119,7 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
+        assert loaded.num_input_responses == 3
 
         expected = dataclasses.asdict(metrics)
         expected.pop("trial_scores")
