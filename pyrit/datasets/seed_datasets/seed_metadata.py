@@ -226,12 +226,15 @@ class SeedDatasetFilter:
             **kwargs: Flat metadata fields passed to SeedDatasetMetadata.
 
         Raises:
-            ValueError: If both criteria and flat kwargs are provided.
+            ValueError: If both criteria and flat kwargs are provided, or if an
+                explicit criteria list is empty.
         """
         if criteria is not None and kwargs:
             raise ValueError("Cannot pass both 'criteria' and flat metadata kwargs. Use one or the other.")
 
         if criteria is not None:
+            if not criteria:
+                raise ValueError("'criteria' must contain at least one metadata criterion.")
             self.criteria = criteria
         elif kwargs:
             self.criteria = [SeedDatasetMetadata(**kwargs)]
