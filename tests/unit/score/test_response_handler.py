@@ -3,11 +3,13 @@
 
 import json
 from collections.abc import Sequence
+from typing import Any
 
 import pytest
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import ComponentIdentifier
+from pyrit.score import CategoryConflictPolicy
 from pyrit.score.response_handler import (
     CallableResponseHandler,
     JsonSchemaResponseHandler,
@@ -111,7 +113,7 @@ def test_json_schema_response_handler_rejects_category_in_both_by_default(respon
 
 
 def test_json_schema_response_handler_prefer_response_category() -> None:
-    handler = JsonSchemaResponseHandler(prefer_response_category=True)
+    handler = JsonSchemaResponseHandler(category_conflict_policy=CategoryConflictPolicy.PREFER_RESPONSE)
 
     from_response = handler.parse(
         response_text='{"score_value": "1", "rationale": "r", "category": "violence"}',
@@ -130,9 +132,33 @@ def test_json_schema_response_handler_prefer_response_category() -> None:
     assert fallback.score_category == ["harm"]
 
 
-def test_json_schema_response_handler_rejects_conflicting_category_preferences() -> None:
-    with pytest.raises(ValueError, match="Only one category preference"):
-        JsonSchemaResponseHandler(prefer_response_category=True, prefer_configured_category=True)
+@pytest.mark.parametrize("policy", ["unsupported", None, True])
+def test_json_schema_response_handler_rejects_invalid_category_conflict_policy(policy: Any) -> None:
+    with pytest.raises(ValueError, match="CategoryConflictPolicy"):
+        JsonSchemaResponseHandler(category_conflict_policy=policy)
+
+
+@pytest.mark.parametrize("policy", list(CategoryConflictPolicy))
+@pytest.mark.parametrize(
+    ("response_category", "configured_category", "expected_category"),
+    [("violence", None, ["violence"]), (None, "harm", ["harm"]), (None, None, None)],
+)
+def test_json_schema_response_handler_category_policy_without_conflict(
+    policy: CategoryConflictPolicy,
+    response_category: str | None,
+    configured_category: str | None,
+    expected_category: list[str] | None,
+) -> None:
+    handler = JsonSchemaResponseHandler(category_conflict_policy=policy)
+
+    score = handler.parse(
+        response_text=json.dumps({"score_value": "1", "rationale": "r", "category": response_category}),
+        scorer_identifier=SCORER_IDENTIFIER,
+        scored_prompt_id="test-id",
+        category=configured_category,
+    )
+
+    assert score.score_category == expected_category
 
 
 @pytest.mark.parametrize("category_output_key", ["category", "label"])
@@ -160,7 +186,7 @@ def test_json_schema_response_handler_prefers_configured_category(
 ) -> None:
     handler = JsonSchemaResponseHandler(
         category_output_key=category_output_key,
-        prefer_configured_category=True,
+        category_conflict_policy=CategoryConflictPolicy.PREFER_CONFIGURED,
     )
 
     score = handler.parse(
@@ -177,7 +203,7 @@ def test_json_schema_response_handler_prefers_configured_category(
 def test_json_schema_response_handler_validates_response_category_without_configuration(
     response_category: object,
 ) -> None:
-    handler = JsonSchemaResponseHandler(prefer_configured_category=True)
+    handler = JsonSchemaResponseHandler(category_conflict_policy=CategoryConflictPolicy.PREFER_CONFIGURED)
 
     with pytest.raises(InvalidJsonException, match="'category' must be"):
         handler.parse(
@@ -189,19 +215,32 @@ def test_json_schema_response_handler_validates_response_category_without_config
 
 def test_json_schema_response_handler_replay_identifier_unchanged_by_default() -> None:
     default = JsonSchemaResponseHandler()._get_replay_identifier()
-    response_first = JsonSchemaResponseHandler(prefer_response_category=True)._get_replay_identifier()
-    configured_first = JsonSchemaResponseHandler(prefer_configured_category=True)._get_replay_identifier()
+    rejecting = JsonSchemaResponseHandler(
+        category_conflict_policy=CategoryConflictPolicy.REJECT_CONFLICT
+    )._get_replay_identifier()
+    response_first = JsonSchemaResponseHandler(
+        category_conflict_policy=CategoryConflictPolicy.PREFER_RESPONSE
+    )._get_replay_identifier()
+    configured_first = JsonSchemaResponseHandler(
+        category_conflict_policy=CategoryConflictPolicy.PREFER_CONFIGURED
+    )._get_replay_identifier()
 
     assert default is not None
-    assert "prefer_response_category" not in default
-    assert "prefer_configured_category" not in default
-    assert response_first == {**default, "prefer_response_category": True}
-    assert configured_first == {**default, "prefer_configured_category": True}
+    assert rejecting == default
+    assert "category_conflict_policy" not in default
+    assert response_first == {**default, "category_conflict_policy": "prefer_response"}
+    assert configured_first == {**default, "category_conflict_policy": "prefer_configured"}
 
 
-@pytest.mark.parametrize("prefer_response_category", [False, True])
 @pytest.mark.parametrize(
-    ("response_text", "configured_category", "compatible"),
+    ("policy", "legacy_preference_key"),
+    [
+        (CategoryConflictPolicy.PREFER_CONFIGURED, "prefer_configured_category"),
+        (CategoryConflictPolicy.PREFER_RESPONSE, "prefer_response_category"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("response_text", "configured_category", "strict_compatible"),
     [
         ('{"category": "violence"}', None, True),
         ("{}", "harm", True),
@@ -214,19 +253,21 @@ def test_json_schema_response_handler_replay_identifier_unchanged_by_default() -
     ],
 )
 def test_json_schema_response_handler_legacy_contract_requires_unchanged_category_parsing(
-    prefer_response_category: bool,
+    policy: CategoryConflictPolicy,
+    legacy_preference_key: str,
     response_text: str,
     configured_category: str | None,
-    compatible: bool,
+    strict_compatible: bool,
 ) -> None:
-    handler = JsonSchemaResponseHandler(
-        prefer_response_category=prefer_response_category,
-        prefer_configured_category=not prefer_response_category,
-    )
+    handler = JsonSchemaResponseHandler(category_conflict_policy=policy)
 
     legacy = handler._legacy_replay_identifiers(response_text=response_text, category=configured_category)
 
-    expected = [JsonSchemaResponseHandler()._get_replay_identifier()] if compatible else []
+    historical = JsonSchemaResponseHandler()._get_replay_identifier()
+    assert historical is not None
+    expected = [{**historical, legacy_preference_key: True}]
+    if strict_compatible:
+        expected.append(historical)
     assert legacy == expected
 
 

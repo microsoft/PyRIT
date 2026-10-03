@@ -13,6 +13,7 @@ from pyrit.score.llm_scoring import (
     _run_llm_scoring_async,
 )
 from pyrit.score.response_handler import (
+    CategoryConflictPolicy,
     JsonSchemaResponseHandler,
     NumericRangeResponseHandler,
     ResponseHandler,
@@ -87,7 +88,7 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             prompt_format_string (str | None): User prompt template with the same placeholders.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
                 to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments that
-                prefers the configured category.
+                uses ``CategoryConflictPolicy.PREFER_CONFIGURED``.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
                 validator will be used requiring text input and an objective.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
@@ -121,7 +122,7 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             description_output_key=description_output_key,
             metadata_output_key=metadata_output_key,
             category_output_key=category_output_key,
-            prefer_configured_category=True,
+            category_conflict_policy=CategoryConflictPolicy.PREFER_CONFIGURED,
             response_schema=response_json_schema,
             numeric_value=True,
         )

@@ -5,7 +5,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -39,6 +39,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     AudioTrueFalseScorer,
     CallableResponseHandler,
+    CategoryConflictPolicy,
     ContentClassifier,
     ContentClassifierPaths,
     InsecureCodeScorer,
@@ -1397,8 +1398,23 @@ def _pre_category_preference_identifier() -> AbstractContextManager[Any]:
 
     def legacy(self: JsonSchemaResponseHandler) -> dict[str, Any]:
         identifier = current(self)
-        identifier.pop("prefer_response_category", None)
-        identifier.pop("prefer_configured_category", None)
+        identifier.pop("category_conflict_policy", None)
+        return identifier
+
+    return patch.object(JsonSchemaResponseHandler, "_replay_identifier", legacy)
+
+
+def _boolean_category_policy_identifier() -> AbstractContextManager[Any]:
+    """Mimic the equivalent category contract from before the enum replaced the flags."""
+    current = JsonSchemaResponseHandler._replay_identifier
+
+    def legacy(self: JsonSchemaResponseHandler) -> dict[str, Any]:
+        identifier = current(self)
+        policy = identifier.pop("category_conflict_policy", None)
+        if policy == CategoryConflictPolicy.PREFER_CONFIGURED.value:
+            identifier["prefer_configured_category"] = True
+        elif policy == CategoryConflictPolicy.PREFER_RESPONSE.value:
+            identifier["prefer_response_category"] = True
         return identifier
 
     return patch.object(JsonSchemaResponseHandler, "_replay_identifier", legacy)
@@ -1441,27 +1457,37 @@ async def test_general_scorer_replays_observations_from_before_category_preferen
 
 
 @pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
-@pytest.mark.parametrize("prefer_response_category", [False, True], ids=["default_handler", "response_first_handler"])
+@pytest.mark.parametrize("policy", [CategoryConflictPolicy.PREFER_CONFIGURED, CategoryConflictPolicy.PREFER_RESPONSE])
+@pytest.mark.parametrize("legacy_identity", [False, True], ids=["enum_contract", "boolean_contract"])
 async def test_general_scorer_category_precedence_is_preserved_in_replay_async(
     sqlite_instance: MemoryInterface,
     scorer_type: type[Scorer],
     raw_score: str,
-    prefer_response_category: bool,
+    policy: CategoryConflictPolicy,
+    legacy_identity: bool,
 ) -> None:
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.set_system_prompt_async = AsyncMock()
     body = json.dumps({"score_value": raw_score, "rationale": "r", "category": "violence"})
     target.send_prompt_async = AsyncMock(return_value=_response(body))
-    handler = JsonSchemaResponseHandler(prefer_response_category=True) if prefer_response_category else None
+    handler = (
+        JsonSchemaResponseHandler(category_conflict_policy=policy)
+        if policy is CategoryConflictPolicy.PREFER_RESPONSE
+        else None
+    )
     scorer = _general_scorer(scorer_type, target=target, category="harm", response_handler=handler)
     expectation = ScoringExpectation(objective="Judge this response")
 
-    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    acquisition_context = _boolean_category_policy_identifier() if legacy_identity else nullcontext()
+    with acquisition_context:
+        live = (
+            await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
+        )[0]
     observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
     replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
 
-    expected_category = ["violence"] if prefer_response_category else ["harm"]
+    expected_category = ["violence"] if policy is CategoryConflictPolicy.PREFER_RESPONSE else ["harm"]
     assert live.score_category == expected_category
     assert replay.score_category == expected_category
     assert replay.score_value == live.score_value
@@ -1469,24 +1495,39 @@ async def test_general_scorer_category_precedence_is_preserved_in_replay_async(
 
 
 @pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
-@pytest.mark.parametrize("prefer_response_category", [False, True])
-async def test_general_scorer_rejects_replay_when_category_preference_changes_async(
+@pytest.mark.parametrize("policy", [CategoryConflictPolicy.PREFER_CONFIGURED, CategoryConflictPolicy.PREFER_RESPONSE])
+@pytest.mark.parametrize("legacy_identity", [False, True], ids=["enum_contract", "boolean_contract"])
+async def test_general_scorer_rejects_replay_when_category_policy_changes_async(
     sqlite_instance: MemoryInterface,
     scorer_type: type[Scorer],
     raw_score: str,
-    prefer_response_category: bool,
+    policy: CategoryConflictPolicy,
+    legacy_identity: bool,
 ) -> None:
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     target.set_system_prompt_async = AsyncMock()
     body = json.dumps({"score_value": raw_score, "rationale": "r", "category": "violence"})
     target.send_prompt_async = AsyncMock(return_value=_response(body))
-    handler = JsonSchemaResponseHandler(prefer_response_category=True) if prefer_response_category else None
+    handler = (
+        JsonSchemaResponseHandler(category_conflict_policy=policy)
+        if policy is CategoryConflictPolicy.PREFER_RESPONSE
+        else None
+    )
     scorer = _general_scorer(scorer_type, target=target, category="harm", response_handler=handler)
     expectation = ScoringExpectation(objective="Judge this response")
-    live = (await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation))[0]
+    acquisition_context = _boolean_category_policy_identifier() if legacy_identity else nullcontext()
+    with acquisition_context:
+        live = (
+            await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
+        )[0]
     observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
-    changed_handler = None if prefer_response_category else JsonSchemaResponseHandler(prefer_response_category=True)
+    changed_policy = (
+        CategoryConflictPolicy.PREFER_CONFIGURED
+        if policy is CategoryConflictPolicy.PREFER_RESPONSE
+        else CategoryConflictPolicy.PREFER_RESPONSE
+    )
+    changed_handler = JsonSchemaResponseHandler(category_conflict_policy=changed_policy)
     changed = _general_scorer(scorer_type, target=target, category="harm", response_handler=changed_handler)
 
     with pytest.raises(NonReplayableObservationError, match="handler or category"):

@@ -11,7 +11,12 @@ from pyrit.score.llm_scoring import (
     _parse_judgment_observation,
     _run_llm_scoring_async,
 )
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
+from pyrit.score.response_handler import (
+    CategoryConflictPolicy,
+    JsonSchemaResponseHandler,
+    ResponseHandler,
+    TrueFalseResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -86,7 +91,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
                 with the default response handler. Defaults to None.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
                 to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments that
-                prefers the configured category.
+                uses ``CategoryConflictPolicy.PREFER_CONFIGURED``.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
                 validator will be used requiring text input.
             score_aggregator (TrueFalseAggregatorFunc): Aggregator for combining scores. Defaults to
@@ -125,7 +130,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
             description_output_key=description_output_key,
             metadata_output_key=metadata_output_key,
             category_output_key=category_output_key,
-            prefer_configured_category=True,
+            category_conflict_policy=CategoryConflictPolicy.PREFER_CONFIGURED,
             response_schema=response_json_schema,
         )
         # Keep score-domain validation in the parser callback so invalid semantic values retry.
