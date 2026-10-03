@@ -243,15 +243,54 @@ git() {
             assert "::error::Source checkout must be clean" in result.stdout
 
 
-def test_pypi_build_uses_configured_coordinated_release(workflow: dict[str, Any]) -> None:
+def test_pypi_build_defaults_to_latest_release_with_only_an_explicit_override(workflow: dict[str, Any]) -> None:
     version_input = workflow["on"]["workflow_dispatch"]["inputs"]["pypiVersion"]
     assert version_input["type"] == "string"
     assert version_input["required"] == "false"
     steps = workflow["jobs"]["build-and-test-pypi"]["steps"]
     selection = next(step for step in steps if step.get("id") == "pypi-version")
     production = next(step for step in steps if step.get("id") == "production")
-    assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}"
+    assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion }}"
+    assert "vars.PYRIT_PYPI_VERSION" not in WORKFLOW.read_text(encoding="utf-8")
+    assert "python3 build_scripts/select_pypi_version.py" in selection["run"]
     assert "PYRIT_VERSION=${{ steps.pypi-version.outputs.version }}" in production["with"]["build-args"]
+    assert steps.index(selection) < steps.index(production)
+
+
+@pytest.mark.parametrize("override", [None, "", "9.9.9rc1"])
+@pytest.mark.parametrize("selection_status", [0, 1])
+def test_pypi_selection_outputs_only_a_successfully_resolved_version(
+    *, workflow: dict[str, Any], bash_path: str, tmp_path: Path, override: str | None, selection_status: int
+) -> None:
+    selection = next(
+        step for step in workflow["jobs"]["build-and-test-pypi"]["steps"] if step.get("id") == "pypi-version"
+    )
+    output = tmp_path / "outputs"
+    selected = override or "9.9.9"
+    result = _run_bash(
+        bash_path=bash_path,
+        script="""
+python3() {
+    [[ "$#" == 3 && "$1" == build_scripts/select_pypi_version.py && "$2" == --version &&
+        "$3" == "${PYRIT_PYPI_VERSION:-}" ]] || return 97
+    printf '%s\\n' "$SELECTED_VERSION"
+    return "$SELECTION_STATUS"
+}
+"""
+        + selection["run"],
+        environment={
+            "PYRIT_PYPI_VERSION": override,
+            "SELECTED_VERSION": selected,
+            "SELECTION_STATUS": str(selection_status),
+            "GITHUB_OUTPUT": output.as_posix(),
+        },
+    )
+    assert result.returncode == selection_status, result.stdout + result.stderr
+    if selection_status == 0:
+        assert output.read_text(encoding="utf-8") == f"version={selected}\n"
+        assert f"Testing published PyPI release: {selected}" in result.stdout
+    else:
+        assert not output.exists()
 
 
 def test_builds_stay_local_and_only_identical_devcontainers_share_cache(workflow: dict[str, Any]) -> None:

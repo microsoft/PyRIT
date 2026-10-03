@@ -21,9 +21,19 @@ sequence publishes images.
 
 Local builds record the checked-out commit and require a clean source tree before
 building, so Python and frontend compatibility stamps describe the same source.
-PyPI checks require an exact stamped release from the `pypiVersion` dispatch input
-or the `PYRIT_PYPI_VERSION` repository variable. Missing or invalid configuration
-fails rather than selecting an arbitrary latest release.
+PyPI checks resolve the latest stable, non-yanked release from PyPI at execution
+time and pass that exact version to the production build. The optional
+`pypiVersion` dispatch input selects an explicit published version, including a
+prerelease. The `PYRIT_PYPI_VERSION` repository variable is not used.
+
+Selection uses PyPI's release ordering, without installing dependencies or sorting
+version strings. Lookup failures, invalid metadata, yanked releases, and missing
+published distributions fail without an older-version fallback. The image removes
+local Python and frontend sources and uses the selected distribution's packaged
+assets. Compatibility validation remains mandatory: if the latest release predates
+the required stamps, the build identifies that version and fails until a
+coordinated release is published. Selecting a release does not establish that its
+build and smoke checks pass.
 
 The existing `Build Devcontainer`, `Build Production (local)`, `Test Import (local)`,
 `Test GUI (local)`, and `Test Jupyter (local)` check names are retained as result
