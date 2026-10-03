@@ -1652,6 +1652,53 @@ async def test_construct_message_truncated_skips_partial_tool_call(
     assert any(p.original_value_data_type == "text" and p.response_error == "empty" for p in result.message_pieces)
 
 
+def _make_unreadable_section() -> MagicMock:
+    """A completed section PyRIT does not model, e.g. the ``image_generation_call`` item the
+    Responses API returns once a run enables the built-in image_generation tool."""
+    section = MagicMock()
+    section.type = "image_generation_call"
+    return section
+
+
+def _make_completed_response(output: list | None) -> MagicMock:
+    response = MagicMock()
+    response.error = None
+    response.status = "completed"
+    response.incomplete_details = None
+    response.output = output
+    return response
+
+
+async def test_construct_message_completed_without_readable_output_raises(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A completed response with nothing PyRIT can read is an error, not a reasoning-only answer."""
+    response = _make_completed_response(output=[_make_reasoning_section(), _make_unreadable_section()])
+
+    with pytest.raises(PyritException) as excinfo:
+        await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    # Deliberately not an EmptyResponseException: @pyrit_target_retry retries that
+    # type, and a section type PyRIT does not model comes back identically on every
+    # attempt, so retrying only bills the same outcome again.
+    assert not isinstance(excinfo.value, EmptyResponseException)
+    assert type(excinfo.value) is PyritException
+
+
+async def test_construct_message_completed_keeps_readable_output_next_to_unreadable(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A readable section alongside an unmodelled one is still returned."""
+    response = _make_completed_response(
+        output=[_make_reasoning_section(), _make_unreadable_section(), _make_message_section("An answer")]
+    )
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    text_pieces = [p for p in result.message_pieces if p.original_value_data_type == "text"]
+    assert [p.original_value for p in text_pieces] == ["An answer"]
+
+
 async def test_construct_message_from_response(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     """Test _construct_message_from_response parses output sections."""
     mock_response = MagicMock()
