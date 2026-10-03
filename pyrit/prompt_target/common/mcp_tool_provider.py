@@ -11,7 +11,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
-import httpx
+import httpx2
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -96,7 +96,7 @@ class _MCPTool(Tool):
         super().__init__(
             name=definition.name,
             description=definition.description or "",
-            parameters=dict(definition.inputSchema),
+            parameters=dict(definition.input_schema),
         )
         self._provider = provider
 
@@ -234,12 +234,11 @@ class MCPToolProvider:
     @asynccontextmanager
     async def _create_session_async(self) -> AsyncIterator[ClientSession]:
         if isinstance(self._server_config, MCPStreamableHTTPServerConfig):
-            timeout = httpx.Timeout(self._HTTP_TIMEOUT_SECONDS, read=self._HTTP_READ_TIMEOUT_SECONDS)
-            async with httpx.AsyncClient(headers=self._server_config.headers, timeout=timeout) as http_client:
+            timeout = httpx2.Timeout(self._HTTP_TIMEOUT_SECONDS, read=self._HTTP_READ_TIMEOUT_SECONDS)
+            async with httpx2.AsyncClient(headers=self._server_config.headers, timeout=timeout) as http_client:
                 async with streamable_http_client(self._server_config.url, http_client=http_client) as (
                     read_stream,
                     write_stream,
-                    _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
@@ -325,7 +324,7 @@ class MCPToolProvider:
         while True:
             result = await session.list_tools(params=PaginatedRequestParams(cursor=cursor))
             tools.extend(result.tools)
-            cursor = result.nextCursor
+            cursor = result.next_cursor
             if cursor is None:
                 return tools
 
@@ -342,8 +341,8 @@ class MCPToolProvider:
     def _serialize_call_result(*, result: CallToolResult) -> dict[str, object]:
         serialized: dict[str, object] = {
             "content": [item.model_dump(mode="json", by_alias=True, exclude_none=True) for item in result.content],
-            "is_error": result.isError,
+            "is_error": result.is_error,
         }
-        if result.structuredContent is not None:
-            serialized["structured_content"] = result.structuredContent
+        if result.structured_content is not None:
+            serialized["structured_content"] = result.structured_content
         return serialized
