@@ -40,11 +40,12 @@ def _payload(*, piece_value: str = "hello world") -> dict[str, Any]:
             "scorer": None,
             "stats": {
                 "total_techniques": 2,
-                "total_results": 3,
+                "total_units": 3,
+                "total_attempts": 4,
                 "overall_success_rate": 67,
                 "unique_objectives": 2,
             },
-            "groups": [{"name": "g1", "num_results": 3, "success_rate": 67}],
+            "groups": [{"name": "g1", "num_units": 3, "num_attempts": 4, "success_rate": 67}],
         },
         "conversations": [
             {

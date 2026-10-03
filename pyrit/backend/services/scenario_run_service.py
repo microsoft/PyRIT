@@ -1641,14 +1641,12 @@ class ScenarioRunService:
                 scenario_result_id,
             )
             plan = None
-        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks, completed_attacks, objective_achieved_rate, successful_attacks = (
             self._progress_read_model.calculate_progress_counts(
                 scenario_result=scenario_result,
                 plan=plan,
-                plan_lookup=plan_lookup,
             )
         )
         techniques_used = (
@@ -1667,6 +1665,7 @@ class ScenarioRunService:
         persisted_retries: list[int] = []
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
         attempts_by_unit: dict[ResultUnitIdentity, int] = {}
+        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
                 unit_identity = self._progress_read_model.resolve_result_unit_identity(

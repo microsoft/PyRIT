@@ -20,7 +20,21 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, false, func, literal, not_, or_, select, update
+from sqlalchemy import (
+    MetaData,
+    Unicode,
+    and_,
+    case,
+    exists,
+    false,
+    func,
+    literal,
+    not_,
+    or_,
+    select,
+    type_coerce,
+    update,
+)
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -2068,9 +2082,13 @@ class MemoryInterface(abc.ABC):
         """Return a compact persisted start-time expression when the backend supports one."""
         return literal(None)
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """
         Return backend-specific JSON expressions for scenario attempt unit attribution.
+
+        The expressions are the atomic attack name, the technique hash, the attributed seed group
+        (NULL when absent), and a key built from the atomic identifier's ordered seed hashes (NULL
+        when it has none).
 
         Raises:
             NotImplementedError: If the memory backend does not support Scenario history queries.
@@ -5704,14 +5722,25 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A statement selecting one aggregate row per scenario run with attempts.
         """
-        atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+        atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key = (
+            self._get_scenario_attempt_unit_expressions()
+        )
+        # Same fallback order as pyrit.analytics.scenario_statistics.resolve_execution_unit, minus the plan
+        # match: identifier seeds keep legacy seed groups sharing an objective apart, then the objective hash.
+        fallback_seed_id = func.coalesce(
+            attributed_seed_group_id,
+            literal("seeds:", Unicode).concat(type_coerce(identifier_seed_key, Unicode)),
+            AttackResultEntry.objective_sha256,
+            "",
+        )
         attempts = (
             select(
                 AttackResultEntry.id.label("attempt_id"),
                 AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
-                seed_group_id.label("seed_group_id"),
+                attributed_seed_group_id.label("attributed_seed_group_id"),
+                fallback_seed_id.label("seed_group_id"),
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
@@ -5780,6 +5809,13 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A statement selecting one row per attempt with its resolved unit identity.
         """
+        # Without a matching planned group, a unit is its atomic attack name plus technique configuration,
+        # the same identity pyrit.analytics.scenario_statistics uses, so configurations sharing a name stay apart.
+        unplanned_group_id = (
+            type_coerce(attempts.c.atomic_attack_name, Unicode)
+            .concat(literal("\x1f", Unicode))
+            .concat(type_coerce(attempts.c.technique_eval_hash, Unicode))
+        )
         if not plan_entry_ids:
             return select(
                 attempts.c.scenario_result_id,
@@ -5787,12 +5823,22 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
-                attempts.c.atomic_attack_name.label("unit_group_id"),
+                unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
                 literal(1).label("is_planned"),
             )
 
         planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
+        # How many planned groups share each atomic attack name, so name-only matches can require a unique group.
+        groups_per_name = (
+            select(
+                planned_units.c.scenario_result_id,
+                planned_units.c.atomic_attack_name,
+                func.count(func.distinct(planned_units.c.atomic_group_id)).label("group_count"),
+            )
+            .group_by(planned_units.c.scenario_result_id, planned_units.c.atomic_attack_name)
+            .subquery("history_planned_groups_per_name")
+        )
         planned = (
             select(
                 planned_units.c.scenario_result_id,
@@ -5802,6 +5848,7 @@ class MemoryInterface(abc.ABC):
                 planned_units.c.technique_eval_hash,
                 planned_units.c.seed_group_id,
                 plan_seeds.c.objective_sha256,
+                groups_per_name.c.group_count,
             )
             .select_from(
                 planned_units.outerjoin(
@@ -5810,25 +5857,32 @@ class MemoryInterface(abc.ABC):
                         plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
                         plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
                     ),
+                ).join(
+                    groups_per_name,
+                    and_(
+                        groups_per_name.c.scenario_result_id == planned_units.c.scenario_result_id,
+                        groups_per_name.c.atomic_attack_name == planned_units.c.atomic_attack_name,
+                    ),
                 )
             )
             .subquery("history_planned_units")
         )
-        # An attempt persisted without seed-group attribution falls back to its objective hash,
-        # so it is matched against the planned seed group carrying that same objective hash.
-        seed_matches_exactly = planned.c.seed_group_id == attempts.c.seed_group_id
+        # An attempt persisted without seed-group attribution is matched to the planned seed group in its
+        # atomic group carrying the same objective hash (objectives are unique within an atomic group).
+        seed_matches_exactly = planned.c.seed_group_id == attempts.c.attributed_seed_group_id
         match_condition = and_(
             planned.c.scenario_result_id == attempts.c.scenario_result_id,
             planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
+            # Same rule as ScenarioPlanLookup.resolve_group: without a technique hash, the name must be unambiguous.
             or_(
-                attempts.c.technique_eval_hash == "",
+                and_(attempts.c.technique_eval_hash == "", planned.c.group_count == 1),
                 planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
             ),
             or_(
                 seed_matches_exactly,
                 and_(
-                    attempts.c.seed_group_id == attempts.c.objective_sha256,
-                    planned.c.objective_sha256 == attempts.c.seed_group_id,
+                    attempts.c.attributed_seed_group_id.is_(None),
+                    planned.c.objective_sha256 == attempts.c.objective_sha256,
                 ),
             ),
         )
@@ -5840,6 +5894,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.timestamp,
                 attempts.c.total_retries,
                 attempts.c.atomic_attack_name,
+                unplanned_group_id.label("unplanned_group_id"),
                 attempts.c.seed_group_id,
                 planned.c.atomic_group_id,
                 planned.c.seed_group_id.label("planned_seed_group_id"),
@@ -5863,7 +5918,7 @@ class MemoryInterface(abc.ABC):
             matched.c.outcome,
             matched.c.timestamp,
             matched.c.total_retries,
-            func.coalesce(matched.c.atomic_group_id, matched.c.atomic_attack_name).label("unit_group_id"),
+            func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
             # Runs outside the plan-resolution set keep their raw identity and stay counted.
             case(

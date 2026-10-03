@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary  # noqa: TC001
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
@@ -165,6 +165,42 @@ class ScenarioProgressCounts(BaseModel):
     success_percentage: int | None = Field(default=None, ge=0, le=100)
     errors: int = Field(..., ge=0)
     retries: int = Field(..., ge=0)
+
+
+class ScenarioExecutionUnit(BaseModel):
+    """
+    Identity of one scenario execution unit.
+
+    ``atomic_group_id`` identifies the atomic attack together with its technique configuration, so
+    two configurations that share an atomic attack name are separate units. ``seed_group_id``
+    identifies the logical seed group within it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    atomic_group_id: str
+    seed_group_id: str
+
+
+class ScenarioExecutionStatistics(BaseModel):
+    """
+    Effective execution-unit statistics for one scenario run, calculated by ``pyrit.analytics``.
+
+    Each execution unit counts once, by its latest attempt, so recovered errors do not lower the success
+    percentage. ``attempts`` and the ``errors`` and ``retries`` of each count keep the historical attempt
+    history separately from the effective-unit statistics.
+    """
+
+    #: Counts across every counted execution unit.
+    overall: ScenarioProgressCounts
+    #: Counts keyed by atomic attack name (all technique configurations that share the name).
+    atomic_attacks: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
+    #: Counts keyed by display group label.
+    display_groups: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
+    #: Total persisted attempts, including superseded ones.
+    attempts: int = Field(default=0, ge=0)
+    #: Attempts that matched no planned execution unit and are excluded from the counts.
+    unattributed_attempts: int = Field(default=0, ge=0)
 
 
 class ScenarioTechniqueProgress(ScenarioProgressCounts):
