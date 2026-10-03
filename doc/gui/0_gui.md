@@ -390,6 +390,12 @@ prevents newly admitted work from overlapping replacement.
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
 
+Backend shutdown closes runtime and management admission, then waits for accepted requests and any live apply
+to finish before stopping the scheduler and closing shared resources. This includes requests retained after a
+client disconnect and their offloaded writes. Cancelling the shutdown caller does not interrupt that cleanup;
+a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
+Shutdown can therefore wait for an outstanding operation.
+
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
 backend. The administration UI stays available for configuration repair. Authentication and authorization retain
