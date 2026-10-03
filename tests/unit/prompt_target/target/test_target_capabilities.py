@@ -4,6 +4,7 @@
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
 from pyrit.prompt_target.common.target_capabilities import (
@@ -561,3 +562,94 @@ class TestGetDefaultConfiguration:
         assert result.capabilities.supports_multi_turn is True
         assert result.capabilities.supports_multi_message_pieces is True
         assert result.capabilities.supports_system_prompt is True
+
+
+class TestTargetCapabilitiesWireRoundTrip:
+    """Test that the REST wire form of TargetCapabilities reads back without losing data.
+
+    ``TargetCapabilities`` is embedded in the ``TargetInstance`` REST response, so
+    ``model_dump_json()`` / ``model_validate_json()`` is a real round trip: the CLI does
+    exactly this on every ``GET /api/targets`` payload. Serialization excludes the
+    modality *combination* fields and emits their flattened ``supported_*_modalities``
+    projections instead, so reading the wire form back has to rebuild the combinations
+    from those projections -- otherwise a non-text target silently reads back as
+    text-only and the object contradicts the payload it came from.
+    """
+
+    def test_flattened_modalities_survive_the_wire_round_trip(self):
+        caps = TargetCapabilities(
+            input_modalities=frozenset({frozenset({"text"}), frozenset({"text", "image_path"})}),
+            output_modalities=frozenset({frozenset({"text"}), frozenset({"audio_path", "text"})}),
+        )
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored.supported_input_modalities == caps.supported_input_modalities
+        assert restored.supported_output_modalities == caps.supported_output_modalities
+
+    def test_non_text_output_target_does_not_read_back_as_text_only(self):
+        caps = TargetCapabilities(output_modalities=frozenset({frozenset({"image_path"})}))
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored.output_modalities == caps.output_modalities
+        assert restored.supported_output_modalities == ["image_path"]
+
+    def test_non_text_input_target_does_not_read_back_as_text_only(self):
+        caps = TargetCapabilities(input_modalities=frozenset({frozenset({"audio_path"})}))
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored.input_modalities == caps.input_modalities
+        assert restored.supported_input_modalities == ["audio_path"]
+
+    def test_known_model_capabilities_survive_the_wire_round_trip(self):
+        caps = get_known_capabilities("gpt-4o")
+        assert caps is not None
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored.supported_input_modalities == caps.supported_input_modalities
+        assert restored.supported_output_modalities == caps.supported_output_modalities
+        for field in ("supports_multi_turn", "supports_system_prompt", "supports_json_output"):
+            assert getattr(restored, field) == getattr(caps, field)
+
+    def test_capability_helpers_agree_after_the_wire_round_trip(self):
+        caps = TargetCapabilities(
+            supports_multi_turn=True,
+            output_modalities=frozenset({frozenset({"audio_path"})}),
+        )
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored.includes(capability=CapabilityName.MULTI_TURN) is True
+        assert "audio_path" in restored.supported_output_modalities
+
+    def test_empty_modalities_survive_the_wire_round_trip(self):
+        caps = TargetCapabilities(input_modalities=frozenset())
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored.supported_input_modalities == []
+        assert restored.input_modalities == frozenset()
+
+    def test_default_capabilities_are_unchanged_by_the_round_trip(self):
+        caps = TargetCapabilities()
+
+        restored = TargetCapabilities.model_validate_json(caps.model_dump_json())
+
+        assert restored == caps
+
+    def test_in_process_construction_is_not_reinterpreted(self):
+        # Supplying the live combination fields must win over any flattened projection.
+        caps = TargetCapabilities(
+            input_modalities=frozenset({frozenset({"image_path"})}),
+            supported_input_modalities=["text"],
+        )
+
+        assert caps.input_modalities == frozenset({frozenset({"image_path"})})
+        assert caps.supported_input_modalities == ["image_path"]
+
+    def test_non_mapping_payload_is_left_to_pydantic(self):
+        with pytest.raises(ValidationError):
+            TargetCapabilities.model_validate_json('"not an object"')

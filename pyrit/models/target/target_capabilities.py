@@ -20,9 +20,9 @@ they are not modeled on the typed identifier projections in
 from __future__ import annotations
 
 from enum import Enum
-from typing import cast
+from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
@@ -141,6 +141,43 @@ class TargetCapabilities(BaseModel):
             list[str]: Sorted unique output modality data types.
         """
         return sorted({str(data_type) for combo in self.output_modalities for data_type in combo})
+
+    @model_validator(mode="before")
+    @classmethod
+    def _restore_modality_combinations_from_wire(cls, data: Any) -> Any:
+        """
+        Rebuild the excluded combination fields when validating from a serialized payload.
+
+        Serialization drops the live ``input_modalities`` / ``output_modalities`` and emits
+        their flattened ``supported_input_modalities`` / ``supported_output_modalities``
+        projections instead. A client that deserializes the wire form (e.g. the CLI
+        consuming ``GET /api/targets``) therefore holds those keys but no live combination
+        set, and would fall through to the text-only default — so an image- or audio-capable
+        target reads back as text-only, contradicting the very payload it was built from.
+
+        The wire carries the flattened union rather than the combinations, so a single
+        combination holding that union is restored. That is enough to keep the flattened
+        projection self-consistent, which is the contract the wire documents; recovering
+        the original combinations would require changing the wire format. In-process
+        construction, which already supplies a live combination set, is left untouched.
+
+        Returns:
+            Any: The input unchanged, or a copy with the combination fields restored from
+                the serialized flattened projections.
+        """
+        if not isinstance(data, dict):
+            return data
+        for combinations_key, flattened_key in (
+            ("input_modalities", "supported_input_modalities"),
+            ("output_modalities", "supported_output_modalities"),
+        ):
+            if combinations_key in data:
+                continue
+            flattened = data.get(flattened_key)
+            if isinstance(flattened, list):
+                combinations = [frozenset(flattened)] if flattened else []
+                data = {**data, combinations_key: combinations}
+        return data
 
     def includes(self, *, capability: CapabilityName) -> bool:
         """
