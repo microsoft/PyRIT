@@ -184,7 +184,7 @@ class SeedDatasetFilter:
             SeedDatasetMetadata(size={"large"}, modalities={"image"}),
         ])
 
-    Passing both flat kwargs and criteria raises ValueError.
+    Passing both flat kwargs and criteria, or an empty criteria list, raises ValueError.
 
     Special tags:
     - "all": Returns every dataset, ignores all other fields. This tag will
@@ -193,7 +193,7 @@ class SeedDatasetFilter:
       strict_match=True, loses its shortcut and is treated as a normal tag.
 
     Args:
-        criteria: Explicit list of SeedDatasetMetadata to OR-match against.
+        criteria: Non-empty list of SeedDatasetMetadata to OR-match against.
         strict_match: If True, within-axis matching uses AND (all filter values
             must be present) instead of OR (any overlap suffices).
         **kwargs: Flat metadata fields (tags, size, modalities, etc.) for simple use.
@@ -221,12 +221,12 @@ class SeedDatasetFilter:
             ])
 
         Args:
-            criteria: Explicit list of SeedDatasetMetadata to OR-match against.
+            criteria: Non-empty list of SeedDatasetMetadata to OR-match against.
             strict_match: If True, within-axis matching uses AND instead of OR.
             **kwargs: Flat metadata fields passed to SeedDatasetMetadata.
 
         Raises:
-            ValueError: If both criteria and flat kwargs are provided.
+            ValueError: If both criteria and flat kwargs are provided, or criteria is empty.
         """
         if criteria is not None and kwargs:
             raise ValueError("Cannot pass both 'criteria' and flat metadata kwargs. Use one or the other.")
@@ -247,6 +247,11 @@ class SeedDatasetFilter:
             return SeedDatasetMetadata(**normalized)
 
         self.criteria = [_normalize_criterion(c) for c in self.criteria]
+
+        if not self.criteria:
+            raise ValueError(
+                "'criteria' must contain at least one criterion. Omit 'criteria' for an unconstrained filter."
+            )
 
         self.strict_match = strict_match
         self._validate()
