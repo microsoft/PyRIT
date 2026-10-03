@@ -63,7 +63,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
-from pyrit.score.response_handler import TrueFalseResponseHandler
+from pyrit.score.response_handler import NumericRangeResponseHandler, TrueFalseResponseHandler
 
 _INVALID_RESPONSE = "not valid json"
 _VALID_RESPONSE = '{"score_value":"true","description":"matched","rationale":"reason","metadata":"test"}'
@@ -1473,5 +1473,62 @@ async def test_legacy_contract_does_not_override_a_handler_that_opts_out_of_repl
     scorer._response_handler = opted_out
 
     with pytest.raises(NonReplayableObservationError, match="stable replay contract"):
+        await scorer.score_observation_async(observation=observation, expectation=expectation)
+    assert target.send_prompt_async.call_count == 1
+
+
+class _VersionTwoTrueFalseHandler(TrueFalseResponseHandler):
+    """A custom wrapper whose parsing changed, so it declares a new contract version."""
+
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        identifier = super()._replay_identifier()
+        return None if identifier is None else {**identifier, "version": 2}
+
+
+class _VersionTwoNumericRangeHandler(NumericRangeResponseHandler):
+    """A custom range wrapper whose parsing changed, so it declares a new contract version."""
+
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        identifier = super()._replay_identifier()
+        return None if identifier is None else {**identifier, "version": 2}
+
+
+def _with_version_two_wrapper(handler: ResponseHandler) -> ResponseHandler:
+    if isinstance(handler, NumericRangeResponseHandler):
+        return _VersionTwoNumericRangeHandler(
+            response_handler=handler._response_handler,
+            minimum_value=handler._minimum_value,
+            maximum_value=handler._maximum_value,
+        )
+    assert isinstance(handler, TrueFalseResponseHandler)
+    return _VersionTwoTrueFalseHandler(response_handler=handler._response_handler)
+
+
+@pytest.mark.parametrize(("scorer_type", "raw_score"), _LEGACY_GENERAL_SCORERS)
+async def test_legacy_contract_keeps_a_changed_wrapper_version_async(
+    sqlite_instance: MemoryInterface,
+    scorer_type: type[Scorer],
+    raw_score: str,
+) -> None:
+    target = MagicMock()
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.set_system_prompt_async = AsyncMock()
+    body = json.dumps({"score_value": raw_score, "rationale": "r"})
+    target.send_prompt_async = AsyncMock(return_value=_response(body))
+    scorer = _general_scorer(scorer_type, target=target, category="harm")
+    expectation = ScoringExpectation(objective="Judge this response")
+    with _pre_prefer_response_category_identifier():
+        live = (
+            await scorer.score_async(scorable=ContentScorable(value="candidate response"), expectation=expectation)
+        )[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+    # With the original wrapper this observation replays through the legacy category contract.
+    changed = _with_version_two_wrapper(scorer._response_handler)
+    legacy = changed._legacy_replay_identifiers(response_text=json.dumps({"score_value": raw_score}), category="harm")
+    assert legacy
+    assert all(identifier["version"] == 2 for identifier in legacy)
+    scorer._response_handler = changed
+
+    with pytest.raises(NonReplayableObservationError, match="handler or category"):
         await scorer.score_observation_async(observation=observation, expectation=expectation)
     assert target.send_prompt_async.call_count == 1

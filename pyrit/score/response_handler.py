@@ -455,16 +455,18 @@ class TrueFalseResponseHandler(ResponseHandler):
         self, *, response_text: str, category: Sequence[str] | str | None
     ) -> list[dict[str, Any]]:
         """
-        Wrap the inner handler's legacy contracts the same way ``_replay_identifier`` wraps its current one.
+        Keep this wrapper's current contract and swap in each of the inner handler's legacy contracts.
 
         Returns:
             list[dict[str, Any]]: The wrapped legacy identifiers.
         """
-        # The outer contract covers this wrapper's own opt-out as well as the inner handler's.
-        if self._get_replay_identifier() is None:
+        # The outer contract covers this wrapper's own opt-out as well as the inner handler's, and reusing it
+        # keeps the wrapper's declared version and configuration.
+        current = self._get_replay_identifier()
+        if current is None:
             return []
         return [
-            {"handler": f"{type(self).__module__}.{type(self).__qualname__}", "version": 1, "wrapped": wrapped}
+            {**current, "wrapped": wrapped}
             for wrapped in self._response_handler._legacy_replay_identifiers(
                 response_text=response_text, category=category
             )
@@ -547,22 +549,18 @@ class NumericRangeResponseHandler(ResponseHandler):
         self, *, response_text: str, category: Sequence[str] | str | None
     ) -> list[dict[str, Any]]:
         """
-        Wrap the inner handler's legacy contracts the same way ``_replay_identifier`` wraps its current one.
+        Keep this wrapper's current contract and swap in each of the inner handler's legacy contracts.
 
         Returns:
             list[dict[str, Any]]: The wrapped legacy identifiers.
         """
-        # The outer contract covers this wrapper's own opt-out as well as the inner handler's.
-        if self._get_replay_identifier() is None:
+        # The outer contract covers this wrapper's own opt-out as well as the inner handler's, and reusing it
+        # keeps the wrapper's declared version and configuration.
+        current = self._get_replay_identifier()
+        if current is None:
             return []
         return [
-            {
-                "handler": f"{type(self).__module__}.{type(self).__qualname__}",
-                "version": 1,
-                "wrapped": wrapped,
-                "minimum_value": self._minimum_value,
-                "maximum_value": self._maximum_value,
-            }
+            {**current, "wrapped": wrapped}
             for wrapped in self._response_handler._legacy_replay_identifiers(
                 response_text=response_text, category=category
             )
