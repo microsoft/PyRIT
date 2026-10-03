@@ -15,6 +15,7 @@ import {
   ConverterInstance,
   Message,
   MessageAttachment,
+  MessageSendConversation,
   MessageSendStatus,
   PromptResponseError,
   TargetCapabilities,
@@ -459,7 +460,7 @@ describe("ChatWindow Integration", () => {
     jest.restoreAllMocks();
   });
 
-  describe("asynchronous single send", () => {
+  describe("asynchronous sending", () => {
     const props = {
       ...defaultProps,
       attackResultId: "async-attack",
@@ -734,6 +735,191 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
       expect(screen.getByRole("textbox")).toBeDisabled();
       expect(screen.queryByText("Async reply")).not.toBeInTheDocument();
+    });
+
+    describe("repeat sends", () => {
+      function repeatedProgress(states: MessageSendConversation["state"][]): MessageSendStatus {
+        return {
+          ...queued,
+          count: states.length,
+          state: states.every((state) => state === "completed") ? "completed" : "sending",
+          conversations: states.map((state, index): MessageSendConversation => ({
+            conversation_id: index === 0 ? props.conversationId : `copy-${index}`,
+            request_turn_number: 0, state, error: null, failure_stage: null,
+          })),
+        };
+      }
+
+      async function chooseCount(user: ReturnType<typeof userEvent.setup>, count: number): Promise<void> {
+        await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+        for (let index = 1; index < count; index++) {
+          await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+        }
+        await user.keyboard("{Escape}");
+      }
+
+      it("settles completed conversations independently and cannot unlock a newer send on a finished copy", async () => {
+        const user = userEvent.setup();
+        const onSelectConversation = jest.fn();
+        const onAttackChange = jest.fn();
+        let finishOlder: (value: MessageSendStatus) => void = () => {};
+        mockedAttacksApi.submitMessageSend.mockResolvedValueOnce({ ...queued, count: 3 })
+          .mockResolvedValue({ ...queued, send_id: "newer-send", conversation_id: "copy-1" });
+        mockedAttacksApi.getMessageSend.mockResolvedValueOnce(repeatedProgress(["completed", "completed", "sending"]))
+          .mockImplementation((_attackId: string, sendId: string) => new Promise((resolve) => {
+            if (sendId === queued.send_id) finishOlder = resolve;
+          }));
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockImplementation(async (_attackId, conversationId) => ({
+          ...reply, conversation_id: conversationId ?? props.conversationId,
+        }));
+        const rendered = render(<TestWrapper>
+          <ChatWindow {...props} onSelectConversation={onSelectConversation} onAttackChange={onAttackChange} />
+        </TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1].count).toBe(3);
+        expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1].request_converter_configurations).toBeUndefined();
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        expect(screen.getByRole("textbox")).toHaveValue("");
+        expect(screen.getByRole("button", { name: "Open conversation copy-1" })).toHaveTextContent("Completed");
+        expect(screen.getByRole("button", { name: "Open conversation copy-2" })).toHaveTextContent("Sending");
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(2);
+        await user.click(screen.getByRole("button", { name: "Open conversation copy-1" }));
+        expect(onSelectConversation).toHaveBeenCalledWith("copy-1");
+        rendered.rerender(<TestWrapper>
+          <ChatWindow {...props} activeConversationId="copy-1"
+            onSelectConversation={onSelectConversation} onAttackChange={onAttackChange} />
+        </TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await user.type(screen.getByRole("textbox"), "Newer copy draft");
+        await user.click(screen.getByRole("button", { name: "Send message", exact: true }));
+        await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
+        expect(mockedAttacksApi.submitMessageSend.mock.calls[1][1]).toEqual(expect.objectContaining({
+          target_conversation_id: "copy-1",
+          pieces: [expect.objectContaining({ original_value: "Newer copy draft" })],
+        }));
+        onAttackChange.mockClear();
+        await act(async () => { finishOlder(repeatedProgress(["completed", "completed", "completed"])); });
+        expect(await screen.findByRole("button", { name: "Dismiss repeat progress" })).toBeInTheDocument();
+        expect(screen.getByRole("textbox")).toBeDisabled();
+        expect(screen.getByRole("textbox")).toHaveValue("Newer copy draft");
+        expect(onAttackChange).not.toHaveBeenCalled();
+      });
+
+      it("refreshes one shared progress GET after failure without resubmitting any conversation", async () => {
+        const user = userEvent.setup();
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
+        mockedAttacksApi.getMessageSend
+          .mockResolvedValueOnce(repeatedProgress(["completed", "sending", "queued"]))
+          .mockRejectedValueOnce(readError)
+          .mockResolvedValue(repeatedProgress(["completed", "completed", "completed"]));
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockResolvedValue(reply);
+        render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        await user.click(await screen.findByRole("button", { name: "Refresh progress" }));
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Open conversation copy-1" })).toHaveTextContent("Completed");
+          expect(screen.queryByRole("button", { name: "Refresh progress" })).not.toBeInTheDocument();
+        });
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(3);
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("textbox")).toHaveValue("");
+        await user.click(screen.getByRole("button", { name: "Dismiss repeat progress" }));
+        expect(screen.queryByRole("region", { name: "Repeated send progress" })).not.toBeInTheDocument();
+      });
+
+      it.each([false, true])("reads the final summary when conversations finish first, read failure %s", async (readFails) => {
+        const user = userEvent.setup();
+        const complete = repeatedProgress(["completed", "completed"]);
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 2 });
+        mockedAttacksApi.getMessageSend.mockResolvedValueOnce({ ...complete, state: "sending" });
+        if (readFails) mockedAttacksApi.getMessageSend.mockRejectedValueOnce(readError);
+        mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockResolvedValue(reply);
+        render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 2);
+        await sendDraft(user);
+        if (readFails) await user.click(await screen.findByRole("button", { name: "Refresh progress" }));
+        expect(await screen.findByRole("button", { name: "Dismiss repeat progress" })).toBeInTheDocument();
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(readFails ? 3 : 2);
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(["preparation", "sending"] as const)("preserves a %s failure draft and attachment on a copied conversation", async (stage) => {
+        const user = userEvent.setup();
+        const failed = repeatedProgress(["completed", "failed"]);
+        failed.state = "failed";
+        failed.failure_stage = "sending";
+        failed.error = "Some conversations failed";
+        const copy = failed.conversations?.[1];
+        if (!copy) throw new Error("Expected a copy");
+        copy.failure_stage = stage;
+        copy.error = `Controlled ${stage} failure`;
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 2 });
+        mockedAttacksApi.getMessageSend.mockResolvedValue(failed);
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockImplementation(async (_attackId, conversationId) => (
+          conversationId === "copy-1"
+            ? { ...(stage === "sending" ? makeErrorResponse("processing", "Copy failed").messages : empty), conversation_id: "copy-1" }
+            : reply
+        ));
+        mockedAttacksApi.createConversation.mockResolvedValue({
+          conversation_id: "clean-copy", created_at: "2026-01-01T00:00:03Z",
+        });
+        const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await user.upload(screen.getByTestId("file-input"), new File(["image"], "retained.png", { type: "image/png" }));
+        await chooseCount(user, 2);
+        await sendDraft(user);
+        await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
+        await user.click(screen.getByRole("button", { name: "Open conversation copy-1" }));
+        rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="copy-1" /></TestWrapper>);
+        const restore = stage === "preparation" ? /restore prompt/i : /edit in clean conversation/i;
+        await user.click(await screen.findByRole("button", { name: restore }));
+        expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
+        expect(screen.getByText(/retained.png/)).toBeInTheDocument();
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Refresh progress" })).not.toBeInTheDocument();
+        expect(screen.queryByText(/Progress or saved messages could not be loaded/)).not.toBeInTheDocument();
+      });
+
+      it("keeps a failed preparation editable when no copies were committed", async () => {
+        const user = userEvent.setup();
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
+        mockedAttacksApi.getMessageSend.mockResolvedValue({
+          ...queued, count: 3, conversations: [], state: "failed",
+          failure_stage: "preparation", error: "Copies could not be prepared",
+        });
+        render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        await waitFor(() => expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeEnabled());
+        expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
+        expect(screen.queryByRole("button", { name: /open conversation/ })).not.toBeInTheDocument();
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not start copy trackers after unmount while preparation was being read", async () => {
+        const user = userEvent.setup();
+        let finish: (value: MessageSendStatus) => void = () => {};
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
+        mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        const signal = mockedAttacksApi.getMessageSend.mock.calls[0][2];
+        rendered.unmount();
+        expect(signal?.aborted).toBe(true);
+        await act(async () => { finish(repeatedProgress(["sending", "sending", "queued"])); });
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(1);
+        expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

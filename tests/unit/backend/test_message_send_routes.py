@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Single-conversation asynchronous submission and read-only status contracts."""
+"""Asynchronous submission and read-only status contracts."""
 
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
@@ -53,16 +53,36 @@ def test_submission_returns_accepted_handle(
         "state": "queued",
         "error": None,
         "failure_stage": None,
+        "count": 1,
+        "conversations": [],
     }
     sender.submit_async.assert_awaited_once()
+    admitted = sender.submit_async.call_args.kwargs["request"]
+    assert admitted.count == 1
+    assert admitted.request_converter_mode == "shared"
+
+
+@pytest.mark.parametrize("count", [1, 2, 10])
+@pytest.mark.parametrize("mode", ["shared", "per_branch"])
+def test_repeat_options_are_admitted(
+    *, client: TestClient, sender: MagicMock, payload: dict[str, object], count: int, mode: str
+) -> None:
+    response = client.post(
+        "/api/attacks/attack/message-sends", json={**payload, "count": count, "request_converter_mode": mode}
+    )
+    assert response.status_code == 202
+    admitted = sender.submit_async.call_args.kwargs["request"]
+    assert admitted.count == count
+    assert admitted.request_converter_mode == mode
 
 
 @pytest.mark.parametrize(
     ("override", "value"),
     [
-        ("count", 2),
-        ("count", 1),
-        ("request_converter_mode", "shared"),
+        *[("count", value) for value in [0, -1, 11, True, 1.5, "2", None]],
+        ("request_converter_mode", "unknown"),
+        ("request_converter_configurations", []),
+        ("unrecognized_option", True),
         ("submission_id", ""),
         ("submission_id", " "),
         ("submission_id", "s" * 129),
@@ -72,7 +92,7 @@ def test_submission_returns_accepted_handle(
         ("send", False),
     ],
 )
-def test_invalid_or_later_phase_fields_are_not_admitted(
+def test_invalid_fields_are_not_admitted(
     *, client: TestClient, sender: MagicMock, payload: dict[str, object], override: str, value: object
 ) -> None:
     payload[override] = value

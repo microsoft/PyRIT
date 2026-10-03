@@ -103,7 +103,10 @@ export interface ChatConverterController {
   clear: (pieceId: string) => void
   clearAll: () => void
   editConvertedValue: (pieceId: string, value: string) => void
-  restore: (text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>) => void
+  restore: (
+    text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>,
+    pipelines?: Record<string, ConverterPipelineStage[]>,
+  ) => void
 }
 
 export interface MessageTextDisplayPiece {
@@ -637,16 +640,28 @@ export interface MessageSendRequest extends AddMessageRequest {
   send: true
   target_registry_name: string
   submission_id: string
+  count?: number
+  request_converter_mode?: 'shared' | 'per_branch'
 }
 
-export interface MessageSendStatus {
-  send_id: string
-  attack_result_id: string
+export interface MultiSendOptions {
+  count: number
+  requestConverterMode: 'shared' | 'per_branch'
+}
+
+export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+}
+
+export interface MessageSendStatus extends MessageSendConversation {
+  send_id: string
+  attack_result_id: string
+  count?: number
+  conversations?: MessageSendConversation[]
 }
 
 export interface AttackListResponse {

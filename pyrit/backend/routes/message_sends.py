@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Submit and observe a single manual send without tying execution to an HTTP request."""
+"""Submit and observe manual sends without tying execution to an HTTP request."""
 
 import logging
 from typing import Annotated

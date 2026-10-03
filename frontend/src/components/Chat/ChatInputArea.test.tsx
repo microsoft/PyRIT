@@ -177,6 +177,56 @@ describe("ChatInputArea", () => {
     expect(onSend).toHaveBeenCalled();
   });
 
+  it("should bound repetitions from one to ten and default to shared conversion", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+    const decrease = screen.getByRole("button", { name: "Decrease repetitions" });
+    const increase = screen.getByRole("button", { name: "Increase repetitions" });
+    expect(decrease).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Convert once, reuse for all" })).toBeChecked();
+    for (let count = 1; count < 10; count++) await user.click(increase);
+    expect(increase).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Repetitions: 10" })).toHaveTextContent("n=10");
+    for (let count = 10; count > 1; count--) await user.click(decrease);
+    expect(decrease).toBeDisabled();
+  });
+
+  it.each(["Enter", "Send"])("should submit the same repeat options with %s and reset before completion", async (action: string) => {
+    const user = userEvent.setup();
+    let settle: (value: typeof retryableOutcome) => void = () => {};
+    const onSend = jest.fn(() => new Promise<typeof retryableOutcome>((resolve) => { settle = resolve; }));
+    render(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Repeat this");
+    await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+    await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+    await user.click(screen.getByRole("radio", { name: "Convert independently for each" }));
+    await user.keyboard("{Escape}");
+    if (action === "Enter") {
+      await user.click(screen.getByRole("textbox"));
+      await user.keyboard("{Enter}");
+    } else {
+      await user.click(getSendButton());
+    }
+    expect(onSend).toHaveBeenCalledWith("Repeat this", undefined, [], { count: 2, requestConverterMode: "per_branch" });
+    const settings = screen.getByRole("button", { name: "Repetitions: 1" });
+    expect(settings).toHaveTextContent("n=1");
+    await user.click(settings);
+    await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+    settle(retryableOutcome);
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Repeat this"));
+    expect(screen.getByRole("button", { name: "Repetitions: 2" })).toHaveTextContent("n=2");
+  });
+
+  it("should keep ordinary sends on the existing callback contract", async () => {
+    const user = userEvent.setup();
+    const onSend = jest.fn().mockResolvedValue(sentOutcome);
+    render(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "One send{Enter}");
+    expect(onSend).toHaveBeenCalledWith("One send", undefined, []);
+    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeInTheDocument();
+  });
+
   it("should disable input when disabled prop is true", () => {
     render(
       <TestWrapper>

@@ -1,5 +1,6 @@
 import type {
-  ConverterInputPiece, MessageAttachment, MessagePieceRequest, PieceConversion,
+  ConverterConfigurationRequest, ConverterInputPiece, ConverterPipelineStage,
+  MessageAttachment, MessagePieceRequest, PieceConversion,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { mimeTypeToDataType } from '@/utils/messageMapper'
@@ -69,5 +70,24 @@ export function applyConvertedValues(
       converted_value_data_type: conversion.convertedDataType,
       applied_converter_ids: conversion.converterInstanceIds,
     } : piece
+  })
+}
+
+/** Repeat-send runs unapplied pipelines on original inputs; exact applied previews are never rerun. */
+export function buildRequestConverterConfigurations(
+  inputs: ConverterInputPiece[],
+  pieceIds: string[],
+  pipelines: Record<string, ConverterPipelineStage[]>,
+  conversions: Record<string, PieceConversion>,
+): ConverterConfigurationRequest[] {
+  return pieceIds.flatMap((pieceId: string, index: number): ConverterConfigurationRequest[] => {
+    if (conversions[pieceId]) return []
+    const input = inputs.find((candidate: ConverterInputPiece) => candidate.id === pieceId)
+    if (!input) throw new Error('Message piece has no matching converter input.')
+    const stages = pipelines[input.pieceType] ?? []
+    return stages.length ? [{
+      converter_ids: stages.map((stage: ConverterPipelineStage) => stage.converterId),
+      indexes_to_apply: [index],
+    }] : []
   })
 }
