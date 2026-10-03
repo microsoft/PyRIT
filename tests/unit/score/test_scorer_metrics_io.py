@@ -799,5 +799,36 @@ def test_cleanup_failure_is_logged_without_masking_replace_error(
     assert len(staging_paths) == 1
     staging_path = staging_paths[0]
     assert [call.args[0] for call in unlink.call_args_list] == [staging_path] * len(unlink_errors)
+    assert [call.args[0] for call in unlink.call_args_list] == [staging_path] * len(unlink_errors)
     assert caplog.messages == [f"Failed to clean up staging file {staging_path}: cleanup failed"]
     staging_path.unlink()
+
+
+def _reject_constant(token: str):
+    """Refuse the ``NaN``/``Infinity`` tokens the way a strict JSON reader (``JSON.parse``) does."""
+    raise ValueError(f"Not valid JSON (RFC 8259): bare {token} token")
+
+
+@pytest.mark.parametrize("write", [add_evaluation_results, replace_evaluation_results], ids=["add", "replace"])
+def test_registry_entry_with_undefined_statistics_is_valid_json(*, tmp_path: Path, write) -> None:
+    """
+    A t-test that is undefined is reported as NaN by the evaluator (see ``ScorerMetrics`` docs).
+    Writing that through ``json.dumps`` emits the bare ``NaN`` token, which is not JSON, so the
+    checked-in registry stops being readable by strict parsers (``JSON.parse``, .NET, Go).
+    """
+    path = tmp_path / "harm" / "probe_metrics.jsonl"
+    identifier = _make_identifier()
+    metrics = _make_harm_metrics(t_statistic=float("nan"), p_value=float("nan"))
+
+    write(file_path=path, scorer_identifier=identifier, eval_hash="nan-hash", metrics=metrics)
+
+    raw = path.read_text(encoding="utf-8").strip()
+    assert "NaN" not in raw
+    json.loads(raw, parse_constant=_reject_constant)
+
+    # The row must still load back as a metrics object, not be dropped by the missing-key filter.
+    loaded = find_harm_metrics_by_eval_hash(eval_hash="nan-hash", file_path=path)
+    assert loaded is not None
+    assert loaded.t_statistic is None
+    assert loaded.p_value is None
+    assert loaded.mean_absolute_error == 0.08
