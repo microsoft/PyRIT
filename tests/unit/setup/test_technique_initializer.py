@@ -14,6 +14,7 @@ import yaml
 from pyrit.common.path import DOCS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
 from pyrit.converter import CharNoiseConverter, CharSwapConverter, RandomCapitalLettersConverter
 from pyrit.executor.attack import (
+    CoTHijackingAttack,
     CrescendoAttack,
     PAIRAttack,
     PromptSendingAttack,
@@ -53,6 +54,7 @@ CORE_TECHNIQUE_NAMES: list[str] = [
 
 EXTRA_TECHNIQUE_NAMES: list[str] = [
     "pair",
+    "cot_hijacking",
     "skeleton_key",
     "best_of_n",
     "violent_durian",
@@ -139,6 +141,11 @@ class TestExtraGroupCatalog:
     def test_pair_uses_pair_attack(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "pair")
         assert factory.attack_class is PAIRAttack
+
+    def test_cot_hijacking_uses_cot_hijacking_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "cot_hijacking")
+        assert factory.attack_class is CoTHijackingAttack
+        assert factory.technique_tags == ["multi_turn"]
 
     def test_skeleton_key_uses_skeleton_key_attack(self):
         factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")

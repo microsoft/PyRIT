@@ -92,7 +92,7 @@ class AttackAdversarialConfig:
 def resolve_adversarial_system_prompt(
     *,
     config: AttackAdversarialConfig,
-    default_system_prompt_path: str | Path,
+    default_system_prompt_path: str | Path | None,
     required_parameters: list[str],
     error_message: str | None = None,
 ) -> SeedPrompt:
@@ -116,7 +116,8 @@ def resolve_adversarial_system_prompt(
 
     Args:
         config: The adversarial configuration to resolve the system prompt from.
-        default_system_prompt_path: Fallback YAML path when neither inline nor path is set.
+        default_system_prompt_path: Fallback YAML path when the config does not provide a
+            system prompt, or None when callers require an explicitly configured prompt.
         required_parameters: Parameter names the resolved template must support.
         error_message: Optional custom error message for base-prompt validation failures.
 
@@ -124,10 +125,10 @@ def resolve_adversarial_system_prompt(
         The resolved adversarial system-prompt SeedPrompt.
 
     Raises:
-        ValueError: If ``config.system_prompt_prefix`` is an inline string containing Jinja
-            syntax, if an explicitly provided SeedPrompt (base or prefix) is missing required
-            parameters, or if both the base prompt and the prefix declare a
-            ``response_json_schema``.
+        ValueError: If no system prompt or fallback path is provided, if
+            ``config.system_prompt_prefix`` is an inline string containing Jinja syntax, if an
+            explicitly provided SeedPrompt (base or prefix) is missing required parameters, or
+            if both the base prompt and the prefix declare a ``response_json_schema``.
     """
     system_prompt = config.system_prompt
     if system_prompt is not None:
@@ -137,12 +138,14 @@ def resolve_adversarial_system_prompt(
             error_message=error_message,
             component_name="adversarial system prompt",
         )
-    else:
+    elif default_system_prompt_path is not None:
         base_prompt = SeedPrompt.from_yaml_with_required_parameters(
             template_path=default_system_prompt_path,
             required_parameters=required_parameters,
             error_message=error_message,
         )
+    else:
+        raise ValueError("An adversarial system prompt is required when no default path is configured.")
 
     if config.system_prompt_prefix is None:
         return base_prompt

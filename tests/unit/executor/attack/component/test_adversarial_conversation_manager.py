@@ -319,6 +319,14 @@ def _param_system_prompt(*, schema: dict | None = None) -> SeedPrompt:
 class TestResolveConfig:
     """``resolve_config`` is the single owner of adversarial-prompt resolution the attacks call."""
 
+    def test_requires_explicit_system_prompt_without_default_path(self):
+        with pytest.raises(ValueError, match="An adversarial system prompt is required"):
+            _AdversarialConversationManager.resolve_config(
+                config=_adversarial_config(),
+                default_system_prompt_path=None,
+                system_prompt_required_parameters=["objective"],
+            )
+
     def test_template_mode_applies_default_first_and_next_messages(self):
         # first_message / adversarial_prompt_template unset -> the manager supplies the canonical
         # defaults so template-mode attacks never re-implement the fallbacks.

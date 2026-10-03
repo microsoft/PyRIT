@@ -142,6 +142,16 @@ class TestResolveAdversarialJsonSchema:
 class TestResolveAdversarialSystemPrompt:
     """Tests for resolve_adversarial_system_prompt."""
 
+    def test_missing_explicit_prompt_raises_when_no_default_path_is_configured(self):
+        config = AttackAdversarialConfig(target=MagicMock(spec=PromptTarget))
+
+        with pytest.raises(ValueError, match="An adversarial system prompt is required"):
+            resolve_adversarial_system_prompt(
+                config=config,
+                default_system_prompt_path=None,
+                required_parameters=["objective"],
+            )
+
     def test_explicit_seedprompt_with_required_params_returned_as_is(self):
         """An explicitly provided SeedPrompt declaring the required params is returned unchanged."""
         provided = SeedPrompt(value="persona {{ objective }}", data_type="text", parameters=["objective"])
