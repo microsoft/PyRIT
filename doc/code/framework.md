@@ -201,6 +201,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 **Attack Responsibility**: An attack is a type of executor, which manages conversations to achieve an objective.
 
+- A conversation created for an attack belongs to that execution. Reusing conversation history in another execution, child attack, or branch requires a copy with a new conversation ID.
+- Each attack execution has a unique `attack_result_id`.
 - Any branching decision (e.g. the next thing(s) to do is based on a previous result) should be an attack/executor.
 - Executors should always make use of other component's responsibilities. An executor should always branch based on a scorer and NOT a direct response. (e.g. was this prompt blocked? is a scorer responsibility, not an executor responsibility)
 - Executors should use scoring and target capabilities implicitly. Executors should support multi-modal.
@@ -246,7 +248,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
   bootstrap-history identity, replay, or branching state.
-- HTTP targets can propagate a separate trace context for each send. `TargetTraceConfig` controls this
+- HTTP targets and `LiteLLMChatTarget` can propagate a separate trace context for each send. `TargetTraceConfig` controls this
   behavior, is off by default, and can use a caller-owned tracer. Enable it only for an endpoint that
   is known to accept W3C trace context. Targets record request trace metadata; the prompt normalizer
   persists it. Outbound request metadata is separate from chat role, so missing trace

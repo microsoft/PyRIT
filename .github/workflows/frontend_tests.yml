@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -58,9 +58,25 @@ jobs:
           path: frontend/coverage/
           retention-days: 7
 
-  e2e-tests:
-    name: Frontend E2E Tests
+  e2e-shards:
+    name: Frontend E2E (${{ matrix.project }}, shard ${{ matrix.shard }}/${{ matrix.total }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: mock
+            shard: 1
+            total: 2
+          - project: mock
+            shard: 2
+            total: 2
+          - project: seeded
+            shard: 1
+            total: 1
+    outputs:
+      expected-reports: ${{ strategy.job-total }}
     permissions:
       contents: read
     defaults:
@@ -84,12 +100,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.9.17"
           enable-cache: true
           cache-dependency-glob: |
             **/pyproject.toml
+            **/uv.lock
 
       - name: Install Python dependencies
         run: |
@@ -102,12 +119,101 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E tests (mock and seeded — no credentials needed)
-        run: npx playwright test --fail-on-flaky-tests --project=mock --project=seeded
+      - name: Run E2E shard (no credentials needed)
+        run: npx playwright test --fail-on-flaky-tests --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}
         env:
           CI: true
+          # Mock specs still use the backend for auth bootstrap and some API calls.
           E2E_SEEDED_MODE: true
           FAIL_ON_SKIPPED_TESTS: true
+
+      - name: Upload Playwright blob report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: playwright-blob-${{ matrix.project }}-${{ matrix.shard }}
+          path: frontend/blob-report/
+          if-no-files-found: error
+          # Keep successful shards available when only failed jobs are rerun.
+          overwrite: true
+          retention-days: 7
+
+      - name: Upload test results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure() || cancelled()
+        with:
+          name: test-results-${{ matrix.project }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: frontend/test-results/
+          retention-days: 7
+
+  e2e-tests:
+    name: Frontend E2E Tests
+    needs: e2e-shards
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download Playwright blob reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: always()
+        with:
+          pattern: playwright-blob-*
+          path: frontend/blob-report/
+          merge-multiple: false
+
+      - name: Prepare and validate shard reports
+        if: always()
+        env:
+          EXPECTED_REPORTS: ${{ needs.e2e-shards.outputs.expected-reports }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const directory = 'blob-report';
+          fs.mkdirSync(directory, { recursive: true });
+          const artifacts = fs.readdirSync(directory, { withFileTypes: true })
+            .filter(entry => entry.isDirectory() && entry.name.startsWith('playwright-blob-'));
+          let complete = artifacts.length > 0 && artifacts.length === Number(process.env.EXPECTED_REPORTS);
+          for (const artifact of artifacts) {
+            const artifactPath = path.join(directory, artifact.name);
+            const reports = fs.readdirSync(artifactPath, { withFileTypes: true })
+              .filter(entry => entry.isFile() && entry.name.endsWith('.zip'));
+            if (reports.length !== 1) {
+              console.error(`::error::${artifact.name} must contain exactly one blob report (found ${reports.length}).`);
+              complete = false;
+            }
+            for (const report of reports) {
+              fs.copyFileSync(path.join(artifactPath, report.name), path.join(directory, `${artifact.name}-${report.name}`));
+            }
+          }
+          if (!complete) {
+            console.error(`::error::Expected one blob report per shard (${process.env.EXPECTED_REPORTS || 'unknown'} shards); found ${artifacts.length} artifacts.`);
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Merge Playwright reports
+        if: always()
+        run: npx playwright merge-reports --reporter=html blob-report
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -115,15 +221,17 @@ jobs:
         with:
           name: playwright-report
           path: frontend/playwright-report/
+          if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
-      - name: Upload test results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: test-results
-          path: frontend/test-results/
-          retention-days: 7
+      - name: Fail unless every E2E shard passed
+        if: always() && (needs.e2e-shards.result != 'success' || cancelled())
+        env:
+          SHARD_RESULT: ${{ needs.e2e-shards.result }}
+        run: |
+          echo "::error::All E2E shards must succeed without cancellation (result=$SHARD_RESULT)."
+          exit 1
 
   lint:
     name: Frontend Lint & Type Check

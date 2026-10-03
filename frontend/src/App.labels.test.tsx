@@ -48,7 +48,8 @@ jest.mock('@/services/api', () => ({
     getConversations: jest.fn(),
     updateAttack: jest.fn(),
     createAttack: jest.fn(),
-    addMessage: jest.fn(),
+    submitMessageSend: jest.fn(),
+    getMessageSend: jest.fn(),
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
@@ -77,7 +78,14 @@ const SCENARIO: RegisteredScenario = {
   include_baseline_by_default: false,
   supported_parameters: [],
   uses_default_adversarial_target: false,
-  default_run_size: { estimated_attack_count: 1, components: [], datasets: [], note: null },
+  default_run_size: {
+    dataset_size: { kind: 'bounded', value: 1 },
+    dataset_limit: { state: 'scenario_default' },
+    estimated_attack_count: 1,
+    components: [],
+    datasets: [],
+    note: null,
+  },
 }
 const TARGET = makeTarget({ target_registry_name: 'test_target', identifier_hash: 'test_hash' })
 const DEFAULT_LABELS = { operator: 'config_user', operation: 'config_op', team: 'config_team' }
@@ -318,7 +326,7 @@ describe('Shared new run labels', () => {
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     expect(attacksApi.updateAttack).not.toHaveBeenCalled()
     expect(attacksApi.createAttack).not.toHaveBeenCalled()
-    expect(attacksApi.addMessage).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
 
     const toolbar = within(currentLabels()).getByRole('group', { name: 'Chat controls' })
     expect(within(toolbar).getByLabelText('Active target: test_target')).toBeInTheDocument()
