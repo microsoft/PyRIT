@@ -714,3 +714,19 @@ def test_llm_based_converters_validate_target_requirements(setup_memory, convert
     with patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate") as mock_validate:
         converter_class(**converter_args)
     mock_validate.assert_called_once_with(target=setup_memory)
+
+
+async def test_convert_tokens_keep_tokens_rewraps_each_region_async() -> None:
+    converter = Base64Converter()
+
+    result = await converter.convert_tokens_async(prompt="a ⟪b⟫ c ⟪d⟫", keep_tokens=True)
+
+    assert result.output_text == "a ⟪Yg==⟫ c ⟪ZA==⟫"
+
+
+async def test_convert_tokens_keep_tokens_without_markers_wraps_prompt_async() -> None:
+    converter = Base64Converter()
+
+    result = await converter.convert_tokens_async(prompt="b", keep_tokens=True)
+
+    assert result.output_text == "⟪Yg==⟫"

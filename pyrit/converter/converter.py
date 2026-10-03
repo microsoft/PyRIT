@@ -198,8 +198,21 @@ class Converter(Identifiable):
         """
         return self._seed
 
+    @staticmethod
+    def _mark_converted(text: str, *, start_token: str, end_token: str) -> str:
+        # A nested selective converter already marks its own output, so wrapping it again would nest the tokens.
+        if start_token in text:
+            return text
+        return f"{start_token}{text}{end_token}"
+
     async def convert_tokens_async(
-        self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType = "text",
+        start_token: str = "⟪",
+        end_token: str = "⟫",
+        keep_tokens: bool = False,
     ) -> ConverterResult:
         """
         Convert marked text regions, consuming their delimiters and preserving all unmarked text.
@@ -216,6 +229,9 @@ class Converter(Identifiable):
                 relatively distinct.
             end_token (str): The token indicating the end of a substring to be converted. Defaults to "⟫" which is
                 relatively distinct.
+            keep_tokens (bool): When True, each converted region stays wrapped in the start and end tokens so
+                a later stage can find it again. Without delimiters, the whole converted prompt is wrapped.
+                Defaults to False.
 
         Returns:
             ConverterResult: The prompt with specified substrings converted.
@@ -231,7 +247,13 @@ class Converter(Identifiable):
 
         spans = self._get_token_spans(prompt=prompt, start_token=start_token, end_token=end_token)
         if not spans:
-            return await self.convert_async(prompt=prompt, input_type=input_type)
+            result = await self.convert_async(prompt=prompt, input_type=input_type)
+            if keep_tokens and result.output_type == "text":
+                result = ConverterResult(
+                    output_text=self._mark_converted(result.output_text, start_token=start_token, end_token=end_token),
+                    output_type="text",
+                )
+            return result
 
         if not self.input_supported("text") or not self.output_supported("text"):
             raise ValueError("Selected-region conversion requires a converter supporting text input and text output.")
@@ -245,7 +267,12 @@ class Converter(Identifiable):
         parts: list[str] = []
         previous_end = 0
         for (start, end), converted in zip(spans, converted_parts, strict=True):
-            parts.extend((prompt[previous_end:start], converted.output_text))
+            converted_text = (
+                self._mark_converted(converted.output_text, start_token=start_token, end_token=end_token)
+                if keep_tokens
+                else converted.output_text
+            )
+            parts.extend((prompt[previous_end:start], converted_text))
             previous_end = end
         parts.append(prompt[previous_end:])
         return ConverterResult(output_text="".join(parts), output_type="text")
