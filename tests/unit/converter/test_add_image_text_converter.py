@@ -46,6 +46,12 @@ def test_add_image_text_converter_invalid_font(image_text_converter_sample_image
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, font_name="helvetica.otf")
 
 
+@pytest.mark.parametrize("color", [(0, 0), (0, 0, 256), [0, 0, 0]])
+def test_add_image_text_converter_invalid_color(image_text_converter_sample_image, color):
+    with pytest.raises(ValueError, match="color must be a tuple of three integers between 0 and 255"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, color=color)
+
+
 def test_add_image_text_converter_null_img_to_add():
     with pytest.raises(ValueError):
         AddImageTextConverter(img_to_add="")
