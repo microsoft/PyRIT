@@ -15,6 +15,7 @@ import pytest
 from aiosqlite import Connection, Cursor
 from sqlalchemy import text
 from sqlalchemy.engine import Connection as SQLAlchemyConnection
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pyrit.memory import SQLiteMemory
@@ -202,6 +203,94 @@ async def test_cancelled_session_finishes_rollback_before_return_async(
         await session.execute(text("INSERT INTO CancellationProbe VALUES (2)"))
         await session.commit()
     await _assert_error_result_write_async(sqlite_memory_async)
+
+
+@pytest.mark.parametrize(
+    ("cancel_in_body", "additional_cancellations"),
+    [(True, 0), (True, 2), (False, 0), (False, 2), (None, 0)],
+    ids=["transaction-body", "transaction-body-repeated", "session-close", "session-close-repeated", "no-cancellation"],
+)
+async def test_failed_session_rollback_discards_connection_async(
+    *, sqlite_memory_async: SQLiteMemory, cancel_in_body: bool | None, additional_cancellations: int
+) -> None:
+    async with await sqlite_memory_async.get_session_async() as session:
+        await session.execute(text("CREATE TABLE CancellationProbe (value INTEGER)"))
+        await session.commit()
+    inserted, rolling_back, release_rollback, connection_closed = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    original = sqlite3.OperationalError("rollback failed")
+    close = Connection.close
+    driver: Connection | None = None
+    original_cancellation: asyncio.CancelledError | None = None
+    cancellation_message = "cancel transaction body" if cancel_in_body else "cancel session cleanup"
+
+    async def failed_rollback_async(connection: Connection) -> None:
+        rolling_back.set()
+        await release_rollback.wait()
+        raise original
+
+    async def observed_close_async(connection: Connection) -> None:
+        await close(connection)
+        connection_closed.set()
+
+    async def write_async() -> None:
+        nonlocal driver, original_cancellation
+        async with await sqlite_memory_async.get_session_async() as session:
+            await session.execute(text("INSERT INTO CancellationProbe VALUES (1)"))
+            connection = await session.connection()
+            driver = (await connection.get_raw_connection()).driver_connection
+            inserted.set()
+            if cancel_in_body:
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError as error:
+                    original_cancellation = error
+                    raise
+
+    task = asyncio.create_task(write_async())
+    try:
+        with (
+            patch.object(Connection, "rollback", new=failed_rollback_async),
+            patch.object(Connection, "close", new=observed_close_async),
+        ):
+            await asyncio.wait_for(inserted.wait(), timeout=5)
+            if cancel_in_body:
+                task.cancel(cancellation_message)
+            await asyncio.wait_for(rolling_back.wait(), timeout=5)
+            if cancel_in_body is False:
+                task.cancel(cancellation_message)
+                await asyncio.sleep(0)
+            for _ in range(additional_cancellations):
+                task.cancel("cancel rollback again")
+                await asyncio.sleep(0)
+                assert not task.done()
+            release_rollback.set()
+            expected = OperationalError if cancel_in_body is None else asyncio.CancelledError
+            message = "rollback failed" if cancel_in_body is None else cancellation_message
+            with pytest.raises(expected, match=message) as raised:
+                await task
+
+        assert connection_closed.is_set()
+        error = raised.value if cancel_in_body is None else raised.value.__cause__
+        assert isinstance(error, OperationalError)
+        assert error.orig is original
+        assert error.connection_invalidated
+        if cancel_in_body:
+            assert raised.value is original_cancellation
+        async with await sqlite_memory_async.get_session_async() as session:
+            assert await session.scalar(text("SELECT COUNT(*) FROM CancellationProbe")) == 0
+        await _assert_error_result_write_async(sqlite_memory_async)
+    finally:
+        release_rollback.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if driver is not None:
+            await driver.close()
 
 
 async def test_cancelled_database_worker_finishes_before_return_async(
