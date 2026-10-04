@@ -555,7 +555,8 @@ async def test_openai_response_target_uses_mcp_tools(patch_central_database) -> 
     assert first_body["tools"] == second_body["tools"]
     assert first_body["tools"][0]["name"] == "get_note"
     provider.call_tool_async.assert_awaited_once_with(name="get_note", arguments={"id": "welcome"})
-    assert output == {"structured_content": {"text": "Welcome"}}
+    assert output.output == {"structured_content": {"text": "Welcome"}}
+    assert output.invoked is True
 
 
 async def test_openai_response_target_rejects_provider_name_conflict(patch_central_database) -> None:
