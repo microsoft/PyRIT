@@ -100,6 +100,7 @@ dev = [
     "respx>=0.22.0",
     "sse-starlette>=3.0.0",
     "ruff>=0.14.4",
+    "setuptools>=64.0.0",
     "types-aiofiles>=24.1.0",
     "types-PyYAML>=6.0.12.20250516",
     "types-requests>=2.31.0.20250515",
