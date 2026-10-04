@@ -152,7 +152,7 @@ print(df.to_string(index=False))
 # setting that changes the judgment or parsing. Subclasses without their own declaration
 # can still capture observations, but replay raises `NonReplayableObservationError`.
 #
-# Deleting a score through `memory.get_session()` and ORM `session.delete()` removes its
+# Deleting a score through `await memory.get_session_async()` and ORM `await session.delete()` removes its
 # observation only after the final score reference is gone. Removing an ORM observation link
 # also triggers this cleanup, including when a collection is cleared before its score is deleted.
 # Cleanup uses persisted links and removed relationship history, not just cached collections.
@@ -252,11 +252,11 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 memory = CentralMemory.get_memory_instance()
 prompt_ids = []
 for r in results:
-    prompt_ids.extend(str(p.id) for p in memory.get_message_pieces(conversation_id=r.conversation_id))
+    prompt_ids.extend(str(p.id) for p in (await memory.get_message_pieces_async(conversation_id=r.conversation_id)))
 
 batch_scorer = BatchScorer()
 scores = await batch_scorer.score_responses_by_filters_async(scorer=scorer, prompt_ids=prompt_ids)  # type: ignore
 
 for score in scores:
-    text = memory.get_message_pieces(prompt_ids=[str(score.message_piece_id)])[0].original_value
+    text = (await memory.get_message_pieces_async(prompt_ids=[str(score.message_piece_id)]))[0].original_value
     print(f"{score.get_value()} : {text}")

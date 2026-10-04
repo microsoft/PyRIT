@@ -4,16 +4,18 @@
 import asyncio
 import logging
 import tempfile
-import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import av
 
 from pyrit.converter import AzureSpeechAudioToTextConverter
-from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
+from pyrit.models import MessagePiece, Score, ScoringExpectation
+from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation.execution import _suppress_observation_collection
-from pyrit.score.scorer import Scorer
+
+if TYPE_CHECKING:
+    from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -105,37 +107,46 @@ class AudioTranscriptHelper:
     def __init__(
         self,
         *,
-        text_capable_scorer: Scorer,
+        text_capable_scorer: MessageScorer,
     ) -> None:
         """
         Initialize the base audio scorer.
 
         Args:
-            text_capable_scorer (Scorer): A scorer capable of processing text that will be used to score
+            text_capable_scorer (MessageScorer): A scorer capable of processing text that will be used to score
                 the transcribed audio content.
 
         Raises:
-            ValueError: If text_capable_scorer does not support text data type.
+            ValueError: If text_capable_scorer does not support text or requires stored conversation history.
         """
         self._validate_text_scorer(text_capable_scorer)
         self.text_scorer = text_capable_scorer
 
     @staticmethod
-    def _validate_text_scorer(scorer: Scorer) -> None:
+    def _validate_text_scorer(scorer: MessageScorer) -> None:
         """
-        Validate that a scorer supports the text data type.
+        Validate that a scorer can evaluate a transcript without stored conversation history.
 
         Args:
-            scorer (Scorer): The scorer to validate.
+            scorer (MessageScorer): The scorer to validate.
 
         Raises:
-            ValueError: If the scorer does not support text data type.
+            ValueError: If the scorer does not support text or requires stored conversation history.
         """
         if "text" not in scorer._validator._supported_data_types:
             raise ValueError(
                 f"text_capable_scorer must support 'text' data type. "
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
+        pending: list[Scorer] = [scorer]
+        while pending:
+            child = pending.pop()
+            if isinstance(child, MessageScorer) and child._REQUIRES_CONVERSATION_HISTORY:
+                raise ValueError(
+                    f"{type(child).__name__} requires stored conversation history and cannot score an isolated "
+                    "audio transcript. Use a transcript-only text scorer."
+                )
+            pending.extend(child._get_child_scorers())
 
     async def _score_audio_async(
         self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None
@@ -167,38 +178,13 @@ class AudioTranscriptHelper:
             # Return empty list - no text to score
             return []
 
-        # Create a MessagePiece for the transcript
-        original_prompt_id = message_piece.original_prompt_id
-        if isinstance(original_prompt_id, str):
-            original_prompt_id = uuid.UUID(original_prompt_id)
-
-        text_piece = MessagePiece(
-            original_value=transcript,
-            role=message_piece.role,
-            original_prompt_id=original_prompt_id,
-            converted_value=transcript,
-            converted_value_data_type="text",
-            conversation_id=message_piece.conversation_id or str(uuid.uuid4()),
-        )
-
-        text_message = text_piece.to_message()
-
-        # Add to memory so score references are valid
-        memory = CentralMemory.get_memory_instance()
-        memory.add_message_to_memory(request=text_message)
-
+        transcript_piece = MessagePiece(role=message_piece.role, original_value=transcript)
+        transcript_piece.not_in_memory = True
         with _suppress_observation_collection():
-            transcript_scores = await self.text_scorer._score_nested_async(
-                scorable=MessageScorable.from_message(text_message),
+            return await self.text_scorer._score_nested_message_async(
+                message=transcript_piece.to_message(),
                 expectation=self.text_scorer._select_expectation(expectation=expectation),
             )
-
-        # Add context to indicate this was scored from audio transcription
-        for score in transcript_scores:
-            existing_rationale = score.score_rationale or ""
-            score.score_rationale = existing_rationale + f"\nAudio transcript scored: {existing_rationale}"
-
-        return transcript_scores
 
     async def _transcribe_audio_async(self, audio_path: str) -> str:
         """

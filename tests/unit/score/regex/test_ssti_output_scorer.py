@@ -66,4 +66,4 @@ async def test_ssti_scorer_adds_to_memory():
         scorer = SSTIOutputScorer()
         await scorer.score_text_async(text="nothing here")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()

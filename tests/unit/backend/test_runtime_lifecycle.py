@@ -6,8 +6,9 @@
 import asyncio
 import os
 from collections.abc import Generator
+from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -19,7 +20,10 @@ from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
 
@@ -71,6 +75,29 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     await runtime.apply_task
 
 
+@pytest.mark.parametrize("failure", [None, "scenarios", "services"])
+async def test_shutdown_disposes_memory_after_services_even_on_failure(
+    runtime: RuntimeLifecycle, failure: str | None
+) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    scenario_service = MagicMock(spec=ScenarioRunService)
+    order = MagicMock()
+    with (
+        patch.object(CentralMemory, "_memory_instance", memory),
+        patch.object(lifecycle_module, "peek_scenario_run_service", return_value=scenario_service),
+        patch.object(lifecycle_module, "close_services_async", new_callable=AsyncMock) as close_services,
+    ):
+        order.attach_mock(scenario_service.shutdown_async, "scenarios")
+        order.attach_mock(close_services, "services")
+        order.attach_mock(memory.dispose_engine_async, "memory")
+        if failure is not None:
+            getattr(order, failure).side_effect = RuntimeError("cleanup failed")
+        with pytest.raises(RuntimeError, match="cleanup failed") if failure else nullcontext():
+            await runtime.shutdown_async()
+
+    assert order.mock_calls == [call.scenarios(), call.services(), call.memory()]
+
+
 async def test_success_preflights_then_replaces_idle_runtime(runtime: RuntimeLifecycle) -> None:
     await apply_async(runtime)
     assert runtime.state == "ready"
@@ -114,6 +141,24 @@ async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: R
     assert runtime.state == "ready"
     lifecycle_module.close_services_async.assert_not_awaited()
     assert not hasattr(service, "request_stop") or not service.request_stop.called
+
+
+async def test_admitted_manual_send_blocks_reinitialization_without_an_http_request_async(
+    runtime: RuntimeLifecycle,
+) -> None:
+    get_manual_send_scheduler.cache_clear()
+    try:
+        scheduler = get_manual_send_scheduler()
+        with scheduler.reserve(conversation_id="accepted-send"):
+            assert not runtime.operations
+            await apply_async(runtime)
+            assert runtime.outcome == "busy"
+            assert runtime.generation == "original"
+            lifecycle_module.close_services_async.assert_not_awaited()
+        await apply_async(runtime)
+        assert runtime.generation != "original"
+    finally:
+        get_manual_send_scheduler.cache_clear()
 
 
 async def test_second_idle_check_closes_admission_race(runtime: RuntimeLifecycle) -> None:

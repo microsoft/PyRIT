@@ -7,8 +7,10 @@ Tests for the FastAPI application entry point (main.py).
 Covers the lifespan manager and setup_frontend function.
 """
 
+import asyncio
 import logging
 import os
+import threading
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -17,15 +19,50 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from starlette.datastructures import State
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.backend.models.converters import CreateConverterRequest
 from pyrit.backend.services.converter_service import ConverterService, get_converter_service
+from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.memory import AzureSQLMemory
+from pyrit.backend.services.service_lifecycle import close_services_async
+from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
+
+
+async def test_health_responds_while_database_operation_is_pending(sqlite_instance: SQLiteMemory) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def wait_in_database() -> int:
+        started.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("Database wait was not released")
+        return 1
+
+    async with await sqlite_instance.get_session_async() as session:
+        connection = await session.connection()
+        await connection.run_sync(
+            lambda sync_connection: sync_connection.connection.run_async(
+                lambda driver: driver.create_function("wait_in_database", 0, wait_in_database)
+            )
+        )
+        query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
+            assert response.status_code == 200
+            assert response.json()["status"] == "healthy"
+            assert not query.done()
+        finally:
+            release.set()
+            await query
 
 
 @pytest.fixture
@@ -43,8 +80,61 @@ def mock_scenario_run_lifecycle():
         yield service
 
 
+@pytest.mark.usefixtures("patch_central_database")
 class TestLifespan:
     """Tests for the application lifespan context manager."""
+
+    async def test_cancelled_manual_shutdown_still_closes_converter_and_clears_caches_async(
+        self, *, patch_central_database: MagicMock
+    ) -> None:
+        service = get_message_send_service()
+        converter = get_converter_service()
+        with (
+            patch.object(service, "shutdown_async", side_effect=asyncio.CancelledError),
+            patch.object(converter, "close_async", wraps=converter.close_async) as close,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await close_services_async()
+        close.assert_awaited_once()
+        assert get_message_send_service.cache_info().currsize == 0
+        assert get_manual_send_scheduler.cache_info().currsize == 0
+        assert get_converter_service.cache_info().currsize == 0
+
+    @pytest.mark.parametrize("scenario_failure", [False, True])
+    async def test_manual_sends_stop_before_converter_cleanup_and_caches_reset_async(
+        self, *, patch_central_database: MagicMock, mock_scenario_run_lifecycle: MagicMock, scenario_failure: bool
+    ) -> None:
+        fake_config = ConfigurationLoader()
+        order: list[str] = []
+        service = get_message_send_service()
+        scheduler = get_manual_send_scheduler()
+        converter = get_converter_service()
+        close = converter.close_async
+
+        async def shutdown_async() -> None:
+            assert scheduler._closing
+            order.append("sends")
+
+        async def close_async() -> None:
+            order.append("converters")
+            await close()
+
+        if scenario_failure:
+            mock_scenario_run_lifecycle.shutdown_async.side_effect = RuntimeError("scenario shutdown failed")
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+            patch.object(service, "shutdown_async", side_effect=shutdown_async),
+            patch.object(converter, "close_async", side_effect=close_async),
+            pytest.raises(RuntimeError, match="scenario shutdown failed") if scenario_failure else nullcontext(),
+        ):
+            async with lifespan(app):
+                assert get_message_send_service() is service
+        assert order == ["sends", "converters"]
+        assert get_message_send_service.cache_info().currsize == 0
+        assert get_manual_send_scheduler.cache_info().currsize == 0
+        assert get_converter_service.cache_info().currsize == 0
 
     @pytest.fixture(autouse=True)
     def isolated_lifespan_state(self) -> Iterator[None]:
@@ -103,10 +193,17 @@ class TestLifespan:
                 assert not path.exists()
         assert paths[0] != paths[1]
 
-    async def test_lifespan_yields(self, mock_scenario_run_lifecycle) -> None:
+    async def test_lifespan_yields(self, compatibility_id: str, mock_scenario_run_lifecycle) -> None:
         """Test that lifespan delegates to ConfigurationLoader and yields."""
         fake_config = ConfigurationLoader()
+        event_loop_thread_id = threading.get_ident()
+
+        def read_stamp() -> str:
+            assert threading.get_ident() != event_loop_thread_id
+            return compatibility_id
+
         with (
+            patch("pyrit._compatibility.get_compatibility_id", side_effect=read_stamp) as stamp_reader,
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
             patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()) as init_mock,
             patch("pyrit.backend.main.setup_frontend"),
@@ -114,7 +211,9 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
+            stamp_reader.assert_called_once()
             init_mock.assert_awaited_once_with(raise_on_initializer_error=True)
+            assert app.state.compatibility_id == compatibility_id
             assert app.state.default_labels == {}
             assert app.state.max_concurrent_scenario_runs == fake_config.max_concurrent_scenario_runs
             assert app.state.allow_custom_initializers is False
@@ -154,8 +253,8 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-        shared_memory.get_scenario_run_state_page.assert_not_called()
-        shared_memory.update_scenario_run_state.assert_not_called()
+        shared_memory.get_scenario_run_state_page_async.assert_not_awaited()
+        shared_memory.update_scenario_run_state_async.assert_not_awaited()
 
     async def test_lifespan_populates_default_labels_from_operator_and_operation(
         self, mock_scenario_run_lifecycle

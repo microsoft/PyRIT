@@ -5,8 +5,9 @@
 
 import uuid
 
+from pyrit.backend.models.attacks import ScoreView
 from pyrit.cli._sources import RestApiConversationSource
-from pyrit.models import Message, Score
+from pyrit.models import ComponentIdentifier, Message, Score
 
 
 class _FakeClient:
@@ -57,78 +58,40 @@ async def test_get_messages_hydrates_domain_messages():
     assert [message.api_role for message in messages] == ["user", "assistant"]
 
 
-async def test_objective_score_selected_by_hash_and_served_by_piece_id():
-    objective = [
-        {
-            "score_value": "false",
-            "score_type": "true_false",
-            "score_rationale": "complied",
-            "scorer_type": "SelfAskRefusalScorer",
-            "scorer_class_identifier": {"hash": "AUX"},
-        },
-        {
-            "score_value": "true",
-            "score_type": "true_false",
-            "score_rationale": "achieved",
-            "scorer_type": "TrueFalseCompositeScorer",
-            "scorer_class_identifier": {"hash": "OBJ"},
-        },
+async def test_get_scores_async_returns_every_score_hydrated_from_the_view():
+    piece_json = _piece(role="assistant", text="x")
+    scorers = [
+        ComponentIdentifier(class_name="RefusalScorer", class_module="tests"),
+        ComponentIdentifier(class_name="ObjectiveScorer", class_module="tests", params={"threshold": 0.5}),
     ]
-    assistant_piece = _piece(role="assistant", text="there", scores=objective)
-    response = _response([{"role": "assistant", "turn_number": 1, "message_pieces": [assistant_piece]}])
-    source = RestApiConversationSource(client=_FakeClient(response), attack_result_id="aid-1", objective_hash="OBJ")
-
-    messages = await source.get_messages_async(conversation_id="conv-1")
-    piece_id = str(messages[0].get_piece().id)
-    scores = await source.get_scores_async(prompt_ids=[piece_id])
-
-    assert len(scores) == 1
-    assert isinstance(scores[0], Score)
-    # The objective (composite) score is surfaced, not the first (refusal) one.
-    assert scores[0].score_value == "true"
-    assert scores[0].score_rationale == "achieved"
-
-
-async def test_objective_score_falls_back_to_class_name():
-    scores_json = [
-        {"score_value": "true", "score_type": "true_false", "scorer_type": "MyObjective"},
+    piece_json["scores"] = [
+        ScoreView.from_domain(
+            Score(
+                score_type="true_false",
+                score_value="true",
+                message_piece_id=piece_json["id"],
+                scorer_class_identifier=scorer,
+            )
+        ).model_dump(mode="json")
+        for scorer in scorers
     ]
-    response = _response(
-        [
-            {
-                "role": "assistant",
-                "turn_number": 1,
-                "message_pieces": [_piece(role="assistant", text="x", scores=scores_json)],
-            }
-        ]
-    )
-    source = RestApiConversationSource(
-        client=_FakeClient(response), attack_result_id="aid-1", objective_class="MyObjective"
-    )
-
-    messages = await source.get_messages_async(conversation_id="conv-1")
-    scores = await source.get_scores_async(prompt_ids=[str(messages[0].get_piece().id)])
-
-    assert [score.score_value for score in scores] == ["true"]
-
-
-async def test_no_objective_scorer_yields_no_scores():
-    scores_json = [{"score_value": "true", "score_type": "true_false", "scorer_type": "X"}]
-    response = _response(
-        [
-            {
-                "role": "assistant",
-                "turn_number": 1,
-                "message_pieces": [_piece(role="assistant", text="x", scores=scores_json)],
-            }
-        ]
-    )
+    response = _response([{"role": "assistant", "turn_number": 1, "message_pieces": [piece_json]}])
     source = RestApiConversationSource(client=_FakeClient(response), attack_result_id="aid-1")
 
     messages = await source.get_messages_async(conversation_id="conv-1")
     scores = await source.get_scores_async(prompt_ids=[str(messages[0].get_piece().id)])
 
-    assert scores == []
+    assert [score.scorer_class_identifier.hash for score in scores] == [scorer.hash for scorer in scorers]
+    assert [str(score.message_piece_id) for score in scores] == [piece_json["id"], piece_json["id"]]
+
+
+async def test_get_scores_async_is_empty_for_unscored_piece():
+    response = _response([{"role": "user", "turn_number": 0, "message_pieces": [_piece(role="user", text="hi")]}])
+    source = RestApiConversationSource(client=_FakeClient(response), attack_result_id="aid-1")
+
+    messages = await source.get_messages_async(conversation_id="conv-1")
+
+    assert await source.get_scores_async(prompt_ids=[str(messages[0].get_piece().id)]) == []
 
 
 async def test_view_only_fields_are_dropped_on_hydration():

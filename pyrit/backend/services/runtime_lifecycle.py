@@ -15,8 +15,13 @@ from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
-from pyrit.backend.services.service_lifecycle import close_services_async, outstanding_estimates
+from pyrit.backend.services.service_lifecycle import (
+    close_services_async,
+    has_active_manual_sends,
+    outstanding_estimates,
+)
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
+from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
@@ -219,14 +224,25 @@ class RuntimeLifecycle:
     def _has_active_work(self) -> bool:
         """Return whether any admitted or background runtime operation remains."""
         service = peek_scenario_run_service()
-        return bool((service and service.has_active_work()) or self.operations or outstanding_estimates())
+        return bool(
+            (service and service.has_active_work())
+            or self.operations
+            or outstanding_estimates()
+            or has_active_manual_sends()
+        )
 
     async def shutdown_async(self) -> None:
         """Stop the current scheduler and close services owned by this process."""
         if self.apply_task and not self.apply_task.done():
             await asyncio.shield(self.apply_task)
         self.state = "stopping"
-        service = peek_scenario_run_service()
-        if service:
-            await service.shutdown_async()
-        await close_services_async()
+        try:
+            service = peek_scenario_run_service()
+            if service:
+                await service.shutdown_async()
+        finally:
+            try:
+                await close_services_async()
+            finally:
+                if CentralMemory._memory_instance is not None:
+                    await CentralMemory.get_memory_instance().dispose_engine_async()

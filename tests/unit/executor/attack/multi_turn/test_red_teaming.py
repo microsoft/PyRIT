@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.exceptions import (
     AdversarialChatRefusedException,
@@ -31,7 +32,7 @@ from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailureKind,
 )
 from pyrit.executor.attack.core.attack_strategy import _ObjectiveTargetConversationLifecycle
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import (
     AttackOutcome,
@@ -111,7 +112,7 @@ def mock_objective_target() -> MagicMock:
 def mock_adversarial_chat() -> MagicMock:
     chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock()
-    chat.set_system_prompt = MagicMock()
+    chat.set_system_prompt_async = AsyncMock()
     chat.get_identifier.return_value = _mock_target_id("MockChatTarget")
     chat.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
     chat.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
@@ -128,7 +129,7 @@ def mock_objective_scorer() -> MagicMock:
 
 @pytest.fixture
 def mock_prompt_normalizer() -> MagicMock:
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -601,7 +602,7 @@ class TestContextValidation:
         # Create a separate chat target for objective since prepended_conversation requires PromptTarget
         mock_chat_objective_target = MagicMock(spec=PromptTarget)
         mock_chat_objective_target.send_prompt_async = AsyncMock()
-        mock_chat_objective_target.set_system_prompt = MagicMock()
+        mock_chat_objective_target.set_system_prompt_async = AsyncMock()
         mock_chat_objective_target.get_identifier.return_value = _mock_target_id("MockChatTarget")
         mock_chat_objective_target.configuration.capabilities.input_modalities = frozenset({frozenset({"text"})})
         mock_chat_objective_target.configuration.capabilities.output_modalities = frozenset({frozenset({"text"})})
@@ -685,7 +686,7 @@ class TestSetupPhase:
         assert len(context) == 2
         assert all(item["role"] == "user" for item in context)
         assert "stored result" in str(context)
-        source = CentralMemory.get_memory_instance().get_conversation_messages(
+        source = await CentralMemory.get_memory_instance().get_conversation_messages_async(
             conversation_id=basic_context.session.conversation_id
         )
         assert {"function_call", "function_call_output"} <= {
@@ -794,7 +795,7 @@ class TestSetupPhase:
             Message.from_prompt(prompt="prepended user", role="user"),
             Message.from_prompt(prompt="prepended assistant", role="assistant"),
         ]
-        attack._memory = MagicMock()
+        attack._memory = MagicMock(spec=MemoryInterface)
 
         # Mock that simulates initialize_context_async merging labels
         async def mock_initialize(*, context, memory_labels=None, **kwargs):
@@ -836,8 +837,8 @@ class TestSetupPhase:
             await attack._setup_async(context=basic_context)
 
         # Verify system prompt was set
-        mock_adversarial_chat.set_system_prompt.assert_called_once()
-        call_args = mock_adversarial_chat.set_system_prompt.call_args
+        mock_adversarial_chat.set_system_prompt_async.assert_called_once()
+        call_args = mock_adversarial_chat.set_system_prompt_async.call_args
         assert "Test objective" in call_args.kwargs["system_prompt"]
         assert call_args.kwargs["conversation_id"] == basic_context.session.adversarial_chat_conversation_id
 
@@ -1045,16 +1046,18 @@ class TestObjectiveTargetSending:
             conversation_id=old_conversation_id,
             sequence=0,
         )
-        memory.add_message_pieces_to_memory(
-            message_pieces=[
-                system_piece,
-                MessagePiece(
-                    original_value="First request",
-                    role="user",
-                    conversation_id=old_conversation_id,
-                    sequence=1,
-                ),
-            ]
+        (
+            await memory.add_message_pieces_to_memory_async(
+                message_pieces=[
+                    system_piece,
+                    MessagePiece(
+                        original_value="First request",
+                        role="user",
+                        conversation_id=old_conversation_id,
+                        sequence=1,
+                    ),
+                ]
+            )
         )
         basic_context.prepended_history_send_context = ConversationManager.create_prepended_history_send_context(
             target=objective_target,
@@ -1227,7 +1230,9 @@ class TestAttackExecution:
         assert next(iter(result.related_conversations)).conversation_type is ConversationType.ADVERSARIAL
         assert "I cannot assist with that request." in (result.outcome_reason or "")
         mock_send.assert_not_awaited()
-        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        [persisted_result] = await CentralMemory.get_memory_instance().get_attack_results_async(
+            objective="Test objective"
+        )
         assert persisted_result.outcome is AttackOutcome.UNDETERMINED
         assert AttackPreparationFailure.from_result(result=persisted_result) == preparation_failure
 
@@ -1287,7 +1292,9 @@ class TestAttackExecution:
         # rather than re-running the objective under new conversation ids.
         assert AttackPreparationFailure.from_result(result=result) is None
         assert "Blocked by content filter." in (result.outcome_reason or "")
-        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        [persisted_result] = await CentralMemory.get_memory_instance().get_attack_results_async(
+            objective="Test objective"
+        )
         assert AttackPreparationFailure.from_result(result=persisted_result) is None
 
     async def test_unrelated_adversarial_bad_request_still_propagates(

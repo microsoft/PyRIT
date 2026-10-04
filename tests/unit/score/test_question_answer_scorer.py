@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import store_message
+from unit.mocks import store_message_async
 
 from pyrit.models import (
     AnswerMatches,
@@ -56,7 +56,7 @@ async def test_question_answer_scorer_score_async(
     response: str, expected_score: bool, expectation: ScoringExpectation
 ) -> None:
     scorer = QuestionAnswerScorer(category=["new_category"])
-    message = store_message(Message.from_prompt(prompt=response, role="assistant"))
+    message = await store_message_async(Message.from_prompt(prompt=response, role="assistant"))
 
     scores = await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation)
 
@@ -71,7 +71,7 @@ async def test_question_answer_scorer_score_async(
 @pytest.mark.parametrize("expectation", [None, ScoringExpectation(), ScoringExpectation(objective="Paris")])
 async def test_question_answer_requires_typed_condition_async(expectation: ScoringExpectation | None) -> None:
     scorer = QuestionAnswerScorer()
-    message = store_message(
+    message = await store_message_async(
         Message.from_prompt(
             prompt="Paris",
             role="assistant",
@@ -84,7 +84,7 @@ async def test_question_answer_requires_typed_condition_async(expectation: Scori
 
 async def test_question_answer_ignores_conflicting_metadata_async(expectation: ScoringExpectation) -> None:
     scorer = QuestionAnswerScorer()
-    message = store_message(
+    message = await store_message_async(
         Message.from_prompt(
             prompt="Paris",
             role="assistant",
@@ -167,7 +167,7 @@ async def test_question_answer_preserves_piece_aggregation_async(
         score_aggregator=TrueFalseScoreAggregator.AND if use_and else TrueFalseScoreAggregator.OR
     )
     conversation_id = "qa-piece-aggregation"
-    message = store_message(
+    message = await store_message_async(
         Message(
             message_pieces=[
                 MessagePiece(role="assistant", original_value=value, conversation_id=conversation_id)
@@ -302,7 +302,7 @@ async def test_question_answer_preserves_role_filter_async(expectation: ScoringE
     scorer = QuestionAnswerScorer(
         validator=ScorerPromptValidator(supported_data_types=["text"], supported_roles=["assistant"])
     )
-    message = store_message(Message.from_prompt(prompt="Paris", role="user"))
+    message = await store_message_async(Message.from_prompt(prompt="Paris", role="user"))
     assert await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation) == []
 
 
@@ -311,7 +311,7 @@ async def test_question_answer_preserves_error_policy_async(
     error: PromptResponseError, expectation: ScoringExpectation
 ) -> None:
     scorer = QuestionAnswerScorer()
-    message = store_message(
+    message = await store_message_async(
         Message(
             message_pieces=[
                 MessagePiece(
@@ -336,7 +336,7 @@ async def test_question_answer_preserves_error_policy_async(
 
 async def test_question_answer_adds_to_memory_async(expectation: ScoringExpectation) -> None:
     scorer = QuestionAnswerScorer()
-    with patch.object(scorer._memory, "add_scores_to_memory", new_callable=MagicMock) as add:
+    with patch.object(scorer._memory, "add_scores_to_memory_async", new_callable=AsyncMock) as add:
         await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
     add.assert_called_once()
 

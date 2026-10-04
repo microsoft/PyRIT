@@ -9,11 +9,12 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.converter import ConverterResult
 from pyrit.converter.math_prompt_converter import MathPromptConverter
 from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 
 
 async def test_math_prompt_converter_convert_async():
     # Mock the converter target - use MagicMock for synchronous methods
-    mock_converter_target = MagicMock()
+    mock_converter_target = MagicMock(spec=PromptTarget)
     mock_converter_target.send_prompt_async = AsyncMock()
     mock_converter_target.get_identifier.return_value = get_mock_target_identifier("MockMathTarget")
     # Specify parameters=['prompt'] to match the placeholder in the template
@@ -70,7 +71,7 @@ async def test_math_prompt_converter_convert_async():
 
 async def test_math_prompt_converter_handles_disallowed_content():
     # Mock the converter target - use MagicMock for synchronous methods
-    mock_converter_target = MagicMock()
+    mock_converter_target = MagicMock(spec=PromptTarget)
     mock_converter_target.send_prompt_async = AsyncMock()
     mock_converter_target.get_identifier.return_value = get_mock_target_identifier("MockMathTarget")
     # Specify parameters=['prompt'] to match the placeholder in the template
@@ -124,7 +125,7 @@ async def test_math_prompt_converter_handles_disallowed_content():
 
 async def test_math_prompt_converter_invalid_input_type():
     # Mock the converter target - use MagicMock for synchronous methods
-    mock_converter_target = MagicMock()
+    mock_converter_target = MagicMock(spec=PromptTarget)
     mock_converter_target.send_prompt_async = AsyncMock()
     mock_converter_target.get_identifier.return_value = get_mock_target_identifier("MockMathTarget")
     # Specify parameters=['prompt'] to match the placeholder in the template
@@ -146,7 +147,7 @@ async def test_math_prompt_converter_invalid_input_type():
 
 async def test_math_prompt_converter_error_handling():
     # Mock the converter target - use MagicMock for synchronous methods
-    mock_converter_target = MagicMock()
+    mock_converter_target = MagicMock(spec=PromptTarget)
     mock_converter_target.send_prompt_async = AsyncMock()
     mock_converter_target.get_identifier.return_value = get_mock_target_identifier("MockMathTarget")
     # Specify parameters=['prompt'] to match the placeholder in the template
