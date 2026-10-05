@@ -7,7 +7,7 @@ import type {
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import {
-  attachmentDraft, draftToolTypes, editorTargetDisabledReason, newDraftMessage, newDraftPiece,
+  attachmentDraft, draftDataTypes, editorTargetDisabledReason, newDraftMessage, newDraftPiece,
   unansweredToolCallId, validateDraft,
 } from '@/utils/conversationDraft'
 import { isPathDataType } from '@/utils/media'
@@ -38,7 +38,7 @@ export function useConversationDraft() {
   )
   const validationError = draft ? validateDraft(draft.messages) : null
   const targetError = draft?.target
-    ? editorTargetDisabledReason(draft.target, draftToolTypes(draft.messages)) : undefined
+    ? editorTargetDisabledReason(draft.target, draftDataTypes(draft.messages)) : undefined
 
   const releaseUrls = useCallback((): void => {
     for (const url of urls.current) URL.revokeObjectURL(url)

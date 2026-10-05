@@ -186,15 +186,18 @@ the call ID, name, and JSON arguments. **Add tool response** inserts a separate
 `simulated_tool` message after it and copies the call ID. A response needs a preceding,
 unanswered call. Tool content is stored, not executed.
 
-During editing, targets without editable history are disabled. If the draft
-contains tool pieces, the target must also accept each tool input type. The
+During editing, targets without editable history are disabled. The target must
+also accept every effective history data type, including audio, video, and tool
+pieces. A converted piece is checked using its converted data type. The
 requirements update when pieces are added or removed. An incompatible current
 target shows a warning; select a compatible target or clear the selection to
 save a new attack without a target. These checks also apply on the server and
 when the first send binds an unbound attack.
 The selected target also checks its required tool fields before saving or binding.
 A rejected check does not save media or change the attack's target. A targetless
-draft can retain provider-specific content until a target is selected.
+draft can retain unsupported media and provider-specific content until a
+compatible target is selected. History validation checks native input support;
+it does not run message normalizers or change the saved content.
 
 Click the objective to edit it, or select **Add objective** on an empty chat.
 Changes made during conversation editing stay local until you save.

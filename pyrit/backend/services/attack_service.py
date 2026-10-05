@@ -607,11 +607,6 @@ class AttackService:
         target = await self._validate_editor_target_async(
             target_identifier=target_identifier,
             registry_name=request.target_registry_name,
-            data_types={
-                piece.converted_value_data_type or piece.data_type
-                for message in request.messages
-                for piece in message.pieces
-            },
         )
         persisted_paths: list[str] = []
         inserted = False
@@ -784,7 +779,7 @@ class AttackService:
                 prepared_pieces.append((saved, request_piece))
             prepared_messages.append(Message(message_pieces=prepared))
         if target:
-            target.validate_tool_history(prepared_messages)
+            target.validate_history(prepared_messages)
         elif source_pieces is not None:
             validate_tool_conversation(prepared_messages)
         for saved, request_piece in prepared_pieces:
@@ -800,10 +795,9 @@ class AttackService:
         *,
         target_identifier: ComponentIdentifier | None,
         registry_name: str | None,
-        data_types: set[str],
     ) -> PromptTarget | None:
         """
-        Require editable history and support for each structured tool input.
+        Resolve a registered target that supports editable, multi-turn history.
 
         Returns:
             The resolved target for provider preflight, or None for an unbound draft.
@@ -828,11 +822,6 @@ class AttackService:
         capabilities = target.capabilities
         if not capabilities.supports_editable_history or not capabilities.supports_multi_turn:
             raise ValueError("The selected target does not support editable history. Select a different target.")
-        tool_types = data_types & {"function_call", "function_call_output", "tool_call"}
-        unsupported = tool_types - set(capabilities.supported_input_modalities)
-        if unsupported:
-            missing = ", ".join(sorted(unsupported))
-            raise ValueError(f"The selected target does not support these tool pieces: {missing}.")
         target_object = service.get_target_object(target_registry_name=target.target_registry_name)
         if target_object is None:
             raise ValueError("The selected target is no longer registered")
@@ -1117,16 +1106,10 @@ class AttackService:
         target_object = await self._validate_editor_target_async(
             target_identifier=target,
             registry_name=registry_name,
-            data_types={
-                piece.converted_value_data_type
-                for conversation in conversations.values()
-                for message in conversation
-                for piece in message.message_pieces
-            },
         )
         if target_object:
             for conversation in conversations.values():
-                target_object.validate_tool_history(conversation)
+                target_object.validate_history(conversation)
         atomic = AtomicAttackIdentifier.build(
             attack_identifier=AttackIdentifier(
                 class_name="ManualAttack",

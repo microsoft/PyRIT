@@ -8,20 +8,18 @@ import { buildMediaUrl, isPathDataType } from './media'
 
 export const DRAFT_ROLES: ConversationDraftRole[] = ['system', 'user', 'simulated_assistant', 'simulated_tool', 'developer']
 export const NEW_MESSAGE_ROLES: ConversationDraftRole[] = ['system', 'developer', 'user', 'simulated_assistant']
-const TOOL_DATA_TYPES = ['function_call', 'function_call_output', 'tool_call']
 
-export function draftToolTypes(messages: ConversationDraftMessage[]): string[] {
+export function draftDataTypes(messages: ConversationDraftMessage[]): string[] {
   return [...new Set(messages.flatMap((message: ConversationDraftMessage) => message.pieces
-    .map((piece: ConversationDraftPiece) => piece.converted_value_data_type ?? piece.data_type)
-    .filter((type: string) => TOOL_DATA_TYPES.includes(type))))]
+    .map((piece: ConversationDraftPiece) => piece.converted_value_data_type ?? piece.data_type)))]
 }
 
-export function editorTargetDisabledReason(target: TargetInstance, toolTypes: string[]): string | undefined {
+export function editorTargetDisabledReason(target: TargetInstance, dataTypes: string[]): string | undefined {
   if (!target.capabilities?.supports_editable_history || !target.capabilities.supports_multi_turn) {
     return 'This target does not support editable history.'
   }
-  const unsupported = toolTypes.filter((type: string) => !target.capabilities?.supported_input_modalities.includes(type))
-  if (unsupported.length) return `This target does not support these tool pieces: ${unsupported.join(', ')}.`
+  const unsupported = dataTypes.filter((type: string) => !target.capabilities?.supported_input_modalities.includes(type))
+  if (unsupported.length) return `This target does not support these history data types: ${unsupported.join(', ')}.`
   return undefined
 }
 

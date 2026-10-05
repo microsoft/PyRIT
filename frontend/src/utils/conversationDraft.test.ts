@@ -1,7 +1,7 @@
 import type { ConversationDraftMessage, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
-import { draftConverterInputs, draftToolTypes, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
+import { draftConverterInputs, draftDataTypes, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
 
 describe('conversation drafts', () => {
   it.each([
@@ -59,17 +59,45 @@ describe('conversation drafts', () => {
     expect(draftConverterInputs(messages, new Set(['message', 'output']))).toEqual([])
   })
 
-  it('derives tool requirements only from current effective pieces and links', () => {
-    expect(draftToolTypes(messages)).toEqual(['function_call', 'function_call_output'])
+  it('derives requirements from all current effective pieces and keeps tool links', () => {
+    expect(draftDataTypes(messages)).toEqual(['function_call', 'function_call_output'])
     expect(unansweredToolCallId(messages, 'message')).toBeUndefined()
     expect(unansweredToolCallId([messages[0]], 'message')).toBe('call-1')
-    expect(draftToolTypes([{
+    expect(draftDataTypes([{
       ...messages[0], pieces: [{ ...messages[0].pieces[0], converted_value: 'text', converted_value_data_type: 'text' }],
-    }])).toEqual([])
-    expect(draftToolTypes([])).toEqual([])
+    }])).toEqual(['text'])
+    expect(draftDataTypes([])).toEqual([])
   })
 
-  it('requires editable multi-turn history and each tool input modality', () => {
+  it.each(['audio_path', 'video_path', 'binary_path'])('checks %s anywhere in the effective draft', (dataType: string) => {
+    const target = makeTarget({
+      target_registry_name: 'text',
+      capabilities: {
+        supports_multi_turn: true, supports_editable_history: true,
+        supported_input_modalities: ['text'],
+      },
+    })
+    const history: ConversationDraftMessage[] = [{
+      id: 'media', role: 'user', pieces: [{
+        draftId: 'piece', data_type: 'text', original_value: 'original',
+        converted_value: 'media', converted_value_data_type: dataType,
+      }],
+    }, {
+      id: 'reply', role: 'simulated_assistant',
+      pieces: [{ draftId: 'reply-piece', data_type: 'text', original_value: 'reply' }],
+    }]
+    expect(draftDataTypes(history)).toEqual([dataType, 'text'])
+    expect(editorTargetDisabledReason(target, draftDataTypes(history))).toContain(dataType)
+    expect(editorTargetDisabledReason(target, draftDataTypes(history.slice(1)))).toBeUndefined()
+    history[0].pieces[0] = {
+      draftId: 'piece', data_type: dataType, original_value: 'media',
+      converted_value: 'transcript', converted_value_data_type: 'text',
+    }
+    expect(draftDataTypes(history)).toEqual(['text'])
+    expect(editorTargetDisabledReason(target, draftDataTypes(history))).toBeUndefined()
+  })
+
+  it('requires editable multi-turn history and each input modality', () => {
     const capabilities: TargetCapabilities = {
       supports_multi_turn: true, supports_editable_history: true, supports_json_schema: false,
       supports_json_output: false, supports_system_prompt: true,

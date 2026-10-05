@@ -30,7 +30,7 @@ from pyrit.backend.services.target_service import TargetService
 from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import Conversation, MessagePiece, Score
+from pyrit.models import Conversation, MessagePiece, PromptDataType, Score
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.models.target.target_capabilities import TargetCapabilities
@@ -86,12 +86,158 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
     service = MagicMock(spec=TargetService)
     service.get_target_object.return_value = target
     service.get_target_async.return_value = target_object_to_instance("responses", target)
+    service.list_targets_async.return_value = TargetListResponse(
+        items=[target_object_to_instance("responses", target)],
+        pagination=PaginationInfo(limit=50, has_more=False),
+    )
     with patch("pyrit.backend.services.attack_service.get_target_service", return_value=service):
         yield target
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConversationEditor:
+    @pytest.mark.parametrize("data_type", ["audio_path", "video_path", "binary_path"])
+    @pytest.mark.parametrize("same_attack", [False, True])
+    @pytest.mark.parametrize("converted", [False, True])
+    async def test_save_rejects_unsupported_history_before_writing_async(
+        self,
+        *,
+        response_target: OpenAIResponseTarget,
+        sqlite_instance: SQLiteMemory,
+        data_type: PromptDataType,
+        same_attack: bool,
+        converted: bool,
+    ) -> None:
+        service = AttackService()
+        initial = draft()
+        initial.target_registry_name = "responses"
+        source = await service.save_conversation_async(request=initial) if same_attack else None
+        before = await sqlite_instance.get_attack_results_async()
+        request = draft()
+        request.target_registry_name = "responses"
+        if source:
+            request.destination = "same_attack"
+            request.attack_result_id = source.attack.attack_result_id
+            request.target_registry_name = None
+        request.messages[0].pieces = [
+            ConversationPieceRequest(
+                data_type="text" if converted else data_type,
+                original_value="original",
+                converted_value="media" if converted else None,
+                converted_value_data_type=data_type if converted else None,
+            )
+        ]
+        request.messages.append(
+            ConversationMessageRequest(
+                role="simulated_assistant",
+                pieces=[ConversationPieceRequest(original_value="reply")],
+            )
+        )
+        with (
+            patch.object(service, "_persist_base64_pieces_async", new_callable=AsyncMock) as persist,
+            patch.object(response_target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send,
+        ):
+            with pytest.raises(ValueError, match=data_type):
+                await service.save_conversation_async(request=request)
+            persist.assert_not_awaited()
+            send.assert_not_awaited()
+        assert await sqlite_instance.get_attack_results_async() == before
+        assert await sqlite_instance.get_conversation_metadata_async(conversation_id=str(request.save_id)) is None
+        assert await sqlite_instance.get_message_pieces_async(conversation_id=str(request.save_id)) == []
+
+    @pytest.mark.parametrize("data_type", ["audio_path", "video_path", "binary_path"])
+    @pytest.mark.parametrize("related", [False, True])
+    async def test_targetless_media_is_saved_but_incompatible_binding_writes_nothing_async(
+        self,
+        *,
+        response_target: OpenAIResponseTarget,
+        sqlite_instance: SQLiteMemory,
+        tmp_path: Path,
+        data_type: PromptDataType,
+        related: bool,
+    ) -> None:
+        media = tmp_path / "history.bin"
+        await asyncio.to_thread(media.write_bytes, b"history bytes")
+        service = AttackService()
+        source = await service.save_conversation_async(request=draft())
+        request = draft()
+        request.destination = "same_attack"
+        request.attack_result_id = source.attack.attack_result_id
+        request.messages[0].pieces = [
+            ConversationPieceRequest(
+                data_type="text",
+                original_value="original",
+                converted_value=str(media),
+                converted_value_data_type=data_type,
+            )
+        ]
+        request.messages.append(
+            ConversationMessageRequest(
+                role="simulated_assistant",
+                pieces=[ConversationPieceRequest(original_value="reply")],
+            )
+        )
+        saved = await service.save_conversation_async(request=request)
+        attack_id = saved.attack.attack_result_id
+        before = (await sqlite_instance.get_attack_results_async(attack_result_ids=[attack_id]))[0]
+        history = await sqlite_instance.get_message_pieces_async(conversation_id=saved.messages.conversation_id)
+        assert history[0].converted_value_data_type == data_type
+        assert saved.attack.target_unbound
+        with patch.object(response_target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
+            with pytest.raises(ValueError, match=data_type):
+                await service.add_message_async(
+                    attack_result_id=attack_id,
+                    request=AddMessageRequest(
+                        target_conversation_id=source.messages.conversation_id
+                        if related
+                        else saved.messages.conversation_id,
+                        target_registry_name="responses",
+                        pieces=[ConversationPieceRequest(original_value="next")],
+                    ),
+                )
+            send.assert_not_awaited()
+        assert (await sqlite_instance.get_attack_results_async(attack_result_ids=[attack_id]))[0] == before
+        for conversation_id in before.get_active_conversation_ids():
+            assert (
+                await sqlite_instance.get_conversation_metadata_async(
+                    conversation_id=conversation_id,
+                )
+            ).target_identifier is None
+        assert await sqlite_instance.get_message_pieces_async(conversation_id=saved.messages.conversation_id) == history
+
+    async def test_supported_converted_history_can_save_and_bind_async(
+        self,
+        *,
+        response_target: OpenAIResponseTarget,
+        sqlite_instance: SQLiteMemory,
+        tmp_path: Path,
+    ) -> None:
+        media = tmp_path / "original.wav"
+        await asyncio.to_thread(media.write_bytes, b"original audio bytes")
+        service = AttackService()
+        request = draft()
+        request.messages[0].pieces = [
+            ConversationPieceRequest(
+                data_type="audio_path",
+                original_value=str(media),
+                converted_value="transcript",
+                converted_value_data_type="text",
+            )
+        ]
+        targetless = await service.save_conversation_async(request=request)
+        attack = (
+            await sqlite_instance.get_attack_results_async(
+                attack_result_ids=[targetless.attack.attack_result_id],
+            )
+        )[0]
+        bound = await service._bind_manual_target_async(attack=attack, registry_name="responses")
+        assert bound.metadata["target_unbound"] is False
+        request.save_id = uuid.uuid4()
+        request.target_registry_name = "responses"
+        saved = await service.save_conversation_async(request=request)
+        assert saved.attack.target_unbound is False
+        assert saved.messages.messages[0].message_pieces[0].converted_value == "transcript"
+
     @pytest.mark.parametrize("same_attack", [False, True])
     async def test_save_long_conversation_async(self, *, sqlite_instance: SQLiteMemory, same_attack: bool) -> None:
         service = AttackService()
@@ -282,7 +428,7 @@ class TestConversationEditor:
                 role="simulated_assistant",
                 pieces=[
                     ConversationPieceRequest(
-                        data_type="binary_path", original_value=base64.b64encode(b"media").decode()
+                        data_type="image_path", original_value=base64.b64encode(b"media").decode()
                     ),
                     ConversationPieceRequest(data_type="tool_call", original_value='{"call_id":"web-1"}'),
                 ],

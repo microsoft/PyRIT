@@ -36,7 +36,7 @@ import { generateClientId } from '@/utils/clientId'
 import ObjectiveHeader from './ObjectiveHeader'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
-import { draftToolTypes, editorTargetDisabledReason, toConversationDraft } from '@/utils/conversationDraft'
+import { draftDataTypes, editorTargetDisabledReason, toConversationDraft } from '@/utils/conversationDraft'
 import { useConversationSave } from '@/hooks/useConversationSave'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import type { PieceConversion } from './converterTypes'
@@ -1340,7 +1340,7 @@ export default function ChatWindow({
       const source = await attacksApi.getMessages(attackResultId, sourceId)
       const copiedMessages = toConversationDraft(source.messages.slice(0, messageIndex + 1))
       const target = destination === 'new_attack' && activeTarget
-        && editorTargetDisabledReason(activeTarget, draftToolTypes(copiedMessages))
+        && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))
         ? null : activeTarget
       const response = await copySave.save({
         sourceAttackId: attackResultId,
@@ -1372,7 +1372,7 @@ export default function ChatWindow({
       ? 'Choose New attack to select a target while editing an unbound attack.'
     : isTargetResolutionLocked ? 'The source target cannot be safely resolved. Choose New attack.'
     : undefined
-  const editorToolTypes = draftToolTypes(editDraft?.messages ?? [])
+  const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
   const recoverableProcessingErrorIndex = recoverableSend?.conversationId === viewedConversationId
@@ -1431,7 +1431,7 @@ export default function ChatWindow({
             disabled={isSending || isSavingEditor}
             onSelect={editDraft !== null ? editor.changeTarget : onSelectTarget}
             disabledReason={editDraft !== null
-              ? (target: TargetInstance) => editorTargetDisabledReason(target, editorToolTypes) : undefined}
+              ? (target: TargetInstance) => editorTargetDisabledReason(target, editorDataTypes) : undefined}
           />
         ) : activeTarget ? (
           <TargetBadge target={activeTarget} />

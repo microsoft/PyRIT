@@ -161,6 +161,28 @@ class PromptTarget(Identifiable):
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
 
+    def validate_history(self, messages: Sequence[Message]) -> None:
+        """
+        Check history data types and tool payloads without sending or changing history.
+
+        This checks native input support, not normalization policy. Empty histories
+        and histories ending with an assistant message or unanswered call are permitted.
+        It does not load media or validate a future request.
+
+        Args:
+            messages: Complete ordered history to replay.
+
+        Raises:
+            ValueError: An effective data type is unsupported or tool history is invalid.
+        """
+        supported = set(self.capabilities.supported_input_modalities)
+        unsupported = {
+            piece.converted_value_data_type for message in messages for piece in message.message_pieces
+        } - supported
+        if unsupported:
+            raise ValueError(f"The target does not support these history data types: {', '.join(sorted(unsupported))}.")
+        self.validate_tool_history(messages)
+
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """
         Check stored tool history without sending, normalizing, or retrieving media.

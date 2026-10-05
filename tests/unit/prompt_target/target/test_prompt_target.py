@@ -12,7 +12,14 @@ from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Message,
+    MessagePiece,
+    PromptDataType,
+    flatten_to_message_pieces,
+)
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -54,6 +61,62 @@ def mock_attack_strategy():
         class_module="pyrit.executor.attack.test_attack",
     )
     return strategy
+
+
+@pytest.mark.parametrize("data_type", ["audio_path", "video_path", "binary_path"])
+@pytest.mark.parametrize("converted", [False, True])
+def test_validate_history_checks_all_effective_types(
+    *, azure_openai_target: OpenAIChatTarget, data_type: PromptDataType, converted: bool
+) -> None:
+    piece = MessagePiece(
+        role="user",
+        original_value="not-loaded",
+        original_value_data_type="text" if converted else data_type,
+        converted_value="not-loaded",
+        converted_value_data_type=data_type,
+    )
+    history = [piece.to_message(), MessagePiece(role="simulated_assistant", original_value="reply").to_message()]
+    before = [message.model_dump() for message in history]
+    with pytest.raises(ValueError, match=data_type):
+        azure_openai_target.validate_history(history)
+    assert [message.model_dump() for message in history] == before
+
+
+def test_validate_history_uses_converted_type_and_allows_incomplete_history(
+    azure_openai_target: OpenAIChatTarget,
+) -> None:
+    azure_openai_target.validate_history([])
+    history = [
+        MessagePiece(
+            role="user",
+            original_value="not-loaded.wav",
+            original_value_data_type="audio_path",
+            converted_value="transcript",
+            converted_value_data_type="text",
+        ).to_message(),
+        MessagePiece(role="simulated_assistant", original_value="reply").to_message(),
+    ]
+    azure_openai_target.validate_history(history)
+    azure_openai_target.apply_capabilities(
+        capabilities=azure_openai_target.capabilities.model_copy(
+            update={"input_modalities": frozenset({frozenset({"text"}), frozenset({"function_call"})})}
+        )
+    )
+    history.append(
+        MessagePiece(
+            role="simulated_assistant",
+            original_value='{"call_id":"call-1","name":"lookup","arguments":"{}"}',
+            original_value_data_type="function_call",
+        ).to_message()
+    )
+    azure_openai_target.validate_history(history)
+
+
+def test_validate_history_preserves_provider_validation(azure_openai_target: OpenAIChatTarget) -> None:
+    history = [MessagePiece(role="user", original_value="text").to_message()]
+    with patch.object(azure_openai_target, "validate_tool_history", side_effect=ValueError("provider constraint")):
+        with pytest.raises(ValueError, match="provider constraint"):
+            azure_openai_target.validate_history(history)
 
 
 async def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):

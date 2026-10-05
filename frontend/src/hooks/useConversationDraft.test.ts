@@ -17,6 +17,46 @@ const initial: ConversationSaveInput = {
 describe('useConversationDraft', () => {
   beforeEach(() => jest.resetAllMocks())
 
+  it.each(['same_attack', 'new_attack'] as const)(
+    'blocks %s for unsupported media and permits a targetless new attack',
+    async (destination) => {
+      const target = makeTarget({
+        target_registry_name: 'text',
+        capabilities: {
+          supports_multi_turn: true, supports_editable_history: true,
+          supported_input_modalities: ['text'],
+        },
+      })
+      const { result } = renderHook(() => useConversationDraft())
+      act(() => { result.current.begin({
+        ...initial, target, messages: [{
+          id: 'media', role: 'user', pieces: [{
+            draftId: 'audio', data_type: 'audio_path', original_value: 'history.wav',
+          }],
+        }],
+      }) })
+      expect(result.current.targetError).toContain('audio_path')
+      const onSaved = jest.fn()
+      await act(async () => { await result.current.save(destination, onSaved) })
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(result.current.error).toContain('audio_path')
+      act(() => { result.current.changeTarget(null) })
+      expect(result.current.targetError).toBeUndefined()
+      jest.mocked(attacksApi.saveConversation).mockResolvedValue({
+        attack: {
+          attack_result_id: 'saved', conversation_id: 'saved', attack_type: 'ManualAttack', objective: 'Objective',
+          converters: [], message_count: 1, related_conversation_ids: [], labels: {}, created_at: '', updated_at: '',
+        },
+        messages: { conversation_id: 'saved', messages: [], target_response_status: null },
+      })
+      await act(async () => { await result.current.save('new_attack', onSaved) })
+      expect(onSaved).toHaveBeenCalledTimes(1)
+      const request = jest.mocked(attacksApi.saveConversation).mock.calls[0][0]
+      expect(request.target_registry_name).toBeUndefined()
+      expect(request.messages[0].pieces[0].data_type).toBe('audio_path')
+    },
+  )
+
   it('protects target-only changes and ignores target object replacement with the same identity', () => {
     const target = makeTarget({ target_registry_name: 'first' })
     const { result } = renderHook(() => useConversationDraft())
