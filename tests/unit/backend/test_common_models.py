@@ -433,6 +433,12 @@ def test_update_attack_request_rejects_oversized_objective() -> None:
         UpdateAttackRequest(objective="o" * (MAX_TEXT_LENGTH + 1))
 
 
+def test_update_attack_request_expected_objective_is_not_length_limited() -> None:
+    request = UpdateAttackRequest(objective="o", expected_objective="o" * (MAX_TEXT_LENGTH + 1))
+
+    assert len(request.expected_objective or "") == MAX_TEXT_LENGTH + 1
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

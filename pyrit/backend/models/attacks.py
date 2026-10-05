@@ -521,7 +521,7 @@ class UpdateAttackRequest(BaseModel):
         description="Updated attack outcome",
     )
     objective: TextStr | None = Field(default=None, description="Shared objective for all conversations in the attack")
-    expected_objective: TextStr | None = Field(
+    expected_objective: str | None = Field(
         default=None, description="Objective read before editing, for conflict detection"
     )
 
