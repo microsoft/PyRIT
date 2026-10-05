@@ -25,6 +25,7 @@ from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackResultRole,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
@@ -889,6 +890,7 @@ class TestDefaultAttackStrategyEventHandler:
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
+            "result_role": "target_facing",
             "seed_group_id": "seed-a",
         }
 
@@ -944,7 +946,46 @@ class TestDefaultAttackStrategyEventHandler:
         assert persisted.attribution_parent_id == "scenario-err"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
+            "result_role": "target_facing",
             "seed_group_id": "seed-error",
+        }
+
+    @pytest.mark.parametrize("event", [StrategyEvent.ON_POST_EXECUTE, StrategyEvent.ON_ERROR])
+    async def test_attribution_records_result_role_and_attempt_index(
+        self, event, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """Completed and error results both carry the context's role and the child's position."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            sample_attack_context._result_role = AttackResultRole.ORCHESTRATION
+            sample_attack_context._attribution = AttackResultAttribution(
+                parent_id="scenario-1",
+                parent_collection="atomic_a",
+                attempt_index=2,
+            )
+            is_error = event is StrategyEvent.ON_ERROR
+            event_data = StrategyEventData(
+                event=event,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=None if is_error else sample_attack_result,
+                error=RuntimeError("boom") if is_error else None,
+            )
+            await handler.on_event_async(event_data)
+
+        persisted = (
+            mock_memory.add_attack_results_to_memory_async.call_args.kwargs["attack_results"][0]
+            if is_error
+            else sample_attack_result
+        )
+        assert persisted.attribution_data == {
+            "parent_collection": "atomic_a",
+            "result_role": "orchestration",
+            "attempt_index": 2,
         }
 
     async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):

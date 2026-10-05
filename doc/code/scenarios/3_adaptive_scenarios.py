@@ -233,6 +233,50 @@ for technique, n in total_picks.most_common():
     print(f"{technique:40s}  {total_wins[technique]:>4} / {n:<4}   {total_wins[technique] / n:.0%}")
 
 # %% [markdown]
+# ## Result roles in scenario progress
+#
+# The strategy that produces each result records what the result represents, and the scenario progress
+# API (`GET /api/scenarios/runs/{scenario_result_id}/progress`) returns it. Clients read these fields
+# instead of inferring a parent from a class name or an empty conversation ID:
+#
+# - `result_role` is `target_facing` for an attack that sends its own requests to the objective target,
+#   `orchestration` for a parent that only runs other attacks (such as the per-objective
+#   `SequentialAttack`), and `unknown` for rows saved before roles were recorded. A `target_facing` role
+#   does not prove a request reached the target: an attack that ends in a preparation failure is still
+#   `target_facing`.
+# - `child_attack_result_ids` lists an orchestration parent's children in the order they ran.
+# - `attempt_index` is a child's 1-based position under its parent. For Adaptive it matches the
+#   `_adaptive_attempt` memory label.
+# - Each `summary.atomic_groups` entry has a `kind`: `attack`, `baseline`, `adaptive`, or `unknown` for
+#   plans saved before kinds were recorded.
+#
+# Roles describe results without changing how progress is counted: a parent and its children still
+# belong to one planned unit.
+#
+# This excerpt of a progress response shows one Adaptive objective whose first attempt failed and whose
+# second succeeded (other fields omitted):
+#
+# ```json
+# {
+#   "results": [
+#     {"attack_result_id": "child-1", "conversation_id": "conversation-1", "outcome": "failure",
+#      "result_role": "target_facing", "child_attack_result_ids": [], "attempt_index": 1},
+#     {"attack_result_id": "child-2", "conversation_id": "conversation-2", "outcome": "success",
+#      "result_role": "target_facing", "child_attack_result_ids": [], "attempt_index": 2},
+#     {"attack_result_id": "parent", "conversation_id": "", "outcome": "success",
+#      "result_role": "orchestration", "child_attack_result_ids": ["child-1", "child-2"],
+#      "attempt_index": null}
+#   ],
+#   "summary": {
+#     "atomic_groups": [
+#       {"atomic_attack_name": "baseline", "kind": "baseline", "completed": 1, "planned": 1},
+#       {"atomic_attack_name": "adaptive_airt_hate::4f0c...", "kind": "adaptive", "completed": 1, "planned": 1}
+#     ]
+#   }
+# }
+# ```
+
+# %% [markdown]
 # ## Running from the scanner CLI
 #
 # You can run `TextAdaptive` directly from the `pyrit_scan` CLI without writing Python:

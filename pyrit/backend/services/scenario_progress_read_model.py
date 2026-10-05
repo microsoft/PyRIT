@@ -10,7 +10,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Literal
+from typing import Any, Literal
 
 from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.deprecation import print_deprecation_message
@@ -21,6 +21,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultRole,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ScenarioAtomicGroupProgress,
@@ -36,6 +37,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioScorerIdentity,
     ScenarioSeedGroupProgress,
@@ -622,6 +624,7 @@ class ScenarioProgressReadModel:
                     display_group=group.display_group,
                     status=group_status,
                     technique_details=technique_details_by_group.get(group.id),
+                    kind=group.kind or ScenarioRunPlanGroupKind.UNKNOWN,
                     **counts.model_dump(),
                 )
             )
@@ -912,7 +915,54 @@ class ScenarioProgressReadModel:
             error_type=delta.error_type,
             error_message=delta.error_message,
             score=delta.score,
+            result_role=ScenarioProgressReadModel._read_result_role(attribution_data=delta.attribution_data),
+            child_attack_result_ids=ScenarioProgressReadModel._read_child_attack_result_ids(
+                attack_metadata=delta.attack_metadata
+            ),
+            attempt_index=ScenarioProgressReadModel._read_attempt_index(attribution_data=delta.attribution_data),
         )
+
+    @staticmethod
+    def _read_result_role(*, attribution_data: dict[str, Any]) -> AttackResultRole:
+        """
+        Read the role recorded by the producing strategy.
+
+        A row without a recognized role is ``UNKNOWN``. Nothing is inferred from other
+        fields, such as an empty conversation ID.
+
+        Returns:
+            AttackResultRole: The recorded role, or ``UNKNOWN``.
+        """
+        try:
+            return AttackResultRole(attribution_data.get("result_role"))
+        except ValueError:
+            return AttackResultRole.UNKNOWN
+
+    @staticmethod
+    def _read_child_attack_result_ids(*, attack_metadata: dict[str, Any]) -> list[str]:
+        """
+        Read the ordered child result IDs that ``SequentialAttack`` stores in its metadata.
+
+        Returns:
+            list[str]: The child IDs in stored order, or an empty list when none are recorded.
+        """
+        child_ids = attack_metadata.get("child_attack_result_ids")
+        if isinstance(child_ids, list) and all(isinstance(child_id, str) for child_id in child_ids):
+            return list(child_ids)
+        return []
+
+    @staticmethod
+    def _read_attempt_index(*, attribution_data: dict[str, Any]) -> int | None:
+        """
+        Read a child result's 1-based position under its orchestration parent.
+
+        Returns:
+            int | None: The recorded position, or None when absent or invalid.
+        """
+        attempt_index = attribution_data.get("attempt_index")
+        if isinstance(attempt_index, int) and not isinstance(attempt_index, bool) and attempt_index >= 1:
+            return attempt_index
+        return None
 
     @staticmethod
     def _synthesize_legacy_plan(*, deltas: list[ScenarioAttackResultDelta]) -> ScenarioRunPlan:

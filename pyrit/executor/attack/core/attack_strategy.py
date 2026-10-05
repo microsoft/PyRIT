@@ -33,6 +33,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultRole,
     ComponentIdentifier,
     ConversationReference,
     ConverterIdentifier,
@@ -205,6 +206,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
 
     # ID of the AttackResult this execution produces. Allocated when execution starts.
     _attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    # Role of the AttackResult this execution produces. Copied from the strategy's
+    # ``RESULT_ROLE`` when execution starts, so success and error results both carry it.
+    _result_role: AttackResultRole = field(
+        default=AttackResultRole.TARGET_FACING, init=False, repr=False, compare=False
+    )
 
     _expectation: ScoringExpectation = field(init=False, repr=False)
 
@@ -442,7 +449,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         the AttackExecutor when an upstream orchestrator supplied a factory).
         When present, writes ``attribution_parent_id`` and a fixed-schema
         ``attribution_data`` dict onto the result so they round-trip into
-        ``AttackResultEntry``.
+        ``AttackResultEntry``. The dict also records ``result_role``, the
+        producing strategy's ``RESULT_ROLE``.
 
         Args:
             context: The per-task AttackContext.
@@ -454,11 +462,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         result.attribution_parent_id = attribution.parent_id
         attribution_data: dict[str, Any] = {
             "parent_collection": attribution.parent_collection,
+            "result_role": context._result_role.value,
         }
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
         if attribution.seed_group_id is not None:
             attribution_data["seed_group_id"] = attribution.seed_group_id
+        if attribution.attempt_index is not None:
+            attribution_data["attempt_index"] = attribution.attempt_index
         result.attribution_data = attribution_data
 
     @staticmethod
@@ -587,6 +598,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
+
+    #: What this strategy's persisted results represent. Compound attacks that only coordinate
+    #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
+    RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -858,6 +873,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         self._validate_scoring_expectation(context=context)
         context._error_result_persistence_error = None
         context._attack_result_id = str(uuid.uuid4())
+        context._result_role = self.RESULT_ROLE
         lifecycle = _ObjectiveTargetConversationLifecycle(
             objective_target=self._objective_target,
             logger=self._logger,
