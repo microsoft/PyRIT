@@ -6,10 +6,14 @@ import binascii
 import pytest
 
 from pyrit.converter import (
+    AllWordsSelectionStrategy,
     BinAsciiConverter,
     WordIndexSelectionStrategy,
+    WordKeywordSelectionStrategy,
     WordProportionSelectionStrategy,
+    WordSelectionStrategy,
 )
+from pyrit.registry import ConverterRegistry
 
 
 class TestBinAsciiConverterHex:
@@ -221,3 +225,72 @@ class TestBinAsciiConverterSeparator:
         space_result = await with_space.convert_async(prompt="alpha beta", input_type="text")
 
         assert none_result.output_text == space_result.output_text
+
+
+@pytest.mark.parametrize(
+    ("first_strategy", "second_strategy"),
+    [
+        (WordIndexSelectionStrategy(indices=[0]), WordIndexSelectionStrategy(indices=[1])),
+        (WordKeywordSelectionStrategy(keywords=["ab"]), WordKeywordSelectionStrategy(keywords=["cd"])),
+    ],
+)
+async def test_identifier_distinguishes_word_selection_async(
+    *, first_strategy: WordSelectionStrategy, second_strategy: WordSelectionStrategy
+) -> None:
+    first = BinAsciiConverter(word_selection_strategy=first_strategy)
+    second = BinAsciiConverter(word_selection_strategy=second_strategy)
+
+    first_result = await first.convert_async(prompt="ab cd", input_type="text")
+    second_result = await second.convert_async(prompt="ab cd", input_type="text")
+
+    assert first_result.output_text == "6162 cd"
+    assert second_result.output_text == "ab 6364"
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
+@pytest.mark.parametrize("encoding_func", ["hex", "quoted-printable", "UUencode"])
+def test_registry_accepts_distinct_word_selections(encoding_func: BinAsciiConverter.EncodingFunc) -> None:
+    first = BinAsciiConverter(
+        encoding_func=encoding_func, word_selection_strategy=WordIndexSelectionStrategy(indices=[0])
+    )
+    second = BinAsciiConverter(
+        encoding_func=encoding_func, word_selection_strategy=WordIndexSelectionStrategy(indices=[1])
+    )
+    instances = ConverterRegistry().instances
+
+    instances.register(first)
+    instances.register(second)
+
+    assert instances.get(first.get_identifier().unique_name) is first
+    assert instances.get(second.get_identifier().unique_name) is second
+
+
+async def test_identifier_normalizes_equivalent_indices_async() -> None:
+    first = BinAsciiConverter(word_selection_strategy=WordIndexSelectionStrategy(indices=[0, 1]))
+    second = BinAsciiConverter(word_selection_strategy=WordIndexSelectionStrategy(indices=[1, 0]))
+
+    first_result = await first.convert_async(prompt="ab cd", input_type="text")
+    second_result = await second.convert_async(prompt="ab cd", input_type="text")
+
+    assert first_result.output_text == second_result.output_text == "6162 6364"
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+@pytest.mark.parametrize("explicit_all_words", [False, True])
+@pytest.mark.parametrize(
+    ("encoding_func", "expected_hash"),
+    [
+        ("hex", "997d88728fc485b88e30323fd1dc368292209d8ada8ed58b70e58aa8aadfe108"),
+        ("quoted-printable", "fc9df198b3e1199c620bccc6f86bbb73477641f85c76a62b7048cbf9e16aa170"),
+        ("UUencode", "20bc6dd2594880b93f9dab7c483ec5eee3fb8049993bb614922e59ef48a4b8e7"),
+    ],
+)
+def test_identifier_preserves_default_hash(
+    *, encoding_func: BinAsciiConverter.EncodingFunc, expected_hash: str, explicit_all_words: bool
+) -> None:
+    converter = BinAsciiConverter(
+        encoding_func=encoding_func,
+        word_selection_strategy=AllWordsSelectionStrategy() if explicit_all_words else None,
+    )
+
+    assert converter.get_identifier().hash == expected_hash
