@@ -134,6 +134,7 @@ project:
             - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/hack_a_prompt_target.ipynb
             - file: code/targets/open_ai_completions.ipynb
+            - file: code/targets/github_copilot_target.ipynb
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb

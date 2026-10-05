@@ -104,7 +104,8 @@ async def test_openai_response_target_advertises_and_executes_tool(patch_central
             "strict": False,
         },
     ]
-    assert result == 5
+    assert result.output == 5
+    assert result.invoked is True
 
 
 def test_openai_response_target_without_tools_preserves_identifier(patch_central_database) -> None:
@@ -223,8 +224,25 @@ async def test_legacy_declaration_and_callback_remain_compatible(patch_central_d
     result = await target._execute_call_section_async({"name": "legacy_add", "arguments": '{"x": 2}'})
     assert body["tools"][0] == declaration
     assert len(body["tools"]) == 2
-    assert result == {"value": 3}
+    assert result.output == {"value": 3}
+    assert result.invoked is True
     callback.assert_awaited_once_with({"x": 2})
+
+
+async def test_non_object_arguments_record_no_invocation_async(patch_central_database) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tools=[add],
+        fail_on_missing_function=False,
+    )
+    with patch.object(add, "execute_async", new_callable=AsyncMock) as execute:
+        result = await target._execute_call_section_async({"name": "add", "arguments": "[]"})
+
+    execute.assert_not_awaited()
+    assert result.invoked is False
+    assert result.output == {"error": "malformed_arguments", "function": "add", "raw_arguments": "[]"}
 
 
 async def test_model_retries_pace_each_request_without_repeating_tools(patch_central_database) -> None:

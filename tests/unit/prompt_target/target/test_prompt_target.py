@@ -15,6 +15,7 @@ from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
+    Conversation,
     Message,
     MessagePiece,
     PromptDataType,
@@ -148,6 +149,111 @@ async def test_set_system_prompt_adds_memory(
     assert chats[0].api_role == "system"
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("supports_multi_turn", "supports_editable_history", "supports_system_prompt", "policy", "expected_error"),
+    [
+        pytest.param(True, False, True, None, None, id="native-system-without-editable-history"),
+        pytest.param(
+            True,
+            True,
+            False,
+            CapabilityHandlingPolicy(behaviors={CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.ADAPT}),
+            None,
+            id="editable-history-without-native-system",
+        ),
+        pytest.param(False, True, True, None, ValueError, id="without-multi-turn-editable"),
+        pytest.param(False, False, True, None, ValueError, id="without-multi-turn-native-system"),
+        pytest.param(True, False, False, None, ValueError, id="without-editable-or-native-system"),
+    ],
+)
+async def test_set_system_prompt_capability_admission_and_nonmutation(
+    *,
+    sqlite_instance: MemoryInterface,
+    supports_multi_turn: bool,
+    supports_editable_history: bool,
+    supports_system_prompt: bool,
+    policy: CapabilityHandlingPolicy | None,
+    expected_error: type[ValueError] | None,
+) -> None:
+    conversation_id = "system-prompt-capability-conversation"
+    target = _make_identifier_target(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=supports_multi_turn,
+            supports_editable_history=supports_editable_history,
+            supports_system_prompt=supports_system_prompt,
+        ),
+        policy=policy,
+    )
+
+    if expected_error is None:
+        await target.set_system_prompt_async(system_prompt="be concise", conversation_id=conversation_id)
+        stored = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+        assert len(stored) == 1
+        piece = stored[0].get_piece()
+        assert piece.api_role == "system"
+        assert piece.converted_value == "be concise"
+        assert piece.conversation_id == conversation_id
+    else:
+        with pytest.raises(
+            expected_error,
+            match="It must support multi-turn conversations and either editable history or native system prompts.",
+        ):
+            await target.set_system_prompt_async(system_prompt="be concise", conversation_id=conversation_id)
+        assert await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id) == []
+        assert (
+            await sqlite_instance.get_target_identifiers_async(identifier_hashes=[target.get_identifier().hash]) == []
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("existing_role", "existing_content"),
+    [
+        pytest.param("system", "be concise", id="repeated-system-prompt"),
+        pytest.param("user", "existing user message", id="existing-user-message"),
+    ],
+)
+async def test_set_system_prompt_rejects_nonempty_conversation_without_mutation(
+    *,
+    sqlite_instance: MemoryInterface,
+    existing_role: str,
+    existing_content: str,
+) -> None:
+    conversation_id = "nonempty-system-prompt-conversation"
+    target = _make_identifier_target(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_editable_history=False,
+            supports_system_prompt=True,
+        )
+    )
+    if existing_role == "system":
+        await target.set_system_prompt_async(system_prompt=existing_content, conversation_id=conversation_id)
+    else:
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user",
+                conversation_id=conversation_id,
+                original_value=existing_content,
+                converted_value=existing_content,
+            ).to_message()
+        )
+
+    with pytest.raises(RuntimeError, match="Conversation already exists"):
+        await target.set_system_prompt_async(system_prompt="be expansive", conversation_id=conversation_id)
+
+    stored = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    assert len(stored) == 1
+    piece = stored[0].get_piece()
+    assert piece.api_role == existing_role
+    assert piece.converted_value == existing_content
+    assert piece.conversation_id == conversation_id
+
+
 @pytest.mark.parametrize("multi_turn,editable_history", [(False, True), (True, False)])
 async def test_set_system_prompt_rejects_unsupported_history_without_writing(
     azure_openai_target: OpenAIChatTarget, multi_turn: bool, editable_history: bool
@@ -155,7 +261,9 @@ async def test_set_system_prompt_rejects_unsupported_history_without_writing(
     azure_openai_target.apply_capabilities(
         capabilities=TargetCapabilities(supports_multi_turn=multi_turn, supports_editable_history=editable_history)
     )
-    with pytest.raises(ValueError, match="multi-turn conversations and editable history"):
+    with pytest.raises(
+        ValueError, match="multi-turn conversations and either editable history or native system prompts"
+    ):
         await azure_openai_target.set_system_prompt_async(system_prompt="rejected", conversation_id="unsupported")
     assert await azure_openai_target._memory.get_message_pieces_async(conversation_id="unsupported") == []
 

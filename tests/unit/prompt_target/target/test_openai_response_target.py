@@ -34,10 +34,11 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ToolExecutionMetadata,
     flatten_to_message_pieces,
 )
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
-from pyrit.prompt_target.openai.openai_response_target import token_usage_from_responses
+from pyrit.prompt_target.openai.openai_response_target import _ToolDispatchResult, token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
@@ -1098,14 +1099,18 @@ async def test_build_input_for_multi_modal_async_preserves_empty_conversation_er
     assert str(exc_info.value) == "Conversation cannot be empty"
 
 
-def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIResponseTarget):
+@pytest.mark.parametrize("invoked", [True, False])
+def test_make_tool_piece_serializes_output_and_sets_call_id(target: OpenAIResponseTarget, invoked: bool):
     out = {"answer": 42}
     reference_piece = MessagePiece(
         role="user",
         original_value="test",
         conversation_id="test-conv-123",
     )
-    piece = target._make_tool_piece(out, call_id="tool-1", reference_piece=reference_piece)
+    piece = target._make_tool_piece(
+        result=_ToolDispatchResult(output=out, invoked=invoked), call_id="tool-1", reference_piece=reference_piece
+    )
+    assert ToolExecutionMetadata.from_metadata(metadata=piece.prompt_metadata) == ToolExecutionMetadata(invoked=invoked)
     assert piece.original_value_data_type == "function_call_output"
     assert piece.conversation_id == "test-conv-123"
     payload = json.loads(piece.original_value)
@@ -1124,16 +1129,19 @@ async def test_execute_call_section_calls_registered_function(target: OpenAIResp
 
     section = {"type": "function_call", "name": "add", "arguments": json.dumps({"a": 2, "b": 3})}
     result = await target._execute_call_section_async(section)
-    assert result == {"sum": 5}
+    assert result.output == {"sum": 5}
+    assert result.invoked is True
 
 
 async def test_execute_call_section_missing_function_tolerant_mode(target: OpenAIResponseTarget):
     # default fail_on_missing_function=False
     section = {"type": "function_call", "name": "unknown_tool", "arguments": "{}"}
     result = await target._execute_call_section_async(section)
-    assert result["error"] == "function_not_found"
-    assert result["missing_function"] == "unknown_tool"
-    assert "available_functions" in result
+    assert result.invoked is False
+    assert isinstance(result.output, dict)
+    assert result.output["error"] == "function_not_found"
+    assert result.output["missing_function"] == "unknown_tool"
+    assert "available_functions" in result.output
 
 
 async def test_execute_call_section_malformed_arguments_tolerant_mode(target: OpenAIResponseTarget):
@@ -1143,9 +1151,25 @@ async def test_execute_call_section_malformed_arguments_tolerant_mode(target: Op
     target._custom_functions["echo"] = echo_fn
     section = {"type": "function_call", "name": "echo", "arguments": "{not-json"}
     result = await target._execute_call_section_async(section)
-    assert result["error"] == "malformed_arguments"
-    assert result["function"] == "echo"
-    assert result["raw_arguments"] == "{not-json"
+    assert result.invoked is False
+    assert result.output == {"error": "malformed_arguments", "function": "echo", "raw_arguments": "{not-json"}
+
+
+async def test_execute_call_section_missing_name_records_no_invocation_async(target: OpenAIResponseTarget) -> None:
+    section = {"type": "function_call", "arguments": "{}"}
+    result = await target._execute_call_section_async(section)
+
+    assert result.invoked is False
+    assert result.output == {"error": "missing_function_name", "tool_call_section": section}
+
+
+async def test_execute_call_section_preserves_tool_exception_async(target: OpenAIResponseTarget) -> None:
+    callback = AsyncMock(side_effect=ValueError("tool failed"))
+    target._custom_functions["lookup"] = callback
+
+    with pytest.raises(ValueError, match="tool failed"):
+        await target._execute_call_section_async({"name": "lookup", "arguments": "{}"})
+    callback.assert_awaited_once()
 
 
 async def test_execute_call_section_missing_function_strict_mode(target: OpenAIResponseTarget):

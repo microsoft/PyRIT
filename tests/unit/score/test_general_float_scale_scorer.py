@@ -297,3 +297,45 @@ def test_general_float_scale_no_chat_target_raises():
             system_prompt_format_string="prompt",
             scale=DEFAULT_RANGE,
         )
+
+
+def _response(body: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=body)])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("body", "configured_category", "expected_category"),
+    [
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": "test_category"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": null}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', None, ["violence"]),
+    ],
+    ids=[
+        "configured_category_wins",
+        "matching_categories",
+        "no_response_category",
+        "null_response_category",
+        "no_configured_category",
+    ],
+)
+async def test_general_float_scorer_category_precedence_async(
+    body: str, configured_category: str | None, expected_category: list[str]
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt_async = AsyncMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=NumericRange(minimum_value=0, maximum_value=100, category=configured_category),
+    )
+
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert score[0].score_category == expected_category
+    assert score[0].score_value == "0.5"
+    chat_target.send_prompt_async.assert_awaited_once()
