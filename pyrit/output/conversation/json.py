@@ -4,7 +4,7 @@
 import json
 from typing import Any
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
 from pyrit.output.conversation.base import ConversationPrinterBase
 from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
 from pyrit.output.score.json import JsonScorePrinter
@@ -51,18 +51,28 @@ class JsonConversationPrinter(ConversationPrinterBase):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the structured (dict) representation of a conversation.
 
         Args:
             messages (list[Message]): The messages to serialize.
-            include_scores (bool): Whether to attach inline objective scores. Defaults to False.
+            include_scores (bool): Whether to attach inline scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to keep reasoning pieces. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, attach only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             list[dict[str, Any]]: One dict per message with renderable pieces.
         """
+        objective_scores = (
+            await self._select_objective_scores_async(
+                messages=messages, objective_scorer_identifier=objective_scorer_identifier
+            )
+            if include_scores
+            else None
+        )
         result: list[dict[str, Any]] = []
         for message in messages:
             pieces = self._get_renderable_pieces(
@@ -72,7 +82,12 @@ class JsonConversationPrinter(ConversationPrinterBase):
             if not pieces:
                 continue
             piece_dicts = [
-                await self._build_piece_async(piece=piece, include_scores=include_scores) for piece in pieces
+                await self._build_piece_async(
+                    piece=piece,
+                    include_scores=include_scores,
+                    objective_scores=objective_scores,
+                )
+                for piece in pieces
             ]
             result.append(
                 {
@@ -89,14 +104,17 @@ class JsonConversationPrinter(ConversationPrinterBase):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a conversation as a JSON string.
 
         Args:
             messages (list[Message]): The messages to render.
-            include_scores (bool): Whether to attach inline objective scores. Defaults to False.
+            include_scores (bool): Whether to attach inline scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to keep reasoning pieces. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, attach only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The conversation serialized as indented JSON.
@@ -105,16 +123,25 @@ class JsonConversationPrinter(ConversationPrinterBase):
             messages,
             include_scores=include_scores,
             include_reasoning_summaries=include_reasoning_summaries,
+            objective_scorer_identifier=objective_scorer_identifier,
         )
         return json.dumps(structured, indent=self._indent, default=str, ensure_ascii=False)
 
-    async def _build_piece_async(self, *, piece: MessagePiece, include_scores: bool) -> dict[str, Any]:
+    async def _build_piece_async(
+        self,
+        *,
+        piece: MessagePiece,
+        include_scores: bool,
+        objective_scores: dict[str, Score] | None,
+    ) -> dict[str, Any]:
         """
         Build the structured representation of a single message piece.
 
         Args:
             piece (MessagePiece): The piece to serialize.
-            include_scores (bool): Whether to attach inline objective scores.
+            include_scores (bool): Whether to attach inline scores.
+            objective_scores (dict[str, Score] | None): Objective scores selected for the conversation
+                keyed by piece id, or None to attach every score.
 
         Returns:
             dict[str, Any]: The piece's curated fields (a reasoning summary for
@@ -134,7 +161,7 @@ class JsonConversationPrinter(ConversationPrinterBase):
             if partial_content:
                 data["partial_content"] = str(partial_content)
         if include_scores:
-            scores = await self._source.get_scores_async(prompt_ids=[str(piece.id)])
+            scores = await self._get_piece_scores_async(piece=piece, objective_scores=objective_scores)
             if scores:
                 data["scores"] = [self._score_printer.build(score) for score in scores]
         return data

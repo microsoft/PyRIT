@@ -289,13 +289,7 @@ async def get_scenario_run(scenario_result_id: IdentifierStr) -> ScenarioRunSumm
         ScenarioRunSummary: Current run status (and result if completed).
     """
     service = get_scenario_run_service()
-    active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
-    run = await service.get_run_from_storage_async(
-        scenario_result_id=scenario_result_id,
-        active_error=active_snapshot.error,
-        queue_position=active_snapshot.queue_position,
-        active_scenario_result_id=active_snapshot.active_scenario_result_id,
-    )
+    run = await service.get_run_async(scenario_result_id=scenario_result_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -325,15 +319,11 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
         ScenarioRunProgress: Backend-owned rollups, the run plan, and ascending result deltas.
     """
     service = get_scenario_run_service()
-    active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
     try:
-        progress = await service.get_run_progress_from_storage_async(
+        progress = await service.get_run_progress_async(
             scenario_result_id=scenario_result_id,
             since=since,
             limit=limit,
-            active_group_ids=active_snapshot.active_group_ids,
-            queue_position=active_snapshot.queue_position,
-            active_scenario_result_id=active_snapshot.active_scenario_result_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None

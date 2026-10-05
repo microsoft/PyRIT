@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "./_fixtures";
-import { makeAddMessageResponse } from "./_attacks";
+import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
@@ -319,11 +319,29 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/attacks/mobile-attack-001/message-sends" && method === "POST") {
+      await fulfillMessageSend(route, makeAddMessageResponse(
+        "mobile-attack-001", "mobile-conversation-001", MESSAGES,
+        null, {
+          target: {
+            target_type: "RoundRobinTarget", identifier_hash: "mobile-round-robin-hash",
+            endpoint: null, model_name: "mobile-router",
+          },
+        },
+      ));
+      return;
+    }
     if (apiPath === "/attacks/mobile-attack-001/messages") {
       await route.fulfill(
         method === "POST"
           ? jsonResponse(makeAddMessageResponse(
               "mobile-attack-001", "mobile-conversation-001", MESSAGES,
+              null, {
+                target: {
+                  target_type: "RoundRobinTarget", identifier_hash: "mobile-round-robin-hash",
+                  endpoint: null, model_name: "mobile-router",
+                },
+              },
             ))
           : jsonResponse({ messages: MESSAGES })
       );
@@ -679,14 +697,18 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="chat-input"]',
           '[data-testid="send-message-btn"]',
           '[data-testid="copy-to-input-btn-1"]',
-          '[data-testid="copy-to-new-conv-btn-1"]',
-          '[data-testid="branch-conv-btn-1"]',
-          '[data-testid="branch-attack-btn-1"]',
+          '[aria-label="Edit objective"]',
           '[aria-label^="Objective achieved outcome:"]',
         ].join(",")
       )
     );
     await expectNoDocumentOverflow(page);
+
+    await page.getByTestId("copy-to-input-btn-1").click();
+    for (const name of ["This conversation", "New conversation", "New attack"]) {
+      await expectMinimumTouchTarget(page.getByRole("menuitem", { name, exact: true }));
+    }
+    await page.keyboard.press("Escape");
 
     const outcomeButton = page.getByRole("button", {
       name: /Objective achieved outcome:/,
