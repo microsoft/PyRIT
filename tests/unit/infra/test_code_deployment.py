@@ -142,7 +142,7 @@ class TestLocalDockerBuild(unittest.TestCase):
 class TestPypiBuild(unittest.TestCase):
     def test_pypi_images_require_an_explicit_coordinated_version(self) -> None:
         pipeline = yaml.safe_load((REPO_ROOT / ".github/workflows/docker_build.yml").read_text(encoding="utf-8"))
-        steps = pipeline["jobs"]["build-production-pypi"]["steps"]
+        steps = pipeline["jobs"]["build-and-test-pypi"]["steps"]
         selection = next(step for step in steps if step.get("id") == "pypi-version")
         assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}"
         assert "pip index" not in selection["run"]
