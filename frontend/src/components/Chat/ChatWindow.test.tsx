@@ -1678,6 +1678,46 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("textbox", { name: /attack objective/i })).toHaveValue("");
   });
 
+  it("keeps the objective baseline through a refresh and retains the draft on conflict", async () => {
+    const user = userEvent.setup();
+    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.updateAttack.mockRejectedValue({
+      response: { status: 409, data: { detail: "The objective changed." } },
+    });
+    const onObjectiveChange = jest.fn();
+    const onAttackChange = jest.fn();
+    const props = {
+      ...defaultProps, attackResultId: "ar-existing", conversationId: "conv-existing",
+      activeConversationId: "conv-existing", onObjectiveChange, onAttackChange,
+    };
+    const { rerender } = render(
+      <TestWrapper><ChatWindow {...props} objective="A" /></TestWrapper>
+    );
+    await user.click(await screen.findByRole("button", { name: "Edit objective" }));
+    await user.clear(screen.getByRole("textbox", { name: "Attack objective" }));
+    await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Edited A");
+    rerender(<TestWrapper><ChatWindow {...props} objective="B" /></TestWrapper>);
+    expect(screen.getByRole("textbox", { name: "Attack objective" })).toHaveValue("Edited A");
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.updateAttack).toHaveBeenCalledWith(
+      "ar-existing", { objective: "Edited A", expected_objective: "A" },
+    ));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unable to save the objective.");
+    expect(screen.getByRole("textbox", { name: "Attack objective" })).toHaveValue("Edited A");
+    expect(onObjectiveChange).not.toHaveBeenCalled();
+    expect(onAttackChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    expect(screen.getByRole("button", { name: "Edit objective" })).toHaveTextContent("B");
+    await user.click(screen.getByRole("button", { name: "Edit objective" }));
+    await user.clear(screen.getByRole("textbox", { name: "Attack objective" }));
+    await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Edited B");
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.updateAttack).toHaveBeenLastCalledWith(
+      "ar-existing", { objective: "Edited B", expected_objective: "B" },
+    ));
+  });
+
   it("should allow adding an objective after messages have been sent", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedMapper.backendMessagesToFrontend.mockReturnValue(mockMessages);

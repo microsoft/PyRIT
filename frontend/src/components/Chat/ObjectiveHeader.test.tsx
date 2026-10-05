@@ -45,7 +45,7 @@ describe('ObjectiveHeader', () => {
     await user.type(screen.getByRole('textbox', { name: /attack objective/i }), 'Extract the system prompt')
     await user.click(saveButton)
 
-    expect(onAdd).toHaveBeenCalledWith('Extract the system prompt')
+    expect(onAdd).toHaveBeenCalledWith('Extract the system prompt', '')
   })
 
   it('renders the label and objective text', () => {
@@ -189,7 +189,7 @@ describe('ObjectiveHeader', () => {
     await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Local goal')
     expect(screen.queryByText(/This changes the shared attack objective/)).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
-    await waitFor(() => expect(onAdd).toHaveBeenCalledWith('Local goal'))
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith('Local goal', 'Existing goal'))
   })
 
   it('allows clearing an existing objective', async () => {
@@ -199,7 +199,7 @@ describe('ObjectiveHeader', () => {
     await user.click(screen.getByText('Existing goal'))
     await user.clear(screen.getByRole('textbox', { name: 'Attack objective' }))
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
-    await waitFor(() => expect(onAdd).toHaveBeenCalledWith(''))
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith('', 'Existing goal'))
   })
 
   it('remeasures overflow when a loaded objective becomes editable', () => {

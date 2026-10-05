@@ -1273,7 +1273,7 @@ export default function ChatWindow({
     onHumanScoreChange,
   ])
 
-  const handleAddObjective = useCallback(async (newObjective: string): Promise<void> => {
+  const handleAddObjective = useCallback(async (newObjective: string, expectedObjective: string): Promise<void> => {
     if (editDraft !== null) {
       setEditorObjective(newObjective)
       return
@@ -1283,10 +1283,10 @@ export default function ChatWindow({
       return
     }
 
-    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective, expected_objective: objective })
+    const updatedAttack = await attacksApi.updateAttack(attackResultId, { objective: newObjective, expected_objective: expectedObjective })
     onAttackChange?.(updatedAttack)
     onObjectiveChange?.(updatedAttack.objective)
-  }, [attackResultId, objective, onAttackChange, onObjectiveChange, editDraft, setEditorObjective])
+  }, [attackResultId, onAttackChange, onObjectiveChange, editDraft, setEditorObjective])
 
   const beginEdit = async (
     target: TargetInstance | null = activeTarget,

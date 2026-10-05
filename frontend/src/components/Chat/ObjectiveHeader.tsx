@@ -39,7 +39,7 @@ interface ObjectiveHeaderProps {
   onUpdateHumanScore?: (value: boolean, rationale: string) => Promise<void>
   onRemoveHumanScore?: () => Promise<void>
   canAdd?: boolean
-  onAdd?: (objective: string) => Promise<void>
+  onAdd?: (objective: string, expectedObjective: string) => Promise<void>
 }
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
@@ -70,6 +70,7 @@ export default function ObjectiveHeader({
   const [overflowing, setOverflowing] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [initialObjective, setInitialObjective] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState('')
   const initialVerdict = scoreVerdict(humanScore ?? automatedScore)
@@ -102,6 +103,13 @@ export default function ObjectiveHeader({
     return () => observer.disconnect()
   }, [objective, expanded, isEditing, ObjectiveContent])
 
+  const beginEditing = (): void => {
+    setDraft(objective)
+    setInitialObjective(objective)
+    setError('')
+    setIsEditing(true)
+  }
+
   const handleSave = async (): Promise<void> => {
     const trimmedObjective = draft.trim()
     if ((!trimmedObjective && missingObjective) || !onAdd) return
@@ -109,7 +117,7 @@ export default function ObjectiveHeader({
     setIsSaving(true)
     setError('')
     try {
-      await onAdd(trimmedObjective)
+      await onAdd(trimmedObjective, initialObjective)
       setIsEditing(false)
       setDraft('')
     } catch {
@@ -304,7 +312,7 @@ export default function ObjectiveHeader({
                 {error && <Text role="alert">{error}</Text>}
               </>
             ) : (
-              <Button appearance="subtle" size="small" icon={<AddRegular />} onClick={() => setIsEditing(true)} className={styles.addButton}>
+              <Button appearance="subtle" size="small" icon={<AddRegular />} onClick={beginEditing} className={styles.addButton}>
                 Add objective
               </Button>
             )}
@@ -326,7 +334,7 @@ export default function ObjectiveHeader({
         <ObjectiveContent
           type={canAdd && onAdd ? 'button' : undefined}
           aria-label={canAdd && onAdd ? 'Edit objective' : undefined}
-          onClick={canAdd && onAdd ? () => { setDraft(objective); setIsEditing(true) } : undefined}
+          onClick={canAdd && onAdd ? beginEditing : undefined}
           ref={(element: HTMLButtonElement | HTMLSpanElement | null) => { contentRef.current = element }}
           className={mergeClasses(styles.content, canAdd && onAdd && styles.editableContent, expanded ? styles.contentExpanded : styles.contentCollapsed)}
           data-testid="objective-header-content"
