@@ -1926,6 +1926,7 @@ async def test_normalizer_reports_partial_creation_cleanup_retry_failure_async(
 async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after_allocation_async(
     *,
     client: NonCallableMagicMock,
+    sqlite_instance: MemoryInterface,
     first_delete_failure: str,
 ) -> None:
     session = client.create_session.return_value
@@ -1959,20 +1960,30 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
     _mock_session_storage(client=client, sessions=sessions)
     client.delete_session.side_effect = delete_session_async
     target = GitHubCopilotTarget(model_name="gpt-5-mini")
-    request_task = asyncio.create_task(
-        _send_normalized_async(
-            target=target,
-            original_value="Reply exactly HELLO.",
-            conversation_id=conversation_id,
+    # Database I/O and client construction are not part of the cancellation window.
+    await target._get_or_start_client_async()
+    with (
+        patch.object(sqlite_instance, "add_conversation_to_memory_async", new_callable=AsyncMock) as add_conversation,
+        patch.object(sqlite_instance, "get_conversation_messages_async", AsyncMock(return_value=[])),
+        patch.object(sqlite_instance, "add_message_to_memory_async", new_callable=AsyncMock) as add_message,
+    ):
+        request_task = asyncio.create_task(
+            _send_normalized_async(
+                target=target,
+                original_value="Reply exactly HELLO.",
+                conversation_id=conversation_id,
+            )
         )
-    )
-    try:
-        await asyncio.wait_for(allocated.wait(), timeout=2.0)
-        request_task.cancel(cancellation_message)
-        with pytest.raises(asyncio.CancelledError) as cancellation_error:
-            await asyncio.wait_for(request_task, timeout=2.0)
-    finally:
-        await _cancel_tasks_async(request_task)
+        try:
+            await asyncio.wait_for(allocated.wait(), timeout=2.0)
+            request_task.cancel(cancellation_message)
+            with pytest.raises(asyncio.CancelledError) as cancellation_error:
+                await asyncio.wait_for(request_task, timeout=2.0)
+        finally:
+            await _cancel_tasks_async(request_task)
+
+        add_conversation.assert_awaited_once()
+        add_message.assert_not_awaited()
 
     assert request_task.done()
     assert request_task.cancelled()

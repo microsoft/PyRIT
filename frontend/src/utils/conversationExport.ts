@@ -22,6 +22,7 @@ const ROLE_LABELS: Record<Message['role'], string> = {
   tool: 'Tool',
   simulated_tool: 'Simulated Tool',
   system: 'System',
+  developer: 'Developer',
 }
 
 /** Friendly label per attachment type, matching the API's media preview wording. */

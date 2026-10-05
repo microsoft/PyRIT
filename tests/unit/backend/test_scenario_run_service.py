@@ -57,6 +57,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -252,7 +253,7 @@ def mock_all_registries(mock_memory):
     mock_ir = MagicMock()
     mock_ir.create_and_configure.return_value = MagicMock(initialize_async=AsyncMock())
 
-    # By default, return a matching DB result for get_run / list_runs queries
+    # By default, return a matching DB result for async run reads.
     db_result = _make_db_scenario_result()
     mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
 
@@ -1623,6 +1624,44 @@ class TestScenarioRunServiceStartRun:
 class TestScenarioRunServiceGetRun:
     "Tests for ScenarioRunService.get_run_async."
 
+    async def test_get_run_keeps_live_snapshot_across_storage_await(self, mock_memory: MagicMock) -> None:
+        db_result = make_scenario_result(attack_results={}, scenario_run_state=ScenarioRunState.IN_PROGRESS)
+        run_id = str(db_result.id)
+        service = ScenarioRunService()
+        active = _svc_mod._ActiveTask(scenario_result_id=run_id, error="captured error")
+        service._active_tasks[run_id] = active
+        service._queued_runs.append(active)
+        service._active_scenario_result_id = "previous-run"
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def get_results_async(*, scenario_result_ids: list[str]) -> list[ScenarioResult]:
+            assert scenario_result_ids == [run_id]
+            entered.set()
+            await release.wait()
+            return [db_result]
+
+        mock_memory.get_scenario_results_async.side_effect = get_results_async
+        task = asyncio.create_task(service.get_run_async(scenario_result_id=run_id))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            active.error = "later error"
+            service._queued_runs.clear()
+            service._active_scenario_result_id = run_id
+            release.set()
+            fetched = await asyncio.wait_for(task, timeout=5)
+
+            assert fetched is not None
+            assert fetched.error == "captured error"
+            assert fetched.queue_position == 1
+            assert fetched.active_scenario_result_id == "previous-run"
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            service._queued_runs.clear()
+            service._active_scenario_result_id = None
+            await service.close_async()
+
     async def test_get_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         "Test that get_run_async returns None for non-existent run."
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[])
@@ -2223,18 +2262,36 @@ async def test_legacy_plan_techniques_agree_across_projections(
     (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
     run_id = str(scenario_result.id)
     service = ScenarioRunService()
-    summaries = {
-        name: ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"])
-        for name in techniques
-    }
+    summaries = tuple(
+        ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"]) for name in techniques
+    )
+    metadata = ScenarioMetadata(
+        class_name=Scenario.__name__,
+        class_module=Scenario.__module__,
+        registry_name="garak.prompt_inject",
+        default_technique="all",
+        all_techniques=tuple(techniques),
+        technique_summaries=summaries,
+        aggregate_techniques=("all",),
+        default_datasets=(),
+    )
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.__contains__.return_value = True
+    registry.get_class.return_value = Scenario
+    registry.get_class_metadata.return_value = metadata
 
-    with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries):
+    with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry) as get_registry:
         history = (await service.list_runs_async()).items[0]
         detail = await service.get_run_async(scenario_result_id=run_id)
         progress = await service.get_run_progress_from_storage_async(
             scenario_result_id=run_id, since=None, limit=25, active_group_ids=[]
         )
 
+    get_registry.assert_called_once()
+    registry.__contains__.assert_called_once_with("garak.prompt_inject")
+    registry.get_class.assert_called_once_with("garak.prompt_inject")
+    registry.get_class_metadata.assert_called_once_with(Scenario)
+    registry.create_instance.assert_not_called()
     assert detail is not None
     assert progress is not None
     assert history.techniques_used == detail.techniques_used == progress.run.techniques_used == techniques
@@ -2766,7 +2823,7 @@ class TestScenarioRunServiceExecution:
         assert active.error == "scenario exploded"
         assert response.scenario_result_id not in service._active_tasks
 
-        # get_run surfaces the bounded terminal error evidence.
+        # The async run read surfaces the bounded terminal error evidence.
         fetched = await service.get_run_async(scenario_result_id=response.scenario_result_id)
         assert fetched is not None
         assert fetched.error == "scenario exploded"
@@ -2840,17 +2897,17 @@ class TestScenarioRunServiceExecution:
 
 
 class TestScenarioRunServiceGetResults:
-    """Tests for ScenarioRunService.get_run_results."""
+    """Tests for ScenarioRunService.get_run_results_async."""
 
     async def test_get_results_returns_none_for_unknown_id(self, mock_memory) -> None:
-        """Test that get_run_results returns None for non-existent run."""
+        """Test that get_run_results_async returns None for non-existent run."""
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[])
         service = ScenarioRunService()
         result = await service.get_run_results_async(scenario_result_id="nonexistent-id")
         assert result is None
 
     async def test_get_results_raises_if_not_completed(self, mock_memory) -> None:
-        """Test that get_run_results raises ValueError if run is not completed."""
+        """Test that get_run_results_async raises ValueError if run is not completed."""
         db_result = _make_db_scenario_result(result_id="sr-running", run_state=ScenarioRunState.IN_PROGRESS)
         mock_memory.get_scenario_results_async = AsyncMock(return_value=[db_result])
 
@@ -2859,7 +2916,7 @@ class TestScenarioRunServiceGetResults:
             (await service.get_run_results_async(scenario_result_id="sr-running"))
 
     async def test_get_results_returns_details_for_completed_run(self, mock_memory) -> None:
-        """Test that get_run_results returns the ScenarioResult for a completed run."""
+        """Test that get_run_results_async returns the ScenarioResult for a completed run."""
         from pyrit.models import AttackOutcome
 
         mock_attack_result = MagicMock()
@@ -3406,6 +3463,74 @@ async def test_planned_progress_maps_legacy_objective_hash_to_logical_seed_id(mo
 
     assert summary.total_attacks == 1
     assert summary.completed_attacks == 1
+
+
+async def test_get_progress_keeps_live_snapshot_across_storage_await(mock_memory: MagicMock) -> None:
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id="group",
+                atomic_attack_name="attack",
+                display_group="Attack",
+                technique_name="attack",
+                technique_eval_hash="eval",
+                seed_group_ids=["seed"],
+            )
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(id="seed", objective="objective", objective_sha256=to_sha256("objective"))
+        ],
+    )
+    header = make_scenario_result(
+        attack_results={},
+        scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json")},
+    )
+    run_id = str(header.id)
+    service = ScenarioRunService()
+    scenario = MagicMock(spec=Scenario)
+    active_groups = {"group"}
+    scenario.active_atomic_group_ids = active_groups
+    active = _svc_mod._ActiveTask(scenario_result_id=run_id, scenario=scenario)
+    service._active_tasks[run_id] = active
+    service._queued_runs.append(active)
+    service._active_scenario_result_id = "previous-run"
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def get_header_async(*, scenario_result_id: str) -> ScenarioResult:
+        assert scenario_result_id == run_id
+        entered.set()
+        await release.wait()
+        return header
+
+    mock_memory.get_scenario_result_header_async.side_effect = get_header_async
+    mock_memory.get_scenario_attack_result_deltas_async.return_value = ([], False)
+    task = asyncio.create_task(service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=25))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        active_groups.clear()
+        service._queued_runs.clear()
+        service._active_scenario_result_id = run_id
+        release.set()
+        progress = await asyncio.wait_for(task, timeout=5)
+
+        assert progress is not None
+        assert progress.run.queue_position == 1
+        assert progress.run.active_scenario_result_id == "previous-run"
+        assert progress.summary.atomic_groups[0].status == "RUNNING"
+        refreshed = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=25)
+        assert refreshed is not None
+        assert refreshed.run.queue_position is None
+        assert refreshed.run.active_scenario_result_id == run_id
+        assert refreshed.summary.atomic_groups[0].status == "PENDING"
+        assert progress.summary.atomic_groups[0].status == "RUNNING"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        service._queued_runs.clear()
+        service._active_scenario_result_id = None
+        await service.close_async()
 
 
 async def test_get_progress_uses_lightweight_queries_without_full_hydration(mock_memory) -> None:

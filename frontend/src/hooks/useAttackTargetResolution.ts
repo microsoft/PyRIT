@@ -28,6 +28,7 @@ interface UseAttackTargetResolutionOptions {
   attackTarget: TargetInfo | null
   attackTargetSource: 'persisted' | 'created'
   createdTarget?: TargetInstance | null
+  targetUnbound?: boolean
   createdTargetGeneration?: string
 }
 
@@ -69,6 +70,7 @@ export function useAttackTargetResolution({
   attackTarget,
   attackTargetSource,
   createdTarget,
+  targetUnbound = false,
   createdTargetGeneration,
 }: UseAttackTargetResolutionOptions): UseAttackTargetResolutionResult {
   const { generation, ready } = useRuntime()
@@ -116,6 +118,7 @@ export function useAttackTargetResolution({
 
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
+    if (targetUnbound && !attackTarget) return 'unbound'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
     if (useCreatedTarget) {
       return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash

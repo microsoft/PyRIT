@@ -72,6 +72,8 @@ a message.
 without waiting for media preparation, conversion, or target I/O. It sends exactly
 one message to one conversation. `send=false` remains available only on `/messages`.
 Both APIs use the same sending core and share the existing admission and execution budgets.
+An attack saved without a target is bound before its first send through either API.
+Binding validates every saved conversation and rejects history changes during validation.
 An asynchronous operation retains its reservation through finalization or cancellation cleanup;
 subsequent transcript and attack-detail reads are independent of that reservation.
 
