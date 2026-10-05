@@ -402,7 +402,8 @@ class PromptTarget(Identifiable):
             conversation_id (str): The conversation id to attach the prompt to.
 
         Raises:
-            ValueError: If the target does not support multi-turn or editable history.
+            ValueError: If the target does not support multi-turn conversations, or
+                supports neither editable history nor native system prompts.
             RuntimeError: If the conversation already has messages.
         """
         print_deprecation_message(
@@ -410,10 +411,12 @@ class PromptTarget(Identifiable):
             new_item="PromptTarget.set_system_prompt_async",
             removed_in="1.4.0",
         )
-        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+        if not self.capabilities.supports_multi_turn or not (
+            self.capabilities.supports_editable_history or self.capabilities.supports_system_prompt
+        ):
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
-                "It must support both multi-turn conversations and editable history."
+                "It must support multi-turn conversations and either editable history or native system prompts."
             )
 
         messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
@@ -465,13 +468,16 @@ class PromptTarget(Identifiable):
             conversation_id (str): The conversation id to attach the prompt to.
 
         Raises:
-            ValueError: If the target does not support multi-turn or editable history.
+            ValueError: If the target does not support multi-turn conversations, or
+                supports neither editable history nor native system prompts.
             RuntimeError: If the conversation already has messages.
         """
-        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+        if not self.capabilities.supports_multi_turn or not (
+            self.capabilities.supports_editable_history or self.capabilities.supports_system_prompt
+        ):
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
-                "It must support both multi-turn conversations and editable history."
+                "It must support multi-turn conversations and either editable history or native system prompts."
             )
 
         messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
