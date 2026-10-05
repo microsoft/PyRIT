@@ -110,12 +110,13 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async.return_value = user_message
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
             score = await scorer._score_piece_async(assistant_piece)
 
+            memory.get_request_from_response_async.assert_awaited_once()
             assert len(score) == 1
             assert score[0].get_value() is False
 

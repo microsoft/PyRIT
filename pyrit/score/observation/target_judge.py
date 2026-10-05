@@ -54,6 +54,7 @@ class TargetJudge:
         request: JudgmentRequest,
         response_handler: ResponseHandler,
         normalizer: PromptNormalizer | None = None,
+        fresh_conversation_per_attempt: bool = False,
     ) -> UnvalidatedScore:
         """
         Run the persisted, retry-aware exchange using explicit criteria.
@@ -66,4 +67,5 @@ class TargetJudge:
             request=request,
             response_handler=response_handler,
             normalizer=normalizer,
+            fresh_conversation_per_attempt=fresh_conversation_per_attempt,
         )

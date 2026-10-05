@@ -129,7 +129,7 @@ npm run test:watch    # Watch mode for development
 npm run test:coverage # Run with coverage report (85%+ threshold)
 
 # End-to-End Tests (Playwright)
-npm run test:e2e          # Run headless (auto-starts frontend + backend via dev.py)
+npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
@@ -161,7 +161,27 @@ E2E_LIVE_MODE=true npx playwright test
 
 The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
 
-E2E tests use `dev.py` to automatically start both frontend and backend servers. If servers are already running, they will be reused.
+CI runs two isolated mock shards alongside one serial seeded job, with one
+worker per job. Each job starts its own Vite server and Python backend because
+mock specs still depend on backend auth bootstrap and some API calls. The jobs
+never share backend state. The required **Frontend E2E Tests** check merges their reports and fails
+if any shard fails, is cancelled, or is missing a report. Skipped and flaky tests
+also fail CI.
+
+The `playwright-report` artifact contains the combined HTML report. CI retains
+traces for every failing test attempt, including the original attempt before a
+retry, and uploads diagnostic artifacts named by project, shard, and workflow
+attempt. Per-shard blob reports are replaced on reruns so **Re-run failed jobs**
+can reuse the reports from successful shards.
+
+Default local E2E runs (`CI` and `E2E_FRONTEND_PORT` unset) use `dev.py` to
+automatically start both frontend and backend servers and can reuse servers
+that are already running. Setting `E2E_FRONTEND_PORT` locally instead starts
+only a dedicated Vite server, expects the backend to already be running, and
+disables server reuse.
+
+In CI with `E2E_SEEDED_MODE=true`, Playwright starts its own backend and Vite
+servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 
 > **Note**: `test:e2e:ui` and `test:e2e:headed` require a graphical display and won't work in headless environments like devcontainers. Use `npm run test:e2e` for CI/headless testing.
 

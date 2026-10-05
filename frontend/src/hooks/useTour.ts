@@ -4,6 +4,7 @@ import type { EventData } from 'react-joyride'
 import { ACTIONS, LIFECYCLE, STATUS } from 'react-joyride'
 
 import { createTourSteps } from '../components/Tour/tourSteps'
+import type { TourStep } from '../components/Tour/tourSteps'
 import TourTooltip from '../components/Tour/TourTooltip'
 import type { ViewName } from '../components/Sidebar/Navigation'
 
@@ -34,6 +35,16 @@ const JOYRIDE_LOCALE = {
 }
 
 /**
+ * Whether a step's anchor is currently in the DOM. A view can render several
+ * routes (`/scanner` vs `/scanner/:scenarioName`), so matching `viewRequired`
+ * alone does not guarantee the anchor exists.
+ */
+function isStepTargetPresent(step: TourStep): boolean {
+  if (typeof step.target !== 'string') return true
+  return document.querySelector(step.target) !== null
+}
+
+/**
  * Manages the onboarding tour lifecycle: step progression, cross-view
  * navigation, and Joyride configuration.
  *
@@ -44,10 +55,14 @@ export function useTour(
   isDarkMode: boolean,
   currentView: ViewName,
   hasActiveTarget = false,
+  canManageConfiguration = false,
 ) {
   const [run, setRun] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
-  const steps = useMemo(() => createTourSteps(hasActiveTarget), [hasActiveTarget])
+  const steps = useMemo(
+    () => createTourSteps({ hasActiveTarget, canManageConfiguration }),
+    [hasActiveTarget, canManageConfiguration],
+  )
   const visibleSteps = useMemo(() => {
     const currentStep = steps[stepIndex]
     if (!currentStep || currentStep.viewRequired === currentView) {
@@ -171,6 +186,20 @@ export function useTour(
       pendingStepRef.current = nextIndex
       switchingViewRef.current = true
       onNavigate(nextStep.viewRequired)
+    } else if (!isStepTargetPresent(nextStep)) {
+      // Right view, wrong route within it. Navigating to the view's canonical
+      // route leaves currentView unchanged, so the useEffect above never runs;
+      // advance here once the router has committed and painted.
+      switchingViewRef.current = true
+      pendingStepRef.current = nextIndex
+      onNavigate(nextStep.viewRequired)
+      requestAnimationFrame(() => {
+        // endTour clears the pending step, so a cancelled tour never advances.
+        if (pendingStepRef.current === null) return
+        pendingStepRef.current = null
+        setStepIndex(nextIndex)
+        switchingViewRef.current = false
+      })
     } else {
       setStepIndex(nextIndex)
     }

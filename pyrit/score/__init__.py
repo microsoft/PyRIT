@@ -47,7 +47,12 @@ if TYPE_CHECKING:
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
-    from pyrit.score.response_handler import CallableResponseHandler, JsonSchemaResponseHandler, ResponseHandler
+    from pyrit.score.response_handler import (
+        CallableResponseHandler,
+        CategoryConflictPolicy,
+        JsonSchemaResponseHandler,
+        ResponseHandler,
+    )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
     from pyrit.score.scorer import Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
@@ -90,6 +95,7 @@ if TYPE_CHECKING:
     )
     from pyrit.score.true_false.local_refusal_classifier_scorer import LocalRefusalClassifierScorer
     from pyrit.score.true_false.manual_scorer import ManualScorer
+    from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
@@ -159,6 +165,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AzureContentFilterScorer": "pyrit.score.float_scale.azure_content_filter_scorer",
     "BatchScorer": "pyrit.score.batch_scorer",
     "CallableResponseHandler": "pyrit.score.response_handler",
+    "CategoryConflictPolicy": "pyrit.score.response_handler",
     "ContentScorable": "pyrit.score.scorable",
     "ContentClassifier": "pyrit.score.true_false.self_ask_category_scorer",
     "ContentClassifierCategory": "pyrit.score.true_false.self_ask_category_scorer",
@@ -209,6 +216,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LlamaGuardScorer": "pyrit.score.true_false.llamaguard_scorer",
     "MarkdownInjectionScorer": "pyrit.score.true_false.regex.markdown_injection",
     "ManualScorer": "pyrit.score.true_false.manual_scorer",
+    "MessageToolCallScorer": "pyrit.score.true_false.message_tool_call_scorer",
     "MessageScorableResolver": "pyrit.score.message_scorable_resolver",
     "MessageScorable": "pyrit.score.scorable",
     "MessageScorer": "pyrit.score.message_scorer",

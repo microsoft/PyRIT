@@ -86,7 +86,7 @@ class _CCPSensitivePromptsDataset(_RemoteDatasetLoader):
         return "ccp_sensitive_prompts"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch CCP-sensitive prompts dataset and return as SeedDataset.
 

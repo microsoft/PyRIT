@@ -39,38 +39,6 @@ if TYPE_CHECKING:
 _ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload | tuple[MessagePiece, ...]
 
 
-def _scored_evidence_digest(
-    *,
-    scorable: ScorableUnion,
-    scored_piece_id: uuid.UUID,
-    memory: MemoryInterface,
-    scored_message_piece: MessagePiece | None = None,
-) -> str | None:
-    """
-    Resolve and hash the canonical input evidence used for one judgment.
-
-    Returns:
-        str | None: The digest, or None when media replay is deferred.
-
-    Raises:
-        NonReplayableObservationError: If the scored evidence cannot be resolved.
-    """
-    if isinstance(scorable, MessageScorable) and scored_message_piece is None:
-        pieces = memory.get_message_pieces(prompt_ids=[scored_piece_id])
-        scored_message_piece = next((piece for piece in pieces if piece.id == scored_piece_id), None)
-    content_id = scorable.content_id if isinstance(scorable, ContentEntryScorable) else None
-    stored_content = _load_content_evidence(memory=memory, content_id=content_id)
-    try:
-        return _resolved_scored_evidence_digest(
-            scorable=scorable,
-            scored_piece_id=scored_piece_id,
-            scored_piece=scored_message_piece,
-            stored_content=stored_content,
-        )
-    except ValueError as error:
-        raise NonReplayableObservationError(str(error)) from error
-
-
 async def _scored_evidence_digest_async(
     *,
     scorable: ScorableUnion,
@@ -101,22 +69,6 @@ async def _scored_evidence_digest_async(
         )
     except ValueError as error:
         raise NonReplayableObservationError(str(error)) from error
-
-
-def _load_content_evidence(
-    *, memory: MemoryInterface, content_id: uuid.UUID | None
-) -> tuple[ContentScorable, str] | None:
-    """
-    Load stored content and its hash.
-
-    Returns:
-        tuple[ContentScorable, str] | None: The evidence, or None if unreferenced or missing.
-    """
-    if content_id is None:
-        return None
-    content = memory.get_scorable_content(content_ids=[content_id]).get(content_id)
-    digest = memory.get_scorable_content_hashes(content_ids=[content_id]).get(content_id)
-    return (content, digest) if content is not None and digest is not None else None
 
 
 async def _load_content_evidence_async(

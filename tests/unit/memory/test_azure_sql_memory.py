@@ -711,11 +711,11 @@ def test_provide_token_raises_when_auth_token_none():
         captured_fn(None, None, ["some_connection_string"], {})
 
 
-def test_reset_database_raises_when_engine_none():
+async def test_reset_database_raises_when_engine_none_async() -> None:
     obj = AzureSQLMemory.__new__(AzureSQLMemory)
     obj.engine = None
     with pytest.raises(RuntimeError, match="Engine is not initialized"):
-        obj.reset_database()
+        await obj.reset_database_async()
 
 
 def test_init_prod_connection_runs_check_only_not_migration():

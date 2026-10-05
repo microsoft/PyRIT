@@ -32,14 +32,14 @@ def test_memory(sqlite_instance: MemoryInterface):
     assert sqlite_instance
 
 
-def test_print_schema_raises_when_engine_none():
-    # Test the MemoryInterface.print_schema guard; use AzureSQLMemory which inherits it without override
+async def test_print_schema_raises_when_engine_none_async() -> None:
+    # AzureSQLMemory inherits the MemoryInterface schema guard without an override.
     from pyrit.memory import AzureSQLMemory
 
     obj = AzureSQLMemory.__new__(AzureSQLMemory)
     obj.engine = None
     with pytest.raises(RuntimeError, match="Engine is not initialized"):
-        obj.print_schema()
+        await obj.print_schema_async()
 
 
 async def test_get_all_embeddings_delegates_to_query(sqlite_instance: MemoryInterface):

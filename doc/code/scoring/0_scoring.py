@@ -178,7 +178,7 @@ print(df.to_string(index=False))
 # setting that changes the judgment or parsing. Subclasses without their own declaration
 # can still capture observations, but replay raises `NonReplayableObservationError`.
 #
-# Deleting a score through `memory.get_session()` and ORM `session.delete()` removes its
+# Deleting a score through `await memory.get_session_async()` and ORM `await session.delete()` removes its
 # observation only after the final score reference is gone. Removing an ORM observation link
 # also triggers this cleanup, including when a collection is cleared before its score is deleted.
 # Cleanup uses persisted links and removed relationship history, not just cached collections.

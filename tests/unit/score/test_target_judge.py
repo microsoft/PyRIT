@@ -340,11 +340,13 @@ def test_migrated_scorer_has_one_target_owner(migrated_scorer: tuple[type[Messag
     scorer_type, kwargs = migrated_scorer
     target = MagicMock(spec=PromptTarget)
     with (
-        patch.object(TargetRequirements, "validate", autospec=True) as validate,
+        patch.object(type(scorer_type.TARGET_REQUIREMENTS), "validate", autospec=True) as validate,
         patch("pyrit.score.scorer.print_deprecation_message") as warn,
     ):
         scorer = scorer_type(chat_target=target, **kwargs)
-    validate.assert_called_once_with(scorer_type.TARGET_REQUIREMENTS, target=target)
+    validate.assert_called_once()
+    assert validate.call_args.args == (scorer_type.TARGET_REQUIREMENTS,)
+    assert validate.call_args.kwargs["target"] is target
     warn.assert_not_called()
     assert scorer.get_chat_target() is target
     assert scorer._judge._target is target

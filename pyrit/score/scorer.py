@@ -8,6 +8,7 @@ import asyncio
 import logging
 import uuid
 from abc import abstractmethod
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
@@ -34,7 +35,8 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_scores,
@@ -62,6 +64,18 @@ logger = logging.getLogger(__name__)
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
 ConditionT = TypeVar("ConditionT", bound=Condition)
+
+
+class _SelfContainedJudgeTargetRequirements(TargetRequirements):
+    def validate(self, *, target: PromptTarget) -> None:
+        requirements = CHAT_TARGET_REQUIREMENTS
+        if not target.capabilities.supports_editable_history:
+            requirements = replace(
+                requirements,
+                required=requirements.required - {CapabilityName.EDITABLE_HISTORY},
+                native_required=requirements.native_required | {CapabilityName.SYSTEM_PROMPT},
+            )
+        requirements.validate(target=target)
 
 
 async def _legacy_score_scorable_async(
@@ -1268,7 +1282,7 @@ class Scorer(Identifiable, abc.ABC):
         """
         Read the objective from the turn before an assistant response.
 
-        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn``.
+        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn_async``.
 
         Args:
             response (Message): The response to extract the objective from.
@@ -1280,7 +1294,7 @@ class Scorer(Identifiable, abc.ABC):
 
         print_deprecation_message(
             old_item="Scorer._extract_objective_from_response",
-            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn",
+            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
         return await extract_objective_from_previous_turn_async(message=response, memory=self._memory)

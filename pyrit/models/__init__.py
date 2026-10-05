@@ -133,6 +133,16 @@ if TYPE_CHECKING:
     from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
     from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
     from pyrit.models.retry_event import RetryEvent
+    from pyrit.models.scenario_dataset_size_estimate import (
+        AllAvailableDatasetSize,
+        BoundedDatasetSize,
+        DatasetLimitInput,
+        DatasetLimitState,
+        IndeterminateDatasetSize,
+        ScenarioDatasetSizeEstimate,
+        ScenarioDatasetSizeEstimateKind,
+        scenario_dataset_size_from_limit,
+    )
     from pyrit.models.scenario_progress import (
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_PLAN_VERSION,
@@ -209,6 +219,7 @@ if TYPE_CHECKING:
         SeedDatasetSummary,
         SeedGroup,
         SeedObjective,
+        SeedOrigin,
         SeedPrompt,
         SeedSimulatedConversation,
         SeedUnion,
@@ -236,6 +247,7 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_trace_context import RequestTraceContext
+    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata
 
 _LAZY_EXPORTS: dict[str, str] = {
     "Contains": "pyrit.models.score",
@@ -245,7 +257,16 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OutputMatches": "pyrit.models.score",
     "ConversationScorable": "pyrit.models.score",
     "ConversationObservationPayload": "pyrit.models.score",
+    "AllAvailableDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
+    "BoundedDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
+    "DatasetLimitInput": "pyrit.models.scenario_dataset_size_estimate",
+    "DatasetLimitState": "pyrit.models.scenario_dataset_size_estimate",
+    "IndeterminateDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
+    "ScenarioDatasetSizeEstimate": "pyrit.models.scenario_dataset_size_estimate",
+    "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
+    "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
+    "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "AttackAnalyticsCell": "pyrit.models.analytics",
     "AttackAnalyticsConverterDirection": "pyrit.models.analytics",
     "AttackAnalyticsDimension": "pyrit.models.analytics",
@@ -409,6 +430,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AttackSeedGroup": "pyrit.models.seeds",
     "AttackTechniqueSeedGroup": "pyrit.models.seeds",
     "SeedObjective": "pyrit.models.seeds",
+    "SeedOrigin": "pyrit.models.seeds",
     "SeedPrompt": "pyrit.models.seeds",
     "SeedDataset": "pyrit.models.seeds",
     "SeedDatasetSummary": "pyrit.models.seeds",

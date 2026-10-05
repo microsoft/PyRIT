@@ -101,6 +101,25 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=0.5, n=3)
         assert matcher.is_match(target="hello", text="") is False
 
+    def test_whitespace_only_target(self):
+        # A whitespace-only target is long enough to form n-grams, so it used to
+        # score a perfect overlap against any text containing the same run of
+        # spaces. `ExactTextMatching` rejects a blank target for the same reason.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.is_match(target="   ", text="hello world") is False
+        assert matcher.is_match(target="   ", text="x   y") is False
+        assert matcher.get_overlap_score(target="   ", text="x   y") == 0.0
+
+    def test_whitespace_only_target_with_zero_threshold(self):
+        matcher = ApproximateTextMatching(threshold=0.0, n=3)
+        assert matcher.is_match(target="   ", text="x   y") is False
+
+    def test_whitespace_only_target_is_not_confused_with_a_padded_real_target(self):
+        # Stripping only decides whether the target is blank; a target that has
+        # real content still matches, padding and all.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.is_match(target="  hello  ", text="say hello there") is True
+
     def test_approximate_detection(self):
         # Test detecting encoded/modified text
         original = "secretmessage"

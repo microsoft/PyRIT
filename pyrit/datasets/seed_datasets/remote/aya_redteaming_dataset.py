@@ -105,7 +105,7 @@ class _AyaRedteamingDataset(_RemoteDatasetLoader):
         return "aya_redteaming"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch Aya Red-teaming dataset with optional filtering and return as SeedDataset.
 

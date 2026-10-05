@@ -100,6 +100,7 @@ project:
             - file: code/datasets/3_dataset_writing.md
             - file: code/datasets/4_dataset_coding.ipynb
             - file: code/datasets/5_simulated_conversation.ipynb
+            - file: code/datasets/6_generated_datasets.ipynb
         - file: code/executor/0_executor.md
           children:
             - file: code/executor/1_single_turn.ipynb
@@ -133,6 +134,7 @@ project:
             - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/hack_a_prompt_target.ipynb
             - file: code/targets/open_ai_completions.ipynb
+            - file: code/targets/github_copilot_target.ipynb
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb

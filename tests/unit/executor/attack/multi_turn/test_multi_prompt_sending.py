@@ -772,7 +772,7 @@ class TestUserMessageReuse:
 
         assert first.conversation_id != second.conversation_id
         for result in (first, second):
-            conversation = sqlite_instance.get_conversation_messages(conversation_id=result.conversation_id)
+            conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=result.conversation_id)
             assert [message.get_value() for message in conversation] == ["turn one", "default", "turn two", "default"]
         # The caller's messages are left untouched.
         assert [piece.id for message in user_messages for piece in message.message_pieces] == original_ids

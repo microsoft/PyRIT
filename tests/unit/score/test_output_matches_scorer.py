@@ -75,7 +75,7 @@ async def test_output_match_persists_typed_expectation_async(
     assert scores[0].get_value() is True
     assert scores[0].scored_expectation == expectation
     assert isinstance(scores[0].scorable, ContentEntryScorable)
-    stored = sqlite_instance.get_scores(score_type="true_false")[0]
+    stored = (await sqlite_instance.get_scores_async(score_type="true_false"))[0]
     assert stored.scored_expectation == expectation
     assert stored.scorable == scores[0].scorable
     rescored = await OutputMatchesScorer().score_async(scorable=stored.scorable, expectation=expectation)
@@ -135,5 +135,6 @@ async def test_seed_yaml_output_match_reaches_attack_async(
     assert result.outcome == AttackOutcome.SUCCESS
     assert result.automated_score is not None
     assert result.automated_score.scored_expectation == group.scoring_expectation
-    assert sqlite_instance.get_scores(score_type="true_false")[0].scored_expectation == group.scoring_expectation
+    stored = (await sqlite_instance.get_scores_async(score_type="true_false"))[0]
+    assert stored.scored_expectation == group.scoring_expectation
     assert target.prompt_sent == [seed.value]

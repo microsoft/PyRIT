@@ -156,7 +156,7 @@ async def test_file_content_is_copied_hashed_shared_and_resolvable(
     assert managed_path.read_bytes() == image_bytes
 
     source.unlink()
-    resolved = MessageScorableResolver().resolve(
+    resolved = await MessageScorableResolver().resolve_async(
         scorable=scores[0].scorable,  # type: ignore[arg-type]
         memory=sqlite_instance,
     )

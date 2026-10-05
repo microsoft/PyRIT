@@ -15,11 +15,13 @@ if TYPE_CHECKING:
         PromptGeneratorStrategyContext,
         PromptGeneratorStrategyResult,
     )
+    from pyrit.executor.promptgen.target_objective_generator import TargetObjectiveGenerator
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AnecdoctorContext": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorGenerator": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorResult": "pyrit.executor.promptgen.anecdoctor",
+    "TargetObjectiveGenerator": "pyrit.executor.promptgen.target_objective_generator",
     "PromptGeneratorStrategy": "pyrit.executor.promptgen.core",
     "PromptGeneratorStrategyContext": "pyrit.executor.promptgen.core",
     "PromptGeneratorStrategyResult": "pyrit.executor.promptgen.core",

@@ -20,11 +20,12 @@ from pyrit.models import (
     SeedPrompt,
     UnvalidatedScore,
 )
-from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.score.llm_scoring import _parse_judgment_observation
 from pyrit.score.observation.execution import _ObservationEvidence
 from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
+from pyrit.score.scorer import _SelfContainedJudgeTargetRequirements
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -154,7 +155,7 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(
         supported_data_types=["text", "image_path"],
     )
-    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    TARGET_REQUIREMENTS = _SelfContainedJudgeTargetRequirements()
 
     def __init__(
         self,
@@ -170,8 +171,9 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
         Initialize the SelfAskTrueFalseScorer.
 
         Args:
-            chat_target (PromptTarget | None): The chat target used for scoring. Must satisfy
-                CHAT_TARGET_REQUIREMENTS.
+            chat_target (PromptTarget | None): The chat target used for scoring. Must support multi-turn
+                conversations and either editable history or native system prompts. Noneditable targets
+                are supported for text scoring only.
             system_prompt (SeedPrompt | str | None): The scoring system prompt. A ``SeedPrompt``
                 (e.g. rendered via ``render_true_false_system_prompt``) is used verbatim and may
                 carry a ``response_json_schema``; a ``str`` is used as-is; ``None`` falls back to the
@@ -303,8 +305,7 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
         """
         objective = expectation.objective if expectation else None
         # Build scoring prompt - for non-text content, extra context about objective is sent as a prepended text piece
-        is_non_text = message_piece.converted_value_data_type != "text"
-        if is_non_text:
+        if message_piece.converted_value_data_type != "text":
             prepended_text = f"objective: {objective}\nresponse:"
             scoring_value = message_piece.converted_value
             scoring_data_type = message_piece.converted_value_data_type
@@ -328,6 +329,7 @@ class SelfAskTrueFalseScorer(MessageTrueFalseScorer):
                     category=self._score_category,
                 )
             ),
+            fresh_conversation_per_attempt=True,
         )
 
         return [self._convert_score(unvalidated_score)]
