@@ -52,41 +52,39 @@ await output_attack_async(result)
 # MCP Streamable HTTP or stdio, translate their JSON Schemas to OpenAI function
 # tools, and execute function calls on the host. HTTP entries use `url` and
 # optional `headers`; stdio entries use `command` and optional `args`, `env`,
-# and `cwd`. For example, a stdio entry can be configured as:
+# and `cwd`.
 #
-# ```json
-# {
-#   "servers": {
-#     "notes": {
-#       "type": "stdio",
-#       "command": "uv",
-#       "args": [
-#         "run",
-#         "python",
-#         "doc/code/targets/supporting_assets/notes_mcp_server.py",
-#         "--transport",
-#         "stdio"
-#       ]
-#     }
-#   }
-# }
-# ```
+# This example uses an in-memory stdio configuration. The provider starts and
+# stops the notes server automatically. `sys.executable` uses the notebook
+# kernel's Python environment, and `DOCS_CODE_PATH` gives an absolute asset path.
+# No separate server or network port is needed, and the example does not depend
+# on the notebook's working directory.
 #
-# Start the standalone notes server in a separate terminal:
+# To try Streamable HTTP instead, start the notes server from the repository
+# root in a separate terminal:
 #
 # ```bash
-# uv run python doc/code/targets/supporting_assets/notes_mcp_server.py --port 8000
+# uv run --no-sync python doc/code/targets/supporting_assets/notes_mcp_server.py --port 8000
 # ```
 #
-# The HTTP example configuration points to `http://127.0.0.1:8000/mcp/notes`.
-# To use stdio instead, load
-# `doc/code/targets/supporting_assets/notes_mcp_stdio_config.json`;
-# the provider will start and stop the same notes server automatically.
+# Then replace the provider configuration below with:
+#
+# ```python
+# mcp_tools = MCPToolProvider.from_config_file(
+#     config_path=DOCS_CODE_PATH / "targets" / "supporting_assets" / "notes_mcp_config.json",
+#     server_name="notes",
+# )
+# ```
+#
+# The HTTP configuration points to `http://127.0.0.1:8000/mcp/notes`.
+# If port 8000 is in use, select a free port and update the configuration URL.
 
 # %%
 import os
+import sys
 
 from pyrit.auth import get_azure_openai_auth
+from pyrit.common.path import DOCS_CODE_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import MCPToolProvider, OpenAIResponseTarget
@@ -94,8 +92,20 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-mcp_tools = MCPToolProvider.from_config_file(
-    config_path="doc/code/targets/supporting_assets/notes_mcp_config.json",
+mcp_tools = MCPToolProvider.from_config(
+    config={
+        "servers": {
+            "notes": {
+                "type": "stdio",
+                "command": sys.executable,
+                "args": [
+                    str(DOCS_CODE_PATH / "targets" / "supporting_assets" / "notes_mcp_server.py"),
+                    "--transport",
+                    "stdio",
+                ],
+            }
+        }
+    },
     server_name="notes",
 )
 
