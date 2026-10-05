@@ -90,6 +90,9 @@ class SelectiveTextConverter(Converter):
         self._is_word_level = isinstance(selection_strategy, WordSelectionStrategy)
         self._is_token_based = isinstance(selection_strategy, TokenSelectionStrategy)
 
+    def _is_conversion_dispatch(self, prompt: str) -> bool:
+        return self._is_token_based and (self._start_token in prompt or self._end_token in prompt)
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build identifier with selective text converter parameters.

@@ -883,6 +883,35 @@ class TestConverterServiceCleanup:
 class TestPreviewConversion:
     """Tests for ConverterService.preview_conversion method."""
 
+    @pytest.mark.parametrize(("start_token", "end_token"), [("<<", ">>"), ("[", "]")])
+    async def test_preview_conversion_custom_markers_async(
+        self, *, upload_service: ConverterService, start_token: str, end_token: str
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = (
+            f"keep ⟪literal⟫ {start_token}{start_token}test{end_token}{end_token} "
+            f"/ {start_token}{start_token}test2{end_token}{end_token}"
+        )
+        partial = f"keep ⟪literal⟫ {start_token}dGVzdA=={end_token} / {start_token}dGVzdDI={end_token}"
+        expected = f"keep ⟪literal⟫ {codecs.encode('dGVzdA==', 'rot_13')} / {codecs.encode('dGVzdDI=', 'rot_13')}"
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                converter_ids=["base64", "rot13"],
+                start_token=start_token,
+                end_token=end_token,
+            )
+        )
+        assert result.original_value == original
+        assert [step.output_value for step in result.steps] == [partial, expected]
+        assert result.converted_value == expected
+
+    @pytest.mark.parametrize("field", ["start_token", "end_token"])
+    def test_preview_conversion_rejects_empty_markers(self, *, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            ConverterPreviewRequest(original_value="test", converter_ids=[], **{field: ""})
+
     async def test_preview_conversion_raises_for_nonexistent_converter(self) -> None:
         """Test that preview raises ValueError for non-existent converter ID."""
         service = ConverterService()

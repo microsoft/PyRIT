@@ -79,6 +79,16 @@ target = TextTarget(text_stream=open(os.devnull, "w", encoding="utf-8"))  # noqa
 #
 # Python callers can also use custom delimiters with `convert_tokens_async`.
 # Identical start/end delimiters form alternating flat pairs; they cannot express nesting.
+#
+# ### Custom Markers in Pipelines
+#
+# For attacks, pass `PromptNormalizer(start_token="<<", end_token=">>")` as `prompt_normalizer`.
+# This recognizes ASCII-marked regions such as `Decode: <<<<hello>>>>` in request and response converter chains.
+# Use the same delimiters on any `SelectiveTextConverter` with `TokenSelectionStrategy`.
+#
+# API clients can set `start_token` and `end_token` on `ConverterPreviewRequest` and `AddMessageRequest`.
+# These settings also apply to queued message sends. Empty delimiters are rejected.
+# Unicode markers remain the defaults. The GUI selection button still inserts those default markers.
 
 # %%
 # Just put tokens around what you want to convert
@@ -260,6 +270,7 @@ await output_attack_async(result)
 # With `preserve_tokens=False`, the converter consumes the innermost pairs as usual.
 # These rules are the same for direct `convert_async` calls, attack pipelines, and API previews.
 # If the input has no markers, the whole value is converted and `preserve_tokens=True` wraps that result.
+# For the same seed and execution context, direct and pipeline token-selection calls produce the same result.
 
 # %%
 first_converter = SelectiveTextConverter(

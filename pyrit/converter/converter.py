@@ -114,6 +114,8 @@ class Converter(Identifiable):
                 namespace = f"{type(self).__module__}.{type(self).__qualname__}"
                 prompt = kwargs.get("prompt")
                 input_type = kwargs.get("input_type", "text")
+                if isinstance(prompt, str) and self._is_conversion_dispatch(prompt):
+                    return await convert_async(self, *args, **kwargs)
                 operation_key = f"{input_type}\x1f{prompt}" if isinstance(prompt, str) else None
                 with random_execution(
                     namespace=namespace,
@@ -197,6 +199,18 @@ class Converter(Identifiable):
             int | None: The converter-specific seed, or None to inherit the configured root.
         """
         return self._seed
+
+    def _is_conversion_dispatch(self, prompt: str) -> bool:
+        """
+        Identify inputs dispatched to separately scoped conversion calls.
+
+        Args:
+            prompt (str): The input prompt.
+
+        Returns:
+            bool: Whether this call delegates selection without transforming the input itself.
+        """
+        return False
 
     async def convert_tokens_async(
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"

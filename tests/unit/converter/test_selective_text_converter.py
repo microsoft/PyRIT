@@ -5,10 +5,13 @@ from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.converter import (
     Base64Converter,
+    Converter,
     ConverterResult,
     LeetspeakConverter,
+    RandomCapitalLettersConverter,
     ROT13Converter,
     SelectiveTextConverter,
 )
@@ -23,6 +26,8 @@ from pyrit.converter.text_selection_strategy import (
     WordIndexSelectionStrategy,
     WordProportionSelectionStrategy,
 )
+from pyrit.models import Message
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 
 @pytest.mark.parametrize("token_entry", [False, True])
@@ -140,6 +145,48 @@ async def test_token_selection_rejects_nontext_output_async(*, preserve_tokens: 
         convert.return_value = ConverterResult(output_text="output.png", output_type="image_path")
         with pytest.raises(ValueError, match="text output"):
             await converter.convert_async(prompt="⟪test⟫")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+@pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
+@pytest.mark.parametrize("nested_wrapper", [False, True])
+async def test_token_selection_seeded_pipeline_entry_paths_async(
+    *, preserve_tokens: bool, start_token: str, end_token: str, nested_wrapper: bool
+) -> None:
+    original_seed = get_configured_random_seed()
+    configure_random_seed(seed=42)
+    try:
+        sub_converter: Converter = RandomCapitalLettersConverter(percentage=50)
+        if nested_wrapper:
+            sub_converter = SelectiveTextConverter(
+                sub_converter=sub_converter,
+                selection_strategy=TokenSelectionStrategy(),
+                start_token=start_token,
+                end_token=end_token,
+            )
+        converter = SelectiveTextConverter(
+            sub_converter=sub_converter,
+            selection_strategy=TokenSelectionStrategy(),
+            preserve_tokens=preserve_tokens,
+            start_token=start_token,
+            end_token=end_token,
+        )
+        prompt = (
+            f"keep {start_token}{start_token}abcdefghijklmno{end_token}{end_token} "
+            f"and {start_token}{start_token}pqrstuvwxyz{end_token}{end_token}"
+        )
+        direct = await converter.convert_async(prompt=prompt)
+        selected = await converter.convert_tokens_async(prompt=prompt, start_token=start_token, end_token=end_token)
+        message = Message.from_prompt(prompt=prompt, role="user")
+        await PromptNormalizer(start_token=start_token, end_token=end_token).convert_values_async(
+            converter_configurations=[ConverterConfiguration(converters=[converter])],
+            message=message,
+        )
+        assert direct.output_text == selected.output_text == message.get_value()
+        assert (await converter.convert_async(prompt=prompt)).output_text == direct.output_text
+    finally:
+        configure_random_seed(seed=original_seed)
 
 
 class TestSelectiveTextConverter:

@@ -167,6 +167,14 @@ For a `SelectiveTextConverter` with `TokenSelectionStrategy`, setting
 That stage does not consume a marker layer. The default, `preserve_tokens=False`,
 consumes the innermost pairs as described above.
 
+API clients can set non-empty `start_token` and `end_token` strings on converter
+preview and message requests, including queued sends. The same settings control
+request and response converter pipelines. For example, `start_token="<<"` and
+`end_token=">>"` select ASCII-marked regions such as `<<<<hello>>>>`.
+Use the same settings on token-based `SelectiveTextConverter` instances in the
+pipeline. Other marker characters stay literal. Omitting these fields retains the
+Unicode defaults; the GUI selection button still inserts those defaults.
+
 Click **Add converted value** to apply the final result, then **Send**. The exact
 applied value is sent and stored alongside the unchanged original; the backend does
 not rerun the pipeline. The exact ordered list of applied converters is retained

@@ -118,6 +118,8 @@ class ConverterPreviewRequest(BaseModel):
     original_value: str = Field(..., description="Text to convert")
     original_value_data_type: PromptDataType = Field(default="text", description="Data type of original value")
     converter_ids: list[str] = Field(..., description="Converter instance IDs to apply")
+    start_token: str = Field(default="⟪", min_length=1, description="Opening marker for selected text regions")
+    end_token: str = Field(default="⟫", min_length=1, description="Closing marker for selected text regions")
 
 
 class ConverterPreviewResponse(BaseModel):
