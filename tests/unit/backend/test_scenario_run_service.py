@@ -57,6 +57,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.registry import ScenarioMetadata, ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -2234,18 +2235,37 @@ async def test_legacy_plan_techniques_agree_across_projections(
     (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
     run_id = str(scenario_result.id)
     service = ScenarioRunService()
-    summaries = {
-        name: ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"])
+    summaries = tuple(
+        ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"])
         for name in techniques
-    }
+    )
+    metadata = ScenarioMetadata(
+        class_name=Scenario.__name__,
+        class_module=Scenario.__module__,
+        registry_name="garak.prompt_inject",
+        default_technique="all",
+        all_techniques=tuple(techniques),
+        technique_summaries=summaries,
+        aggregate_techniques=("all",),
+        default_datasets=(),
+    )
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.__contains__.return_value = True
+    registry.get_class.return_value = Scenario
+    registry.get_class_metadata.return_value = metadata
 
-    with patch.object(service, "_get_scenario_technique_summaries", return_value=summaries):
+    with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry) as get_registry:
         history = (await service.list_runs_async()).items[0]
         detail = await service.get_run_async(scenario_result_id=run_id)
         progress = await service.get_run_progress_from_storage_async(
             scenario_result_id=run_id, since=None, limit=25, active_group_ids=[]
         )
 
+    get_registry.assert_called_once()
+    registry.__contains__.assert_called_once_with("garak.prompt_inject")
+    registry.get_class.assert_called_once_with("garak.prompt_inject")
+    registry.get_class_metadata.assert_called_once_with(Scenario)
+    registry.create_instance.assert_not_called()
     assert detail is not None
     assert progress is not None
     assert history.techniques_used == detail.techniques_used == progress.run.techniques_used == techniques
