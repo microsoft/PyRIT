@@ -462,7 +462,6 @@ async def _collect_conversation_entries_async(
     Returns:
         list[tuple[str, Any, list[dict[str, Any]]]]: ``(name, attack, structured_messages)`` triples.
     """
-    from pyrit.cli._results import _objective_scorer_key
     from pyrit.cli._sources import RestApiConversationSource
     from pyrit.output._derivation import select_attacks
     from pyrit.output.conversation.json import JsonConversationPrinter
@@ -470,18 +469,17 @@ async def _collect_conversation_entries_async(
     selected = select_attacks(result, attack_result_ids=attack_result_ids)
     if limit is not None:
         selected = selected[:limit]
-    objective_hash, objective_class = _objective_scorer_key(result=result)
+    objective_scorer_identifier = result.objective_scorer_identifier
 
     entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
     for atomic_attack_name, attack_result in selected:
-        source = RestApiConversationSource(
-            client=client,
-            attack_result_id=attack_result.attack_result_id,
-            objective_hash=objective_hash,
-            objective_class=objective_class,
-        )
+        source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
         messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
-        structured = await JsonConversationPrinter(source=source).build_async(messages, include_scores=True)
+        structured = await JsonConversationPrinter(source=source).build_async(
+            messages,
+            include_scores=objective_scorer_identifier is not None,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
         entries.append((atomic_attack_name, attack_result, structured))
     return entries
 
@@ -523,7 +521,6 @@ async def print_conversations_async(
         await _write_json_document_async(document, sink=sink)
         return
 
-    from pyrit.cli._results import _objective_scorer_key
     from pyrit.cli._sources import RestApiConversationSource
     from pyrit.output._derivation import attack_score_display, select_attacks
     from pyrit.output.conversation.pretty import PrettyConversationPrinter
@@ -537,7 +534,7 @@ async def print_conversations_async(
         print(f"\nNo conversations found for scenario {scenario_result_id}.")
         return
 
-    objective_hash, objective_class = _objective_scorer_key(result=result)
+    objective_scorer_identifier = result.objective_scorer_identifier
     _header(f"Conversations — scenario {scenario_result_id}")
     for index, (atomic_attack_name, attack_result) in enumerate(selected, start=1):
         _cprint(
@@ -548,15 +545,16 @@ async def print_conversations_async(
         )
         print(f"       id:        {attack_result.attack_result_id}")
         print(f"       objective: {attack_result.objective}")
-        source = RestApiConversationSource(
-            client=client,
-            attack_result_id=attack_result.attack_result_id,
-            objective_hash=objective_hash,
-            objective_class=objective_class,
-        )
+        source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
         messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
         printer = PrettyConversationPrinter(source=source)
-        print(await printer.render_async(messages, include_scores=True))
+        print(
+            await printer.render_async(
+                messages,
+                include_scores=objective_scorer_identifier is not None,
+                objective_scorer_identifier=objective_scorer_identifier,
+            )
+        )
 
     shown = len(selected)
     if shown < total:

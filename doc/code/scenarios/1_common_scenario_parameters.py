@@ -13,7 +13,9 @@
 #
 # This guide covers the key parameters for configuring scenarios programmatically: datasets,
 # techniques, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
-# patterns apply to any scenario.
+# patterns apply to any scenario. The last section,
+# [Reporting Every Conversation](#reporting-every-conversation), shows how to print each attack's
+# conversation and save a full HTML report.
 #
 # > **Two selection axes**: *Techniques* select attack techniques (*how* attacks run — e.g., prompt
 # > sending, role play, TAP). *Datasets* select objectives (*what* is tested — e.g., harm categories,
@@ -190,3 +192,32 @@ await custom_scenario.initialize_async()  # type: ignore
 
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
+
+# %% [markdown]
+# ## Reporting Every Conversation
+#
+# `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use
+# `output_scenario_conversations_async`. It reads each attack's conversation from memory and prints
+# one JSON document that shows only the objective score on each response, like
+# `pyrit_scan scenario-results --view conversations`. It includes every attack unless you pass
+# `attack_result_ids` or `limit`; here `limit=1` prints just the first one.
+
+# %%
+from pyrit.output import output_scenario_conversations_async
+
+await output_scenario_conversations_async(custom_result, limit=1)
+
+# %% [markdown]
+# `output_scenario_full_async` adds the run overview, like `--view full`, and writes the report as
+# JSON or a standalone HTML page. HTML needs a sink such as `FileSink`. This example writes the report
+# to a temporary folder; point `FileSink` at your own path to keep it.
+
+# %%
+import tempfile
+
+from pyrit.output import FileSink, output_scenario_full_async
+
+with tempfile.TemporaryDirectory() as report_dir:
+    report_path = Path(report_dir) / "report.html"
+    await output_scenario_full_async(custom_result, format="html", sink=FileSink(path=report_path))
+    print(f"Wrote {report_path.name}")
