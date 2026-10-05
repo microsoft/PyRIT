@@ -202,12 +202,13 @@ class Converter(Identifiable):
         self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
     ) -> ConverterResult:
         """
-        Convert marked text regions, consuming their delimiters and preserving all unmarked text.
+        Convert innermost marked regions, consuming their delimiters and preserving all other text.
 
-        Regions may span multiple lines but must be non-empty and cannot nest. Without
-        delimiters, the entire prompt is converted, including non-text inputs. Selected
-        regions require text input and text output. All delimiters are validated before
-        any conversion is invoked.
+        Regions may be empty, span multiple lines, and nest. Each call converts all
+        innermost regions and retains their outer delimiters for later calls. Identical
+        start and end delimiters form flat pairs. Without delimiters, the entire prompt
+        is converted, including non-text inputs. Selected regions require text input
+        and text output. All delimiters are validated before any conversion is invoked.
 
         Args:
             prompt (str): The input prompt containing text to be converted.
@@ -258,31 +259,33 @@ class Converter(Identifiable):
 
     def _get_token_spans(self, *, prompt: str, start_token: str, end_token: str) -> list[tuple[int, int]]:
         """
-        Validate delimiters and return marked spans in the original prompt.
+        Validate all delimiters and return innermost marked spans in source order.
 
         Returns:
             The start and end offsets for each marked region.
 
         Raises:
-            ValueError: If the marker sequence is unmatched or nested.
+            ValueError: If the marker sequence is unmatched.
         """
         tokens = sorted({start_token, end_token}, key=len, reverse=True)
         pattern = "|".join(re.escape(token) for token in tokens)
         spans: list[tuple[int, int]] = []
-        region_start: int | None = None
+        open_regions: list[tuple[int, bool]] = []
         for token in re.finditer(pattern, prompt):
-            is_start = token.group() == start_token and (start_token != end_token or region_start is None)
+            is_start = token.group() == start_token and (start_token != end_token or not open_regions)
             if is_start:
-                if region_start is not None:
-                    raise ValueError(f"Nested start token at position {token.start()} is not allowed.")
-                region_start = token.start()
+                if open_regions:
+                    parent_start, _ = open_regions[-1]
+                    open_regions[-1] = (parent_start, True)
+                open_regions.append((token.start(), False))
             else:
-                if region_start is None:
+                if not open_regions:
                     raise ValueError(f"Unmatched end token at position {token.start()}.")
-                spans.append((region_start, token.end()))
-                region_start = None
-        if region_start is not None:
-            raise ValueError(f"Unmatched start token at position {region_start}.")
+                region_start, has_children = open_regions.pop()
+                if not has_children:
+                    spans.append((region_start, token.end()))
+        if open_regions:
+            raise ValueError(f"Unmatched start token at position {open_regions[-1][0]}.")
         return spans
 
     def _build_identifier(self) -> ComponentIdentifier:

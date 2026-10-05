@@ -131,13 +131,41 @@ you can edit it directly before applying it.
 
 To convert only part of a text value, select it and click **Convert selection only**.
 This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
-regions and removes their markers, preserving everything outside them. Marked regions
-have a colored highlight while their markers stay visible. Later stages convert the
-whole result unless you select another region. Multiple and multiline
-regions are supported; unmatched and nested regions are rejected. Empty regions
-pass an empty string to the converter. Partial
+regions and removes their markers, preserving everything outside them. Multiple,
+multiline, empty, and nested regions are supported. Each stage transforms **all
+innermost regions** and removes only their marker pairs. Outer markers remain for
+later stages. Marked regions have a colored highlight while every marker stays visible.
+You can select text inside a marked region or select one or more complete regions
+to add an outer pair. A selection that crosses only one boundary of an existing pair
+is rejected. Unmatched markers must be corrected before adding a region or converting.
+Empty regions pass an empty string to the converter. Partial
 conversion requires text input and text output. Without markers, converters retain
 their normal whole-value behavior, including media conversions.
+
+For a **Translate to French -> Base64 -> ROT13** pipeline, wrap each region three times:
+
+```text
+Decode this recursively: ⟪⟪⟪Hello⟫⟫⟫ and ⟪⟪⟪Goodbye⟫⟫⟫
+```
+
+If translation returns `Bonjour` and `Au revoir`, the regions change as follows:
+
+| Stage | First region | Second region |
+|---|---|---|
+| Translate to French | `⟪⟪Bonjour⟫⟫` | `⟪⟪Au revoir⟫⟫` |
+| Base64 | `⟪Qm9uam91cg==⟫` | `⟪QXUgcmV2b2ly⟫` |
+| ROT13 | `Dz9hnz91pt==` | `DKHtpzI2o2yl` |
+
+`Decode this recursively:` and ` and ` stay unchanged through these three stages.
+Regions can have different depths. A region with no markers left stays unchanged
+while other marked regions are selected. When no markers remain anywhere, any later
+converter transforms the whole value. If the pipeline ends with outer markers still
+present, those markers remain in the final value.
+
+For a `SelectiveTextConverter` with `TokenSelectionStrategy`, setting
+`preserve_tokens=True` keeps each converted region's marker pair for the next stage.
+That stage does not consume a marker layer. The default, `preserve_tokens=False`,
+consumes the innermost pairs as described above.
 
 Click **Add converted value** to apply the final result, then **Send**. The exact
 applied value is sent and stored alongside the unchanged original; the backend does

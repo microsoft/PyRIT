@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from unittest.mock import AsyncMock, call, patch
+
 import pytest
 
 from pyrit.converter import (
     Base64Converter,
+    ConverterResult,
     LeetspeakConverter,
     ROT13Converter,
     SelectiveTextConverter,
@@ -16,9 +19,127 @@ from pyrit.converter.text_selection_strategy import (
     ProportionSelectionStrategy,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    TokenSelectionStrategy,
     WordIndexSelectionStrategy,
     WordProportionSelectionStrategy,
 )
+
+
+@pytest.mark.parametrize("token_entry", [False, True])
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+@pytest.mark.parametrize(
+    ("prompt", "consumed", "preserved"),
+    [
+        (
+            "keep ⟪⟪test⟫⟫ / ⟪⟪test2⟫⟫",
+            "keep ⟪dGVzdA==⟫ / ⟪dGVzdDI=⟫",
+            "keep ⟪⟪dGVzdA==⟫⟫ / ⟪⟪dGVzdDI=⟫⟫",
+        ),
+        ("keep ⟪test⟫ / ⟪test2⟫", "keep dGVzdA== / dGVzdDI=", "keep ⟪dGVzdA==⟫ / ⟪dGVzdDI=⟫"),
+        ("⟪test⟫⟪test2⟫", "dGVzdA==dGVzdDI=", "⟪dGVzdA==⟫⟪dGVzdDI=⟫"),
+        (
+            "keep ⟪⟪test⟫⟫ / ⟪test2⟫",
+            "keep ⟪dGVzdA==⟫ / dGVzdDI=",
+            "keep ⟪⟪dGVzdA==⟫⟫ / ⟪dGVzdDI=⟫",
+        ),
+        (
+            "keep ⟪outer ⟪test⟫ and ⟪test2⟫ end⟫",
+            "keep ⟪outer dGVzdA== and dGVzdDI= end⟫",
+            "keep ⟪outer ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫ end⟫",
+        ),
+        ("keep ⟪⟫ / ⟪⟪⟫⟫", "keep  / ⟪⟫", "keep ⟪⟫ / ⟪⟪⟫⟫"),
+        ("test", "dGVzdA==", "⟪dGVzdA==⟫"),
+    ],
+)
+async def test_token_selection_entry_paths_async(
+    *, prompt: str, consumed: str, preserved: str, preserve_tokens: bool, token_entry: bool
+) -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+    )
+    result = (
+        await converter.convert_tokens_async(prompt=prompt)
+        if token_entry
+        else await converter.convert_async(prompt=prompt)
+    )
+    assert result.output_text == (preserved if preserve_tokens else consumed)
+    assert result.output_type == "text"
+
+
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+@pytest.mark.parametrize(("start_token", "end_token"), [("<<", ">>"), ("[.*", ".*]"), ("|", "|")])
+async def test_token_selection_custom_delimiter_entry_paths_async(
+    *, preserve_tokens: bool, start_token: str, end_token: str
+) -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+        start_token=start_token,
+        end_token=end_token,
+    )
+    prompt = f"keep {start_token}test{end_token} / {start_token}test2{end_token}"
+    expected = (
+        f"keep {start_token}dGVzdA=={end_token} / {start_token}dGVzdDI={end_token}"
+        if preserve_tokens
+        else "keep dGVzdA== / dGVzdDI="
+    )
+    direct = await converter.convert_async(prompt=prompt)
+    selected = await converter.convert_tokens_async(prompt=prompt, start_token=start_token, end_token=end_token)
+    assert direct.output_text == selected.output_text == expected
+
+
+@pytest.mark.parametrize("token_entry", [False, True])
+async def test_token_selection_preserves_generated_markers_async(*, token_entry: bool) -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(
+        sub_converter=sub_converter,
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=True,
+    )
+    with patch.object(sub_converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="generated ⟪new⟫", output_type="text")
+        result = (
+            await converter.convert_tokens_async(prompt="keep ⟪⟪test⟫⟫ after")
+            if token_entry
+            else await converter.convert_async(prompt="keep ⟪⟪test⟫⟫ after")
+        )
+    assert convert.await_args_list == [call(prompt="test", input_type="text")]
+    assert result.output_text == "keep ⟪⟪generated ⟪new⟫⟫⟫ after"
+
+
+@pytest.mark.parametrize("token_entry", [False, True])
+@pytest.mark.parametrize("prompt", ["⟪outer ⟪inner⟫", "⟪valid⟫ then ⟫"])
+async def test_token_selection_rejects_malformed_regions_async(*, prompt: str, token_entry: bool) -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(
+        sub_converter=sub_converter,
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=True,
+    )
+    with patch.object(sub_converter, "convert_async", new_callable=AsyncMock) as convert:
+        with pytest.raises(ValueError, match="Unmatched"):
+            if token_entry:
+                await converter.convert_tokens_async(prompt=prompt)
+            else:
+                await converter.convert_async(prompt=prompt)
+    convert.assert_not_awaited()
+
+
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+async def test_token_selection_rejects_nontext_output_async(*, preserve_tokens: bool) -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(
+        sub_converter=sub_converter,
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+    )
+    with patch.object(sub_converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="output.png", output_type="image_path")
+        with pytest.raises(ValueError, match="text output"):
+            await converter.convert_async(prompt="⟪test⟫")
 
 
 class TestSelectiveTextConverter:

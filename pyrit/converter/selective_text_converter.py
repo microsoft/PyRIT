@@ -62,7 +62,8 @@ class SelectiveTextConverter(Converter):
             selection_strategy (TextSelectionStrategy): The strategy for selecting which text to convert.
                 Can be character-level or word-level strategy.
             preserve_tokens (bool): If True, wraps converted text with start/end tokens.
-                This allows subsequent converters in a chain to target different regions. Defaults to False.
+                With TokenSelectionStrategy, retains each converted region's marker pair, including
+                nested pairs. Without markers, wraps the whole converted value. Defaults to False.
             start_token (str): The token to place before converted text when preserve_tokens=True.
                 Defaults to "⟪".
             end_token (str): The token to place after converted text when preserve_tokens=True.
@@ -156,22 +157,24 @@ class SelectiveTextConverter(Converter):
 
         Raises:
             ValueError: If the input type is not "text".
+            ValueError: If token-based conversion produces non-text output.
         """
         if input_type != "text":
             raise ValueError(f"SelectiveTextConverter only supports text input, got {input_type}")
 
-        # If using TokenSelectionStrategy, delegate to convert_tokens_async
         if self._is_token_based:
-            result = await self._sub_converter.convert_tokens_async(
-                prompt=prompt,
-                input_type="text",
-                start_token=self._start_token,
-                end_token=self._end_token,
-            )
-            # If preserve_tokens is True, the tokens are already in the result
-            # If False, convert_tokens_async removes them
-            if self._preserve_tokens and self._start_token not in result.output_text:
-                # Wrap the result with tokens if they were removed
+            if self._start_token in prompt or self._end_token in prompt:
+                # The shared parser calls this method again with unmarked leaf text.
+                return await self.convert_tokens_async(
+                    prompt=prompt,
+                    input_type="text",
+                    start_token=self._start_token,
+                    end_token=self._end_token,
+                )
+            result = await self._sub_converter.convert_async(prompt=prompt, input_type="text")
+            if result.output_type != "text":
+                raise ValueError(f"SelectiveTextConverter requires text output, but received {result.output_type}.")
+            if self._preserve_tokens:
                 result = ConverterResult(
                     output_text=f"{self._start_token}{result.output_text}{self._end_token}", output_type="text"
                 )

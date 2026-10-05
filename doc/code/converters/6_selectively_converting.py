@@ -49,7 +49,36 @@ target = TextTarget(text_stream=open(os.devnull, "w", encoding="utf-8"))  # noqa
 # ## Example 1: Using Tokens (Simplest)
 #
 # The easiest way to selectively convert text is to put ⟪ and ⟫ tokens around the parts you want converted.
-# The converters will automatically detect these tokens and only convert the text between them.
+# Each converter transforms all innermost marked regions and removes their marker pairs.
+# All other text, including outer markers, stays unchanged in that step.
+#
+# Multiple, multiline, and empty regions are supported. Every marker must have a matching partner.
+# Empty regions pass an empty string to the converter.
+#
+# ### Nested and Multiple Regions
+#
+# For a **Translate to French -> Base64 -> ROT13** pipeline, wrap each region three times:
+#
+# ```text
+# Decode this recursively: ⟪⟪⟪Hello⟫⟫⟫ and ⟪⟪⟪Goodbye⟫⟫⟫
+# ```
+#
+# If translation returns `Bonjour` and `Au revoir`, each step consumes one layer:
+#
+# | Stage | First region | Second region |
+# |---|---|---|
+# | Translate to French | `⟪⟪Bonjour⟫⟫` | `⟪⟪Au revoir⟫⟫` |
+# | Base64 | `⟪Qm9uam91cg==⟫` | `⟪QXUgcmV2b2ly⟫` |
+# | ROT13 | `Dz9hnz91pt==` | `DKHtpzI2o2yl` |
+#
+# `Decode this recursively:` and ` and ` stay unchanged through these three steps.
+# A parent region is not converted in the same step as its children.
+# Regions can have different depths: a completed region stays unchanged while other regions still have markers.
+# When no markers remain anywhere, later converters transform the whole prompt.
+# If the pipeline ends before all layers are consumed, the remaining markers stay in the output.
+#
+# Python callers can also use custom delimiters with `convert_tokens_async`.
+# Identical start/end delimiters form alternating flat pairs; they cannot express nesting.
 
 # %%
 # Just put tokens around what you want to convert
@@ -225,6 +254,12 @@ await output_attack_async(result)
 # ### Example 8: Chaining Selective Converters
 #
 # `preserve_tokens` can be used to use the output of one converter as the input for the next. This example converts the second half to an angry tone, translates that outpu to spanish, and then changes that output to emoji (but never touches the first half of the message).
+#
+# With `TokenSelectionStrategy`, `preserve_tokens=True` keeps each converted region's marker pair
+# at its original position. This also keeps every layer of a nested region.
+# With `preserve_tokens=False`, the converter consumes the innermost pairs as usual.
+# These rules are the same for direct `convert_async` calls, attack pipelines, and API previews.
+# If the input has no markers, the whole value is converted and `preserve_tokens=True` wraps that result.
 
 # %%
 first_converter = SelectiveTextConverter(
