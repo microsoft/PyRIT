@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./_fixtures";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses for history tests
@@ -292,13 +292,18 @@ test.describe("Attack History Filters", () => {
     await expect(page.getByTestId("attack-row-atk-alice-a")).not.toBeVisible();
 
     // Click Reset
-    await page.getByTestId("reset-filters-btn").click();
+    const resetButton = page.getByTestId("reset-filters-btn");
+    await resetButton.click();
 
     // All attacks should return
     await expect(page.getByTestId("attack-row-atk-alice-a")).toBeVisible({ timeout: 5_000 });
     await expect(page.getByTestId("attack-row-atk-bob-b")).toBeVisible();
     await expect(page.getByTestId("attack-row-atk-alice-b")).toBeVisible();
     await expect(page.getByTestId("attack-row-atk-bob-a")).toBeVisible();
+
+    // Reset disables itself without dropping keyboard focus.
+    await expect(resetButton).toBeFocused();
+    await expect(resetButton).toHaveAttribute("aria-disabled", "true");
   });
 
   test("should paginate attacks", async ({ page }) => {

@@ -5,6 +5,7 @@ jest.mock("axios", () => ({
     post: jest.fn(),
     put: jest.fn(),
     delete: jest.fn(),
+    getUri: jest.fn((config: { url: string }) => config.url),
     interceptors: {
       request: { use: jest.fn() },
       response: { use: jest.fn() },
@@ -52,6 +53,41 @@ describe("api service", () => {
       expect(apiClient).toBeDefined();
     });
 
+    describe("single message sends", () => {
+      it("submits one message and reads progress with bounded waiting and cancellation", async () => {
+        const progress = { send_id: "send/id", state: "queued" };
+        const request = {
+          submission_id: "submission", role: "user", pieces: [{ original_value: "hello", data_type: "text" }],
+          send: true as const, target_registry_name: "target", target_conversation_id: "conversation",
+        };
+        const controller = new AbortController();
+        (apiClient.post as jest.Mock).mockResolvedValue({ data: progress });
+        (apiClient.get as jest.Mock).mockResolvedValue({ data: progress });
+        expect(await attacksApi.submitMessageSend("attack/id", request)).toEqual(progress);
+        expect(apiClient.post).toHaveBeenCalledWith("/attacks/attack%2Fid/message-sends", request);
+        expect(await attacksApi.getMessageSend("attack/id", "send/id", controller.signal)).toEqual(progress);
+        expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/message-sends/send%2Fid", {
+          params: { wait_ms: 1000 }, signal: controller.signal,
+        });
+      });
+
+      it("does not automatically retry an unauthorized submission", async () => {
+        const error = {
+          isAxiosError: true,
+          config: { method: "post", url: "/attacks/attack/message-sends", headers: {} },
+          response: { status: 401, data: { detail: "Unauthorized" } },
+        };
+        const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          await expect(responseOnError(error)).rejects.toBe(error);
+          expect(error.config).not.toHaveProperty("_retried");
+          expect(apiClient.post).not.toHaveBeenCalled();
+        } finally {
+          consoleSpy.mockRestore();
+        }
+      });
+    });
+
     it("should have correct methods", () => {
       expect(apiClient.get).toBeDefined();
       expect(apiClient.post).toBeDefined();
@@ -69,7 +105,7 @@ describe("api service", () => {
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
-      const config = { headers };
+      const config = { headers, url: '/health' };
       const result = await requestInterceptor(config);
       expect(result.headers["X-Request-ID"]).toBeDefined();
       expect(typeof result.headers["X-Request-ID"]).toBe("string");
@@ -81,7 +117,7 @@ describe("api service", () => {
         {} as Record<string, string>,
         { set(k: string, v: string) { this[k] = v; } }
       );
-      const config = { headers };
+      const config = { headers, url: '/health' };
       const result = await requestInterceptor(config);
       // UUID v4 pattern: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
       expect(result.headers["X-Request-ID"]).toMatch(
@@ -738,6 +774,8 @@ describe("api service", () => {
     it("posts the exact estimate request and forwards cancellation", async () => {
       const mockResponse = {
         data: {
+          dataset_size: { kind: 'bounded', value: 4 },
+          dataset_limit: { state: 'scenario_default' },
           estimated_attack_count: 8,
           components: [],
           datasets: [],

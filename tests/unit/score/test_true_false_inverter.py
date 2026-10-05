@@ -5,7 +5,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from unit.mocks import get_image_message_piece, store_message
+from unit.mocks import get_image_message_piece, store_message_async
 
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
@@ -31,7 +31,7 @@ async def test_score_async_unsupported_data_type_returns_empty(
 
     request = image_message_piece.to_message()
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(request)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
     assert scores == []
 
     os.remove(image_message_piece.converted_value)
@@ -61,7 +61,7 @@ async def test_substring_scorer_adds_to_memory():
         scorer = SubStringScorer(substring="string", categories=["new_category"])
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_inverter_propagates_silent_child(patch_central_database):
@@ -71,6 +71,28 @@ async def test_inverter_propagates_silent_child(patch_central_database):
     scorer = TrueFalseInverterScorer(scorer=sub_scorer)
     message = MessagePiece(role="user", original_value="test").to_message()
 
-    scores = await scorer.score_async(scorable=MessageScorable.from_message(store_message(message)))
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(message)))
 
     assert scores == []
+
+
+def test_with_scorer_block_policy_reaches_wrapped_scorer(patch_central_database):
+    """The inverter has no policy of its own, so it must hand the policy to its leaf."""
+    sub_scorer = SubStringScorer(substring="test")
+    sub_scorer.raise_if_scorer_blocks = True
+    scorer = TrueFalseInverterScorer(scorer=sub_scorer)
+
+    scoped = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
+
+    assert scoped is not scorer
+    assert scoped._scorer.raise_if_scorer_blocks is False
+    assert sub_scorer.raise_if_scorer_blocks is True
+
+
+def test_with_scorer_block_policy_returns_self_when_already_compliant(patch_central_database):
+    """Returning self keeps shared instances from being copied for no reason."""
+    sub_scorer = SubStringScorer(substring="test")
+    sub_scorer.raise_if_scorer_blocks = True
+    scorer = TrueFalseInverterScorer(scorer=sub_scorer)
+
+    assert scorer.with_scorer_block_policy(raise_if_scorer_blocks=True) is scorer

@@ -12,8 +12,7 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
-from fastapi import APIRouter, HTTPException, Query, status
-from starlette.concurrency import run_in_threadpool
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.scenarios import (
@@ -153,7 +152,9 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
         409: {"model": ProblemDetail, "description": "Saved run cannot be resumed"},
     },
 )
-async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
+async def start_scenario_run(  # pyrit-async-suffix-exempt
+    request: RunScenarioRequest, http_request: Request
+) -> ScenarioRunSummary:
     """
     Start a new scenario run as a background task.
 
@@ -163,10 +164,14 @@ async def start_scenario_run(request: RunScenarioRequest) -> ScenarioRunSummary:
 
     Args:
         request: Scenario run configuration.
+        http_request: HTTP admission context, captured before body parsing.
 
     Returns:
         ScenarioRunSummary: Run metadata with PENDING status.
     """
+    runtime = getattr(http_request.app.state, "runtime_lifecycle", None)
+    if runtime is not None and runtime.state != "ready":
+        raise HTTPException(status_code=503, detail="Scenario start was interrupted by runtime reinitialization.")
     service = get_scenario_run_service()
     try:
         return await service.start_run_async(request=request)
@@ -240,8 +245,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    return await run_in_threadpool(
-        service.list_runs,
+    return await service.list_runs_async(
         scenario_names=scenario_names,
         statuses=run_statuses,
         labels=parse_label_query_params(label),
@@ -283,8 +287,7 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # py
     """
     service = get_scenario_run_service()
     active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
-    run = await run_in_threadpool(
-        service.get_run_from_storage,
+    run = await service.get_run_from_storage_async(
         scenario_result_id=scenario_result_id,
         active_error=active_snapshot.error,
         queue_position=active_snapshot.queue_position,
@@ -321,8 +324,7 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
     service = get_scenario_run_service()
     active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
     try:
-        progress = await run_in_threadpool(
-            service.get_run_progress_from_storage,
+        progress = await service.get_run_progress_from_storage_async(
             scenario_result_id=scenario_result_id,
             since=since,
             limit=limit,
@@ -392,7 +394,7 @@ async def get_scenario_run_results(scenario_result_id: str) -> ScenarioResult:  
     """
     service = get_scenario_run_service()
     try:
-        result = service.get_run_results(scenario_result_id=scenario_result_id)
+        result = await service.get_run_results_async(scenario_result_id=scenario_result_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 

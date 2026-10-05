@@ -3744,6 +3744,28 @@ limitations under the License.
 
 ---------------------------------------------------------
 
+NVIDIA Garak - Apache-2.0
+
+The exploitation scenario, SQL injection and Python code-execution payloads,
+echo request template, Jinja payload wrapper, and primary detector rules are
+adapted and modified from NVIDIA Garak:
+
+https://github.com/NVIDIA/garak/tree/560c75a5e42f8d9d6f0a407263fdbc6d5684fbe0
+(payloads)
+https://github.com/NVIDIA/garak/tree/61ed0b4e1a3d9334e84e42c92ca89f9decb5dcc2
+(probe templates and detector rules)
+
+Copyright (c) 2023 Leon Derczynski
+Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES
+Portions Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
+
+Licensed under the Apache License, Version 2.0.
+The Apache-2.0 license text in the "aiofiles 25.1.0" entry above also applies
+to these Garak-derived portions.
+https://www.apache.org/licenses/LICENSE-2.0
+
+---------------------------------------------------------
+
 overrides 7.7.0 - Apache-2.0
 
 
@@ -18835,4 +18857,3 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 For more information, please refer to <http://unlicense.org/>
 
 ---------------------------------------------------------
-

@@ -7,14 +7,20 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
-from pyrit.exceptions import InvalidJsonException
+from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException
 from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
+)
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
     SimulatedConversationResult,
     _generate_next_message_async,
     generate_simulated_conversation_async,
 )
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -29,7 +35,6 @@ from pyrit.models import (
     SimulatedTargetSystemPromptPaths,
     load_next_message_prompt,
 )
-from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import TrueFalseScorer
 
@@ -55,7 +60,7 @@ def mock_adversarial_chat() -> MagicMock:
     """Create a mock adversarial chat target for testing."""
     chat = MagicMock(spec=PromptTarget)
     chat.send_prompt_async = AsyncMock()
-    chat.set_system_prompt = MagicMock()
+    chat.set_system_prompt_async = AsyncMock()
     chat.get_identifier.return_value = _mock_target_id("MockAdversarialChat")
     return chat
 
@@ -67,6 +72,12 @@ def mock_objective_scorer() -> MagicMock:
     scorer.score_async = AsyncMock()
     scorer.get_identifier.return_value = _mock_scorer_id("MockScorer")
     return scorer
+
+
+@pytest.fixture
+def adversarial_system_prompt() -> SeedPrompt:
+    """Return a valid, already-resolved adversarial chat system prompt for testing."""
+    return SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value)
 
 
 @pytest.fixture
@@ -126,7 +137,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
     ):
         """Test that zero num_turns raises ValueError."""
         with pytest.raises(ValueError, match="num_turns must be a positive integer"):
@@ -134,7 +145,7 @@ class TestGenerateSimulatedConversationAsync:
                 objective="Test objective",
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
-                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
                 num_turns=0,
             )
 
@@ -142,7 +153,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
     ):
         """Test that negative num_turns raises ValueError."""
         with pytest.raises(ValueError, match="num_turns must be a positive integer"):
@@ -150,15 +161,59 @@ class TestGenerateSimulatedConversationAsync:
                 objective="Test objective",
                 adversarial_chat=mock_adversarial_chat,
                 objective_scorer=mock_objective_scorer,
-                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                adversarial_chat_system_prompt=adversarial_system_prompt,
                 num_turns=-1,
             )
+
+    async def test_deprecated_system_prompt_path_still_resolves_and_warns(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        sample_conversation: list[Message],
+    ):
+        """Test that the deprecated adversarial_chat_system_prompt_path still works and warns."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack = MagicMock()
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    atomic_attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="Test objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=3,
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+                    await generate_simulated_conversation_async(
+                        objective="Test objective",
+                        adversarial_chat=mock_adversarial_chat,
+                        objective_scorer=mock_objective_scorer,
+                        adversarial_chat_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+                        num_turns=3,
+                    )
+
+                call_kwargs = mock_attack_class.call_args.kwargs
+                resolved_prompt = call_kwargs["attack_adversarial_config"].system_prompt
+                expected_prompt = SeedPrompt.from_yaml_file(RTASystemPromptPaths.TEXT_GENERATION.value)
+                assert resolved_prompt.value == expected_prompt.value
 
     async def test_uses_adversarial_chat_as_simulated_target(
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the same adversarial_chat is used as simulated target."""
@@ -182,15 +237,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                 )
 
@@ -199,11 +254,58 @@ class TestGenerateSimulatedConversationAsync:
                 call_kwargs = mock_attack_class.call_args.kwargs
                 assert call_kwargs["objective_target"] == mock_adversarial_chat
 
+    async def test_passes_system_prompt_to_adversarial_config(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt: SeedPrompt,
+        sample_conversation: list[Message],
+    ):
+        """Test that adversarial_chat_system_prompt is forwarded as-is onto the adversarial config."""
+        with patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class:
+            mock_attack = MagicMock()
+            mock_attack.get_identifier.return_value = ComponentIdentifier(
+                class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+            )
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    atomic_attack_identifier=ComponentIdentifier(
+                        class_name="RedTeamingAttack", class_module="pyrit.executor.attack"
+                    ),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="Test objective",
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=3,
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+
+            with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
+                mock_memory_class.get_memory_instance.return_value = mock_memory
+
+                await generate_simulated_conversation_async(
+                    objective="Test objective",
+                    adversarial_chat=mock_adversarial_chat,
+                    objective_scorer=mock_objective_scorer,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
+                    num_turns=3,
+                )
+
+                call_kwargs = mock_attack_class.call_args.kwargs
+                adversarial_config = call_kwargs["attack_adversarial_config"]
+                # This function no longer composes a prefix itself - callers are expected to pass
+                # an already-resolved adversarial_chat_system_prompt (e.g. via
+                # SeedSimulatedConversation.with_layered_prefix) before calling in.
+                assert adversarial_config.system_prompt is adversarial_system_prompt
+                assert adversarial_config.system_prompt_prefix is None
+
     async def test_creates_attack_with_score_last_turn_only_true(
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the attack is created with score_last_turn_only=True."""
@@ -226,15 +328,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                 )
 
@@ -246,7 +348,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the attack is created with the specified num_turns as max_turns."""
@@ -269,15 +371,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=5,
                 )
 
@@ -289,7 +391,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the function returns a list of SeedPrompts."""
@@ -316,20 +418,20 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 result = await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                 )
 
                 # Verify get_conversation_messages was called with the correct conversation_id
-                mock_memory.get_conversation_messages.assert_called_once_with(conversation_id=conversation_id)
+                mock_memory.get_conversation_messages_async.assert_called_once_with(conversation_id=conversation_id)
 
                 assert isinstance(result, SimulatedConversationResult)
                 assert len(result.seed_prompts) == len(sample_conversation)
@@ -340,7 +442,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that the simulated target system prompt is passed via prepended_conversation."""
@@ -363,8 +465,8 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 # Pass a simulated_target_system_prompt_path to test prepending behavior
@@ -372,7 +474,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     simulated_target_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
                     num_turns=3,
                 )
@@ -389,7 +491,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that memory_labels are passed to attack.execute_async."""
@@ -414,15 +516,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     memory_labels=memory_labels,
                 )
@@ -436,7 +538,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ) -> None:
         """The transient helper retains both sides of its conversation lineage."""
@@ -460,15 +562,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 result = await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                 )
 
         assert {
@@ -478,11 +580,165 @@ class TestGenerateSimulatedConversationAsync:
             (adversarial_id, ConversationType.ADVERSARIAL),
         }
 
-    async def test_passes_converter_config_to_attack(
+    async def test_adversarial_block_is_returned_as_preparation_failure(
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
         adversarial_system_prompt_path: Path,
+    ) -> None:
+        preparation_id = str(uuid.uuid4())
+        adversarial_id = str(uuid.uuid4())
+        adversarial_reference = ConversationReference(
+            conversation_id=adversarial_id,
+            conversation_type=ConversationType.ADVERSARIAL,
+        )
+        failure_reason = "Adversarial chat blocked the attack before it could generate the next prompt."
+
+        with (
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class,
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation._generate_next_message_async",
+                new_callable=AsyncMock,
+            ) as mock_generate_next,
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class,
+        ):
+            mock_attack = MagicMock()
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    conversation_id=preparation_id,
+                    objective="Test objective",
+                    outcome=AttackOutcome.UNDETERMINED,
+                    outcome_reason=failure_reason,
+                    related_conversations={adversarial_reference},
+                    metadata=AttackPreparationFailure(
+                        kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                        reason=failure_reason,
+                    ).to_metadata(),
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.get_conversation_messages_async.return_value = []
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            result = await generate_simulated_conversation_async(
+                objective="Test objective",
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+            )
+
+        assert result.seed_prompts == []
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.reason == failure_reason
+        assert {
+            (reference.conversation_id, reference.conversation_type) for reference in result.related_conversations
+        } == {
+            (preparation_id, ConversationType.PREPARATION),
+            (adversarial_id, ConversationType.ADVERSARIAL),
+        }
+        mock_generate_next.assert_not_awaited()
+
+    async def test_adversarial_block_without_outcome_reason_still_reports_a_reason(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt_path: Path,
+    ) -> None:
+        with (
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class,
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation._generate_next_message_async",
+                new_callable=AsyncMock,
+            ),
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class,
+        ):
+            mock_attack = MagicMock()
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    conversation_id=str(uuid.uuid4()),
+                    objective="Test objective",
+                    outcome=AttackOutcome.UNDETERMINED,
+                    outcome_reason=None,
+                    metadata={
+                        AttackPreparationFailure.METADATA_KEY: (
+                            AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED.value
+                        )
+                    },
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.get_conversation_messages_async.return_value = []
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            result = await generate_simulated_conversation_async(
+                objective="Test objective",
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+            )
+
+        assert result.seed_prompts == []
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.reason
+
+    async def test_final_prompt_block_is_returned_as_preparation_failure(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt_path: Path,
+        sample_conversation: list[Message],
+    ) -> None:
+        preparation_id = str(uuid.uuid4())
+
+        with (
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.RedTeamingAttack") as mock_attack_class,
+            patch(
+                "pyrit.executor.attack.multi_turn.simulated_conversation._generate_next_message_async",
+                new_callable=AsyncMock,
+                side_effect=AdversarialChatResponseBlockedException(
+                    status_code=200,
+                    message="I cannot assist with that request.",
+                ),
+            ),
+            patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class,
+        ):
+            mock_attack = MagicMock()
+            mock_attack.execute_async = AsyncMock(
+                return_value=AttackResult(
+                    conversation_id=preparation_id,
+                    objective="Test objective",
+                    outcome=AttackOutcome.FAILURE,
+                )
+            )
+            mock_attack_class.return_value = mock_attack
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.get_conversation_messages_async.return_value = sample_conversation
+            mock_memory_class.get_memory_instance.return_value = mock_memory
+
+            result = await generate_simulated_conversation_async(
+                objective="Test objective",
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+                adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
+            )
+
+        assert result.preparation_failure is not None
+        assert result.preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
+        assert "I cannot assist with that request." in result.preparation_failure.reason
+        assert any(
+            reference.description == "simulated next-message generation" for reference in result.related_conversations
+        )
+
+    async def test_passes_converter_config_to_attack(
+        self,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that attack_converter_config is passed to RedTeamingAttack."""
@@ -507,15 +763,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     attack_converter_config=converter_config,
                 )
@@ -528,7 +784,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that a system message is prepended when executing the attack."""
@@ -551,8 +807,8 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 # Pass a simulated_target_system_prompt_path to test prepending behavior
@@ -560,7 +816,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     simulated_target_system_prompt_path=SimulatedTargetSystemPromptPaths.COMPLIANT.value,
                     num_turns=3,
                 )
@@ -576,7 +832,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that default num_turns is 3."""
@@ -599,8 +855,8 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 # Call without specifying num_turns
@@ -608,7 +864,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                 )
 
                 # Verify default max_turns is 3
@@ -619,7 +875,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that next_message_system_prompt_path generates a final user message via LLM call."""
@@ -663,12 +919,12 @@ class TestGenerateSimulatedConversationAsync:
                     "pyrit.executor.attack.multi_turn.simulated_conversation.PromptNormalizer"
                 ) as mock_normalizer_class,
             ):
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 # The manager sends the adversarial turn through this normalizer.
-                mock_normalizer = MagicMock(spec=PromptNormalizer)
+                mock_normalizer = get_mock_prompt_normalizer()
                 mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
                 mock_normalizer_class.return_value = mock_normalizer
 
@@ -676,7 +932,7 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
@@ -703,7 +959,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that next_message_system_prompt_path sets a system prompt on adversarial_chat."""
@@ -746,11 +1002,11 @@ class TestGenerateSimulatedConversationAsync:
                     "pyrit.executor.attack.multi_turn.simulated_conversation.PromptNormalizer"
                 ) as mock_normalizer_class,
             ):
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
-                mock_normalizer = MagicMock(spec=PromptNormalizer)
+                mock_normalizer = get_mock_prompt_normalizer()
                 mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
                 mock_normalizer_class.return_value = mock_normalizer
 
@@ -758,19 +1014,19 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
 
                 # The manager renders and sets the adversarial system prompt before sending.
-                mock_adversarial_chat.set_system_prompt.assert_called()
+                mock_adversarial_chat.set_system_prompt_async.assert_called()
 
     async def test_next_message_scopes_system_prompt_to_generated_message_conversation(
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Regression: the next-message system prompt must be scoped to a concrete conversation id.
@@ -818,11 +1074,11 @@ class TestGenerateSimulatedConversationAsync:
                     "pyrit.executor.attack.multi_turn.simulated_conversation.PromptNormalizer"
                 ) as mock_normalizer_class,
             ):
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
-                mock_normalizer = MagicMock(spec=PromptNormalizer)
+                mock_normalizer = get_mock_prompt_normalizer()
                 mock_normalizer.send_prompt_async = AsyncMock(return_value=next_message_reply)
                 mock_normalizer_class.return_value = mock_normalizer
 
@@ -830,12 +1086,12 @@ class TestGenerateSimulatedConversationAsync:
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     next_message_system_prompt_path=NextMessageSystemPromptPaths.DIRECT.value,
                 )
 
-                system_prompt_conversation_id = mock_adversarial_chat.set_system_prompt.call_args.kwargs[
+                system_prompt_conversation_id = mock_adversarial_chat.set_system_prompt_async.call_args.kwargs[
                     "conversation_id"
                 ]
                 assert system_prompt_conversation_id
@@ -849,7 +1105,7 @@ class TestGenerateSimulatedConversationAsync:
         self,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        adversarial_system_prompt_path: Path,
+        adversarial_system_prompt: SeedPrompt,
         sample_conversation: list[Message],
     ):
         """Test that starting_sequence sets the sequence number of the first prompt."""
@@ -874,15 +1130,15 @@ class TestGenerateSimulatedConversationAsync:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 result = await generate_simulated_conversation_async(
                     objective="Test objective",
                     adversarial_chat=mock_adversarial_chat,
                     objective_scorer=mock_objective_scorer,
-                    adversarial_chat_system_prompt_path=adversarial_system_prompt_path,
+                    adversarial_chat_system_prompt=adversarial_system_prompt,
                     num_turns=3,
                     starting_sequence=5,
                 )
@@ -898,7 +1154,7 @@ class TestGenerateNextMessageAsync:
 
     @staticmethod
     def _mock_normalizer(reply: Message | None) -> MagicMock:
-        normalizer = MagicMock(spec=PromptNormalizer)
+        normalizer = get_mock_prompt_normalizer()
         normalizer.send_prompt_async = AsyncMock(return_value=reply)
         return normalizer
 
@@ -935,7 +1191,7 @@ class TestGenerateNextMessageAsync:
         assert result.message_pieces[0].role == "user"
         assert normalizer.send_prompt_async.call_args.kwargs["conversation_id"] == "next-message-conversation"
         # The manager renders and sets the adversarial system prompt before sending.
-        mock_adversarial_chat.set_system_prompt.assert_called_once()
+        mock_adversarial_chat.set_system_prompt_async.assert_called_once()
         # The canonical schema is always resolved and forwarded so schema-aware targets constrain output.
         sent_message = normalizer.send_prompt_async.call_args.kwargs["message"]
         assert sent_message.message_pieces[0].prompt_metadata.get("response_format") == "json"
@@ -1018,8 +1274,8 @@ class TestSimulatedConversationPromptSources:
             mock_attack_class.return_value = self._mock_attack(str(uuid.uuid4()))
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 with patch("pyrit.models.seeds.yaml_seed_loader.load_seed_from_yaml") as mock_load:
@@ -1049,8 +1305,8 @@ class TestSimulatedConversationPromptSources:
             mock_attack_class.return_value = mock_attack
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 await generate_simulated_conversation_async(
@@ -1080,8 +1336,8 @@ class TestSimulatedConversationPromptSources:
             mock_attack_class.return_value = self._mock_attack(str(uuid.uuid4()))
 
             with patch("pyrit.executor.attack.multi_turn.simulated_conversation.CentralMemory") as mock_memory_class:
-                mock_memory = MagicMock()
-                mock_memory.get_conversation_messages.return_value = iter(sample_conversation)
+                mock_memory = MagicMock(spec=MemoryInterface)
+                mock_memory.get_conversation_messages_async = AsyncMock(return_value=iter(sample_conversation))
                 mock_memory_class.get_memory_instance.return_value = mock_memory
 
                 with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):

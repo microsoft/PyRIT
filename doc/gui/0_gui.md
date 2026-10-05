@@ -297,16 +297,18 @@ Until you expand or collapse the section, its default follows the current group 
 
 The Configuration view manages the targets available for attacks.
 
-<img width="1636" alt="Target configuration" src="images/config.png" />
+<img width="1664" alt="Target configuration" src="images/config.png" />
 
 #### Target Table
 
-Lists all registered targets with their type, endpoint, and model name. Two dropdowns above **Filter by type** select your defaults. Each option shows the registry name and model, when available:
+Lists all registered targets with their type, endpoint, model name, input and output modalities, and capabilities. Two dropdowns above the table select your defaults. Each option shows the registry name and model, when available:
 
 - **Default objective target:** Preselected for new chats and scanner runs.
 - **Default adversarial target:** Preselected for scanner runs that use the shared adversarial target. The target must support multi-turn conversations. Without a saved selection, the GUI preselects the registered `adversarial_chat` target, which the target initializer configures from `ADVERSARIAL_CHAT_*` environment variables. A saved user selection takes priority.
 
 The objective dropdown appears first, followed by the adversarial dropdown. Select **Not set** to clear the objective default. Select **Use server default** to remove a saved adversarial selection and return to the environment default. Small **Objective** and **Adversarial** badges identify the selected rows; the table has no separate defaults column. Filtering the table does not filter the default dropdowns or change your selections.
+
+Filters for type, inputs, outputs, and capabilities sit above the table, and each one appears only when it can narrow the list. You can check several values in a filter, and typing in an open filter narrows its choices. A target matches the type, inputs, or outputs filter when it has any of the checked values, so checking **Image** under inputs also shows targets that accept both text and images. It matches the capabilities filter only when it supports every checked capability. A target must match all the filters you set, and **Reset all filters** clears them. If the target list changes and a checked value no longer applies, it is cleared.
 
 Defaults are saved in this browser, separately for each signed-in account. They do not follow you to another browser or device. When authentication is disabled, the browser uses a separate local profile. Only target names and identity hashes are stored, not credentials or complete target configurations.
 
@@ -358,7 +360,55 @@ The **Configuration** page provides administrator-only editing for the files and
 - **Initializers** shows the read-only startup sequence from the active `.pyrit_conf`, in run order, along with the catalog of registered initializers.
 - **Custom Initializers** registers or removes Python initializer scripts. This tab requires `allow_custom_initializers: true`; scripts are stored in the configured local directory or Azure Blob container and must define a concrete `PyRITInitializer` subclass.
 
-Use **Reload** to discard local edits and fetch the latest source content. Saved configuration and environment changes take effect after restarting PyRIT. Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+Use **Reload file** to fetch the latest source content; unsaved edits require explicit discard confirmation.
+**Save** only persists a source. **Reinitialize PyRIT** separately applies saved configuration, environment sources,
+and stored initializer scripts for every user of this backend. Save or discard editor changes first.
+Custom initializer scripts execute under the backend service identity, so only trusted administrators should manage them.
+
+### Reinitializing without a process restart
+
+Set `enable_live_reinitialization: true` in the saved `.pyrit_conf` to enable this administrator action. This setting
+is an explicit operator acknowledgement that the deployment has **one backend process and one replica**.
+It is disabled when `WEB_CONCURRENCY`, `UVICORN_WORKERS`, `PYRIT_API_WORKERS`, or `PYRIT_REPLICAS` specifies anything
+other than `1`. Do not use it behind a multi-worker server or across multiple replicas; it is not a distributed
+configuration update. External scaling settings cannot be discovered from within a process.
+
+Before replacement, PyRIT validates the saved configuration, environment sources, scripts, initializer parameters,
+and required environment values. Custom initializer scripts are trusted code. Importing a script or constructing its
+initializer can have side effects during validation.
+
+Reinitialization resets setup-owned component registries and recreates backend services. Components created only
+through the GUI must be recreated. The same memory object and persisted history are retained, including an in-memory
+database. Changing the memory type, Azure SQL connection, or Azure results storage configuration requires a backend
+restart and is rejected before replacement.
+
+Live apply does not stop or drain work. It rejects the request if a scenario, preparation, send, estimate, or other
+runtime operation is active. Wait for the work to finish, or cancel it with its existing control, and then retry.
+When the runtime is idle, PyRIT closes admission and checks again before it changes runtime state. This second check
+prevents newly admitted work from overlapping replacement.
+
+Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
+changes and refresh catalogs without discarding chat or configuration drafts.
+
+If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
+if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
+backend. The administration UI stays available for configuration repair. Authentication and authorization retain
+their process-start settings; reinitialization does not recreate them.
+
+Selected environment assignments replace existing process values, **including deployment-provided values**.
+Omitted variables remain unchanged; empty assignments set an empty value. Key Vault source selection and
+`.env.local` priority are preserved, and interpolation uses the new selected values. Ordinary library initialization
+keeps its existing precedence; replacement is an explicit reinitialization option. There is no rollback of
+environment assignments, initializer side effects, memory writes, or external actions if initialization fails.
+Listener and authentication settings remain process-start-only. This does not run a process supervisor, restart a
+container, or make local source files durable when a container is replaced.
+
+API clients can use administrator-only `GET /api/config/runtime`, `POST /api/config/runtime/apply`
+(`version`). Obtain the configuration version and opt-in state from `GET /api/config`. A newly admitted operation
+returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
+invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
+at `GET /api/runtime`.
+`GET /api/health` reports server responsiveness, not runtime readiness.
 
 ---
 

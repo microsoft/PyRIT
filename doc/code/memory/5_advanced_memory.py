@@ -16,7 +16,7 @@
 # 2. **Identifier Filters** — structured filters that match against the JSON-backed identifier columns
 #    (target, converter, scorer, attack) stored alongside different memory entities, such as `MessagePiece`, `AttackResult`, etc.
 #    This notebook demonstrates the functionality with `MessagePiece` entities, but the concepts are similar for other memory entities.
-# 3. **Score Identifier Filters** — the same `IdentifierFilter` mechanism applied to `memory.get_scores()` for
+# 3. **Score Identifier Filters** — the same `IdentifierFilter` mechanism applied to `memory.get_scores_async()` for
 #    retrieving scores by scorer identity (class name, custom parameters, etc.).
 #
 # ## Part 1 — Memory Labels
@@ -73,7 +73,7 @@ from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TextTarget
 
 memory = CentralMemory.get_memory_instance()
-prompts = memory.get_message_pieces(labels={"prompt_group": group1})
+prompts = await memory.get_message_pieces_async(labels={"prompt_group": group1})
 
 # Print original values of queried message pieces (including responses)
 for piece in prompts:
@@ -141,7 +141,7 @@ for filter_target_class in filter_target_classes:
         value=filter_target_class,
     )
 
-    target_class_pieces = memory.get_message_pieces(
+    target_class_pieces = await memory.get_message_pieces_async(
         identifier_filters=[target_class_filter],
     )
 
@@ -164,7 +164,7 @@ openai_filter = IdentifierFilter(
     partial_match=True,
 )
 
-openai_pieces = memory.get_message_pieces(
+openai_pieces = await memory.get_message_pieces_async(
     identifier_filters=[openai_filter],
 )
 
@@ -187,7 +187,7 @@ converter_filter = IdentifierFilter(
     value="Base64Converter",
 )
 
-base64_pieces = memory.get_message_pieces(
+base64_pieces = await memory.get_message_pieces_async(
     identifier_filters=[converter_filter],
 )
 
@@ -208,7 +208,7 @@ text_target_filter = IdentifierFilter(
     value="TextTarget",
 )
 
-combined_pieces = memory.get_message_pieces(
+combined_pieces = await memory.get_message_pieces_async(
     identifier_filters=[text_target_filter, converter_filter],
 )
 
@@ -225,7 +225,7 @@ for piece in combined_pieces:
 
 # %%
 # Retrieve prompts from our labeled group that specifically went through Base64Converter
-labeled_and_filtered = memory.get_message_pieces(
+labeled_and_filtered = await memory.get_message_pieces_async(
     labels={"prompt_group": group1},
     identifier_filters=[converter_filter],
 )
@@ -237,12 +237,12 @@ for piece in labeled_and_filtered:
 # %% [markdown]
 # ## Part 3 — Filtering Scores by Scorer Identity
 #
-# `IdentifierFilter` also works with `memory.get_scores()`. Every `Score` stored in memory records the
+# `IdentifierFilter` also works with `memory.get_scores_async()`. Every `Score` stored in memory records the
 # **scorer's identifier** — a JSON object that contains the class name as well as any custom parameters
 # the scorer was initialized with.
 #
 # In this example we create two `SubStringScorer` instances with different substrings, score the
-# assistant responses from Part 1, and then use `identifier_filters` on `memory.get_scores()` to
+# assistant responses from Part 1, and then use `identifier_filters` on `memory.get_scores_async()` to
 # retrieve only the scores produced by a specific scorer.
 
 # %%
@@ -257,7 +257,7 @@ scorer_assist = SubStringScorer(
 )  # intentionally bad scorer that matches when the phrase 'assist' is present in response. But good for demo.
 
 # Retrieve assistant responses from Part 1
-assistant_pieces = memory.get_message_pieces(
+assistant_pieces = await memory.get_message_pieces_async(
     labels={"prompt_group": group1},
     role="assistant",
 )
@@ -287,7 +287,7 @@ scorer_class_filter = IdentifierFilter(
     value="SubStringScorer",
 )
 
-all_substring_scores = memory.get_scores(
+all_substring_scores = await memory.get_scores_async(
     identifier_filters=[scorer_class_filter],
 )
 
@@ -310,7 +310,7 @@ molotov_scorer_filter = IdentifierFilter(
     value="molotov",
 )
 
-molotov_scores = memory.get_scores(
+molotov_scores = await memory.get_scores_async(
     identifier_filters=[molotov_scorer_filter],
 )
 
@@ -327,7 +327,7 @@ launder_scorer_filter = IdentifierFilter(
     value="launder",
 )
 
-launder_scores = memory.get_scores(
+launder_scores = await memory.get_scores_async(
     identifier_filters=[launder_scorer_filter],
 )
 
@@ -344,7 +344,7 @@ assist_scorer_filter = IdentifierFilter(
     value="assist",
 )
 
-assist_scores = memory.get_scores(
+assist_scores = await memory.get_scores_async(
     identifier_filters=[assist_scorer_filter],
 )
 

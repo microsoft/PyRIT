@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import math
 import uuid
 from typing import TYPE_CHECKING, cast
@@ -10,7 +11,6 @@ if TYPE_CHECKING:
 
 from pyrit.models import (
     ComponentIdentifier,
-    Condition,
     Scorable,
     ScorableUnion,
     Score,
@@ -21,6 +21,7 @@ from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleAggre
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
+from pyrit.score.scorer import Scorer
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
 
@@ -104,28 +105,29 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """
-        Report what the wrapped scorer matches.
+        Apply the policy to the wrapped float-scale scorer.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
 
         Returns:
-            frozenset[type[Condition]]: The condition types the wrapped scorer routes.
+            Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
+            the updated scorer.
         """
-        return self._scorer.matched_conditions()
+        scoped_inner = cast(
+            "FloatScaleScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
+        )
+        if scoped_inner is self._scorer:
+            return self
+        scoped = copy.copy(self)
+        scoped._scorer = scoped_inner
+        return scoped
 
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """
-        Report what the wrapped scorer requires.
-
-        Returns:
-            frozenset[type[Condition]]: The required condition types.
-        """
-        return self._scorer.required_conditions()
-
-    def _validate_expectation(self, *, expectation: ScoringExpectation | None) -> None:
-        """Validate wrapper and child criteria without checking sibling condition coverage."""
-        super()._validate_expectation(expectation=expectation)
-        self._scorer._validate_expectation(expectation=expectation)
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorer whose value is compared to the threshold."""
+        return (self._scorer,)
 
     async def _score_scorable_async(
         self,
@@ -144,7 +146,9 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             list[Score]: ``[]`` when the wrapped scorer is non-applicable; otherwise, a list
                 containing one completed or undetermined true/false score.
         """
-        scores = await self._scorer._score_nested_async(scorable=scorable, expectation=expectation)
+        scores = await self._scorer._score_nested_async(
+            scorable=scorable, expectation=self._scorer._select_expectation(expectation=expectation)
+        )
         if not scores:
             return []
         return self._apply_threshold(
@@ -209,7 +213,7 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         else:
             comparison_symbol = "="
 
-        score = scores[0]
+        score = self._create_wrapper_score(scores[0])
         score.score_type = "true_false"
         score.score_value = str(threshold_result)
         score.status = ScoreStatus.COMPLETE
@@ -226,7 +230,6 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         )
         score.score_value_description = aggregate_score.description
         score.score_category = aggregate_score.category
-        score.id = uuid.uuid4()
         score.scorer_class_identifier = self.get_identifier()
         score.observation_ids = _merge_observation_ids(scores=scores)
         # Store the original float value in metadata for granular comparison

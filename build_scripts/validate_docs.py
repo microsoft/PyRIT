@@ -102,6 +102,8 @@ def find_orphaned_files(toc_files: set[str], doc_root: Path) -> list[str]:
             continue
         # .py companion files for .ipynb are not orphaned
         if file_path.suffix == ".py":
+            if "supporting_assets" in file_path.parts:
+                continue
             notebook_version = file_path.with_suffix(".ipynb")
             if notebook_version.exists():
                 continue

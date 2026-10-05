@@ -13,13 +13,15 @@ authorization.
 import logging
 import os
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from time import monotonic
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import httpx
 from fastapi import HTTPException, status
+from starlette._utils import get_route_path
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -49,11 +51,20 @@ class AuthenticatedUser:
     is_admin: bool = False
 
 
+def authorization_environment(request: Request) -> Mapping[str, str]:
+    """Return the process-start authorization settings, never reinitialized values."""
+    state = getattr(request.scope.get("app"), "state", None)
+    environment = getattr(state, "auth_environment", None)
+    return cast("Mapping[str, str]", environment) if isinstance(environment, dict) else os.environ
+
+
 def require_admin(request: Request) -> None:
     """Require an administrator when authentication is enabled."""
     user = getattr(request.state, "user", None)
     if user is None:
-        allow_unauthenticated = os.getenv("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
+        allow_unauthenticated = (
+            authorization_environment(request).get("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
+        )
         if allow_unauthenticated:
             return
     if not isinstance(user, AuthenticatedUser) or not user.is_admin:
@@ -129,7 +140,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             Response with 401 if auth fails, otherwise the normal response.
         """
         # Skip auth for public paths and static files
-        path = request.url.path
+        path = get_route_path(request.scope)
         if not self._enabled or path in self._PUBLIC_PATHS or not path.startswith("/api"):
             return await call_next(request)
 

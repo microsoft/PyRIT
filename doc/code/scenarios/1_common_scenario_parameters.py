@@ -13,7 +13,9 @@
 #
 # This guide covers the key parameters for configuring scenarios programmatically: datasets,
 # techniques, baseline execution, and custom scorers. All examples use `RedTeamAgent` but the
-# patterns apply to any scenario.
+# patterns apply to any scenario. The last section,
+# [Reporting Every Conversation](#reporting-every-conversation), shows how to print each attack's
+# conversation and save a full HTML report.
 #
 # > **Two selection axes**: *Techniques* select attack techniques (*how* attacks run — e.g., prompt
 # > sending, role play, TAP). *Datasets* select objectives (*what* is tested — e.g., harm categories,
@@ -51,13 +53,21 @@ dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dat
 # %% [markdown]
 # For more control, use `SeedDatasetProvider` to fetch datasets and pass explicit `seed_groups`.
 # This is useful when you need to filter, combine, or inspect the prompts before running.
+#
+# The default techniques below include `AsciiSmugglerConverter`, which only accepts printable
+# ASCII (0x20-0x7E). Filter out seed groups containing newlines, other control characters, or
+# non-ASCII text before sampling. This preserves the original text of the selected objectives.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedGroup
 
 datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["harmbench"])  # type: ignore
-seed_groups: list[SeedGroup] = datasets[0].seed_groups  # type: ignore
+seed_groups: list[SeedGroup] = [
+    group
+    for group in datasets[0].seed_groups
+    if all(seed.value.isascii() and seed.value.isprintable() for seed in group.seeds)
+]
 
 # Pass explicit seed_groups instead of dataset_names
 dataset_config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=2)
@@ -182,3 +192,32 @@ await custom_scenario.initialize_async()  # type: ignore
 
 custom_result = await custom_scenario.run_async()  # type: ignore
 await output_scenario_async(custom_result)
+
+# %% [markdown]
+# ## Reporting Every Conversation
+#
+# `output_scenario_async` gives a high-level overview of a run. To see granular details within each attack, use
+# `output_scenario_conversations_async`. It reads each attack's conversation from memory and prints
+# one JSON document that shows only the objective score on each response, like
+# `pyrit_scan scenario-results --view conversations`. It includes every attack unless you pass
+# `attack_result_ids` or `limit`; here `limit=1` prints just the first one.
+
+# %%
+from pyrit.output import output_scenario_conversations_async
+
+await output_scenario_conversations_async(custom_result, limit=1)
+
+# %% [markdown]
+# `output_scenario_full_async` adds the run overview, like `--view full`, and writes the report as
+# JSON or a standalone HTML page. HTML needs a sink such as `FileSink`. This example writes the report
+# to a temporary folder; point `FileSink` at your own path to keep it.
+
+# %%
+import tempfile
+
+from pyrit.output import FileSink, output_scenario_full_async
+
+with tempfile.TemporaryDirectory() as report_dir:
+    report_path = Path(report_dir) / "report.html"
+    await output_scenario_full_async(custom_result, format="html", sink=FileSink(path=report_path))
+    print(f"Wrote {report_path.name}")

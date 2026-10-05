@@ -8,18 +8,16 @@ Serves non-secret Entra ID configuration to the frontend so MSAL can be
 initialized without hardcoding tenant-specific values in the JS bundle.
 """
 
-import os
-
 from fastapi import APIRouter, Request
 
-from pyrit.backend.middleware.auth import AuthenticatedUser
+from pyrit.backend.middleware.auth import AuthenticatedUser, authorization_environment
 
 router = APIRouter()
 _GRAPH_SCOPES = ["https://graph.microsoft.com/User.Read"]
 
 
 @router.get("/auth/config")
-async def get_auth_config_async() -> dict[str, str | bool | list[str]]:
+async def get_auth_config_async(request: Request) -> dict[str, str | bool | list[str]]:
     """
     Return Entra ID configuration for the frontend MSAL client.
 
@@ -31,9 +29,10 @@ async def get_auth_config_async() -> dict[str, str | bool | list[str]]:
         dict: Auth configuration with enabled state, clientId, tenantId,
             allowedGroupIds, and delegated Microsoft Graph scopes.
     """
-    client_id = os.getenv("ENTRA_CLIENT_ID", "").strip()
-    tenant_id = os.getenv("ENTRA_TENANT_ID", "").strip()
-    allowed_group_ids = os.getenv("ENTRA_ALLOWED_GROUP_IDS", "").strip()
+    environment = authorization_environment(request)
+    client_id = environment.get("ENTRA_CLIENT_ID", "").strip()
+    tenant_id = environment.get("ENTRA_TENANT_ID", "").strip()
+    allowed_group_ids = environment.get("ENTRA_ALLOWED_GROUP_IDS", "").strip()
     enabled = bool(client_id and tenant_id and allowed_group_ids)
 
     return {
@@ -51,5 +50,7 @@ async def get_auth_access_async(request: Request) -> dict[str, bool]:
     user = getattr(request.state, "user", None)
     is_admin = isinstance(user, AuthenticatedUser) and user.is_admin
     if user is None:
-        is_admin = os.getenv("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
+        is_admin = (
+            authorization_environment(request).get("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
+        )
     return {"isAdmin": is_admin}

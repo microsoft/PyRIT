@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
+from unit.mocks import get_mock_prompt_normalizer, get_mock_scorer_identifier, get_mock_target_identifier
 
 from pyrit.executor.attack import (
     AttackConverterConfig,
@@ -46,7 +46,7 @@ def mock_true_false_scorer():
 
 @pytest.fixture
 def mock_prompt_normalizer():
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -381,7 +381,7 @@ class TestSkeletonKeyAttackExecuteAsync:
         attack._perform_async = AsyncMock(return_value=mock_result)
 
         with patch(
-            "pyrit.executor.attack.single_turn.prompt_sending.MessageScorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ):

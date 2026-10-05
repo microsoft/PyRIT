@@ -4,17 +4,32 @@
 import os
 import tempfile
 import uuid
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier
+from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoringExpectation
+from pyrit.prompt_target import GandalfLevel
+from pyrit.score import (
+    DecodingScorer,
+    GandalfScorer,
+    MessageScorer,
+    QuestionAnswerScorer,
+    SystemPromptExtractionScorer,
+    create_conversation_scorer,
+)
+from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
+
+if TYPE_CHECKING:
+    from pyrit.score.scorer import Scorer
 
 
 class MockTextTrueFalseScorer(MessageTrueFalseScorer):
@@ -107,6 +122,27 @@ class TestAudioTrueFalseScorer:
 
         assert audio_scorer._audio_helper.text_scorer is text_scorer
 
+    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt", "gandalf"])
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_rejects_history_dependent_transcript_scorers(self, *, history_scorer: str, nested: bool) -> None:
+        scorer: Scorer
+        if history_scorer == "decoding":
+            scorer = DecodingScorer()
+        elif history_scorer == "conversation":
+            scorer = create_conversation_scorer(scorer=MockTextTrueFalseScorer())
+        elif history_scorer == "system_prompt":
+            scorer = SystemPromptExtractionScorer()
+        else:
+            scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=MockPromptTarget())
+
+        assert isinstance(scorer, MessageScorer)
+        wrapper = MockTextTrueFalseScorer()
+        with (
+            patch.object(wrapper, "_get_child_scorers", return_value=(scorer,) if nested else ()),
+            pytest.raises(ValueError, match="requires stored conversation history"),
+        ):
+            AudioTranscriptHelper(text_capable_scorer=wrapper if nested else scorer)
+
     def test_build_identifier(self):
         """Test that _build_identifier returns correct identifier"""
         text_scorer = MockTextTrueFalseScorer()
@@ -115,6 +151,23 @@ class TestAudioTrueFalseScorer:
         identifier = audio_scorer._build_identifier()
 
         assert isinstance(identifier, ComponentIdentifier)
+
+    async def test_typed_transcript_criteria_are_explicit_async(self, audio_message_piece: MessagePiece) -> None:
+        scorer = AudioTrueFalseScorer(text_capable_scorer=QuestionAnswerScorer())
+        expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
+        unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
+        with (
+            patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
+            patch.object(
+                scorer._audio_helper.text_scorer,
+                "_score_nested_message_async",
+                wraps=scorer._audio_helper.text_scorer._score_nested_message_async,
+            ) as child,
+            _scoring_expectation_context(unrelated),
+        ):
+            [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
+        assert score.get_value() is True
+        assert child.call_args.kwargs["expectation"] is expectation
 
     async def test_score_piece_with_transcript(self, audio_message_piece):
         """Test scoring audio with a valid transcript"""
@@ -127,7 +180,7 @@ class TestAudioTrueFalseScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = "Hello, this is a test transcript."
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
@@ -145,7 +198,7 @@ class TestAudioTrueFalseScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = ""
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             # Empty transcript returns empty list
             assert len(scores) == 0
@@ -161,7 +214,7 @@ class TestAudioTrueFalseScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = "Some transcript text"
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
@@ -199,7 +252,7 @@ class TestAudioFloatScaleScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = "Hello, this is a test transcript."
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             assert len(scores) == 1
             assert scores[0].score_type == "float_scale"
@@ -217,10 +270,25 @@ class TestAudioFloatScaleScorer:
         ) as mock_transcribe:
             mock_transcribe.return_value = ""
 
-            scores = await audio_scorer._score_piece_async(audio_message_piece)
+            scores = await audio_scorer._score_piece_with_expectation_async(audio_message_piece, expectation=None)
 
             # Empty transcript returns empty list
             assert len(scores) == 0
+
+    async def test_typed_criteria_forwarded_to_float_child_async(self, audio_message_piece: MessagePiece) -> None:
+        text_scorer = MockTextFloatScaleScorer()
+        scorer = AudioFloatScaleScorer(text_capable_scorer=text_scorer)
+        expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
+        child_scores = await text_scorer._score_piece_async(MessagePiece(role="assistant", original_value="Paris"))
+        with (
+            patch.object(text_scorer, "CONDITION_TYPE", AnswerMatches),
+            patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
+            patch.object(text_scorer, "_score_nested_message_async", return_value=child_scores) as child,
+            _scoring_expectation_context(ScoringExpectation(objective="unrelated")),
+        ):
+            [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
+        assert score.get_value() == 0.8
+        assert child.call_args.kwargs["expectation"] is expectation
 
 
 @pytest.mark.usefixtures("patch_central_database")

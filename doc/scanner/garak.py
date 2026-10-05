@@ -17,7 +17,8 @@
 # various formats), prompt-injection probes (which embed override commands in benign tasks),
 # API-key probes (which test whether a target will generate or complete
 # credential-shaped values), web-injection probes (which test whether a target emits markdown
-# data-exfiltration or cross-site-scripting payloads), a doctor probe (which applies the Policy
+# data-exfiltration or cross-site-scripting payloads), exploitation probes (which test whether a
+# target echoes template-injection or SQL exploit payloads), a doctor probe (which applies the Policy
 # Puppetry universal bypass), system-prompt-extraction probes (which test whether a target can be
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
@@ -68,6 +69,8 @@ from pyrit.scenario.garak import (
     Doctor,
     Encoding,
     EncodingTechnique,
+    Exploitation,
+    ExploitationTechnique,
     FigStep,
     LatentInjection,
     LatentInjectionDatasetConfiguration,
@@ -239,6 +242,55 @@ web_injection_result = await web_injection_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(web_injection_result)
+
+# %% [markdown]
+# ## Exploitation
+#
+# Ports Garak's active `exploitation.JinjaTemplatePythonInjection` and
+# `exploitation.SQLInjectionEcho` probes. Technique-owned converters wrap each raw payload in the
+# echo template and, for Python payloads, a Jinja expression. The templates are part of the
+# technique identity, not the objective, and are defined in private factories in the scenario
+# module. No technique initializer or shared catalog registration is required.
+# `GarakExploitationScorer` loads its default reference payloads from the pinned, packaged
+# corpus at construction time, independent of memory sampling. It uses Garak's primary detector
+# rules: Jinja extraction followed by a payload check, or SQL payload matching followed by
+# keyword-gated injection patterns. Matching preserves upstream case sensitivity.
+# A positive result reports emitted exploit material, not downstream execution.
+# Set `extended_checks` to `True` in `set_params_from_args(args=...)` to add auxiliary
+# `SSTIOutputScorer` and `SQLInjectionOutputScorer` checks. This option is persisted for resume.
+#
+# **CLI examples:**
+#
+# ```bash
+# # Run the bounded default (both techniques, up to 20 prompts total).
+# pyrit_scan run garak.exploitation --target openai_chat
+#
+# # Run only the SQL echo technique with a smaller total cap.
+# pyrit_scan run garak.exploitation --target openai_chat --techniques sql_injection_echo --prompt-cap 2
+# ```
+#
+# **Available techniques:** `JinjaTemplatePythonInjection` and `SQLInjectionEcho`. `DEFAULT` and
+# `ALL` both select the two techniques. `prompt_cap` is a deterministic cap across all selected
+# techniques, not a per-technique cap. Payloads have a stable sort order before selection.
+
+# %%
+exploitation_scenario = Exploitation()
+exploitation_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [ExploitationTechnique.SQLInjectionEcho],
+        "prompt_cap": 2,
+    }
+)
+await exploitation_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {exploitation_scenario.name}")
+print(f"Atomic attacks: {exploitation_scenario.atomic_attack_count}")
+
+exploitation_result = await exploitation_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(exploitation_result)
 
 # %% [markdown]
 # ## ApiKey

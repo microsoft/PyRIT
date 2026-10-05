@@ -27,7 +27,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: [
-    ["html", { open: "never" }],
+    process.env.CI ? ["blob"] : ["html", { open: "never" }],
     ["list"],
     ["./e2e/noSkippedTestsReporter.ts"],
   ],
@@ -35,7 +35,7 @@ export default defineConfig({
 
   use: {
     baseURL: E2E_FRONTEND_URL,
-    trace: "on-first-retry",
+    trace: process.env.CI ? "retain-on-failure" : "on-first-retry",
     screenshot: "only-on-failure",
     // Pre-set localStorage so the onboarding tour doesn't auto-start and
     // block UI interactions in E2E tests.
@@ -84,7 +84,7 @@ export default defineConfig({
     ? [
         {
           command:
-            `cd .. && uv run python -m pyrit.backend.pyrit_backend ` +
+            `cd .. && uv run --no-sync python -m pyrit.backend.pyrit_backend ` +
             `--host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
             "--config-file tests/end_to_end/test_config.yaml",
           env: { PYRIT_DEV_MODE: "true" },

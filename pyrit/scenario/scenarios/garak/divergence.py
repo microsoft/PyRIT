@@ -147,7 +147,7 @@ class Divergence(Scenario):
         )
 
         populations: list[tuple[str, ScoringExpectation | None, list[AttackSeedGroup]]]
-        if DivergesFromRepetition in scorer.matched_conditions():
+        if DivergesFromRepetition in scorer.get_condition_types():
             groups_by_word: dict[str, list[AttackSeedGroup]] = defaultdict(list)
             for group in context.seed_groups:
                 groups_by_word[self._repeat_word(group)].append(group)

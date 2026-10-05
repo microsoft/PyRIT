@@ -67,9 +67,9 @@ class _EstimateTechnique(ScenarioTechnique):
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(compatibility_headers: dict[str, str]) -> TestClient:
     """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    return TestClient(app, headers=compatibility_headers)
 
 
 @pytest.fixture(autouse=True)
@@ -148,6 +148,68 @@ def test_catalog_preserves_adversarial_default_usage(uses_default: bool) -> None
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAdversarialEstimateScope:
+    @pytest.mark.parametrize(
+        ("scenario_name", "estimate_request", "message"),
+        [
+            (
+                "garak.prompt_inject",
+                ScenarioRunSizeEstimateRequest(max_dataset_size=1),
+                "must be at least the number of goal_texts",
+            ),
+            (
+                "garak.exploitation",
+                ScenarioRunSizeEstimateRequest(scenario_params={"prompt_cap": 0}),
+                "prompt_cap must be greater than zero",
+            ),
+        ],
+    )
+    async def test_configured_preview_rejects_impossible_parameters_without_dataset_reads_async(
+        self, *, scenario_name: str, estimate_request: ScenarioRunSizeEstimateRequest, message: str
+    ) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            service = ScenarioService()
+            with pytest.raises(ValueError, match=message):
+                await service.estimate_scenario_run_size_async(scenario_name=scenario_name, request=estimate_request)
+
+    async def test_default_and_configured_previews_do_not_load_datasets_async(self) -> None:
+        registry = ScenarioRegistry()
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(
+                DatasetAttackConfiguration,
+                "_collect_named_seeds_async",
+                side_effect=AssertionError("Preview queried datasets"),
+            ),
+        ):
+            scenario = registry.create_instance("garak.api_key")
+            service = ScenarioService()
+            with patch.object(registry, "create_instance", return_value=scenario):
+                default = await service._get_default_run_size_estimate_async(
+                    metadata=_make_scenario_metadata(registry_name="garak.api_key"),
+                )
+            configured = await service.estimate_scenario_run_size_async(
+                scenario_name="garak.api_key",
+                request=ScenarioRunSizeEstimateRequest(max_dataset_size=7),
+            )
+        assert default.estimated_attack_count == 20
+        assert configured is not None
+        assert configured.estimated_attack_count == 7
+        assert configured.model_dump(mode="json")["status"] == "approximate"
+        payload = configured.model_dump(mode="json")
+        assert payload["dataset_size"] == {"kind": "bounded", "value": 7}
+        assert payload["dataset_limit"] == {"state": "value", "value": 7}
+        assert "configured_dataset_size" not in payload
+        assert ScenarioRunSizeEstimate.model_validate(payload) == configured
+        assert all(dataset.logical_seed_group_count is None for dataset in configured.datasets)
+
     async def test_cold_registry_estimate_uses_selected_target_without_global_fallback_async(self) -> None:
         registry = ScenarioRegistry()
         selected = MockPromptTarget()
@@ -331,6 +393,30 @@ class TestAdversarialEstimateScope:
 
 class TestScenarioServiceListScenarios:
     """Tests for ScenarioService.list_scenarios_async."""
+
+    async def test_shutdown_tracks_all_owned_estimate_workers(self) -> None:
+        service = ScenarioService()
+        release = asyncio.Event()
+
+        async def wait_for_release() -> ScenarioRunSizeEstimate:
+            await release.wait()
+            return ScenarioRunSizeEstimate.unavailable()
+
+        default_task = asyncio.create_task(wait_for_release())
+        configured_task = asyncio.create_task(wait_for_release())
+        timed_out_task = asyncio.create_task(wait_for_release())
+        service._estimate_tasks[("default", 1)] = default_task
+        service._configured_estimate_tasks[("configured", Scenario, "request")] = configured_task
+        service._timed_out_estimate_workers.add(timed_out_task)
+
+        assert service.outstanding_estimates() == 3
+        close_task = asyncio.create_task(service.close_async())
+        await asyncio.sleep(0)
+        assert not close_task.done()
+
+        release.set()
+        await close_task
+        assert service.outstanding_estimates() == 0
 
     async def test_list_scenarios_returns_empty_when_no_scenarios(self) -> None:
         """Test that list returns empty list when no scenarios are registered."""
@@ -683,7 +769,7 @@ class TestScenarioServiceListScenarios:
         service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
 
         catalog_task = asyncio.create_task(service.list_scenarios_async())
-        await asyncio.wait_for(two_started.wait(), timeout=1)
+        await asyncio.wait_for(two_started.wait(), timeout=2)
         await asyncio.sleep(0)
 
         assert service._run_default_estimate_async.await_count == 2

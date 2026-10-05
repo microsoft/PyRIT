@@ -33,7 +33,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score.true_false.self_ask_refusal_scorer import SelfAskRefusalScorer
@@ -49,7 +49,10 @@ image_path = pathlib.Path(".") / ".." / ".." / ".." / "assets" / "pyrit_architec
 # this is typically stored in the database and not constructed like this
 seed_group = AttackSeedGroup(
     seeds=[
-        SeedObjective(value="Get the model to describe pyrit architecture based on the image"),
+        SeedObjective(
+            value="Get the model to describe pyrit architecture based on the image",
+            origin=SeedOrigin.USER,
+        ),
         SeedPrompt(value="You are a helpful assistant", role="system", sequence=0),
         SeedPrompt(value="Hello how are you?", data_type="text", role="user", sequence=1),
         SeedPrompt(value="I am fine, thank you!", data_type="text", role="assistant", sequence=2),
@@ -162,6 +165,31 @@ print(system_prompt.value)
 # **Constraining the Response Shape:**
 # - `response_json_schema:` inlines a JSON schema on a seed; `response_json_schema_name:` references one bundled under `pyrit/datasets/json_schemas/` (e.g. `true_false_with_rationale`). Set at most one.
 # - Targets that support structured output (e.g. OpenAI's `json_schema` response format) enforce it natively; other targets get the schema appended to the prompt text automatically by the normalization pipeline.
+#
+# **Authoring Scoring Criteria:**
+# An objective can carry `conditions` beside its `value`. Conditions tell scorers what to check; they are not sent to the target. For example:
+#
+# ```yaml
+# name: geography_questions
+# seeds:
+#   - seed_type: objective
+#     value: Answer the geography question
+#     prompt_group_alias: france
+#     conditions:
+#       - condition_type: answer_matches
+#         correct_answer: Paris
+#         correct_answer_label: "2"
+#   - seed_type: prompt
+#     value: "What is the capital of France? 1: London; 2: Paris"
+#     prompt_group_alias: france
+# ```
+#
+# Use `QuestionAnswerScorer` or `SelfAskQuestionAnswerScorer` with this dataset. In Python, the same criterion is `AnswerMatches(correct_answer="Paris", correct_answer_label="2")` in `SeedObjective.conditions`. Quote choice labels in YAML, because both Q&A fields are strings, and omit `correct_answer_label` for an open-ended answer. Labels must be nonempty, but are not checked against choices in prompt text. Conditions are literal data, not Jinja templates.
+# Unknown condition types and fields fail validation rather than being dropped: omitting a criterion could change the verdict. Use a version that supports the dataset's conditions.
+#
+# `SeedGroup.scoring_expectation` returns the objective text and its conditions. Load seeds into memory, retrieve their groups, and pass attack groups to `AttackExecutor.execute_attack_from_seed_groups_async`. The executor forwards the criteria to the configured scorers, and each condition must have a compatible scorer.
+#
+# A shared execution `expectation` replaces seed criteria; a per-row `field_overrides` entry takes precedence over that shared value. An explicit `expectation=None` clears seed criteria and selects the attack-objective fallback. Equal objective text with different conditions is stored separately in memory.
 #
 # #### YAML Example
 #

@@ -1,6 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import math
+
+import pytest
+
 from pyrit.analytics.text_matching import ApproximateTextMatching, ExactTextMatching
 
 
@@ -26,6 +30,16 @@ class TestExactTextMatching:
     def test_empty_text(self):
         matcher = ExactTextMatching(case_sensitive=False)
         assert matcher.is_match(target="hello", text="") is False
+
+    def test_empty_target(self):
+        matcher = ExactTextMatching()
+        assert matcher.is_match(target="", text="hello world") is False
+        assert matcher.is_match(target="   \n ", text="hello world") is False
+
+    def test_whitespace_only_target_when_whitespace_is_not_ignored(self):
+        matcher = ExactTextMatching(ignore_whitespace=False)
+        assert matcher.is_match(target=" ", text="hello world") is False
+        assert matcher.is_match(target=" \n\t ", text="hello world") is False
 
     def test_partial_match(self):
         matcher = ExactTextMatching(case_sensitive=False)
@@ -87,6 +101,25 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=0.5, n=3)
         assert matcher.is_match(target="hello", text="") is False
 
+    def test_whitespace_only_target(self):
+        # A whitespace-only target is long enough to form n-grams, so it used to
+        # score a perfect overlap against any text containing the same run of
+        # spaces. `ExactTextMatching` rejects a blank target for the same reason.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.is_match(target="   ", text="hello world") is False
+        assert matcher.is_match(target="   ", text="x   y") is False
+        assert matcher.get_overlap_score(target="   ", text="x   y") == 0.0
+
+    def test_whitespace_only_target_with_zero_threshold(self):
+        matcher = ApproximateTextMatching(threshold=0.0, n=3)
+        assert matcher.is_match(target="   ", text="x   y") is False
+
+    def test_whitespace_only_target_is_not_confused_with_a_padded_real_target(self):
+        # Stripping only decides whether the target is blank; a target that has
+        # real content still matches, padding and all.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.is_match(target="  hello  ", text="say hello there") is True
+
     def test_approximate_detection(self):
         # Test detecting encoded/modified text
         original = "secretmessage"
@@ -113,6 +146,26 @@ class TestApproximateTextMatching:
         # Partial match should be between 0 and 1
         score = matcher.get_overlap_score(target="hello", text="hallo")
         assert 0.0 < score < 1.0
+
+    @pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf, -0.1, 1.1])
+    def test_invalid_threshold_rejected(self, threshold):
+        with pytest.raises(ValueError, match="threshold"):
+            ApproximateTextMatching(threshold=threshold)
+
+    @pytest.mark.parametrize("threshold", [0.0, 1.0])
+    def test_boundary_threshold_accepted(self, threshold):
+        matcher = ApproximateTextMatching(threshold=threshold)
+        assert matcher.is_match(target="hello", text="hello world") is True
+
+    @pytest.mark.parametrize("n", [0, -1, -5, 1.5, "3", None, True, False])
+    def test_invalid_n_rejected(self, n):
+        with pytest.raises(ValueError, match="n"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [1, 2, 5])
+    def test_valid_n_accepted(self, n):
+        matcher = ApproximateTextMatching(n=n)
+        assert matcher._n == n
 
     def test_default_parameters(self):
         matcher = ApproximateTextMatching()  # Default threshold=0.5, n=3, case_sensitive=False

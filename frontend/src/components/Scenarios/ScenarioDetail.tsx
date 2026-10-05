@@ -31,6 +31,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import TargetSelect from '@/components/Config/TargetSelect'
+import { useRuntime } from '@/hooks/useRuntime'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
@@ -95,22 +96,8 @@ function targetOptionLabel(target: TargetInstance): string {
 }
 
 function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  const datasets = scenario.default_run_size.datasets
-  if (datasets.length === 0) {
-    return ''
-  }
-
-  for (const dataset of datasets) {
-    if (dataset.configured_caps.length === 0) {
-      return ''
-    }
-  }
-
-  const selectedGroupCount = datasets.reduce(
-    (total, dataset) => total + dataset.selected_seed_group_count,
-    0,
-  )
-  return selectedGroupCount > 0 ? String(selectedGroupCount) : ''
+  const limit = scenario.default_run_size.dataset_limit
+  return limit.state === 'value' ? String(limit.value) : ''
 }
 
 /** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
@@ -208,18 +195,19 @@ function estimateFromState(state: ScenarioRunEstimateState): ScenarioRunEstimate
 function formatAtomicAttackCount(state: ScenarioRunEstimateState): string {
   const estimate = estimateFromState(state)
   if (!estimate) {
-    return state.status === 'loading' ? 'Calculating...' : 'Unavailable'
+    return state.status === 'loading' ? 'Calculating...' : 'Unknown'
   }
+  const prefix = estimate.approximate ? 'About ' : ''
   if (estimate.total !== null) {
-    return estimate.total.toLocaleString()
+    return `${estimate.approximate ? 'Up to ' : ''}${estimate.total.toLocaleString()}`
   }
   if (estimate.minimum != null && estimate.maximum != null) {
     return estimate.minimum === estimate.maximum
-      ? estimate.minimum.toLocaleString()
-      : `${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
+      ? `${prefix}${estimate.minimum.toLocaleString()}`
+      : `${prefix}${estimate.minimum.toLocaleString()}-${estimate.maximum.toLocaleString()}`
   }
   if (estimate.minimum != null) {
-    return `At least ${estimate.minimum.toLocaleString()}`
+    return `At least ${prefix.toLowerCase()}${estimate.minimum.toLocaleString()}`
   }
   if (estimate.maximum != null) {
     return `Up to ${estimate.maximum.toLocaleString()}`
@@ -451,11 +439,13 @@ function ScenarioDetailContent({
   const decodedScenarioName = routerPathParamValue(encodedScenarioName)
 
   const [scenario, setScenario] = useState<RegisteredScenario | null>(null)
+  const { generation, ready } = useRuntime()
   const [scenarioStatus, setScenarioStatus] = useState<LoadStatus>('loading')
   const [scenarioError, setScenarioError] = useState<string | null>(null)
   const [refetchCount, setRefetchCount] = useState(0)
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     scenariosApi
       .getScenario(decodedScenarioName)
@@ -475,7 +465,7 @@ function ScenarioDetailContent({
     return () => {
       cancelled = true
     }
-  }, [decodedScenarioName, refetchCount])
+  }, [decodedScenarioName, refetchCount, generation, ready])
 
   const handleRetry = (): void => {
     setScenarioStatus('loading')
@@ -570,6 +560,9 @@ function ScenarioLaunchForm({
   labels,
   onNavigate,
 }: ScenarioLaunchFormProps) {
+  const runtime = useRuntime()
+  const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
+  const staleSelection = selectionGeneration !== runtime.generation
   const styles = useScenarioDetailStyles()
   const navigate = useNavigate()
   const formId = `scenario-launch-${encodeURIComponent(scenario.scenario_name).replace(/%/g, '-')}`
@@ -604,6 +597,9 @@ function ScenarioLaunchForm({
     return ''
   })
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
+  const unavailableSelection = (
+    targetName !== '' && !targets.some((target) => target.target_registry_name === targetName)
+  ) || selectedTechniques.some((name) => !techniqueOptions.some((technique) => technique.name === name))
   const [baselineChecked, setBaselineChecked] = useState(
     () => !isBaselineForbidden && scenario.include_baseline_by_default,
   )
@@ -669,6 +665,9 @@ function ScenarioLaunchForm({
     && maxDatasetSize !== configuredDefaultMaxDatasetSize
     ? maxDatasetSize
     : ''
+  const datasetSizeLabel = scenario.default_run_size.dataset_limit.state === 'not_applicable'
+    ? 'Not applicable'
+    : maxDatasetSize.trim() || configuredDefaultMaxDatasetSize || 'Scenario default'
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -740,12 +739,12 @@ function ScenarioLaunchForm({
   const estimateRequestKey = useMemo(
     () => estimateRequest === null
       ? null
-      : JSON.stringify({ scenarioName: scenario.scenario_name, request: estimateRequest }),
-    [estimateRequest, scenario.scenario_name],
+      : JSON.stringify({ scenarioName: scenario.scenario_name, request: estimateRequest, generation: runtime.generation }),
+    [estimateRequest, scenario.scenario_name, runtime.generation],
   )
 
   useEffect(() => {
-    if (estimateRequest === null || estimateRequestKey === null) {
+    if (!runtime.ready || staleSelection || estimateRequest === null || estimateRequestKey === null) {
       return
     }
 
@@ -792,7 +791,7 @@ function ScenarioLaunchForm({
       window.clearTimeout(debounceTimer)
       controller.abort()
     }
-  }, [estimateRequest, estimateRequestKey, scenario.scenario_name])
+  }, [estimateRequest, estimateRequestKey, scenario.scenario_name, runtime.ready, staleSelection])
 
   let estimateState: ScenarioRunEstimateState
   if (!estimateResult.ok) {
@@ -881,7 +880,7 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current) {
+    if (isSubmittingRef.current || !runtime.ready || staleSelection || unavailableSelection) {
       return
     }
 
@@ -960,6 +959,21 @@ function ScenarioLaunchForm({
                 <MessageBarBody role="alert">{validationError}</MessageBarBody>
               </MessageBar>
             )}
+            {(staleSelection || (targetName && unavailableSelection)) && (
+              <MessageBar intent="warning">
+                <MessageBarBody>
+                  PyRIT was reinitialized. Review the refreshed target and technique selections before starting.
+                  Your parameter drafts have been preserved.
+                  <Button onClick={() => {
+                    setSelectedTechniques(selectedTechniques.filter((name) =>
+                      techniqueOptions.some((technique) => technique.name === name)))
+                    setSelectionGeneration(runtime.generation)
+                  }}>
+                    I have reviewed the refreshed selections
+                  </Button>
+                </MessageBarBody>
+              </MessageBar>
+            )}
             {apiError && (
               <MessageBar intent="error">
                 <MessageBarBody role="alert">{apiError}</MessageBarBody>
@@ -983,11 +997,15 @@ function ScenarioLaunchForm({
                   className={styles.control}
                   value={targetName}
                   disabled={submitting}
-                  onChange={(_, data) => setTargetName(data.value)}
+                  onChange={(_, data) => { setTargetName(data.value); setSelectionGeneration(runtime.generation) }}
                   data-testid="scenario-target-select"
                   aria-label="Objective Target"
                 >
-                  <option value="">{targets.length === 0 ? 'No targets configured' : 'Select an objective target'}</option>
+                  {!targets.some((target) => target.target_registry_name === targetName) && (
+                    <option value={targetName} disabled>
+                      {targets.length === 0 ? 'No targets configured' : 'Select an available target'}
+                    </option>
+                  )}
                   {targets.map((target) => (
                     <option key={target.target_registry_name} value={target.target_registry_name}>
                       {targetOptionLabel(target)}
@@ -1116,16 +1134,18 @@ function ScenarioLaunchForm({
                 </Field>
                 <Field
                   label="Max dataset size"
-                  hint={configuredDefaultMaxDatasetSize
+                  hint={scenario.default_run_size.dataset_limit.state === 'not_applicable'
+                    ? 'This scenario uses prompt-generation limits instead of a dataset size limit.'
+                    : configuredDefaultMaxDatasetSize
                     ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
-                    : 'Enter a positive integer to limit the selected dataset size.'}
+                    : 'Enter a positive integer to limit the selected dataset size. Leave empty to use scenario defaults.'}
                 >
                   <Input
                     className={styles.numberInput}
                     type="number"
                     min={1}
                     value={maxDatasetSize}
-                    disabled={submitting}
+                    disabled={submitting || scenario.default_run_size.dataset_limit.state === 'not_applicable'}
                     onChange={(_, data) => setMaxDatasetSize(data.value)}
                     data-testid="max-dataset-size-input"
                   />
@@ -1213,9 +1233,7 @@ function ScenarioLaunchForm({
                 <div className={styles.costEstimateRow}>
                   <dt>Dataset size</dt>
                   <dd>
-                    {maxDatasetSizeOverride.trim()
-                      || configuredDefaultMaxDatasetSize
-                      || 'Not configured'}
+                    {datasetSizeLabel}
                   </dd>
                 </div>
                 <div className={styles.costEstimateRow}>
@@ -1254,7 +1272,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={submitting || techniqueSelectionInvalid}
+                disabled={!runtime.ready || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
@@ -1310,7 +1328,7 @@ function ScenarioLaunchForm({
                           </Text>
                           <Text size={200} className={styles.hint}>
                             {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {maxDatasetSize.trim() ? ` - capped at ${maxDatasetSize.trim()} each` : ''}
+                            {` - dataset size: ${datasetSizeLabel}`}
                           </Text>
                         </div>
                       </dd>

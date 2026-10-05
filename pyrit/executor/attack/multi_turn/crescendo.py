@@ -15,6 +15,7 @@ from pyrit.executor.attack.component import ConversationManager, PrependedConver
 from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.core import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -41,7 +42,6 @@ from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     MessageScorable,
-    MessageScorer,
     NumericRubric,
     SelfAskRefusalScorer,
     SelfAskScaleScorer,
@@ -362,8 +362,10 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
 
         # Set the system prompt for adversarial chat via the manager, injecting Crescendo's
         # prepended-conversation context as an extra render value.
-        self._build_adversarial_manager(context=context).set_adversarial_system_prompt(
-            conversation_context=adversarial_chat_context,
+        (
+            await self._build_adversarial_manager(context=context).set_adversarial_system_prompt_async(
+                conversation_context=adversarial_chat_context
+            )
         )
 
         # Initialize backtrack count in context
@@ -707,7 +709,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
-            scoring_results = await MessageScorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=context.last_response,
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
@@ -733,7 +735,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
             str: The new conversation ID after backtracking.
         """
         # Access memory through the conversation manager's memory instance
-        new_conversation_id = self._memory.duplicate_conversation_excluding_last_turn(
+        new_conversation_id = await self._memory.duplicate_conversation_excluding_last_turn_async(
             conversation_id=conversation_id,
         )
         self._logger.debug(f"Backtracked conversation from {conversation_id} to {new_conversation_id}")

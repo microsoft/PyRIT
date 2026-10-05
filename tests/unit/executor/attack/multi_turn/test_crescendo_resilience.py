@@ -125,6 +125,7 @@ def _score(*, value: bool, name: str, rationale: str) -> Score:
 def _scorer(name: str) -> MagicMock:
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_async = AsyncMock()
+    scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
     scorer.get_identifier.return_value = _identifier(name)
     return scorer
 
@@ -307,7 +308,7 @@ class TestCrescendoMixedFailureRecovery:
         # A scorable names piece ids rather than carrying the message, so read them back.
         memory = CentralMemory.get_memory_instance()
         refusal_inputs = [
-            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=memory).get_value()
+            (await MessageScorableResolver().resolve_async(scorable=call.kwargs["scorable"], memory=memory)).get_value()
             for call in refusal_scorer.score_async.await_args_list
         ]
         assert refusal_inputs == [
@@ -355,7 +356,7 @@ class TestCrescendoMixedFailureRecovery:
         assert related_by_type[ConversationType.ADVERSARIAL] == {adversarial_target.attempts[0].conversation_id}
 
         memory = attack._memory
-        final_pieces = memory.get_message_pieces(conversation_id=final_conversation_id)
+        final_pieces = await memory.get_message_pieces_async(conversation_id=final_conversation_id)
         assert len(final_pieces) == 20
         assert len({piece.id for piece in final_pieces}) == 20
         assert [piece.original_value for piece in final_pieces if piece.api_role == "user"] == [
@@ -378,7 +379,7 @@ class TestCrescendoMixedFailureRecovery:
         ]
 
         adversarial_conversation_id = adversarial_target.attempts[0].conversation_id
-        adversarial_pieces = memory.get_message_pieces(conversation_id=adversarial_conversation_id)
+        adversarial_pieces = await memory.get_message_pieces_async(conversation_id=adversarial_conversation_id)
         assert len(adversarial_pieces) == 25
         assert partial_adversarial_reply not in {piece.original_value for piece in adversarial_pieces}
         adversarial_conversation = memory._get_conversation(conversation_id=adversarial_conversation_id)
@@ -390,7 +391,7 @@ class TestCrescendoMixedFailureRecovery:
             "InvalidJsonException",
             "RateLimitException",
         }
-        stored_results = memory.get_attack_results(objective=_OBJECTIVE)
+        stored_results = await memory.get_attack_results_async(objective=_OBJECTIVE)
         assert len(stored_results) == 1
         assert stored_results[0].outcome is AttackOutcome.SUCCESS
         assert stored_results[0].executed_turns == 10
@@ -542,7 +543,7 @@ class TestCrescendoSeededModalityTransitions:
         ]
 
         refusal_inputs = [
-            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=attack._memory)
+            await MessageScorableResolver().resolve_async(scorable=call.kwargs["scorable"], memory=attack._memory)
             for call in refusal_scorer.score_async.await_args_list
         ]
         objective_inputs = [call.kwargs["response"] for call in score_response.await_args_list]
@@ -557,7 +558,9 @@ class TestCrescendoSeededModalityTransitions:
             _OBJECTIVE,
         ]
 
-        objective_pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        objective_pieces = await attack._memory.get_message_pieces_async(
+            conversation_id=context.session.conversation_id
+        )
         assert [
             (piece.api_role, piece.original_value, piece.original_value_data_type) for piece in objective_pieces
         ] == [
@@ -580,7 +583,7 @@ class TestCrescendoSeededModalityTransitions:
         assert context.refused_text is None
         assert context.last_accepted_response is not None
         assert context.last_accepted_response.get_value() == "final text response"
-        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        stored_results = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
         assert len(stored_results) == 1
         assert stored_results[0].outcome is AttackOutcome.SUCCESS
         assert stored_results[0].conversation_id == context.session.conversation_id
@@ -712,7 +715,7 @@ class TestCrescendoSeededModalityTransitions:
         } == {first_conversation_id}
 
         refusal_inputs = [
-            MessageScorableResolver().resolve(scorable=call.kwargs["scorable"], memory=attack._memory)
+            await MessageScorableResolver().resolve_async(scorable=call.kwargs["scorable"], memory=attack._memory)
             for call in refusal_scorer.score_async.await_args_list
         ]
         assert [message.get_value() for message in refusal_inputs] == [
@@ -735,7 +738,7 @@ class TestCrescendoSeededModalityTransitions:
             _OBJECTIVE,
         ]
 
-        pruned_pieces = attack._memory.get_message_pieces(conversation_id=first_conversation_id)
+        pruned_pieces = await attack._memory.get_message_pieces_async(conversation_id=first_conversation_id)
         assert [
             (piece.api_role, piece.original_value, piece.original_value_data_type, piece.response_error)
             for piece in pruned_pieces
@@ -744,7 +747,7 @@ class TestCrescendoSeededModalityTransitions:
             ("user", seed_value, "image_path", "none"),
             ("assistant", "first response content filtered", "error", "blocked"),
         ]
-        final_pieces = attack._memory.get_message_pieces(conversation_id=retry_conversation_id)
+        final_pieces = await attack._memory.get_message_pieces_async(conversation_id=retry_conversation_id)
         assert [(piece.api_role, piece.original_value, piece.original_value_data_type) for piece in final_pieces] == [
             ("user", "question-2", "text"),
             ("user", seed_value, "image_path"),
@@ -807,12 +810,12 @@ class TestCrescendoTerminalBoundaries:
         refusal_scorer.score_async.assert_awaited_once()
         score_response.assert_not_awaited()
 
-        pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
         assert [piece.api_role for piece in pieces] == ["user", "assistant"]
         assert [piece.original_value for piece in pieces] == ["question-1", "response-1"]
         assert len({piece.id for piece in pieces}) == 2
 
-        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        stored_results = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
         assert len(stored_results) == 1
         assert stored_results[0].outcome is AttackOutcome.ERROR
         assert stored_results[0].error_type == "RuntimeError"
@@ -868,7 +871,7 @@ class TestCrescendoTerminalBoundaries:
         assert context.executed_turns == 4
         assert score_response.await_count == 5
         assert refusal_scorer.score_async.await_count == 5
-        partial_pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        partial_pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
         assert len(partial_pieces) == 10
         assert [piece.original_value for piece in partial_pieces if piece.api_role == "assistant"] == [
             "response-1",
@@ -877,7 +880,7 @@ class TestCrescendoTerminalBoundaries:
             "response-4",
             "response-5",
         ]
-        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        stored_results = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
         assert len(stored_results) == 1
         assert stored_results[0].outcome is AttackOutcome.ERROR
         assert stored_results[0].error_type == "RuntimeError"
@@ -916,7 +919,7 @@ class TestCrescendoTerminalBoundaries:
         refusal_scorer.score_async.assert_not_awaited()
 
         adversarial_conversation_id = adversarial_target.attempts[0].conversation_id
-        pieces = attack._memory.get_message_pieces(conversation_id=adversarial_conversation_id)
+        pieces = await attack._memory.get_message_pieces_async(conversation_id=adversarial_conversation_id)
         values = [piece.original_value for piece in pieces]
         assert malformed not in values
         assert partial in values
@@ -924,7 +927,7 @@ class TestCrescendoTerminalBoundaries:
         assert conversation is not None
         assert len(conversation.retries) == 1
 
-        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        stored_results = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
         assert len(stored_results) == 1
         assert stored_results[0].outcome is AttackOutcome.ERROR
         assert stored_results[0].total_retries == 2
@@ -969,11 +972,11 @@ class TestCrescendoTerminalBoundaries:
         assert [attempt.prompt for attempt in objective_target.attempts] == ["question-1", "question-1"]
         refusal_scorer.score_async.assert_not_awaited()
 
-        pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
         assert len(pieces) == 2
         assert pieces[0].original_value == "question-1"
         assert pieces[1].response_error == "processing"
-        stored_results = attack._memory.get_attack_results(objective=_OBJECTIVE)
+        stored_results = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
         assert len(stored_results) == 1
         assert stored_results[0].outcome is AttackOutcome.ERROR
         assert stored_results[0].total_retries == 2
@@ -1037,7 +1040,7 @@ class TestCrescendoTerminalBoundaries:
             "adversarial",
             "objective",
         ]
-        pieces = attack._memory.get_message_pieces(conversation_id=context.session.conversation_id)
+        pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
         assert len(pieces) == 8
         assert [piece.original_value for piece in pieces if piece.api_role == "assistant"] == [
             "response-1",
@@ -1045,5 +1048,5 @@ class TestCrescendoTerminalBoundaries:
             "response-3",
             "response-4",
         ]
-        assert attack._memory.get_attack_results(objective=_OBJECTIVE) == []
+        assert (await attack._memory.get_attack_results_async(objective=_OBJECTIVE)) == []
         assert get_retry_collector() is None

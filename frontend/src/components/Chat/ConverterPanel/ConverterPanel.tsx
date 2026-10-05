@@ -18,6 +18,7 @@ import {
 } from '@fluentui/react-icons'
 
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
+import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
@@ -158,6 +159,7 @@ export default function ConverterPanel({
   onClose,
   controller,
 }: ConverterPanelProps) {
+  const { generation, ready } = useRuntime()
   const styles = useConverterPanelStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [activeTab, setActiveTab] = useState('text')
@@ -220,6 +222,7 @@ export default function ConverterPanel({
   }, [retainConverters, addConverter])
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     void convertersApi.listConverters()
       .then((response) => {
@@ -239,7 +242,7 @@ export default function ConverterPanel({
     return () => {
       cancelled = true
     }
-  }, [retainConverters])
+  }, [generation, ready, retainConverters])
 
   const selectedConverters = useMemo(
     () => selectedStages.flatMap((stage: ConverterPipelineStage): SelectedConverter[] => {
@@ -446,7 +449,7 @@ export default function ConverterPanel({
                   size="small"
                   icon={isConverting ? <Spinner size="tiny" /> : <PlayRegular />}
                   onClick={() => void controller.convert(effectiveActiveTab)}
-                  disabled={isConverting || convertibleInputs.length === 0}
+                  disabled={!ready || isConverting || convertibleInputs.length === 0}
                   className={styles.previewButton}
                   title={`Convert the configured ${
                     PIECE_TYPE_LABELS[effectiveActiveTab] ?? effectiveActiveTab
@@ -576,7 +579,7 @@ export default function ConverterPanel({
               <Button
                 appearance="primary"
                 onClick={controller.apply}
-                disabled={isConverting || Object.keys(results).length === 0}
+                disabled={!ready || isConverting || Object.keys(results).length === 0}
                 className={styles.addConvertedButton}
                 data-testid="use-converted-btn"
               >

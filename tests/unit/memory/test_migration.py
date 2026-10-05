@@ -174,6 +174,28 @@ def test_run_schema_migrations_applies_head_revision():
             engine.dispose()
 
 
+@pytest.mark.parametrize("starting_revision", ["9b2d4f6a8c0e", "fcecd0617e61"])
+def test_seed_conditions_and_follow_up_template_migrations_merge(starting_revision: str) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, starting_revision)
+
+        run_schema_migrations(engine=engine)
+        check_schema_migrations(engine=engine)
+
+        with engine.connect() as connection:
+            version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+            assert version == _get_alembic_head_revision(config=config)
+            assert "conditions" in {column["name"] for column in inspect(connection).get_columns("SeedPromptEntries")}
+            assert "adversarial_prompt_template" in {
+                column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
+            }
+    finally:
+        engine.dispose()
+
+
 def test_scenario_progress_migration_adds_composite_index():
     """The migration head contains the parent/timestamp/id keyset index."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -256,6 +278,47 @@ def test_preparation_conversation_migration_upgrades_and_downgrades() -> None:
                 assert "preparation_conversation_ids" not in {
                     column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
                 }
+        finally:
+            engine.dispose()
+
+
+def test_conversation_attack_result_link_migration_upgrades_and_downgrades() -> None:
+    """The conversation's attack result link is added as a nullable indexed column and dropped again."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversation-attack-link.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "6767741d8c6f")
+                connection.execute(text('INSERT INTO "Conversations" (conversation_id) VALUES (:id)'), {"id": "legacy"})
+
+                command.upgrade(config, "6ea3eb4b61c3")
+                columns = {column["name"]: column for column in inspect(connection).get_columns("Conversations")}
+                assert columns["attack_result_id"]["nullable"] is True
+                indexes = {index["name"]: index for index in inspect(connection).get_indexes("Conversations")}
+                assert indexes["ix_Conversations_attack_result_id"]["column_names"] == ["attack_result_id"]
+                legacy_link = connection.execute(
+                    text('SELECT attack_result_id FROM "Conversations" WHERE conversation_id = :id'), {"id": "legacy"}
+                ).scalar_one()
+                assert legacy_link is None
+                attack_result_id = str(uuid.uuid4())
+                connection.execute(
+                    text('INSERT INTO "Conversations" (conversation_id, attack_result_id) VALUES (:id, :link)'),
+                    {"id": "linked", "link": attack_result_id},
+                )
+
+                command.downgrade(config, "6767741d8c6f")
+                assert "attack_result_id" not in {
+                    column["name"] for column in inspect(connection).get_columns("Conversations")
+                }
+                assert "ix_Conversations_attack_result_id" not in {
+                    index["name"] for index in inspect(connection).get_indexes("Conversations")
+                }
+                remaining = connection.execute(
+                    text('SELECT conversation_id FROM "Conversations" ORDER BY conversation_id')
+                ).scalars()
+                assert list(remaining) == ["legacy", "linked"]
         finally:
             engine.dispose()
 

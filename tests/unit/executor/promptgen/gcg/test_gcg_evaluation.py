@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock
 
 import pytest
+from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen3NextConfig, Qwen3NextForCausalLM  # type: ignore[ty:possibly-missing-import]
 
 pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.base.attack_manager",
@@ -23,6 +24,7 @@ from pyrit.executor.promptgen.gcg.attack.gcg.candidate_evaluator import (
     CandidateEvaluationBatch,
     GCGCandidateEvaluator,
 )
+from pyrit.executor.promptgen.gcg.default_implementations import CrossEntropyLoss
 from pyrit.executor.promptgen.gcg.extension_protocols import LossFunction
 
 
@@ -191,6 +193,373 @@ class TestGCGCandidateEvaluatorValidation:
 
 
 class TestGCGCandidateEvaluatorExecution:
+    def test_prefix_cache_rejects_additional_batched_layer_state(self) -> None:
+        class CacheLayer:
+            def __init__(self) -> None:
+                self.keys = torch.zeros(1, 2, 3, 4)
+                self.values = torch.zeros(1, 2, 3, 4)
+                self.conv_states = {0: [torch.zeros(1, 2, 3)]}
+
+        class Cache:
+            layers = [CacheLayer()]
+
+        with pytest.raises(TypeError, match="Unsupported state"):
+            AttackPrompt._expand_prefix_cache(Cache(), batch_size=2)
+
+    def test_prefix_cache_rejects_layer_without_instance_state(self) -> None:
+        class CacheLayer:
+            __slots__ = ("keys", "values")
+
+            def __init__(self) -> None:
+                self.keys = torch.zeros(1, 2, 3, 4)
+                self.values = torch.zeros(1, 2, 3, 4)
+
+        cache = MagicMock()
+        cache.layers = [CacheLayer()]
+
+        with pytest.raises(TypeError, match="Unsupported prefix-cache layer"):
+            AttackPrompt._expand_prefix_cache(cache, batch_size=2)
+
+    def test_prefix_cache_rejects_non_singleton_batch(self) -> None:
+        layer = MagicMock()
+        layer.keys = torch.zeros(2, 2, 3, 4)
+        layer.values = torch.zeros(2, 2, 3, 4)
+        cache = MagicMock()
+        cache.layers = [layer]
+
+        with pytest.raises(ValueError, match="exactly one sequence"):
+            AttackPrompt._expand_prefix_cache(cache, batch_size=2)
+
+    def test_prefix_cache_expands_legacy_cache(self) -> None:
+        keys = torch.randn(1, 2, 3, 4)
+        values = torch.randn(1, 2, 3, 4)
+
+        expanded = AttackPrompt._expand_prefix_cache(((keys, values),), batch_size=3)
+
+        assert expanded[0][0].shape == (3, 2, 3, 4)
+        assert expanded[0][1].shape == (3, 2, 3, 4)
+        assert torch.equal(expanded[0][0][0], keys[0])
+        assert torch.equal(expanded[0][1][0], values[0])
+
+    @pytest.mark.parametrize(
+        ("cache", "expected_error", "message"),
+        [
+            (((torch.zeros(1, 2), "not-a-tensor"),), TypeError, "Unsupported prefix-cache layer"),
+            (((torch.zeros(2, 2), torch.zeros(2, 2)),), ValueError, "exactly one sequence"),
+            (object(), TypeError, "Unsupported prefix-cache type"),
+        ],
+    )
+    def test_prefix_cache_rejects_unsupported_legacy_cache(
+        self,
+        cache: object,
+        expected_error: type[Exception],
+        message: str,
+    ) -> None:
+        with pytest.raises(expected_error, match=message):
+            AttackPrompt._expand_prefix_cache(cache, batch_size=2)
+
+    def test_selective_logits_match_full_logits_on_transformers_model(self) -> None:
+        torch.manual_seed(123)
+        model = Qwen2ForCausalLM(
+            Qwen2Config(
+                vocab_size=32,
+                hidden_size=16,
+                intermediate_size=32,
+                num_hidden_layers=1,
+                num_attention_heads=2,
+                num_key_value_heads=2,
+                max_position_embeddings=32,
+            )
+        ).eval()
+        prompt = object.__new__(AttackPrompt)
+        prompt._control_slice = slice(1, 3)
+        prompt._target_slice = slice(4, 7)
+        prompt.input_ids = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8])
+        prompt.tokenizer = MagicMock()
+        candidates = torch.tensor([[9, 10], [11, 12]])
+        loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
+
+        full_logits, token_ids = prompt.logits(model, candidates, return_ids=True)
+        expected = loss_fn.compute_loss(
+            logits=full_logits,
+            token_ids=token_ids,
+            target_slice=prompt._target_slice,
+            control_slice=prompt._control_slice,
+        )
+        actual = prompt.loss(model, candidates, loss_fn)
+
+        assert torch.equal(actual, expected)
+
+    def test_prefix_cached_loss_matches_full_forward_on_transformers_model(self) -> None:
+        torch.manual_seed(123)
+        model = Qwen2ForCausalLM(
+            Qwen2Config(
+                vocab_size=32,
+                hidden_size=16,
+                intermediate_size=32,
+                num_hidden_layers=2,
+                num_attention_heads=2,
+                num_key_value_heads=2,
+                max_position_embeddings=32,
+            )
+        ).eval()
+        prompt = object.__new__(AttackPrompt)
+        prompt._control_slice = slice(3, 5)
+        prompt._target_slice = slice(6, 9)
+        prompt.input_ids = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        prompt.tokenizer = MagicMock()
+        candidates = torch.tensor([[11, 12], [13, 14], [15, 16]])
+        loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
+
+        full_logits, token_ids = prompt.logits(model, candidates, return_ids=True)
+        expected = loss_fn.compute_loss(
+            logits=full_logits,
+            token_ids=token_ids,
+            target_slice=prompt._target_slice,
+            control_slice=prompt._control_slice,
+        )
+        attention_mask = torch.ones_like(token_ids)
+        prompt._build_candidate_batch = MagicMock(return_value=(token_ids, attention_mask))
+        forward_calls = []
+
+        def capture_forward(_module, _args, kwargs, output):
+            forward_calls.append((kwargs, output.logits.shape))
+
+        hook = model.register_forward_hook(capture_forward, with_kwargs=True)
+        try:
+            actual = prompt.loss(model, candidates, loss_fn, use_prefix_cache=True)
+        finally:
+            hook.remove()
+
+        assert torch.allclose(actual, expected, rtol=1e-5, atol=1e-6)
+        assert actual.argmin() == expected.argmin()
+        prefix_kwargs, prefix_logits_shape = forward_calls[0]
+        assert prefix_kwargs["logits_to_keep"] == 1
+        assert prefix_logits_shape[1] == 1
+        assert torch.equal(
+            prefix_kwargs["attention_mask"],
+            attention_mask[:1, : prompt._control_slice.start - 1],
+        )
+        assert torch.equal(forward_calls[1][0]["attention_mask"], attention_mask)
+
+    def test_hybrid_cache_falls_back_to_uncached_selective_logits(self) -> None:
+        torch.manual_seed(123)
+        model = Qwen3NextForCausalLM(
+            Qwen3NextConfig(
+                vocab_size=32,
+                hidden_size=16,
+                intermediate_size=32,
+                num_hidden_layers=2,
+                num_attention_heads=2,
+                num_key_value_heads=1,
+                head_dim=8,
+                max_position_embeddings=32,
+                linear_conv_kernel_dim=4,
+                linear_key_head_dim=8,
+                linear_value_head_dim=8,
+                linear_num_key_heads=2,
+                linear_num_value_heads=2,
+                moe_intermediate_size=16,
+                shared_expert_intermediate_size=16,
+                num_experts_per_tok=1,
+                num_experts=2,
+                layer_types=["linear_attention", "full_attention"],
+            )
+        ).eval()
+        prompt = object.__new__(AttackPrompt)
+        prompt._control_slice = slice(3, 5)
+        prompt._target_slice = slice(6, 9)
+        prompt.input_ids = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        prompt.tokenizer = MagicMock()
+        candidates = torch.tensor([[11, 12], [13, 14], [15, 16]])
+        loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
+
+        expected = prompt.loss(model, candidates, loss_fn)
+        forward_calls = []
+
+        def capture_forward(_module, _args, kwargs, _output):
+            forward_calls.append(kwargs)
+
+        hook = model.register_forward_hook(capture_forward, with_kwargs=True)
+        try:
+            actual = prompt.loss(model, candidates, loss_fn, use_prefix_cache=True)
+        finally:
+            hook.remove()
+
+        assert torch.equal(actual, expected)
+        assert len(forward_calls) == 2
+        assert forward_calls[0]["input_ids"].shape[0] == 1
+        assert forward_calls[0]["logits_to_keep"] == 1
+        assert forward_calls[1]["input_ids"].shape[0] == len(candidates)
+        assert "past_key_values" not in forward_calls[1]
+
+    def test_attack_prompt_worker_loss_matches_direct_computation(self) -> None:
+        logits = torch.randn(2, 6, 10)
+        token_ids = torch.randint(0, 10, (2, 6))
+        prompt = MagicMock()
+        prompt.logits.return_value = (logits, token_ids)
+        prompt._target_slice = slice(3, 5)
+        prompt._control_slice = slice(1, 3)
+        loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
+        model = MagicMock()
+        candidates = ["cand-1", "cand-2"]
+
+        actual = AttackPrompt.loss(prompt, model, candidates, loss_fn)
+        expected = loss_fn.compute_loss(
+            logits=logits,
+            token_ids=token_ids,
+            target_slice=prompt._target_slice,
+            control_slice=prompt._control_slice,
+        )
+
+        assert torch.equal(actual, expected)
+        prompt.logits.assert_called_once_with(model, candidates, return_ids=True)
+
+    def test_attack_prompt_loss_handles_uninspectable_model_forward(self) -> None:
+        logits = torch.randn(2, 6, 10)
+        token_ids = torch.randint(0, 10, (2, 6))
+        prompt = MagicMock()
+        prompt.logits.return_value = (logits, token_ids)
+        prompt._target_slice = slice(3, 5)
+        prompt._control_slice = slice(1, 3)
+        loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
+        model = MagicMock()
+        model.forward = object()
+
+        actual = AttackPrompt.loss(prompt, model, ["cand-1", "cand-2"], loss_fn)
+
+        expected = loss_fn.compute_loss(
+            logits=logits,
+            token_ids=token_ids,
+            target_slice=prompt._target_slice,
+            control_slice=prompt._control_slice,
+        )
+        assert torch.equal(actual, expected)
+        prompt.logits.assert_called_once_with(model, ["cand-1", "cand-2"], return_ids=True)
+
+    def test_attack_prompt_worker_loss_selects_only_required_logits_when_supported(self) -> None:
+        class SelectiveModel:
+            device = torch.device("cpu")
+
+            def forward(self, *, logits_to_keep: int | torch.Tensor = 0) -> None:
+                del logits_to_keep
+
+        full_logits = torch.randn(2, 6, 10)
+        token_ids = torch.randint(0, 10, (2, 6))
+        prompt = MagicMock()
+        prompt._target_slice = slice(3, 5)
+        prompt._control_slice = slice(1, 3)
+        loss_fn = CrossEntropyLoss(target_weight=0.7, control_weight=0.3)
+        expected_positions = torch.tensor([2, 3, 0, 1])
+        prompt.logits.return_value = (full_logits[:, expected_positions, :], token_ids)
+        model = SelectiveModel()
+
+        actual = AttackPrompt.loss(prompt, model, ["cand-1", "cand-2"], loss_fn)
+        expected = loss_fn.compute_loss(
+            logits=full_logits,
+            token_ids=token_ids,
+            target_slice=prompt._target_slice,
+            control_slice=prompt._control_slice,
+        )
+
+        assert torch.equal(actual, expected)
+        prompt.logits.assert_called_once()
+        args, kwargs = prompt.logits.call_args
+        assert args == (model, ["cand-1", "cand-2"])
+        assert kwargs["return_ids"] is True
+        assert torch.equal(kwargs["logits_to_keep"], expected_positions)
+
+    def test_builtin_loss_is_computed_in_worker(self) -> None:
+        prompt = _MockAttackPrompt(target_slice=slice(3, 5), control_slice=slice(1, 3))
+        pm = _MockPromptManager([prompt])  # type: ignore[arg-type]
+        computed_losses = torch.tensor([0.42, 0.99])
+        worker = _MockWorker([computed_losses])
+        loss_fn = CrossEntropyLoss(target_weight=1.0, control_weight=0.1)
+        evaluator = GCGCandidateEvaluator(
+            workers=[worker],  # type: ignore[list-item]
+            prompts=[pm],  # type: ignore[list-item]
+            loss_function=loss_fn,
+            main_device=torch.device("cpu"),
+        )
+
+        candidates = [["cand-1", "cand-2"]]
+        result = evaluator.evaluate_candidates(control_candidates_by_group=candidates, batch_size=2)
+
+        assert torch.equal(result.losses, computed_losses)
+        assert len(worker.calls) == 1
+        args, kwargs = worker.calls[0]
+        assert args == (prompt, ModelWorkerOperation.LOSS, candidates[0], loss_fn)
+        assert kwargs == {"use_prefix_cache": False}
+
+    def test_builtin_loss_accumulates_across_workers(self) -> None:
+        prompts = [
+            _MockPromptManager([_MockAttackPrompt(slice(3, 5), slice(1, 3))]),
+            _MockPromptManager([_MockAttackPrompt(slice(3, 5), slice(1, 3))]),
+        ]
+        workers = [
+            _MockWorker([torch.tensor([0.2, 0.3])]),
+            _MockWorker([torch.tensor([0.5, 0.7])]),
+        ]
+        loss_fn = CrossEntropyLoss()
+        evaluator = GCGCandidateEvaluator(
+            workers=workers,  # type: ignore[arg-type]
+            prompts=prompts,  # type: ignore[arg-type]
+            loss_function=loss_fn,
+            main_device=torch.device("cpu"),
+        )
+
+        result = evaluator.evaluate_candidates(
+            control_candidates_by_group=[["cand-1", "cand-2"]],
+            batch_size=2,
+        )
+
+        assert torch.allclose(result.losses, torch.tensor([0.7, 1.0]))
+        assert all(worker.calls[0][0][1] is ModelWorkerOperation.LOSS for worker in workers)
+
+    def test_prefix_cache_opt_in_is_forwarded_to_worker(self) -> None:
+        prompt = _MockAttackPrompt(target_slice=slice(3, 5), control_slice=slice(1, 3))
+        pm = _MockPromptManager([prompt])  # type: ignore[arg-type]
+        computed_losses = torch.tensor([0.42, 0.99])
+        worker = _MockWorker([computed_losses])
+        loss_fn = CrossEntropyLoss()
+        evaluator = GCGCandidateEvaluator(
+            workers=[worker],  # type: ignore[list-item]
+            prompts=[pm],  # type: ignore[list-item]
+            loss_function=loss_fn,
+            main_device=torch.device("cpu"),
+            use_prefix_cache=True,
+        )
+
+        evaluator.evaluate_candidates(control_candidates_by_group=[["cand-1", "cand-2"]], batch_size=2)
+
+        assert worker.calls == [
+            (
+                (prompt, ModelWorkerOperation.LOSS, ["cand-1", "cand-2"], loss_fn),
+                {"use_prefix_cache": True},
+            )
+        ]
+
+    def test_builtin_loss_subclass_uses_custom_loss_path(self) -> None:
+        class CustomCrossEntropyLoss(CrossEntropyLoss):
+            pass
+
+        prompt = _MockAttackPrompt(target_slice=slice(3, 5), control_slice=slice(1, 3))
+        pm = _MockPromptManager([prompt])  # type: ignore[arg-type]
+        logits = torch.randn(2, 6, 10)
+        token_ids = torch.randint(0, 10, (2, 6))
+        worker = _MockWorker([(logits, token_ids)])
+        loss_fn = CustomCrossEntropyLoss()
+        evaluator = GCGCandidateEvaluator(
+            workers=[worker],  # type: ignore[list-item]
+            prompts=[pm],  # type: ignore[list-item]
+            loss_function=loss_fn,
+            main_device=torch.device("cpu"),
+        )
+
+        evaluator.evaluate_candidates(control_candidates_by_group=[["cand-1", "cand-2"]], batch_size=2)
+
+        assert worker.calls[0][0][1] is ModelWorkerOperation.LOGITS
+
     def test_single_worker_single_prompt_evaluation(self) -> None:
         target_slice = slice(3, 5)
         control_slice = slice(1, 3)

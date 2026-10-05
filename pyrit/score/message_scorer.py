@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import inspect
 import logging
 from abc import abstractmethod
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
@@ -38,8 +40,9 @@ from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
-    _observation_collection,
+    _collect_scores,
     _ObservationEvidence,
+    _scoring_collection,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
@@ -102,6 +105,11 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     Returns:
         str: The previous turn's text, or an empty string when there is none.
     """
+    print_deprecation_message(
+        old_item="extract_objective_from_previous_turn",
+        new_item="extract_objective_from_previous_turn_async",
+        removed_in="1.4.0",
+    )
     if not message.message_pieces:
         return ""
 
@@ -117,6 +125,49 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
         return ""
 
     conversation = memory.get_message_pieces(conversation_id=scored_piece.conversation_id)
+
+    return "\n".join(
+        [
+            piece.original_value
+            for piece in conversation
+            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+        ]
+    )
+
+
+async def extract_objective_from_previous_turn_async(*, message: Message, memory: MemoryInterface) -> str:
+    """
+    Read the text of the turn before an assistant message and use it as the objective.
+
+    .. deprecated::
+        This conflates scoring with building an expectation. What to look for belongs to
+        the caller that builds the ``ScoringExpectation``, not to the scorer. It exists only
+        to support the deprecated ``infer_objective_from_request`` parameter, and both are
+        removed in the next major release. Resolve the objective at the call site and pass
+        it on the expectation instead.
+
+    Args:
+        message (Message): The assistant message whose previous turn supplies the objective.
+        memory (MemoryInterface): Memory holding the conversation.
+
+    Returns:
+        str: The previous turn's text, or an empty string when there is none.
+    """
+    if not message.message_pieces:
+        return ""
+
+    scored_piece = message.get_piece()
+
+    if scored_piece.api_role != "assistant":
+        return ""
+
+    # The request is the turn before the response being scored, not before whatever the
+    # conversation has grown to since. Scoring an earlier response must not read the latest turn.
+    previous_sequence = scored_piece.sequence - 1
+    if previous_sequence < 0:
+        return ""
+
+    conversation = await memory.get_message_pieces_async(conversation_id=scored_piece.conversation_id)
 
     return "\n".join(
         [
@@ -264,6 +315,9 @@ class MessageScorer(Scorer):
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
 
+    # True when scoring needs other stored turns from the source conversation.
+    _REQUIRES_CONVERSATION_HISTORY: ClassVar[bool] = False
+
     #: When False, a blocked response from the scorer's own LLM produces an undetermined
     #: score instead of raising.
     raise_if_scorer_blocks: bool = True
@@ -292,33 +346,52 @@ class MessageScorer(Scorer):
             validator (ScorerPromptValidator): Validator for message pieces.
             chat_target (PromptTarget | None): Optional target used by the scorer.
             message_resolver (MessageScorableResolver | None): Evidence resolver.
+
+        Raises:
+            TypeError: If a legacy piece override would be hidden by an inherited typed hook.
         """
+        typed_hook_owner = next(
+            cls for cls in type(self).__mro__ if "_score_piece_with_expectation_async" in cls.__dict__
+        )
+        if typed_hook_owner is not MessageScorer:
+            hook_owner = next(
+                cls
+                for cls in type(self).__mro__
+                if "_score_piece_async" in cls.__dict__ or "_score_piece_with_expectation_async" in cls.__dict__
+            )
+            if "_score_piece_with_expectation_async" not in hook_owner.__dict__:
+                raise TypeError(
+                    f"{type(self).__name__} overrides _score_piece_async below an expectation-aware scorer. "
+                    "Move the custom policy to _score_piece_with_expectation_async."
+                )
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
 
-    def matched_conditions(self) -> frozenset[type[Condition]]:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """
-        Return the conditions this message scorer uses as criteria.
+        Return this scorer carrying the given blocked-response policy.
 
-        An objective-required validator is the existing declaration that the scorer judges
-        whether the evidence satisfies the objective. Other message scorers may read the
-        objective as context without matching ``MatchesObjective``.
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply.
 
         Returns:
-            frozenset[type[Condition]]: The matched condition types.
+            Scorer: ``self`` when the policy already matches, otherwise a shallow copy that
+            keeps sharing the chat target and validator and differs only in the policy.
         """
-        matched = super().matched_conditions()
-        if self._validator.is_objective_required:
-            return matched | {MatchesObjective}
-        return matched
+        if self.raise_if_scorer_blocks == raise_if_scorer_blocks:
+            return self
+        scoped = copy.copy(self)
+        scoped.raise_if_scorer_blocks = raise_if_scorer_blocks
+        return scoped
 
-    def required_conditions(self) -> frozenset[type[Condition]]:
-        """Return the matched conditions required by this message scorer."""
-        required = super().required_conditions()
-        if self._validator.is_objective_required:
-            return required | {MatchesObjective}
-        return required
+    def _get_condition_type(self) -> type[Condition] | None:
+        """Return the declared criterion, using the objective validator only for undeclared leaves."""
+        if self._get_child_scorers():
+            return None
+        if self.CONDITION_TYPE is not None:
+            return self.CONDITION_TYPE
+        return MatchesObjective if self._validator.is_objective_required else None
 
     def _validate_expectation(
         self,
@@ -334,17 +407,12 @@ class MessageScorer(Scorer):
         Raises:
             ValueError: If ``MatchesObjective`` is present without an objective to match.
         """
-        super()._validate_expectation(expectation=expectation)
-        if expectation is None or not expectation.conditions:
-            return
-        matches_objective = MatchesObjective in self.matched_conditions() and any(
-            isinstance(condition, MatchesObjective) for condition in expectation.conditions
-        )
-        if matches_objective and not expectation.objective:
+        ScoringExpectation.validate_type(expectation)
+        if self.condition_type is MatchesObjective and (expectation is None or not expectation.objective):
             raise ValueError(
-                "MatchesObjective requires the expectation to carry an objective. "
-                "Set ScoringExpectation.objective or drop the condition."
+                "MatchesObjective requires the expectation to carry an objective. Set ScoringExpectation.objective."
             )
+        super()._validate_expectation(expectation=expectation)
 
     async def score_async(
         self,
@@ -387,7 +455,8 @@ class MessageScorer(Scorer):
                 infer_objective_from_request=infer_objective_from_request,
             )
         )
-        self._validate_expectation(expectation=resolved_expectation)
+        if not infer_objective:
+            resolved_expectation = self.prepare_expectation(expectation=resolved_expectation)
         return await self._score_message_root_async(
             message=message,
             scorable=scorable,
@@ -417,9 +486,11 @@ class MessageScorer(Scorer):
             ValueError: If neither a message nor a scorable is available.
         """
         context_scorable = (
-            self._context_scorable_from_message(message=message) if message is not None else cast("Scorable", scorable)
+            (await self._context_scorable_from_message_async(message=message))
+            if message is not None
+            else cast("Scorable", scorable)
         )
-        with _observation_collection() as collector:
+        with _scoring_collection() as collector:
             with _scoring_scorable_context(context_scorable):
                 # The deprecated parameter hands over the message itself, so scoring it must not
                 # round trip through a reference.
@@ -430,7 +501,7 @@ class MessageScorer(Scorer):
                         infer_objective_from_request=infer_objective_from_request,
                         anchor=self._scorable_from_message(
                             message,
-                            persisted_piece_ids=self._get_persisted_piece_ids(message=message),
+                            persisted_piece_ids=(await self._get_persisted_piece_ids_async(message=message)),
                         ),
                         role_filter=role_filter,
                         skip_on_error_result=skip_on_error_result,
@@ -447,10 +518,34 @@ class MessageScorer(Scorer):
                     )
             return await self._validate_and_persist_scores_async(
                 scores=scores,
-                observations=collector.referenced_by(scores=scores),
+                observations=collector.referenced_by(scores=[*scores, *collector.intermediate_scores]),
+                intermediate_scores=collector.intermediate_scores,
             )
 
-    def _context_scorable_from_message(self, *, message: Message) -> Scorable | None:
+    async def _score_nested_message_async(
+        self, *, message: Message, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        """
+        Score an in-hand child message without changing its role or committing results.
+
+        Returns:
+            list[Score]: Validated child results retained for the public caller to persist.
+        """
+        self._validate_expectation(expectation=expectation)
+        anchor = await self._context_scorable_from_message_async(message=message)
+        with _scoring_scorable_context(anchor), _scoring_expectation_context(expectation):
+            scores = await self._score_resolved_message_async(
+                message=message,
+                expectation=expectation,
+                anchor=anchor,
+                infer_objective_from_request=False,
+            )
+        if scores:
+            self.validate_return_scores(scores=scores)
+            _collect_scores(scores)
+        return scores
+
+    async def _context_scorable_from_message_async(self, *, message: Message) -> Scorable | None:
         """
         Build a durable observation anchor for the in-hand message API.
 
@@ -458,7 +553,7 @@ class MessageScorer(Scorer):
             Scorable | None: The durable message or content anchor, if one can be represented.
         """
         pieces = message.message_pieces
-        persisted = self._memory.get_message_pieces(prompt_ids=[piece.id for piece in pieces])
+        persisted = await self._memory.get_message_pieces_async(prompt_ids=[piece.id for piece in pieces])
         persisted_by_id = {str(piece.id): piece for piece in persisted}
         matches_storage = all(
             str(piece.id) in persisted_by_id
@@ -495,7 +590,7 @@ class MessageScorer(Scorer):
                 supported role, data type, or other required capability. A non-empty list
                 contains completed or undetermined verdicts.
         """
-        self._validate_expectation(expectation=expectation)
+        expectation = self.prepare_expectation(expectation=expectation)
         return await self._score_message_root_async(
             message=message,
             scorable=None,
@@ -559,7 +654,7 @@ class MessageScorer(Scorer):
 
         if infer_objective_from_request:
             resolved_objectives = [
-                objective or extract_objective_from_previous_turn(message=message, memory=self._memory)
+                objective or (await extract_objective_from_previous_turn_async(message=message, memory=self._memory))
                 for message, objective in zip(messages, resolved_objectives, strict=True)
             ]
 
@@ -592,30 +687,34 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None = None,
         objective: str | None = None,
         skip_on_error_result: bool | None = None,
+        auxiliary_expectations: Sequence[ScoringExpectation | None] | None = None,
     ) -> dict[str, list[Score]]:
         """
         Score a response using an objective scorer and optional auxiliary scorers.
 
         Every scorer receives the response as it arrived unless a deprecated compatibility
         filter skips it. Otherwise, which roles a scorer reads and what an unreadable message
-        produces are the scorer's own declarations.
+        produces are the scorer's own declarations. Each scorer must accept its input.
 
         Args:
             response (Message): Response containing pieces to score.
             objective_scorer (Scorer | None): The main scorer to determine success. Defaults to None.
             auxiliary_scorers (list[Scorer] | None): List of auxiliary scorers to apply. Defaults to None.
             role_filter (ChatMessageRole | None): Deprecated compatibility filter.
-            expectation (ScoringExpectation | None): Full scoring question sent unchanged to every scorer.
+            expectation (ScoringExpectation | None): The objective scorer's input. Each auxiliary
+                scorer also receives it unless ``auxiliary_expectations`` is supplied.
             objective (str | None): Deprecated scoring context, removed in 2.0. Use ``expectation``.
             skip_on_error_result (bool | None): Deprecated compatibility policy.
+            auxiliary_expectations (Sequence[ScoringExpectation | None] | None): One input for
+                each auxiliary scorer, in the same order. Defaults to None.
 
         Returns:
             dict[str, list[Score]]: Dictionary with keys `auxiliary_scores` and `objective_scores`
                 containing lists of scores from each type of scorer.
 
         Raises:
-            ValueError: If response is not provided, both expectation inputs are supplied, or
-                conditions cannot be routed to the configured scorers.
+            ValueError: If response is not provided, both expectation inputs are supplied, the
+                auxiliary inputs do not match the auxiliary scorers, or a scorer rejects its input.
         """
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         result: dict[str, list[Score]] = {"auxiliary_scores": [], "objective_scores": []}
@@ -624,31 +723,41 @@ class MessageScorer(Scorer):
         if not response:
             raise ValueError("Response must be provided for scoring.")
 
-        roots = [*([objective_scorer] if objective_scorer is not None else []), *(auxiliary_scorers or [])]
-        Scorer.validate_expectation_for_scorers(scorers=roots, expectation=expectation)
+        auxiliary_scorers = auxiliary_scorers or []
+        if auxiliary_expectations is None:
+            auxiliary_expectations = [expectation] * len(auxiliary_scorers)
+        elif len(auxiliary_expectations) != len(auxiliary_scorers):
+            raise ValueError("auxiliary_expectations must contain one input for each auxiliary scorer.")
+        if objective_scorer is None and not auxiliary_scorers:
+            Scorer.validate_expectation_for_scorers(scorers=[], expectation=expectation)
+        objective_expectation = (
+            objective_scorer.prepare_expectation(expectation=expectation) if objective_scorer is not None else None
+        )
+        auxiliaries = [
+            (scorer, scorer.prepare_expectation(expectation=selected))
+            for scorer, selected in zip(auxiliary_scorers, auxiliary_expectations, strict=True)
+        ]
         if objective_scorer is None:
-            if auxiliary_scorers:
-                result["auxiliary_scores"] = await MessageScorer._score_response_multiple_scorers_async(
+            if auxiliaries:
+                result["auxiliary_scores"] = await MessageScorer._score_response_roots_async(
                     response=response,
-                    scorers=auxiliary_scorers,
-                    expectation=expectation,
+                    roots=auxiliaries,
                     role_filter=role_filter,
                     skip_on_error_result=skip_on_error_result,
                 )
             return result
 
-        if auxiliary_scorers:
-            aux_task = MessageScorer._score_response_multiple_scorers_async(
+        if auxiliaries:
+            aux_task = MessageScorer._score_response_roots_async(
                 response=response,
-                scorers=auxiliary_scorers,
-                expectation=expectation,
+                roots=auxiliaries,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
             obj_task = MessageScorer._score_response_with_scorer_async(
                 scorer=objective_scorer,
                 response=response,
-                expectation=expectation,
+                expectation=objective_expectation,
                 component_role=ComponentRole.OBJECTIVE_SCORER,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
@@ -660,12 +769,40 @@ class MessageScorer(Scorer):
             result["objective_scores"] = await MessageScorer._score_response_with_scorer_async(
                 scorer=objective_scorer,
                 response=response,
-                expectation=expectation,
+                expectation=objective_expectation,
                 component_role=ComponentRole.OBJECTIVE_SCORER,
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
         return result
+
+    @staticmethod
+    async def _score_response_roots_async(
+        *,
+        response: Message,
+        roots: list[tuple[Scorer, ScoringExpectation | None]],
+        role_filter: ChatMessageRole | None,
+        skip_on_error_result: bool | None,
+    ) -> list[Score]:
+        """
+        Run scoring roots with prepared inputs and independent persistence.
+
+        Returns:
+            list[Score]: The roots' scores, in input order.
+        """
+        results = await _gather_score_tasks_cancel_on_error_async(
+            [
+                MessageScorer._score_response_with_scorer_async(
+                    scorer=scorer,
+                    response=response,
+                    expectation=expectation,
+                    role_filter=role_filter,
+                    skip_on_error_result=skip_on_error_result,
+                )
+                for scorer, expectation in roots
+            ]
+        )
+        return [score for scores in results for score in scores]
 
     @staticmethod
     async def score_response_multiple_scorers_async(
@@ -680,8 +817,7 @@ class MessageScorer(Scorer):
         """
         Score a response using multiple scorers in parallel.
 
-        This method applies each scorer to the response and returns all scores. This is
-        typically used for auxiliary scoring where all results are needed.
+        Each independent scorer must accept the complete expectation.
 
         Args:
             response (Message): The response containing pieces to score.
@@ -700,54 +836,19 @@ class MessageScorer(Scorer):
         _warn_retired_message_policy(role_filter=role_filter, skip_on_error_result=skip_on_error_result)
         expectation = _normalize_scoring_expectation(expectation=expectation, objective=objective)
         Scorer.validate_expectation_for_scorers(scorers=scorers, expectation=expectation)
-        return await MessageScorer._score_response_multiple_scorers_async(
+        return await MessageScorer._score_response_roots_async(
             response=response,
-            scorers=scorers,
-            expectation=expectation,
+            roots=[(scorer, expectation) for scorer in scorers],
             role_filter=role_filter,
             skip_on_error_result=skip_on_error_result,
         )
-
-    @staticmethod
-    async def _score_response_multiple_scorers_async(
-        *,
-        response: Message,
-        scorers: list[Scorer],
-        expectation: ScoringExpectation,
-        role_filter: ChatMessageRole | None,
-        skip_on_error_result: bool | None,
-    ) -> list[Score]:
-        """
-        Score a response with each scorer after applying compatibility filters.
-
-        Returns:
-            list[Score]: All scores from applicable scorers.
-        """
-        if not scorers:
-            return []
-
-        tasks = [
-            MessageScorer._score_response_with_scorer_async(
-                scorer=scorer,
-                response=response,
-                expectation=expectation,
-                role_filter=role_filter,
-                skip_on_error_result=skip_on_error_result,
-            )
-            for scorer in scorers
-        ]
-
-        score_lists = await _gather_score_tasks_cancel_on_error_async(tasks)
-
-        # Flatten the list of lists into a single list
-        return [score for scores in score_lists for score in scores]
 
     @staticmethod
     async def _score_response_with_scorer_async(
         *,
         scorer: Scorer,
         response: Message,
-        expectation: ScoringExpectation,
+        expectation: ScoringExpectation | None,
         component_role: ComponentRole = ComponentRole.AUXILIARY_SCORER,
         role_filter: ChatMessageRole | None = None,
         skip_on_error_result: bool | None = None,
@@ -853,7 +954,7 @@ class MessageScorer(Scorer):
         Raises:
             TypeError: If the scorable is not message-shaped.
         """
-        message = self._message_resolver.resolve(scorable=scorable, memory=self._memory)
+        message = await self._message_resolver.resolve_async(scorable=scorable, memory=self._memory)
         return await self._score_resolved_message_async(
             message=message,
             expectation=expectation,
@@ -898,6 +999,21 @@ class MessageScorer(Scorer):
         """
         objective = expectation.objective if expectation else None
 
+        if infer_objective_from_request and (not objective):
+            objective = await extract_objective_from_previous_turn_async(message=message, memory=self._memory)
+
+        effective_expectation = expectation
+        if expectation is None and objective is not None:
+            effective_expectation = ScoringExpectation(objective=objective)
+        elif expectation is not None and objective != expectation.objective:
+            effective_expectation = ScoringExpectation(
+                objective=objective,
+                conditions=expectation.conditions,
+            )
+
+        if infer_objective_from_request:
+            effective_expectation = self.prepare_expectation(expectation=effective_expectation)
+
         if not _legacy_policy_allows_message(
             message=message,
             role_filter=role_filter,
@@ -913,26 +1029,12 @@ class MessageScorer(Scorer):
             return []
 
         scoring_message = self._build_scoring_message(message=message)
-
-        if infer_objective_from_request and (not objective):
-            objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
-
-        effective_expectation = expectation
-        if expectation is None and objective is not None:
-            effective_expectation = ScoringExpectation(objective=objective)
-        elif expectation is not None and objective != expectation.objective:
-            effective_expectation = ScoringExpectation(
-                objective=objective,
-                conditions=expectation.conditions,
-            )
-
         if scoring_message is None:
             scores = self._build_fallback_score(message=message, objective=objective)
-            self._finalize_message_scores(
-                message=message,
-                scores=scores,
-                anchor=anchor,
-                expectation=effective_expectation,
+            (
+                await self._finalize_message_scores_async(
+                    message=message, scores=scores, anchor=anchor, expectation=effective_expectation
+                )
             )
             return scores
 
@@ -995,11 +1097,13 @@ class MessageScorer(Scorer):
         if not scores and scoring_message.message_pieces and not self._get_supported_pieces(scoring_message):
             scores = self._build_fallback_score(message=message, objective=objective)
 
-        self._finalize_message_scores(
-            message=scoring_message,
-            scores=scores,
-            anchor=anchor if scoring_view_matches_acquired_message else None,
-            expectation=effective_expectation,
+        (
+            await self._finalize_message_scores_async(
+                message=scoring_message,
+                scores=scores,
+                anchor=anchor if scoring_view_matches_acquired_message else None,
+                expectation=effective_expectation,
+            )
         )
 
         return scores
@@ -1014,7 +1118,7 @@ class MessageScorer(Scorer):
         """
         self._validator.validate(message, objective=objective)
 
-    def _finalize_message_scores(
+    async def _finalize_message_scores_async(
         self,
         *,
         message: Message,
@@ -1023,7 +1127,7 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None,
     ) -> None:
         """Apply legacy and canonical evidence anchors to completed message scores."""
-        persisted_piece_ids = self._get_persisted_piece_ids(message=message)
+        persisted_piece_ids = await self._get_persisted_piece_ids_async(message=message)
         self._drop_ephemeral_score_links(
             message=message,
             scores=scores,
@@ -1046,15 +1150,24 @@ class MessageScorer(Scorer):
         """
         Score a message after message-family policy and substitutions are applied.
 
-        Wrapping scorers override this hook to forward the complete expectation. Existing
-        leaf scorer bodies continue to receive only the objective string.
+        Pass criteria through aggregation explicitly. Legacy aggregation overrides remain
+        supported for objective-only calls, but must migrate before receiving typed criteria.
 
         Returns:
             list[Score]: The scores produced from the prepared message.
+
+        Raises:
+            TypeError: If a legacy aggregation override cannot receive typed criteria.
         """
+        if "expectation" not in inspect.signature(self._score_async).parameters:
+            self._validate_legacy_hook_expectation(
+                expectation=expectation, replacement="_score_async(..., expectation=...)"
+            )
+            return await self._score_async(message, objective=expectation.objective if expectation else None)
         return await self._score_async(
             message,
             objective=expectation.objective if expectation else None,
+            expectation=expectation,
         )
 
     def _get_judgment_replay_identifier(self) -> dict[str, object] | None:
@@ -1146,7 +1259,9 @@ class MessageScorer(Scorer):
         """
         raise NonReplayableObservationError(f"{type(self).__name__} does not implement judgment observation replay.")
 
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
+    ) -> list[Score]:
         """
         Score the given request response asynchronously.
 
@@ -1157,6 +1272,7 @@ class MessageScorer(Scorer):
         Args:
             message (Message): The message to score.
             objective (str | None): The objective to evaluate against. Defaults to None.
+            expectation (ScoringExpectation | None): Complete criteria passed through aggregation.
 
         Returns:
             list[Score]: The piece scores, or ``[]`` when no piece applies or produces a score.
@@ -1167,7 +1283,12 @@ class MessageScorer(Scorer):
         # Score only the supported pieces
         supported_pieces = self._get_supported_pieces(message)
 
-        tasks = [self._score_piece_async(message_piece=piece, objective=objective) for piece in supported_pieces]
+        if expectation is None and objective is not None:
+            expectation = ScoringExpectation(objective=objective)
+        tasks = [
+            self._score_piece_with_expectation_async(message_piece=piece, expectation=expectation)
+            for piece in supported_pieces
+        ]
 
         if not tasks:
             return []
@@ -1178,9 +1299,37 @@ class MessageScorer(Scorer):
         # Flatten list[list[Score]] -> list[Score]
         return [score for sublist in piece_score_lists for score in sublist]
 
-    @abstractmethod
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        """
+        Score a piece with full criteria, retaining the legacy leaf override by default.
+
+        Returns:
+            list[Score]: The legacy leaf's scores.
+
+        Raises:
+            TypeError: If the legacy hook would discard criteria this scorer claims to match.
+        """
+        self._validate_legacy_hook_expectation(
+            expectation=expectation, replacement="_score_piece_with_expectation_async"
+        )
+        return await self._score_piece_async(
+            message_piece=message_piece,
+            objective=expectation.objective if expectation else None,
+        )
+
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        raise NotImplementedError
+        """
+        Score a piece from the objective alone.
+
+        A leaf implements this hook, or ``_score_piece_with_expectation_async`` when it reads
+        typed criteria.
+
+        Raises:
+            NotImplementedError: If the leaf implements neither piece hook.
+        """
+        raise NotImplementedError(f"{type(self).__name__} implements no piece scoring hook.")
 
     def _build_scoring_message(self, *, message: Message) -> Message | None:
         """
@@ -1277,14 +1426,14 @@ class MessageScorer(Scorer):
             piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
         ]
 
-    def _get_persisted_piece_ids(self, *, message: Message) -> set[uuid.UUID]:
+    async def _get_persisted_piece_ids_async(self, *, message: Message) -> set[uuid.UUID]:
         """Return matching message IDs, allowing storage to change timestamp precision."""
         candidate_ids = [piece.id for piece in message.message_pieces if not piece.not_in_memory]
         if not candidate_ids:
             return set()
 
-        stored_pieces = self._memory.get_message_pieces(
-            prompt_ids=[str(piece_id) for piece_id in candidate_ids],
+        stored_pieces = await self._memory.get_message_pieces_async(
+            prompt_ids=[str(piece_id) for piece_id in candidate_ids]
         )
         supplied_by_id = {piece.id: piece for piece in message.message_pieces}
         return {

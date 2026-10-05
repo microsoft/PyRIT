@@ -112,7 +112,7 @@ class _HarmBenchMultimodalDataset(_RemoteDatasetLoader):
         return "harmbench_multimodal"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch HarmBench multimodal examples and return as SeedDataset.
 

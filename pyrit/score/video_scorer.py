@@ -10,7 +10,7 @@ from pathlib import Path
 from pyrit.memory import CentralMemory
 from pyrit.models import MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-from pyrit.score.observation.execution import _get_current_scoring_expectation, _suppress_observation_collection
+from pyrit.score.observation.execution import _suppress_observation_collection
 from pyrit.score.scorer import Scorer
 
 logger = logging.getLogger(__name__)
@@ -95,21 +95,72 @@ class VideoHelper:
                 f"Supported types: {scorer._validator._supported_data_types}"
             )
 
-    async def _score_frames_async(self, *, message_piece: MessagePiece, objective: str | None = None) -> list[Score]:
+    @staticmethod
+    def _child_expectation(
+        *, scorer: Scorer, expectation: ScoringExpectation | None, template: str | None
+    ) -> ScoringExpectation:
+        """
+        Apply the media context template and select the child's supported conditions.
+
+        Returns:
+            ScoringExpectation: The child's criteria and transformed context.
+        """
+        objective = expectation.objective if expectation is not None else None
+        context = template.format(objective=objective) if objective and template is not None else ""
+        return scorer._select_expectation(
+            expectation=(expectation or ScoringExpectation()).model_copy(update={"objective": context})
+        )
+
+    def get_child_expectations(
+        self, *, expectation: ScoringExpectation | None, audio_scorer: Scorer | None
+    ) -> tuple[tuple[Scorer, ScoringExpectation], ...]:
+        """
+        Prepare the exact frame and audio inputs before media acquisition.
+
+        Returns:
+            tuple: Frame and optional audio scorers with their effective inputs.
+        """
+        children = [
+            (
+                self.image_scorer,
+                self._child_expectation(
+                    scorer=self.image_scorer, expectation=expectation, template=self.image_objective_template
+                ),
+            )
+        ]
+        if audio_scorer is not None:
+            children.append(
+                (
+                    audio_scorer,
+                    self._child_expectation(
+                        scorer=audio_scorer, expectation=expectation, template=self.audio_objective_template
+                    ),
+                )
+            )
+        return tuple(children)
+
+    async def _score_frames_async(
+        self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None
+    ) -> tuple[list[Score], int]:
         """
         Extract frames from video and score them.
 
         Args:
             message_piece: The message piece containing the video.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the frame scorer, with the objective template applied.
 
         Returns:
-            List of scores for the extracted frames.
+            Tuple of the scores for the extracted frames and the number of frames that were extracted.
+            The two are not the same length: a frame scorer may return more than one score per frame.
 
         Raises:
             FileNotFoundError: If the video file does not exist.
             ValueError: If no frames are extracted from the video or if no scores are returned for the frames.
         """
+        frame_expectation = self._child_expectation(
+            scorer=self.image_scorer, expectation=expectation, template=self.image_objective_template
+        )
+        self.image_scorer._validate_expectation(expectation=frame_expectation)
         video_path = message_piece.converted_value
 
         if not Path(video_path).exists():
@@ -143,35 +194,19 @@ class VideoHelper:
 
         memory = CentralMemory.get_memory_instance()
         for request in image_requests:
-            memory.add_message_to_memory(request=request)
+            (await memory.add_message_to_memory_async(request=request))
 
-        # Format objective using template if both are provided
-        if objective is None or self.image_objective_template is None:
-            scoring_objectives = [""] * len(image_requests)
-        else:
-            formatted_objective = self.image_objective_template.format(objective=objective)
-            scoring_objectives = [formatted_objective] * len(image_requests)
-
-        effective_expectation = _get_current_scoring_expectation()
-        frame_expectations = [
-            (
-                effective_expectation.model_copy(update={"objective": scoring_objective})
-                if effective_expectation is not None
-                else ScoringExpectation(objective=scoring_objective)
-            )
-            for scoring_objective in scoring_objectives
-        ]
         with _suppress_observation_collection():
             frame_scores = await self.image_scorer._score_batch_nested_async(
                 scorables=[MessageScorable.from_message(request) for request in image_requests],
-                expectations=frame_expectations,
+                expectations=[frame_expectation] * len(image_requests),
                 batch_size=len(frames),
             )
 
         if not frame_scores:
             raise ValueError("No scores returned for image frames extracted from video.")
 
-        return frame_scores
+        return frame_scores, len(frames)
 
     def _extract_frames(self, video_path: str) -> list[str]:
         """
@@ -224,7 +259,7 @@ class VideoHelper:
         return frame_paths
 
     async def _score_video_audio_async(
-        self, *, message_piece: MessagePiece, audio_scorer: Scorer | None = None, objective: str | None = None
+        self, *, message_piece: MessagePiece, expectation: ScoringExpectation | None, audio_scorer: Scorer | None = None
     ) -> list[Score]:
         """
         Extract and score audio from the video.
@@ -232,7 +267,7 @@ class VideoHelper:
         Args:
             message_piece: The message piece containing the video.
             audio_scorer: The scorer to use for audio scoring.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the audio scorer, with the objective template applied.
 
         Returns:
             List of scores for the audio content, or empty list if audio extraction/scoring fails.
@@ -240,6 +275,10 @@ class VideoHelper:
         if audio_scorer is None:
             return []
 
+        audio_expectation = self._child_expectation(
+            scorer=audio_scorer, expectation=expectation, template=self.audio_objective_template
+        )
+        audio_scorer._validate_expectation(expectation=audio_expectation)
         video_path = message_piece.converted_value
 
         # Use BaseAudioTranscriptScorer's static method to extract audio
@@ -269,29 +308,12 @@ class VideoHelper:
 
             # Add to memory
             memory = CentralMemory.get_memory_instance()
-            memory.add_message_to_memory(request=audio_message)
+            (await memory.add_message_to_memory_async(request=audio_message))
 
-            # Score the audio using the audio_scorer
-            # Format objective using template if both are provided
-            if objective is None or self.audio_objective_template is None:
-                scoring_objectives = [""]
-            else:
-                formatted_objective = self.audio_objective_template.format(objective=objective)
-                scoring_objectives = [formatted_objective]
-
-            effective_expectation = _get_current_scoring_expectation()
-            audio_expectations = [
-                (
-                    effective_expectation.model_copy(update={"objective": scoring_objective})
-                    if effective_expectation is not None
-                    else ScoringExpectation(objective=scoring_objective)
-                )
-                for scoring_objective in scoring_objectives
-            ]
             with _suppress_observation_collection():
                 audio_scores = await audio_scorer._score_batch_nested_async(
                     scorables=[MessageScorable.from_message(audio_message)],
-                    expectations=audio_expectations,
+                    expectations=[audio_expectation],
                     batch_size=1,
                 )
 

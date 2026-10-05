@@ -14,10 +14,18 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.prompt_target.a2a_target import A2ATarget
     from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
     from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
     from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
     from pyrit.prompt_target.common.discover_target_capabilities import discover_target_capabilities_async
+    from pyrit.prompt_target.common.mcp_tool_provider import (
+        MCPConfig,
+        MCPServerConfig,
+        MCPStdioServerConfig,
+        MCPStreamableHTTPServerConfig,
+        MCPToolProvider,
+    )
     from pyrit.prompt_target.common.prompt_target import PromptTarget
     from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
     from pyrit.prompt_target.common.target_capabilities import (
@@ -29,8 +37,18 @@ if TYPE_CHECKING:
     )
     from pyrit.prompt_target.common.target_configuration import TargetConfiguration
     from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
+    from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig
+    from pyrit.prompt_target.common.tool_provider import (
+        FunctionTool,
+        Tool,
+        ToolProvider,
+        collect_tools_async,
+        tool,
+    )
     from pyrit.prompt_target.common.utils import limit_requests_per_minute
     from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
+    from pyrit.prompt_target.github_copilot_target import GitHubCopilotTarget
+    from pyrit.prompt_target.hack_a_prompt_target import HackAPromptChallenge, HackAPromptTarget
     from pyrit.prompt_target.http_target.http_target import HTTPTarget
     from pyrit.prompt_target.http_target.http_target_callback_functions import (
         get_http_target_json_response_callback_function,
@@ -57,6 +75,8 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.websocket_target import WebsocketTarget
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "A2ATarget": "pyrit.prompt_target.a2a_target",
+    "TargetTraceConfig": "pyrit.prompt_target.common.target_trace_config",
     "AzureBlobStorageTarget": "pyrit.prompt_target.azure_blob_storage_target",
     "AzureMLChatTarget": "pyrit.prompt_target.azure_ml_chat_target",
     "CapabilityName": "pyrit.prompt_target.common.target_capabilities",
@@ -64,17 +84,26 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CHAT_TARGET_REQUIREMENTS": "pyrit.prompt_target.common.target_requirements",
     "CopilotType": "pyrit.prompt_target.playwright_copilot_target",
     "ConversationNormalizationPipeline": "pyrit.prompt_target.common.conversation_normalization_pipeline",
+    "FunctionTool": "pyrit.prompt_target.common.tool_provider",
     "GandalfLevel": "pyrit.prompt_target.gandalf_target",
     "GandalfTarget": "pyrit.prompt_target.gandalf_target",
+    "GitHubCopilotTarget": "pyrit.prompt_target.github_copilot_target",
     "get_http_target_json_response_callback_function": "pyrit.prompt_target.http_target.http_target_callback_functions",
     "get_http_target_regex_matching_callback_function": (
         "pyrit.prompt_target.http_target.http_target_callback_functions"
     ),
+    "HackAPromptChallenge": "pyrit.prompt_target.hack_a_prompt_target",
+    "HackAPromptTarget": "pyrit.prompt_target.hack_a_prompt_target",
     "HTTPTarget": "pyrit.prompt_target.http_target.http_target",
     "HTTPXAPITarget": "pyrit.prompt_target.http_target.httpx_api_target",
     "HuggingFaceChatTarget": "pyrit.prompt_target.hugging_face.hugging_face_chat_target",
     "limit_requests_per_minute": "pyrit.prompt_target.common.utils",
     "LiteLLMChatTarget": "pyrit.prompt_target.litellm_chat_target",
+    "MCPConfig": "pyrit.prompt_target.common.mcp_tool_provider",
+    "MCPServerConfig": "pyrit.prompt_target.common.mcp_tool_provider",
+    "MCPStdioServerConfig": "pyrit.prompt_target.common.mcp_tool_provider",
+    "MCPStreamableHTTPServerConfig": "pyrit.prompt_target.common.mcp_tool_provider",
+    "MCPToolProvider": "pyrit.prompt_target.common.mcp_tool_provider",
     "OpenAICompletionTarget": "pyrit.prompt_target.openai.openai_completion_target",
     "OpenAIChatAudioConfig": "pyrit.prompt_target.openai.openai_chat_audio_config",
     "OpenAIChatTarget": "pyrit.prompt_target.openai.openai_chat_target",
@@ -93,11 +122,15 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TargetCapabilities": "pyrit.prompt_target.common.target_capabilities",
     "TargetConfiguration": "pyrit.prompt_target.common.target_configuration",
     "TargetRequirements": "pyrit.prompt_target.common.target_requirements",
+    "Tool": "pyrit.prompt_target.common.tool_provider",
+    "ToolProvider": "pyrit.prompt_target.common.tool_provider",
     "UnsupportedCapabilityBehavior": "pyrit.prompt_target.common.target_capabilities",
     "TextTarget": "pyrit.prompt_target.text_target",
     "WebsocketTarget": "pyrit.prompt_target.websocket_target",
     "discover_target_capabilities_async": "pyrit.prompt_target.common.discover_target_capabilities",
+    "collect_tools_async": "pyrit.prompt_target.common.tool_provider",
     "get_known_capabilities": "pyrit.prompt_target.common.target_capabilities",
+    "tool": "pyrit.prompt_target.common.tool_provider",
     "WebSocketCopilotTarget": "pyrit.prompt_target.websocket_copilot_target",
 }
 

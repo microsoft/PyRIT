@@ -25,9 +25,10 @@ import {
 import { Link } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import { useRuntime } from '@/hooks/useRuntime'
 import { scenariosApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { RegisteredScenario, ScenarioDatasetSummary } from '@/types'
+import type { RegisteredScenario, ScenarioDatasetSizeEstimate, ScenarioDatasetSummary } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import { useScenarioCatalogStyles } from './ScenarioCatalog.styles'
@@ -83,45 +84,39 @@ function formatObjectiveCount(value: number): string {
 function DefaultDatasetSummary({
   datasets,
   declaredDatasets,
-  calculating,
+  datasetSize,
 }: {
   datasets: ScenarioDatasetSummary[]
   declaredDatasets: string[]
-  calculating: boolean
+  datasetSize: ScenarioDatasetSizeEstimate
 }) {
   const styles = useScenarioCatalogStyles()
-
-  if (calculating) {
-    return <Spinner size="tiny" label="Calculating..." labelPosition="after" />
-  }
 
   if (datasets.length === 0 && declaredDatasets.length === 0) {
     return <Text weight="semibold">No default datasets</Text>
   }
 
-  if (datasets.length === 0) {
-    return (
-      <div className={styles.compactStack}>
-        <Text weight="semibold">Population counts unavailable</Text>
-        <Text size={200} className={styles.secondaryText}>{declaredDatasets.join(' · ')}</Text>
-      </div>
-    )
-  }
-
-  const objectiveCount = datasets.reduce(
-    (total, dataset) => total + dataset.selected_seed_group_count,
-    0,
-  )
   const datasetNames = declaredDatasets.length > 0
     ? declaredDatasets
     : datasets.map((dataset) => dataset.name)
 
   return (
     <div className={styles.compactStack}>
-      <Text weight="semibold">{formatObjectiveCount(objectiveCount)}</Text>
+      <Text weight="semibold">{formatSizeBound(datasetSize)}</Text>
       <Text size={200} className={styles.secondaryText}>{datasetNames.join(' · ')}</Text>
     </div>
   )
+}
+
+function formatSizeBound(size: ScenarioDatasetSizeEstimate): string {
+  switch (size.kind) {
+    case 'bounded':
+      return `Up to ${formatObjectiveCount(size.value)}`
+    case 'all_available':
+      return 'All available data (configured child limits still apply)'
+    case 'indeterminate':
+      return size.detail
+  }
 }
 
 interface ScenarioCatalogRowProps {
@@ -248,7 +243,7 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
         <DefaultDatasetSummary
           datasets={scenario.default_run_size.datasets}
           declaredDatasets={scenario.default_datasets}
-          calculating={estimatesLoading}
+          datasetSize={scenario.default_run_size.dataset_size}
         />
       </TableCell>
       <TableCell
@@ -293,6 +288,7 @@ function ScenarioCatalogRow({ scenario, estimatesLoading }: ScenarioCatalogRowPr
 }
 
 export default function ScenarioCatalog() {
+  const { generation } = useRuntime()
   const styles = useScenarioCatalogStyles()
   const [scenarios, setScenarios] = useState<RegisteredScenario[]>([])
   const [loading, setLoading] = useState(true)
@@ -353,7 +349,7 @@ export default function ScenarioCatalog() {
     return () => {
       cancelled = true
     }
-  }, [refetchCount])
+  }, [refetchCount, generation])
 
   const handleRetry = useCallback(() => {
     setLoading(true)
@@ -374,7 +370,7 @@ export default function ScenarioCatalog() {
       data-testid="scenario-catalog"
       aria-labelledby="scenario-catalog-title"
     >
-      <div className={styles.header}>
+      <div className={styles.header} data-tour="scanner-catalog">
         <div className={styles.headerText}>
           <Text id="scenario-catalog-title" as="h1" size={600} weight="semibold">
             <FluentLink

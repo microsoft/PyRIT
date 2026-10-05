@@ -3,9 +3,12 @@
 
 import abc
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Literal, final
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.attack_result_scope import get_current_attack_result_id
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
@@ -15,8 +18,10 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    RequestTraceContext,
     TargetIdentifier,
 )
+from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityName,
     TargetCapabilities,
@@ -25,6 +30,7 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, target_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +68,8 @@ class PromptTarget(Identifiable):
     # Per-instance overrides are also possible via the ``custom_configuration``
     # constructor parameter, which takes precedence over the class-level value.
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+    _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
+    _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -102,6 +110,7 @@ class PromptTarget(Identifiable):
         model_name: str = "",
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize the PromptTarget.
@@ -119,6 +128,7 @@ class PromptTarget(Identifiable):
                 for this target instance. Useful for targets whose capabilities depend on deployment
                 configuration (e.g., Playwright, HTTP). If None, uses the class-level
                 ``_DEFAULT_CONFIGURATION``. Defaults to None.
+            trace_config: Request tracing configuration. Defaults to the target's tracing policy.
         """
         self._memory = CentralMemory.get_memory_instance()
         self._verbose = verbose
@@ -126,14 +136,46 @@ class PromptTarget(Identifiable):
         self._endpoint = endpoint
         self._model_name = model_name
         self._underlying_model = underlying_model
+        self._trace_config = trace_config or TargetTraceConfig(enabled=self._DEFAULT_TRACE_ENABLED)
         self._configuration = (
             custom_configuration
             if custom_configuration is not None
             else type(self).get_default_configuration(self._underlying_model)
         )
+        if custom_configuration is None and underlying_model is None and self._SUPPORTS_TOOL_CALL_HISTORY:
+            known = get_known_capabilities(model_name)
+            if known is not None:
+                self.apply_capabilities(
+                    capabilities=self.capabilities.model_copy(
+                        update={
+                            "input_modalities": self.capabilities.input_modalities
+                            | frozenset(
+                                combo
+                                for combo in known.input_modalities
+                                if combo & {"function_call", "function_call_output"}
+                            )
+                        }
+                    )
+                )
 
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """
+        Check stored tool history without sending, normalizing, or retrieving media.
+
+        Empty histories and histories ending with an unanswered call are permitted.
+        Targets extend this check with provider-specific payload constraints.
+        Callers check capability requirements separately before replaying a draft.
+
+        Args:
+            messages: Complete ordered history, including calls for any results.
+
+        Raises:
+            ValueError: Tool content, roles, or call/result links are invalid.
+        """
+        validate_tool_conversation(messages)
 
     @final
     async def send_prompt_async(
@@ -168,6 +210,9 @@ class PromptTarget(Identifiable):
         Raises:
             ValueError: If the message or normalized conversation are empty.
         """
+        for piece in message.message_pieces:
+            piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+            piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
         conversation_id = message.get_piece().conversation_id or ""
         if send_context and send_context.conversation_id != conversation_id:
@@ -185,9 +230,19 @@ class PromptTarget(Identifiable):
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
             self._validate_request(normalized_conversation=normalized_conversation)
-            if send_context:
-                send_context.mark_target_invoked()
-            response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            with target_trace_context(
+                config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
+            ):
+                if send_context:
+                    send_context.mark_target_invoked()
+                response = await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+            for response_message in response:
+                for piece in response_message.message_pieces:
+                    piece.prompt_metadata = {
+                        key: value
+                        for key, value in piece.prompt_metadata.items()
+                        if key not in (RequestTraceContext.METADATA_KEY, RequestTraceContext.REQUEST_METADATA_KEY)
+                    }
             send_succeeded = True
             return response
         finally:
@@ -232,6 +287,18 @@ class PromptTarget(Identifiable):
         custom_configuration_message = (
             "If your target does support this, set the custom_configuration parameter accordingly."
         )
+        supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
+        for turn in normalized_conversation:
+            for piece in turn.message_pieces:
+                piece_type = piece.converted_value_data_type
+                if (
+                    piece_type in {"function_call", "function_call_output", "tool_call"}
+                    and piece_type not in supported_types_flat
+                ):
+                    raise ValueError(
+                        f"This target does not support tool-history modality '{piece_type}'. "
+                        f"{custom_configuration_message}"
+                    )
         if not self.configuration.includes(capability=CapabilityName.MULTI_MESSAGE_PIECES) and n_pieces != 1:
             raise ValueError(
                 f"This target only supports a single message piece. Received: {n_pieces} pieces. "
@@ -240,7 +307,6 @@ class PromptTarget(Identifiable):
 
         for piece in message.message_pieces:
             piece_type = piece.converted_value_data_type
-            supported_types_flat = {t for combo in self.capabilities.input_modalities for t in combo}
             if piece_type not in supported_types_flat:
                 supported_types = ", ".join(sorted(supported_types_flat))
                 raise ValueError(
@@ -283,7 +349,9 @@ class PromptTarget(Identifiable):
         """
         conversation_id = message.message_pieces[0].conversation_id
         persisted_messages = (
-            list(self._memory.get_conversation_messages(conversation_id=conversation_id)) if conversation_id else []
+            list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
+            if conversation_id
+            else []
         )
         persisted_messages = filter_non_replayable_messages(messages=persisted_messages)
         conversation = send_context.select_history(messages=persisted_messages) if send_context else persisted_messages
@@ -334,13 +402,21 @@ class PromptTarget(Identifiable):
             conversation_id (str): The conversation id to attach the prompt to.
 
         Raises:
-            ValueError: If the target does not support multi-turn or editable history.
+            ValueError: If the target does not support multi-turn conversations, or
+                supports neither editable history nor native system prompts.
             RuntimeError: If the conversation already has messages.
         """
-        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+        print_deprecation_message(
+            old_item="PromptTarget.set_system_prompt",
+            new_item="PromptTarget.set_system_prompt_async",
+            removed_in="1.4.0",
+        )
+        if not self.capabilities.supports_multi_turn or not (
+            self.capabilities.supports_editable_history or self.capabilities.supports_system_prompt
+        ):
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
-                "It must support both multi-turn conversations and editable history."
+                "It must support multi-turn conversations and either editable history or native system prompts."
             )
 
         messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
@@ -349,7 +425,11 @@ class PromptTarget(Identifiable):
             raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
 
         self._memory.add_conversation_to_memory(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=self.get_identifier())
+            conversation=Conversation(
+                conversation_id=conversation_id,
+                target_identifier=self.get_identifier(),
+                attack_result_id=get_current_attack_result_id(),
+            )
         )
         self._memory.add_message_to_memory(
             request=MessagePiece(
@@ -358,6 +438,71 @@ class PromptTarget(Identifiable):
                 original_value=system_prompt,
                 converted_value=system_prompt,
             ).to_message(),
+        )
+
+    @legacy_sync_override(lambda: PromptTarget.set_system_prompt)
+    async def set_system_prompt_async(
+        self,
+        *,
+        system_prompt: str,
+        conversation_id: str,
+    ) -> None:
+        """
+        Inject a system prompt into memory for the given conversation.
+
+        Writes a ``system``-role message so the target's normalization pipeline
+        (or the target itself, when it natively supports system prompts) will
+        pick it up on the next ``send_prompt_async`` call.
+
+        If the target does not natively support system prompts, whether this
+        call is ultimately honored depends on the target's
+        ``CapabilityHandlingPolicy``:
+
+        * ``ADAPT`` — the normalization pipeline (e.g. system squash) will
+          fold the system message into user content on the wire.
+        * ``RAISE`` — the first send after the system prompt is set will
+          raise, because the pipeline cannot adapt the missing capability.
+
+        Args:
+            system_prompt (str): The system prompt text to set.
+            conversation_id (str): The conversation id to attach the prompt to.
+
+        Raises:
+            ValueError: If the target does not support multi-turn conversations, or
+                supports neither editable history nor native system prompts.
+            RuntimeError: If the conversation already has messages.
+        """
+        if not self.capabilities.supports_multi_turn or not (
+            self.capabilities.supports_editable_history or self.capabilities.supports_system_prompt
+        ):
+            raise ValueError(
+                f"Target {type(self).__name__} does not support setting a system prompt. "
+                "It must support multi-turn conversations and either editable history or native system prompts."
+            )
+
+        messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+
+        if messages:
+            raise RuntimeError("Conversation already exists, system prompt needs to be set at the beginning")
+
+        (
+            await self._memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=self.get_identifier(),
+                    attack_result_id=get_current_attack_result_id(),
+                )
+            )
+        )
+        (
+            await self._memory.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="system",
+                    conversation_id=conversation_id,
+                    original_value=system_prompt,
+                    converted_value=system_prompt,
+                ).to_message()
+            )
         )
 
     async def reset_conversation_async(self, *, conversation_id: str) -> None:
@@ -382,7 +527,19 @@ class PromptTarget(Identifiable):
         """
         Dispose database engine to release database connections and resources.
         """
+        print_deprecation_message(
+            old_item="PromptTarget.dispose_db_engine",
+            new_item="PromptTarget.dispose_db_engine_async",
+            removed_in="1.4.0",
+        )
         self._memory.dispose_engine()
+
+    @legacy_sync_override(lambda: PromptTarget.dispose_db_engine)
+    async def dispose_db_engine_async(self) -> None:
+        """
+        Dispose database engine to release database connections and resources.
+        """
+        (await self._memory.dispose_engine_async())
 
     def _create_identifier(
         self,
@@ -490,7 +647,18 @@ class PromptTarget(Identifiable):
         if underlying_model:
             known = get_known_capabilities(underlying_model)
             if known is not None:
-                return TargetConfiguration(capabilities=known)
+                return TargetConfiguration(
+                    capabilities=known.model_copy(
+                        update={
+                            "input_modalities": frozenset(
+                                combo
+                                for combo in known.input_modalities
+                                if cls._SUPPORTS_TOOL_CALL_HISTORY
+                                or not combo & {"function_call", "function_call_output"}
+                            )
+                        }
+                    )
+                )
             logger.info(
                 "No known capabilities for model '%s'. Falling back to %s._DEFAULT_CONFIGURATION.",
                 underlying_model,

@@ -39,11 +39,15 @@ jest.mock('@/components/Layout/MainLayout', () => {
   }
 })
 jest.mock('@/services/api', () => ({
+  runtimeApi: {
+    getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }),
+  },
   attacksApi: {
     getAttack: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
-    addMessage: jest.fn(),
+    submitMessageSend: jest.fn(),
+    getMessageSend: jest.fn(),
     createAttack: jest.fn(),
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
@@ -125,7 +129,10 @@ describe('App target selection with the chat composer', () => {
     jest.mocked(attacksApi.getConversations).mockResolvedValue({
       main_conversation_id: 'saved-conversation', conversations: [],
     })
-    jest.mocked(attacksApi.addMessage).mockResolvedValue({ attack: savedAttack, messages: savedMessages })
+    jest.mocked(attacksApi.submitMessageSend).mockResolvedValue({
+      send_id: 'saved-send', attack_result_id: 'saved-attack', conversation_id: 'saved-conversation',
+      state: 'completed', error: null, failure_stage: null, request_turn_number: 0,
+    })
   })
 
   it('appends to saved target B in the same conversation without replacing default A', async () => {
@@ -139,7 +146,7 @@ describe('App target selection with the chat composer', () => {
     await waitFor(() => expect(prompt).toBeEnabled())
     await user.type(prompt, 'Continue this chat')
     await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await waitFor(() => expect(attacksApi.addMessage).toHaveBeenCalledWith(
+    await waitFor(() => expect(attacksApi.submitMessageSend).toHaveBeenCalledWith(
       'saved-attack',
       expect.objectContaining({
         target_registry_name: 'target-b',
@@ -195,7 +202,7 @@ describe('App target selection with the chat composer', () => {
     expect(selector).toHaveValue('target-b')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for B')
     await user.click(screen.getByRole('button', { name: 'Send message' }))
-    await waitFor(() => expect(attacksApi.addMessage).toHaveBeenCalledWith(
+    await waitFor(() => expect(attacksApi.submitMessageSend).toHaveBeenCalledWith(
       'saved-attack',
       expect.objectContaining({
         target_registry_name: 'target-b',

@@ -52,6 +52,15 @@ def test_every_seed_carries_a_known_family(dataset_name):
         assert family in LatentInjectionDatasetConfiguration.FAMILIES, f"unknown family {family!r} in {dataset_name}"
 
 
+def test_empty_task_seeds_are_intentional_ingredients() -> None:
+    seeds = _load("garak_latent_injection_tasks").seeds
+    assert [seed.metadata["garak_class"] for seed in seeds if not seed.value] == [
+        "LatentInjectionReport",
+        "LatentInjectionResume",
+        "LatentJailbreak",
+    ]
+
+
 def test_every_carrier_family_has_seeds_for_each_role():
     """Each family the scenario can run must have a task, an instruction, and a payload."""
     for role in ("tasks", "instructions", "payload_templates", "triggers"):
@@ -111,11 +120,12 @@ async def test_payload_split_preserves_complete_prompt_population_async(
     ingredient_seeds: dict[str, list[Seed]],
 ) -> None:
     config = LatentInjectionDatasetConfiguration(
-        dataset_names=list(_FILES), families=LatentInjectionDatasetConfiguration.FAMILIES
+        dataset_names=list(_FILES), families=LatentInjectionDatasetConfiguration.FAMILIES, max_dataset_size=None
     )
     with patch.object(config, "_collect_named_seeds_async", return_value=ingredient_seeds):
         groups = await config.get_attack_seed_groups_async()
     assert len(groups) == 4266
+    assert all(group.objective.value and group.prompts[0].value for group in groups)
     # These fingerprints include the objectives, prompts, and logical IDs before the payload split.
     expected = {
         "fact_eiffel": "ef849eeea99d49777c19b74eaf321f072b9c310bcc9c37b3d1cb431f59319786",

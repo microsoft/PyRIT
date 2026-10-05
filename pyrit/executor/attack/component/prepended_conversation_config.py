@@ -51,9 +51,10 @@ class PrependedConversationConfig:
     message_normalizer: MessageStringNormalizer | None = None
 
     def __post_init__(self) -> None:
-        """Normalize simulated assistant opt-in to its API-compatible role."""
+        """Normalize simulated role opt-ins to their API-compatible roles."""
         self.apply_converters_to_roles = [
-            "assistant" if role == "simulated_assistant" else role for role in self.apply_converters_to_roles
+            "assistant" if role == "simulated_assistant" else "tool" if role == "simulated_tool" else role
+            for role in self.apply_converters_to_roles
         ]
 
     def get_message_normalizer(self) -> MessageStringNormalizer:

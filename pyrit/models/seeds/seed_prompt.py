@@ -216,6 +216,137 @@ class SeedPrompt(Seed):
             template_path, required_parameters, error_message=error_message
         )
 
+    @classmethod
+    def from_value_with_required_parameters(
+        cls,
+        value: str | SeedPrompt,
+        *,
+        required_parameters: list[str],
+        error_message: str | None = None,
+        component_name: str = "prompt",
+    ) -> SeedPrompt:
+        """
+        Coerce an inline string or ``SeedPrompt`` into a ``SeedPrompt`` declaring ``required_parameters``.
+
+        Inline strings are trusted: they are wrapped in a Jinja ``SeedPrompt`` whose declared
+        parameters are set to ``required_parameters``. Explicitly provided ``SeedPrompt`` objects
+        are validated against ``required_parameters`` and returned unchanged (never copied).
+
+        Args:
+            value: The inline string or SeedPrompt to coerce.
+            required_parameters: Parameter names the resolved template must support.
+            error_message: Optional custom error message for validation failures.
+            component_name: Human-readable label used in the default failure message (ignored
+                when ``error_message`` is provided).
+
+        Returns:
+            The resolved SeedPrompt.
+
+        Raises:
+            ValueError: If an explicitly provided SeedPrompt is missing required parameters.
+        """
+        if isinstance(value, SeedPrompt):
+            # Validate only explicitly provided SeedPrompts against the required parameters.
+            declared = value.parameters or []
+            missing = [param for param in required_parameters if param not in declared]
+            if missing:
+                raise ValueError(error_message or f"{component_name} is missing required parameters: {missing}")
+            return value
+
+        # Inline strings are trusted — declare all required params so Jinja rendering works.
+        return cls(
+            value=value,
+            is_jinja_template=True,
+            parameters=list(required_parameters),
+        )
+
+    @staticmethod
+    def reject_jinja_syntax(value: str, *, component_name: str = "prompt") -> None:
+        """
+        Raise if an inline string contains Jinja template syntax.
+
+        Shared by callers that accept static, reviewable guidance rather than a template
+        (e.g. ``compose_with_prefix``, ``AttackTechniqueFactory.create``).
+
+        Args:
+            value: The inline string to check.
+            component_name: Human-readable label for ``value``, used in the failure message.
+
+        Raises:
+            ValueError: If value contains "{{", "{%", or "{#".
+        """
+        if any(delimiter in value for delimiter in ("{{", "{%", "{#")):
+            raise ValueError(f"{component_name} must be static text without Jinja syntax.")
+
+    @staticmethod
+    def compose_with_prefix(
+        *,
+        base_prompt: SeedPrompt,
+        prefix: str | SeedPrompt,
+        required_parameters: list[str],
+        base_component_name: str = "prompt",
+        prefix_component_name: str = "prefix",
+    ) -> SeedPrompt:
+        """
+        Prepend static guidance ahead of an already-resolved base prompt.
+
+        Combines ``prefix`` with ``base_prompt`` (separated by a blank line, prefix first). The
+        combined prompt declares the union of both prompts' parameters — not just
+        ``required_parameters``, which is only the minimum each is validated against — and its
+        ``response_json_schema`` is whichever of the two declares one (an error if both do).
+
+        An inline string ``prefix`` must be static text (no Jinja syntax); an explicitly provided
+        ``SeedPrompt`` prefix is exempt and validated against ``required_parameters`` like any
+        other SeedPrompt.
+
+        The combined prompt is marked ``is_jinja_template`` only when both components are, so
+        composing never promotes untrusted text into a trusted template. Promoting it would
+        Jinja-render a value that was deliberately left unrendered, letting a crafted
+        ``{% endraw %}`` escape its raw wrapper (see ``_render_and_infer_data_type``).
+
+        Descriptive metadata (``name``, ``description``, ``source``) is intentionally not carried
+        over: the composed prompt is a distinct prompt and should not inherit the base template's
+        identity.
+
+        Args:
+            base_prompt: The already-resolved base SeedPrompt that the prefix is layered ahead of.
+            prefix: Inline string or SeedPrompt to prepend before ``base_prompt``.
+            required_parameters: Minimum parameter names the resolved (and, if explicit, the
+                prefix) template must support.
+            base_component_name: Human-readable label for ``base_prompt``, used only in the
+                ``response_json_schema`` conflict message.
+            prefix_component_name: Human-readable label for ``prefix``, used in its validation
+                messages and the ``response_json_schema`` conflict message.
+
+        Returns:
+            The combined SeedPrompt.
+
+        Raises:
+            ValueError: If prefix is an inline string containing Jinja syntax, if it is an
+                explicitly provided SeedPrompt missing required parameters, or if both base_prompt
+                and the resolved prefix declare a response_json_schema.
+        """
+        if isinstance(prefix, str):
+            SeedPrompt.reject_jinja_syntax(prefix, component_name=prefix_component_name)
+
+        prefix_prompt = SeedPrompt.from_value_with_required_parameters(
+            prefix,
+            required_parameters=required_parameters,
+            component_name=prefix_component_name,
+        )
+        if base_prompt.response_json_schema is not None and prefix_prompt.response_json_schema is not None:
+            raise ValueError(
+                f"Both the {base_component_name} and {prefix_component_name} declare a "
+                "response_json_schema; set the schema on only one of them."
+            )
+        combined_parameters = list(dict.fromkeys([*(prefix_prompt.parameters or []), *(base_prompt.parameters or [])]))
+        return SeedPrompt(
+            value=f"{prefix_prompt.value}\n\n{base_prompt.value}",
+            is_jinja_template=base_prompt.is_jinja_template and prefix_prompt.is_jinja_template,
+            parameters=combined_parameters,
+            response_json_schema=base_prompt.response_json_schema or prefix_prompt.response_json_schema,
+        )
+
     @staticmethod
     def from_messages(
         messages: list[Message],

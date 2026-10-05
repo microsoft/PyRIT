@@ -572,7 +572,9 @@ class TestParamPersistenceJsonSafety:
 
         await scenario.initialize_async()
 
-        stored = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])[0]
+        stored = (
+            await scenario._memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id])
+        )[0]
         assert stored.scenario_identifier.params["max_turns"] == 10
 
     async def test_non_json_safe_value_raises(self) -> None:

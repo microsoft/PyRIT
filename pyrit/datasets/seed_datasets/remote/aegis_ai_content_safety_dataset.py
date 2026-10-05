@@ -165,7 +165,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
         return "aegis_content_safety"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch NVIDIA Aegis AI Content Safety dataset with optional filtering and return as SeedDataset.
 

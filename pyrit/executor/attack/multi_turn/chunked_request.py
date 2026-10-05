@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import textwrap
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_scoring import prepare_attack_scoring
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -388,23 +390,33 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         if not self._objective_scorer and not self._auxiliary_scorers:
             return None
 
-        scorers: list[Scorer] = []
-        roles: list[ComponentRole] = []
+        prepared = prepare_attack_scoring(
+            objective_scorer=self._objective_scorer,
+            auxiliary_scorers=self._auxiliary_scorers,
+            expectation=expectation,
+        )
+        calls: list[tuple[Scorer, ScoringExpectation | None, ComponentRole]] = []
         if self._objective_scorer is not None:
-            scorers.append(self._objective_scorer)
-            roles.append(ComponentRole.OBJECTIVE_SCORER)
-        scorers.extend(self._auxiliary_scorers)
-        roles.extend([ComponentRole.AUXILIARY_SCORER] * len(self._auxiliary_scorers))
+            calls.append((self._objective_scorer, prepared.objective_expectation, ComponentRole.OBJECTIVE_SCORER))
+        calls.extend(
+            (scorer, selected, ComponentRole.AUXILIARY_SCORER)
+            for scorer, selected in zip(prepared.auxiliary_scorers, prepared.auxiliary_expectations, strict=True)
+        )
         with execution_context(
             component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
             objective=objective,
         ):
-            results = await Scorer.score_with_scorers_async(
-                scorable=ContentScorable(value=combined_value),
-                scorers=scorers,
-                expectation=expectation,
-                scorer_roles=roles,
+            results = await asyncio.gather(
+                *(
+                    Scorer._score_with_context_async(
+                        scorable=ContentScorable(value=combined_value),
+                        scorer=scorer,
+                        expectation=selected,
+                        component_role=role,
+                    )
+                    for scorer, selected, role in calls
+                )
             )
         objective_scores = results[0] if self._objective_scorer is not None else []
         return objective_scores[0] if objective_scores else None

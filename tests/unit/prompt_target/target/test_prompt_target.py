@@ -12,7 +12,14 @@ from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, flatten_to_message_pieces
+from pyrit.models import (
+    ChatMessageRole,
+    ComponentIdentifier,
+    Conversation,
+    Message,
+    MessagePiece,
+    flatten_to_message_pieces,
+)
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -56,13 +63,15 @@ def mock_attack_strategy():
     return strategy
 
 
-def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):
-    azure_openai_target.set_system_prompt(
-        system_prompt="system prompt",
-        conversation_id="1",
+async def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):
+    (
+        await azure_openai_target.set_system_prompt_async(
+            system_prompt="system prompt",
+            conversation_id="1",
+        )
     )
 
-    chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
+    chats = await azure_openai_target._memory.get_message_pieces_async(conversation_id="1")
     assert len(chats) == 1, f"Expected 1 chat, got {len(chats)}"
     assert chats[0].api_role == "system"
     assert chats[0].converted_value == "system prompt"
@@ -71,14 +80,156 @@ def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_st
 async def test_set_system_prompt_adds_memory(
     azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy
 ):
-    azure_openai_target.set_system_prompt(
-        system_prompt="system prompt",
-        conversation_id="1",
+    (
+        await azure_openai_target.set_system_prompt_async(
+            system_prompt="system prompt",
+            conversation_id="1",
+        )
     )
 
-    chats = azure_openai_target._memory.get_message_pieces(conversation_id="1")
+    chats = await azure_openai_target._memory.get_message_pieces_async(conversation_id="1")
     assert len(chats) == 1, f"Expected 1 chats, got {len(chats)}"
     assert chats[0].api_role == "system"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("supports_multi_turn", "supports_editable_history", "supports_system_prompt", "policy", "expected_error"),
+    [
+        pytest.param(True, False, True, None, None, id="native-system-without-editable-history"),
+        pytest.param(
+            True,
+            True,
+            False,
+            CapabilityHandlingPolicy(behaviors={CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.ADAPT}),
+            None,
+            id="editable-history-without-native-system",
+        ),
+        pytest.param(False, True, True, None, ValueError, id="without-multi-turn-editable"),
+        pytest.param(False, False, True, None, ValueError, id="without-multi-turn-native-system"),
+        pytest.param(True, False, False, None, ValueError, id="without-editable-or-native-system"),
+    ],
+)
+async def test_set_system_prompt_capability_admission_and_nonmutation(
+    *,
+    sqlite_instance: MemoryInterface,
+    supports_multi_turn: bool,
+    supports_editable_history: bool,
+    supports_system_prompt: bool,
+    policy: CapabilityHandlingPolicy | None,
+    expected_error: type[ValueError] | None,
+) -> None:
+    conversation_id = "system-prompt-capability-conversation"
+    target = _make_identifier_target(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=supports_multi_turn,
+            supports_editable_history=supports_editable_history,
+            supports_system_prompt=supports_system_prompt,
+        ),
+        policy=policy,
+    )
+
+    if expected_error is None:
+        await target.set_system_prompt_async(system_prompt="be concise", conversation_id=conversation_id)
+        stored = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+        assert len(stored) == 1
+        piece = stored[0].get_piece()
+        assert piece.api_role == "system"
+        assert piece.converted_value == "be concise"
+        assert piece.conversation_id == conversation_id
+    else:
+        with pytest.raises(
+            expected_error,
+            match="It must support multi-turn conversations and either editable history or native system prompts.",
+        ):
+            await target.set_system_prompt_async(system_prompt="be concise", conversation_id=conversation_id)
+        assert await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id) == []
+        assert (
+            await sqlite_instance.get_target_identifiers_async(identifier_hashes=[target.get_identifier().hash]) == []
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("existing_role", "existing_content"),
+    [
+        pytest.param("system", "be concise", id="repeated-system-prompt"),
+        pytest.param("user", "existing user message", id="existing-user-message"),
+    ],
+)
+async def test_set_system_prompt_rejects_nonempty_conversation_without_mutation(
+    *,
+    sqlite_instance: MemoryInterface,
+    existing_role: str,
+    existing_content: str,
+) -> None:
+    conversation_id = "nonempty-system-prompt-conversation"
+    target = _make_identifier_target(
+        capabilities=TargetCapabilities(
+            supports_multi_turn=True,
+            supports_editable_history=False,
+            supports_system_prompt=True,
+        )
+    )
+    if existing_role == "system":
+        await target.set_system_prompt_async(system_prompt=existing_content, conversation_id=conversation_id)
+    else:
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user",
+                conversation_id=conversation_id,
+                original_value=existing_content,
+                converted_value=existing_content,
+            ).to_message()
+        )
+
+    with pytest.raises(RuntimeError, match="Conversation already exists"):
+        await target.set_system_prompt_async(system_prompt="be expansive", conversation_id=conversation_id)
+
+    stored = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    assert len(stored) == 1
+    piece = stored[0].get_piece()
+    assert piece.api_role == existing_role
+    assert piece.converted_value == existing_content
+    assert piece.conversation_id == conversation_id
+
+
+@pytest.mark.parametrize("multi_turn,editable_history", [(False, True), (True, False)])
+async def test_set_system_prompt_rejects_unsupported_history_without_writing(
+    azure_openai_target: OpenAIChatTarget, multi_turn: bool, editable_history: bool
+) -> None:
+    azure_openai_target.apply_capabilities(
+        capabilities=TargetCapabilities(supports_multi_turn=multi_turn, supports_editable_history=editable_history)
+    )
+    with pytest.raises(
+        ValueError, match="multi-turn conversations and either editable history or native system prompts"
+    ):
+        await azure_openai_target.set_system_prompt_async(system_prompt="rejected", conversation_id="unsupported")
+    assert await azure_openai_target._memory.get_message_pieces_async(conversation_id="unsupported") == []
+
+
+async def test_set_system_prompt_preserves_existing_conversation(azure_openai_target: OpenAIChatTarget) -> None:
+    memory = azure_openai_target._memory
+    piece = MessagePiece(role="user", original_value="existing", conversation_id="existing")
+    await memory.add_message_to_memory_async(request=piece.to_message())
+
+    with pytest.raises(RuntimeError, match="Conversation already exists"):
+        await azure_openai_target.set_system_prompt_async(system_prompt="rejected", conversation_id="existing")
+
+    stored = await memory.get_message_pieces_async(conversation_id="existing")
+    assert [(item.id, item.converted_value) for item in stored] == [(piece.id, "existing")]
+
+
+async def test_dispose_db_engine_awaits_memory_cleanup(azure_openai_target: OpenAIChatTarget) -> None:
+    with (
+        patch.object(azure_openai_target._memory, "dispose_engine_async", new_callable=AsyncMock) as dispose,
+        patch.object(azure_openai_target._memory, "dispose_engine", side_effect=AssertionError("Sync cleanup")),
+    ):
+        await azure_openai_target.dispose_db_engine_async()
+    dispose.assert_awaited_once()
 
 
 async def test_send_prompt_with_system_calls_chat_complete(
@@ -103,9 +254,11 @@ async def test_send_prompt_with_system_calls_chat_complete(
     ) as mock_create:
         mock_create.return_value = mock_response
 
-        azure_openai_target.set_system_prompt(
-            system_prompt="system prompt",
-            conversation_id="1",
+        (
+            await azure_openai_target.set_system_prompt_async(
+                system_prompt="system prompt",
+                conversation_id="1",
+            )
         )
 
         request = sample_entries[0]
@@ -219,7 +372,7 @@ async def test_history_squash_preserves_metadata_on_normalized_message():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -262,7 +415,7 @@ async def test_response_preserves_metadata_after_history_squash():
     user_msg = _make_lineage_message(role="user", content="follow-up question")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     mock_completion = _make_mock_chat_completion("target response")
@@ -308,7 +461,7 @@ async def test_system_squash_preserves_metadata():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [system_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[system_msg])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -358,7 +511,7 @@ async def test_history_squash_preserves_metadata_on_all_output_pieces():
     )
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -389,7 +542,7 @@ async def test_conversation_id_stamped_without_merging_normalizer_output_metadat
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = [history_msg]
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[history_msg])
     target._memory = mock_memory
 
     # Simulate a normalizer that inserts a new message with a random conversation_id.
@@ -455,7 +608,7 @@ async def test_json_schema_stripped_for_non_schema_target_remains_authoritative(
     user_msg = Message(message_pieces=[piece])
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -489,7 +642,7 @@ async def test_json_schema_only_metadata_fully_stripped_remains_authoritative():
     user_msg = Message(message_pieces=[piece])
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     normalized = await target._get_normalized_conversation_async(message=user_msg)
@@ -512,7 +665,7 @@ async def test_no_warning_when_message_count_unchanged():
     user_msg = _make_lineage_message(role="user", content="hello")
 
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
     target._memory = mock_memory
 
     with patch.object(target.configuration, "normalize_async", new_callable=AsyncMock) as mock_normalize:

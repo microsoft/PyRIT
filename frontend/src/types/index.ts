@@ -131,7 +131,7 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
-  role: 'user' | 'assistant' | 'simulated_assistant' | 'system'
+  role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system'
   content: string
   timestamp: string
   /**
@@ -167,6 +167,12 @@ export interface ChatSendOutcome {
   clearDraft: boolean
 }
 
+/** A filter choice: the value it selects and the text shown for it. */
+export interface FilterOption {
+  value: string
+  label: string
+}
+
 // ============================================================================
 // Backend DTO Types (mirror pyrit/backend/models)
 // ============================================================================
@@ -182,6 +188,7 @@ export interface ConfigurationFileContent {
   content: string
   source: string
   version: string
+  live_reinitialization_enabled: boolean
 }
 
 export interface UpdateConfigurationFileRequest {
@@ -227,6 +234,7 @@ export interface TargetPreferences {
 
 export interface UserPreferences {
   readonly targets: TargetPreferences
+  readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
@@ -629,6 +637,22 @@ export interface AddMessageResponse {
   messages: ConversationMessagesResponse
 }
 
+export interface MessageSendRequest extends AddMessageRequest {
+  send: true
+  target_registry_name: string
+  submission_id: string
+}
+
+export interface MessageSendStatus {
+  send_id: string
+  attack_result_id: string
+  conversation_id: string
+  request_turn_number: number | null
+  state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
+  error: string | null
+  failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+}
+
 export interface AttackListResponse {
   items: AttackSummary[]
   pagination: PaginationInfo
@@ -733,13 +757,25 @@ export interface ScenarioDatasetSizeCap {
 export interface ScenarioDatasetSummary {
   name: string
   kind: 'dataset' | 'synthesized'
-  logical_seed_group_count: number
-  selected_seed_group_count: number
+  logical_seed_group_count: number | null
+  selected_seed_group_count: number | null
   configured_caps: ScenarioDatasetSizeCap[]
   selection_note: string | null
 }
 
+export type ScenarioDatasetSizeEstimate =
+  | { kind: 'bounded'; value: number }
+  | { kind: 'all_available' }
+  | { kind: 'indeterminate'; detail: string }
+
+export type DatasetLimitInput =
+  | { state: 'value'; value: number }
+  | { state: 'scenario_default' | 'not_applicable'; value?: null }
+
 export interface ScenarioRunSizeEstimateResponse {
+  status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
+  dataset_size: ScenarioDatasetSizeEstimate
+  dataset_limit: DatasetLimitInput
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -780,14 +816,16 @@ export interface ScenarioRunEstimateDataset {
   id: string
   name: string
   kind: 'dataset' | 'synthesized'
-  logicalSeedGroupCount: number
-  selectedSeedGroupCount: number
+  logicalSeedGroupCount: number | null
+  selectedSeedGroupCount: number | null
   configuredCaps: ScenarioRunEstimateDatasetCap[]
   selectionNote: string | null
 }
 
 export interface ScenarioRunEstimate {
   scope: 'default' | 'request'
+  datasetSize: ScenarioDatasetSizeEstimate
+  approximate?: boolean
   total: number | null
   minimum?: number | null
   maximum?: number | null
@@ -1134,4 +1172,19 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+}
+export interface RuntimeReadiness {
+  ready: boolean
+  state: string
+  generation: string
+}
+
+export interface RuntimeStatus {
+  state: string
+  generation: string
+  version: string | null
+  enabled: boolean
+  applying: boolean
+  outcome: string
+  message: string
 }

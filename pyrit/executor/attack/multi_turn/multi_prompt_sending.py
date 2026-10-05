@@ -16,6 +16,7 @@ from pyrit.executor.attack.core.attack_config import (
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
 from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
@@ -34,7 +35,6 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import MessageScorer
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -48,7 +48,8 @@ class MultiPromptSendingAttackParameters(AttackParameters):
     Parameters for MultiPromptSendingAttack.
 
     Extends AttackParameters to include user_messages field for multi-turn attacks.
-    Seed preparation accepts objective, user_messages, memory_labels, and expectation.
+    Seed preparation accepts objective, user_messages, memory_labels, and expectation, and carries the
+    seed group's harm categories into targeted_harm_categories.
     """
 
     user_messages: list[Message] | None = None
@@ -102,7 +103,8 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             objective=seed_group.objective.value,
             memory_labels=overrides.get("memory_labels", {}),
             user_messages=user_messages,
-            expectation=overrides.get("expectation"),
+            expectation=AttackParameters._resolve_seed_expectation(seed_group=seed_group, overrides=overrides),
+            targeted_harm_categories=list(seed_group.harm_categories),
         )
 
 
@@ -375,7 +377,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         ):
             context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
             return await self._prompt_normalizer.send_prompt_async(
-                message=current_message,
+                # Duplicate so the caller's Message objects can be reused across executions
+                # (e.g. broadcast user_messages) without piece ID collisions in memory.
+                message=current_message.duplicate(),
                 target=self._objective_target,
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
@@ -410,10 +414,10 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             attack_strategy_name=self.__class__.__name__,
             objective=objective,
         ):
-            scoring_results = await MessageScorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=response,
+                objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective_scorer=self._objective_scorer if self._objective_scorer else None,
                 expectation=expectation,
             )
 

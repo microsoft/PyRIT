@@ -311,7 +311,9 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
         score.score_metadata = self._verdict_metadata(score)
         return [score]
 
-    async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
+    async def _score_async(
+        self, message: Message, *, objective: str | None = None, expectation: ScoringExpectation | None = None
+    ) -> list[Score]:
         """
         Score every supported piece and record the aggregated verdict.
 
@@ -323,12 +325,13 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
         Args:
             message (Message): The message to score.
             objective (str | None): Objective retained on the resulting score. Defaults to None.
+            expectation (ScoringExpectation | None): Complete criteria passed through aggregation.
 
         Returns:
             list[Score]: A single aggregated true/false score, or an empty list when no piece
                 could be scored.
         """
-        scores = await super()._score_async(message, objective=objective)
+        scores = await super()._score_async(message, objective=objective, expectation=expectation)
 
         if not scores:
             return scores

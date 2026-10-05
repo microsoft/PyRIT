@@ -8,6 +8,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.attack_result_scope import get_current_attack_result_id
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.utils import combine_dict
 from pyrit.executor.attack.component.prepended_conversation_config import (
     PrependedConversationConfig,
@@ -44,9 +47,9 @@ logger = logging.getLogger(__name__)
 
 def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
     """
-    Mark assistant messages as simulated_assistant for traceability.
+    Mark injected history with simulated assistant and tool roles.
 
-    This function converts all assistant roles to simulated_assistant in the
+    This function converts assistant and tool roles to their simulated roles in the
     provided messages. This is useful when loading conversations from YAML files
     or other sources where the responses are not from actual targets.
 
@@ -54,14 +57,12 @@ def mark_messages_as_simulated(messages: Sequence[Message]) -> list[Message]:
         messages (Sequence[Message]): The messages to mark as simulated.
 
     Returns:
-        list[Message]: The same messages with assistant roles converted to simulated_assistant.
+        list[Message]: The same messages with synthetic history provenance.
             Modifies the messages in place and also returns them for convenience.
     """
     result = list(messages)
     for message in result:
-        for piece in message.message_pieces:
-            if piece.role == "assistant":
-                piece.role = "simulated_assistant"
+        message.set_simulated_role()
     return result
 
 
@@ -77,6 +78,7 @@ def get_adversarial_chat_messages(
     chat conversations. From the adversarial chat's perspective:
     - "user" messages become "assistant" (prompts it generated)
     - "assistant" messages become "user" (responses it received)
+    - Tool exchanges become user text context, not the adversarial target's own calls
     - System messages are skipped (adversarial chat has its own system prompt)
 
     All messages receive new UUIDs to distinguish them from the originals.
@@ -103,6 +105,21 @@ def get_adversarial_chat_messages(
         for piece in message.message_pieces:
             # Skip system messages - adversarial chat has its own system prompt
             if piece.api_role == "system":
+                continue
+
+            if piece.api_role == "tool" or piece.converted_value_data_type in {
+                "function_call",
+                "function_call_output",
+                "tool_call",
+            }:
+                context = f"Objective target {piece.role} ({piece.converted_value_data_type}): {piece.converted_value}"
+                result.append(
+                    MessagePiece(
+                        role="user",
+                        original_value=context,
+                        conversation_id=adversarial_chat_conversation_id,
+                    ).to_message()
+                )
                 continue
 
             # Create a new piece with swapped role for adversarial chat
@@ -212,7 +229,27 @@ class ConversationManager:
             A list of messages in the conversation, ordered by creation time.
             Returns empty list if no messages exist.
         """
+        print_deprecation_message(
+            old_item="ConversationManager.get_conversation",
+            new_item="ConversationManager.get_conversation_async",
+            removed_in="1.4.0",
+        )
         conversation = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        return list(conversation)
+
+    @legacy_sync_override(lambda: ConversationManager.get_conversation)
+    async def get_conversation_async(self, conversation_id: str) -> list[Message]:
+        """
+        Retrieve a conversation by its ID.
+
+        Args:
+            conversation_id: The ID of the conversation to retrieve.
+
+        Returns:
+            A list of messages in the conversation, ordered by creation time.
+            Returns empty list if no messages exist.
+        """
+        conversation = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         return list(conversation)
 
     def get_last_message(self, *, conversation_id: str, role: ChatMessageRole | None = None) -> MessagePiece | None:
@@ -226,7 +263,39 @@ class ConversationManager:
         Returns:
             The last message piece, or None if no messages exist.
         """
+        print_deprecation_message(
+            old_item="ConversationManager.get_last_message",
+            new_item="ConversationManager.get_last_message_async",
+            removed_in="1.4.0",
+        )
         conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return None
+
+        if role:
+            for m in reversed(conversation):
+                piece = m.get_piece()
+                if piece.api_role == role:
+                    return piece
+            return None
+
+        return conversation[-1].get_piece()
+
+    @legacy_sync_override(lambda: ConversationManager.get_last_message)
+    async def get_last_message_async(
+        self, *, conversation_id: str, role: ChatMessageRole | None = None
+    ) -> MessagePiece | None:
+        """
+        Retrieve the most recent message from a conversation.
+
+        Args:
+            conversation_id: The ID of the conversation to retrieve from.
+            role: If provided, return only the last message matching this role.
+
+        Returns:
+            The last message piece, or None if no messages exist.
+        """
+        conversation = await self.get_conversation_async(conversation_id)
         if not conversation:
             return None
 
@@ -258,12 +327,41 @@ class ConversationManager:
         Raises:
             ValueError: If target cannot handle the SYSTEM_PROMPT capability.
         """
+        print_deprecation_message(
+            old_item="ConversationManager.set_system_prompt",
+            new_item="ConversationManager.set_system_prompt_async",
+            removed_in="1.4.0",
+        )
         target.configuration.ensure_can_handle(capability=CapabilityName.SYSTEM_PROMPT)
 
         target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
         )
+
+    @legacy_sync_override(lambda: ConversationManager.set_system_prompt)
+    async def set_system_prompt_async(
+        self,
+        *,
+        target: PromptTarget,
+        conversation_id: str,
+        system_prompt: str,
+    ) -> None:
+        """
+        Set or update the system prompt for a conversation.
+
+        Args:
+            target: The target to set the system prompt on. Must handle the
+                SYSTEM_PROMPT capability (natively or via an ADAPT policy).
+            conversation_id: Unique identifier for the conversation.
+            system_prompt: The system prompt text.
+
+        Raises:
+            ValueError: If target cannot handle the SYSTEM_PROMPT capability.
+        """
+        target.configuration.ensure_can_handle(capability=CapabilityName.SYSTEM_PROMPT)
+
+        (await target.set_system_prompt_async(system_prompt=system_prompt, conversation_id=conversation_id))
 
     async def initialize_context_async(
         self,
@@ -417,11 +515,17 @@ class ConversationManager:
 
             prepared_messages.append(message_copy)
 
-        self._memory.add_conversation_to_memory(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        (
+            await self._memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=conversation_id,
+                    target_identifier=target_identifier,
+                    attack_result_id=get_current_attack_result_id(),
+                )
+            )
         )
         for i, message in enumerate(prepared_messages):
-            self._memory.add_message_to_memory(request=message)
+            (await self._memory.add_message_to_memory_async(request=message))
             logger.debug(f"Added prepended message {i + 1}/{len(prepared_messages)} to memory")
 
         return turn_count
@@ -512,7 +616,7 @@ class ConversationManager:
             return state
 
         existing_message_ids = {
-            message.get_piece().id for message in self.get_conversation(conversation_id=conversation_id)
+            message.get_piece().id for message in (await self.get_conversation_async(conversation_id=conversation_id))
         }
 
         # Use the lower-level method to add messages to memory
@@ -527,7 +631,7 @@ class ConversationManager:
         )
         persisted_messages = [
             message
-            for message in self.get_conversation(conversation_id)
+            for message in (await self.get_conversation_async(conversation_id))
             if message.get_piece().id not in existing_message_ids
         ]
         context.prepended_history_send_context = self.create_prepended_history_send_context(
@@ -549,14 +653,16 @@ class ConversationManager:
             # them up by conversation_id and filter to the last assistant turn. Only extract
             # true_false scores with score_value=False so attacks can use the rationale for
             # feedback without re-scoring.
-            memory_pieces = self._memory.get_message_pieces(conversation_id=conversation_id)
+            memory_pieces = await self._memory.get_message_pieces_async(conversation_id=conversation_id)
             assistant_pieces = [piece for piece in memory_pieces if piece.api_role == "assistant"]
             last_assistant_sequence = max((piece.sequence for piece in assistant_pieces), default=None)
             assistant_piece_ids = [
                 str(piece.id) for piece in assistant_pieces if piece.sequence == last_assistant_sequence
             ]
             existing_scores = (
-                self._memory.get_prompt_scores(prompt_ids=assistant_piece_ids) if assistant_piece_ids else []
+                (await self._memory.get_prompt_scores_async(prompt_ids=assistant_piece_ids))
+                if assistant_piece_ids
+                else []
             )
             for score in existing_scores:
                 if score.score_type != "true_false":

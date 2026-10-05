@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import json
+import os
 import shlex
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -43,7 +45,10 @@ def _diff_cover_args(*, target: str = "unit-test-diff-cover", baseline: str | No
 
 
 def _git(*, repo: Path, args: list[str]) -> str:
-    result = subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, timeout=30)
+    # Windows can lose restored empty values in the native environment after patch.dict.
+    result = subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, timeout=30, env=dict(os.environ)
+    )
     return result.stdout.strip()
 
 
@@ -103,6 +108,7 @@ def _run_diff_cover(*, repo: Path, baseline: str) -> tuple[subprocess.CompletedP
         capture_output=True,
         text=True,
         timeout=30,
+        env=dict(os.environ),
     )
     report = json.loads((repo / "diff-coverage.json").read_text(encoding="utf-8"))
     return result, report
@@ -150,9 +156,31 @@ def test_missing_baseline_fails_instead_of_passing(merged_pr: Path) -> None:
         capture_output=True,
         text=True,
         timeout=30,
+        env=dict(os.environ),
     )
     assert result.returncode != 0
     assert "missing-base" in result.stderr
+
+
+def test_diff_coverage_preserves_restored_empty_git_config(tmp_path: Path) -> None:
+    environment = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "audit.empty",
+        "GIT_CONFIG_VALUE_0": "",
+    }
+    with patch.dict(os.environ, environment):
+        with patch.dict(os.environ, {}, clear=True):
+            pass
+
+        repo = _make_merged_pr(repo=tmp_path, base_branch="main")
+        assert _git(repo=repo, args=["config", "--get", "audit.empty"]) == ""
+        _write_coverage(repo=repo, covered_lines=9)
+        result, report = _run_diff_cover(repo=repo, baseline=_diff_step()["env"]["DIFF_COVER_BASE"])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert set(report["src_stats"]) == {"pr.py"}
+    assert report["total_num_lines"] == 10
+    assert report["total_percent_covered"] == 90
 
 
 def test_workflow_preserves_checkout_scope_and_overall_coverage() -> None:
