@@ -231,8 +231,18 @@ value: |
                 cleanup_cancelled.set()
 
         with (
+            patch.object(generator._target, "set_system_prompt_async", new_callable=AsyncMock) as setup,
+            patch.object(
+                generator._normalizer.memory, "get_message_pieces_async", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(
+                generator._normalizer.memory,
+                "delete_conversation_pieces_after_sequence_async",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
             patch.object(generator, "_CLEANUP_TIMEOUT_SECONDS", 0.01),
-            patch.object(generator._normalizer, "send_prompt_async", side_effect=wait_forever_async),
+            patch.object(generator._normalizer, "send_prompt_async", side_effect=wait_forever_async) as send,
             patch.object(generator._target, "reset_conversation_async", side_effect=reset_async) as reset,
         ):
             async with asyncio.timeout(3):
@@ -240,6 +250,8 @@ value: |
                     await generator.execute_async(instructions="Test", count=2)
         assert cancelled.is_set()
         assert cleanup_cancelled.is_set()
+        setup.assert_awaited_once()
+        send.assert_awaited_once()
         reset.assert_awaited_once()
         assert "Timed out resetting generation conversation" in caplog.text
 
@@ -258,6 +270,16 @@ value: |
                 cleanup_cancelled.set()
 
         with (
+            patch.object(generator._target, "set_system_prompt_async", new_callable=AsyncMock) as setup,
+            patch.object(
+                generator._normalizer.memory, "get_message_pieces_async", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(
+                generator._normalizer.memory,
+                "delete_conversation_pieces_after_sequence_async",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
             patch.object(generator, "_CLEANUP_TIMEOUT_SECONDS", 0.01),
             patch.object(
                 generator._normalizer,
@@ -265,8 +287,8 @@ value: |
                 new_callable=AsyncMock,
                 return_value=response,
                 side_effect=failure,
-            ),
-            patch.object(generator._target, "reset_conversation_async", side_effect=reset_async),
+            ) as send,
+            patch.object(generator._target, "reset_conversation_async", side_effect=reset_async) as reset,
         ):
             async with asyncio.timeout(1):
                 if failure is None:
@@ -281,6 +303,9 @@ value: |
                         await generator.execute_async(instructions="Test", count=1)
                     assert generation_error.value.__cause__ is failure
         assert cleanup_cancelled.is_set()
+        setup.assert_awaited_once()
+        send.assert_awaited_once()
+        reset.assert_awaited_once()
         assert "Timed out resetting generation conversation" in caplog.text
 
     async def test_cancellation_propagates_async(self) -> None:
