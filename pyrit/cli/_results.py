@@ -6,8 +6,8 @@ View resolution, ``--limit`` policy, and attack selection for the
 ``scenario-results`` command.
 
 Rendering is delegated to ``pyrit.output`` (the scenario, attacks, and conversation
-printers); this module holds only the CLI-side flag policy and the objective-scorer
-key helper (attack selection is shared via ``pyrit.output._derivation.select_attacks``).
+printers); this module holds only the CLI-side flag policy (attack selection is
+shared via ``pyrit.output._derivation.select_attacks``).
 ``ScenarioResultView`` lives in ``pyrit.cli._cli_args`` so the argument parsers can
 reference it cheaply.
 """
@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 from pyrit.cli._cli_args import ScenarioResultView
 
 if TYPE_CHECKING:
-    from pyrit.models import ScenarioResult
     from pyrit.output.sink import Sink
 
 #: Default cap on how many attacks the transcript-fetching views (``conversations``
@@ -150,24 +149,3 @@ def resolve_output_sink(*, output_path: str | None, output_format: str) -> Sink 
     if not path.parent.exists():
         raise ValueError(f"--output directory does not exist: {path.parent}")
     return FileSink(path=path)
-
-
-def _objective_scorer_key(*, result: ScenarioResult) -> tuple[str | None, str | None]:
-    """
-    Extract the scenario objective scorer's ``(hash, class_name)`` match key.
-
-    The objective scorer is the one whose verdict determines attack success, so
-    its identity is how the transcript picks the single meaningful score out of
-    the several attached to each response.
-
-    Args:
-        result (ScenarioResult): The scenario result whose objective scorer to read.
-
-    Returns:
-        tuple[str | None, str | None]: The identity hash and class name, or
-            ``(None, None)`` when the scenario declares no objective scorer.
-    """
-    identifier = result.objective_scorer_identifier
-    if identifier is None:
-        return None, None
-    return identifier.hash, identifier.class_name

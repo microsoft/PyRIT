@@ -1009,11 +1009,11 @@ class ConversationEntry(Base):
     """
     Conversation-scoped metadata, persisted once per ``conversation_id``.
 
-    Holds identifiers that belong to the conversation as a whole -- currently the
-    target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
-    row. The target is captured once when the conversation's pieces are written and
-    read back via ``MemoryInterface._get_conversation`` (it is not stamped
-    onto individual pieces).
+    Holds identifiers that belong to the conversation as a whole, namely the target
+    identifier and the owning attack execution's result ID, so they are not
+    duplicated onto every ``PromptMemoryEntry`` row. The target is captured once when
+    the conversation's pieces are written and read back via
+    ``MemoryInterface._get_conversation`` (it is not stamped onto individual pieces).
 
     The target is dual-written: the full identifier stays in the ``target_identifier``
     JSON column (still the read source), and ``target_identifier_hash`` references the
@@ -1035,6 +1035,11 @@ class ConversationEntry(Base):
     # this conversation). Nullable for backwards compatibility with existing databases.
     retries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
+    #: ID of the attack result whose execution owns this conversation. It matches
+    #: ``AttackResultEntries.id`` by value rather than by foreign key, because the result
+    #: row is written when the execution finishes. Null outside an attack execution.
+    attack_result_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
+
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
     pyrit_version = mapped_column(String, nullable=True)
@@ -1050,6 +1055,7 @@ class ConversationEntry(Base):
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
         self.retries = [retry.model_dump(mode="json") for retry in conversation.retries] or None
+        self.attack_result_id = uuid.UUID(conversation.attack_result_id) if conversation.attack_result_id else None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -1065,6 +1071,7 @@ class ConversationEntry(Base):
         return Conversation(
             conversation_id=self.conversation_id,
             target_identifier=target_id,
+            attack_result_id=str(self.attack_result_id) if self.attack_result_id else None,
             retries=retries,
         )
 
