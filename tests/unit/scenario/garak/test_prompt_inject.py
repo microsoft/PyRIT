@@ -29,6 +29,11 @@ def _mock_id(name: str) -> ComponentIdentifier:
 
 
 @pytest.fixture
+def garak_dataset_names() -> list[str]:
+    return ["prompt_inject_contexts", "prompt_inject_techniques"]
+
+
+@pytest.fixture
 def mock_objective_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = _mock_id("MockObjectiveTarget")
@@ -109,7 +114,7 @@ class TestPromptInjectInitialization:
         assert "random_seed" not in parameters
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_garak_dataset_fetch")
 class TestPromptInjectAtomicAttacks:
     async def test_technique_and_goal_select_independent_axes(self, mock_objective_target: PromptTarget) -> None:
         scenario = PromptInject()
@@ -451,8 +456,23 @@ class TestPromptInjectAtomicAttacks:
             )
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_garak_dataset_fetch")
 class TestPromptInjectDatasetSampling:
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [({}, 12), ({"max_dataset_size": None}, 210), ({"max_dataset_size": 6}, 6)],
+    )
+    async def test_configuration_default_covers_custom_goals_async(
+        self, *, kwargs: dict[str, int | None], expected: int
+    ) -> None:
+        goals = [f"goal {index}" for index in range(6)]
+        config = PromptInjectDatasetConfiguration(
+            dataset_names=PromptInject.required_datasets(), goal_texts=goals, **kwargs
+        )
+        groups = await config.get_attack_seed_groups_async()
+        assert len(groups) == expected
+        assert {group.objective.metadata["goal_text"] for group in groups} == set(goals)
+
     @pytest.mark.parametrize("grouped", [False, True])
     async def test_both_resolvers_preserve_goal_coverage_async(self, grouped: bool) -> None:
         goals = ["goal A", "goal B", "goal C"]

@@ -478,7 +478,9 @@ class _MockEmbeddingGenerator:
         )
 
 
-def test_add_multimodal_message_with_embedding_persists_and_skips_non_text_pieces(sqlite_instance):
+async def test_add_multimodal_message_with_embedding_persists_and_skips_non_text_pieces_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
     """A multimodal message must persist when embeddings are enabled.
 
     ``MemoryEmbedding.generate_embedding_memory_data`` raises for non-text pieces, so
@@ -486,7 +488,9 @@ def test_add_multimodal_message_with_embedding_persists_and_skips_non_text_piece
     sends working while text similarity search still covers the embeddable content.
     """
     sqlite_instance.memory_embedding = MemoryEmbedding(embedding_model=_MockEmbeddingGenerator())
-    sqlite_instance.add_conversation_to_memory(conversation=Conversation(conversation_id="multimodal-conversation"))
+    await sqlite_instance.add_conversation_to_memory_async(
+        conversation=Conversation(conversation_id="multimodal-conversation")
+    )
 
     text_piece = MessagePiece(
         role="user",
@@ -502,20 +506,21 @@ def test_add_multimodal_message_with_embedding_persists_and_skips_non_text_piece
         conversation_id="multimodal-conversation",
     )
 
-    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[text_piece, image_piece]))
+    await sqlite_instance.add_message_to_memory_async(request=Message(message_pieces=[text_piece, image_piece]))
 
-    persisted = sqlite_instance.get_message_pieces(conversation_id="multimodal-conversation")
+    persisted = await sqlite_instance.get_message_pieces_async(conversation_id="multimodal-conversation")
     assert len(persisted) == 2
-    with sqlite_instance.get_session() as session:
-        embedding_entries = session.query(EmbeddingDataEntry).all()
-        assert len(embedding_entries) == 1
-        assert embedding_entries[0].id == text_piece.id
+    embedding_entries = await sqlite_instance.get_all_embeddings_async()
+    assert len(embedding_entries) == 1
+    assert embedding_entries[0].id == text_piece.id
 
 
-def test_add_message_with_embedding_skips_pieces_not_in_memory(sqlite_instance):
+async def test_add_message_with_embedding_skips_pieces_not_in_memory_async(sqlite_instance: SQLiteMemory) -> None:
     """Pieces flagged ``not_in_memory`` are never persisted, so they get no embedding row."""
     sqlite_instance.memory_embedding = MemoryEmbedding(embedding_model=_MockEmbeddingGenerator())
-    sqlite_instance.add_conversation_to_memory(conversation=Conversation(conversation_id="ephemeral-conversation"))
+    await sqlite_instance.add_conversation_to_memory_async(
+        conversation=Conversation(conversation_id="ephemeral-conversation")
+    )
 
     persisted_piece = MessagePiece(
         role="user",
@@ -529,14 +534,15 @@ def test_add_message_with_embedding_skips_pieces_not_in_memory(sqlite_instance):
         not_in_memory=True,
     )
 
-    sqlite_instance.add_message_to_memory(request=Message(message_pieces=[persisted_piece, ephemeral_piece]))
+    await sqlite_instance.add_message_to_memory_async(
+        request=Message(message_pieces=[persisted_piece, ephemeral_piece])
+    )
 
-    persisted = sqlite_instance.get_message_pieces(conversation_id="ephemeral-conversation")
+    persisted = await sqlite_instance.get_message_pieces_async(conversation_id="ephemeral-conversation")
     assert [piece.original_value for piece in persisted] == ["persisted text"]
-    with sqlite_instance.get_session() as session:
-        embedding_entries = session.query(EmbeddingDataEntry).all()
-        assert len(embedding_entries) == 1
-        assert embedding_entries[0].id == persisted_piece.id
+    embedding_entries = await sqlite_instance.get_all_embeddings_async()
+    assert len(embedding_entries) == 1
+    assert embedding_entries[0].id == persisted_piece.id
 
 
 def test_disable_embedding(sqlite_instance):
@@ -1135,7 +1141,10 @@ def test_legacy_in_memory_database_serializes_sessions_across_threads(isolated_m
     Without serialization this loses rows and raises sqlite3.InterfaceError.
     """
     memory = isolated_memory_factory(db_path=":memory:")
-    with closing(memory.get_session()) as session:
+    with (
+        pytest.warns(DeprecationWarning, match="MemoryInterface.get_session"),
+        closing(memory.get_session()) as session,
+    ):
         session.execute(text("CREATE TABLE lock_probe (id INTEGER PRIMARY KEY, value TEXT)"))
         session.commit()
 
@@ -1144,7 +1153,7 @@ def test_legacy_in_memory_database_serializes_sessions_across_threads(isolated_m
     def _writer(worker: int) -> None:
         try:
             for index in range(30):
-                with closing(memory.get_session()) as session:
+                with closing(memory._get_sync_session()) as session:
                     session.execute(
                         text("INSERT INTO lock_probe (value) VALUES (:value)"),
                         {"value": f"{worker}-{index}"},
@@ -1161,7 +1170,7 @@ def test_legacy_in_memory_database_serializes_sessions_across_threads(isolated_m
 
     assert not any(thread.is_alive() for thread in threads), "session lock deadlocked"
     assert errors == []
-    with closing(memory.get_session()) as session:
+    with closing(memory._get_sync_session()) as session:
         assert session.execute(text("SELECT COUNT(*) FROM lock_probe")).scalar() == 120
 
 
@@ -1207,13 +1216,13 @@ async def test_file_backed_database_is_not_serialized_async(isolated_memory_fact
         memory = isolated_memory_factory(db_path=os.path.join(temp_dir, "locking.db"))
         assert memory._connection_lock is None
         # Windows cannot remove the temp directory while the engine still holds the file open.
-        memory.dispose_engine()
+        await memory.dispose_engine_async()
 
 
-def test_get_message_pieces_filters_on_integer_prompt_metadata(sqlite_instance: SQLiteMemory):
+async def test_get_message_pieces_filters_on_integer_prompt_metadata_async(sqlite_instance: SQLiteMemory) -> None:
     """An integer prompt_metadata value must be queryable.
 
-    ``get_message_pieces`` types the filter as ``dict[str, str | int]`` and the
+    ``get_message_pieces_async`` types the filter as ``dict[str, str | int]`` and the
     targets store an int in that column on every request
     (``pyrit_target_request`` is set to 1), so filtering on one has to work.
     SQLite's JSON_EXTRACT keeps the JSON type of the stored value and never
@@ -1233,9 +1242,9 @@ def test_get_message_pieces_filters_on_integer_prompt_metadata(sqlite_instance: 
         original_value="not sent",
         prompt_metadata={"pyrit_target_request": 0},
     )
-    sqlite_instance._insert_entries(entries=[PromptMemoryEntry(entry=matching), PromptMemoryEntry(entry=other)])
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[matching, other])
 
-    retrieved = sqlite_instance.get_message_pieces(prompt_metadata={"pyrit_target_request": 1})
+    retrieved = await sqlite_instance.get_message_pieces_async(prompt_metadata={"pyrit_target_request": 1})
 
     assert len(retrieved) == 1
     assert retrieved[0].original_value == "sent"

@@ -27,6 +27,12 @@ target expands to:
 The same substitution works for the other targets on this page.
 ```
 
+`make unit-test-junit` also writes per-test timings to `junit/test-results.xml` and
+prints the 25 slowest test phases. Override the report path with
+`make unit-test-junit JUNIT_XML=junit/custom-results.xml`.
+CI uploads JUnit reports for every OS, Python version, and extras combination,
+including failed test runs, with those dimensions in each artifact name.
+
 ## Running a subset while iterating
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.
@@ -71,7 +77,8 @@ Integration tests additionally require `RUN_ALL_TESTS=true` and real credentials
 
 ## Coverage checks
 
-`make unit-test-cov-xml` runs unit tests and enforces 78% overall coverage.
+`make unit-test-cov-xml` runs unit tests, enforces 78% overall coverage, and produces
+the same JUnit timing report.
 `make unit-test-diff-cover` checks an existing `coverage.xml` and requires at least
 90% coverage on changed executable lines. `make diff-cover` runs both checks.
 

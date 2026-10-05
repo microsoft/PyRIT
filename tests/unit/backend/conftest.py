@@ -10,6 +10,19 @@ import pytest
 
 from pyrit import _compatibility
 from pyrit.backend.main import app
+from pyrit.backend.services.attack_service import get_attack_service
+from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.message_send_service import get_message_send_service
+
+
+@pytest.fixture(autouse=True)
+def isolated_manual_message_services() -> Iterator[None]:
+    """Keep cached service owners bound to this test's memory and event loop."""
+    for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler):
+        factory.cache_clear()
+    yield
+    for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler):
+        factory.cache_clear()
 
 
 @pytest.fixture(autouse=True)

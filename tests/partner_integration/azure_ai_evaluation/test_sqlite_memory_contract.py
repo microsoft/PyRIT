@@ -18,6 +18,8 @@ Memory query methods used by the SDK:
 - get_conversation(): _callback_chat_target.py (multi-turn history)
 """
 
+import pytest
+
 from pyrit.memory import CentralMemory, SQLiteMemory
 
 
@@ -64,7 +66,8 @@ class TestMemoryLifecycleContract:
         memory = SQLiteMemory(db_path=":memory:")
         assert hasattr(memory, "dispose_engine")
         assert callable(memory.dispose_engine)
-        memory.dispose_engine()
+        with pytest.warns(DeprecationWarning, match="MemoryInterface.dispose_engine"):
+            memory.dispose_engine()
 
 
 class TestMemoryQueryMethodContract:

@@ -1582,7 +1582,9 @@ class TestEdgeCasesAndErrorHandling:
         assert result.executed_turns == 0
         assert {reference.conversation_id for reference in result.related_conversations} == {"preparation-1"}
         mock_prompt_normalizer.send_prompt_async.assert_not_awaited()
-        [persisted_result] = CentralMemory.get_memory_instance().get_attack_results(objective="Test objective")
+        [persisted_result] = await CentralMemory.get_memory_instance().get_attack_results_async(
+            objective="Test objective"
+        )
         assert persisted_result.outcome is AttackOutcome.UNDETERMINED
         assert persisted_result.related_conversations == result.related_conversations
         persisted_failure = AttackPreparationFailure.from_result(result=persisted_result)

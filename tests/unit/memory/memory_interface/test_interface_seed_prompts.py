@@ -680,9 +680,10 @@ async def test_add_seed_prompts_dedupe_delegates_dataset_name_to_the_database(sq
         SeedPrompt(value=f"prompt{index}", dataset_name="test_dataset", data_type="text") for index in range(3)
     ]
 
-    with patch.object(sqlite_instance, "get_seeds", wraps=sqlite_instance.get_seeds) as spied:
+    with patch.object(sqlite_instance, "_execute_get_seeds", wraps=sqlite_instance._execute_get_seeds) as spied:
         await sqlite_instance.add_seeds_to_memory_async(seeds=prompts, added_by="tester")
 
+    spied.assert_called_once()
     assert all(call.kwargs["dataset_name"] == "test_dataset" for call in spied.call_args_list)
 
 
