@@ -157,6 +157,16 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=threshold)
         assert matcher.is_match(target="hello", text="hello world") is True
 
+    @pytest.mark.parametrize("n", [0, -1, -5, 1.5, "3", None, True, False])
+    def test_invalid_n_rejected(self, n):
+        with pytest.raises(ValueError, match="n"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [1, 2, 5])
+    def test_valid_n_accepted(self, n):
+        matcher = ApproximateTextMatching(n=n)
+        assert matcher._n == n
+
     def test_default_parameters(self):
         matcher = ApproximateTextMatching()  # Default threshold=0.5, n=3, case_sensitive=False
         # Should work with defaults

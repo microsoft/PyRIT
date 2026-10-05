@@ -49,7 +49,11 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
-from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
+from pyrit.backend.services.message_send_service import (
+    MessageSendService,
+    get_message_send_service,
+    resolve_applied_converter_identifiers,
+)
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -103,10 +107,12 @@ class AttackService:
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, message_send_service: MessageSendService | None = None) -> None:
         """Initialize the attack service."""
         self._memory = CentralMemory.get_memory_instance()
-        self._message_send_service = MessageSendService()
+        self._message_send_service = (
+            message_send_service if message_send_service is not None else get_message_send_service()
+        )
 
     # ========================================================================
     # Public API Methods

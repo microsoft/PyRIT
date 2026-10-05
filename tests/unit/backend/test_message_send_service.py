@@ -6,7 +6,7 @@
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,12 @@ from pyrit.backend.models.attacks import (
     ConverterConfigurationRequest,
     MessagePieceRequest,
 )
+from pyrit.backend.models.message_sends import (
+    MessageSendFailureStage,
+    MessageSendRequest,
+    MessageSendState,
+    MessageSendStatus,
+)
 from pyrit.backend.services.converter_service import ConverterService
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
@@ -28,7 +34,11 @@ from pyrit.backend.services.manual_send_scheduler import (
     get_manual_send_scheduler,
 )
 from pyrit.backend.services.media_url_import import MediaDownload
-from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
+from pyrit.backend.services.message_send_service import (
+    MessageSendNotFoundError,
+    MessageSendService,
+    resolve_applied_converter_identifiers,
+)
 from pyrit.backend.services.target_service import TargetService
 from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
@@ -155,10 +165,19 @@ async def test_manual_send_exposes_and_persists_ownership_async(
     assert [piece.role for piece in pieces] == ["user", "assistant"]
 
 
-async def _wait_for_queue_async(*, scheduler: ManualSendScheduler, size: int = 1) -> None:
-    async with asyncio.timeout(3):
-        while len(scheduler._queue) != size:
-            await asyncio.sleep(0)
+@contextmanager
+def _observe_operation(scheduler: ManualSendScheduler) -> Iterator[asyncio.Event]:
+    waiting = asyncio.Event()
+    operation = scheduler.operation_async
+
+    @asynccontextmanager
+    async def observe_async() -> AsyncIterator[None]:
+        waiting.set()
+        async with operation():
+            yield
+
+    with patch.object(scheduler, "operation_async", side_effect=observe_async):
+        yield waiting
 
 
 async def _send_message_and_get_update_fields(
@@ -1704,12 +1723,15 @@ class TestConcurrentMessages:
         ]
         try:
             await started.wait()
-            tasks.append(
-                asyncio.create_task(
-                    services[0].add_message_async(attack_result_id="attack", request=_request(conversation_id="third"))
+            with _observe_operation(scheduler) as waiting:
+                tasks.append(
+                    asyncio.create_task(
+                        services[0].add_message_async(
+                            attack_result_id="attack", request=_request(conversation_id="third")
+                        )
+                    )
                 )
-            )
-            await _wait_for_queue_async(scheduler=scheduler)
+                await waiting.wait()
             with pytest.raises(ManualSendQueueFullError):
                 await services[1].add_message_async(
                     attack_result_id="attack", request=_request(conversation_id="overflow")
@@ -1762,8 +1784,9 @@ class TestConcurrentMessages:
         scheduler = ManualSendScheduler(max_concurrency=1, max_operations=2)
         service = MessageSendService(scheduler=scheduler)
         async with scheduler.operation_async():
-            queued = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))
-            await _wait_for_queue_async(scheduler=scheduler)
+            with _observe_operation(scheduler) as waiting:
+                queued = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))
+                await waiting.wait()
             queued.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await queued
@@ -1780,8 +1803,9 @@ class TestConcurrentMessages:
         scheduler = ManualSendScheduler(max_concurrency=1)
         service = MessageSendService(scheduler=scheduler)
         async with scheduler.operation_async():
-            queued = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))
-            await _wait_for_queue_async(scheduler=scheduler)
+            with _observe_operation(scheduler) as waiting:
+                queued = asyncio.create_task(service.add_message_async(attack_result_id="attack", request=_request()))
+                await waiting.wait()
             target_service.get_target_object.return_value = None
         await queued
         assert send.call_args.kwargs["target"] is target
@@ -1985,7 +2009,6 @@ class TestConcurrentMessages:
         send.assert_awaited_once()
         mock_memory.update_attack_result_by_id_async.assert_not_called()
         assert not message_send_service._scheduler._conversations
-        assert message_send_service._scheduler._active == 0
         send.side_effect = None
         await message_send_service.add_message_async(attack_result_id="attack", request=_request())
 
@@ -2045,7 +2068,6 @@ class TestConcurrentMessages:
         ):
             await message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False))
         assert not message_send_service._scheduler._conversations
-        assert message_send_service._scheduler._active == 0
         assert not message_send_service._scheduler._metadata_updates
         await message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False))
 
@@ -2105,12 +2127,13 @@ class TestConcurrentMessages:
             ]
             try:
                 await first_started.wait()
-                tasks.append(
-                    asyncio.create_task(
-                        services[1].add_message_async(attack_result_id=ar.attack_result_id, request=requests[1])
+                with _observe_operation(scheduler) as waiting:
+                    tasks.append(
+                        asyncio.create_task(
+                            services[1].add_message_async(attack_result_id=ar.attack_result_id, request=requests[1])
+                        )
                     )
-                )
-                await _wait_for_queue_async(scheduler=scheduler)
+                    await waiting.wait()
             finally:
                 release.set()
                 await asyncio.gather(*tasks)
@@ -2199,7 +2222,7 @@ class TestConcurrentMessages:
             ]
             try:
                 await second_metadata_attempted.wait()
-                assert scheduler._active == 2
+                assert all(not task.done() for task in tasks)
                 with pytest.raises(TimeoutError):
                     await asyncio.wait_for(asyncio.shield(tasks[1]), timeout=0.1)
                 assert len(writes) == 1
@@ -2659,3 +2682,519 @@ class TestExactPreviewSend:
             "second",
             "first",
         ]
+
+
+def _submission(*, conversation_id: str = "main", submission_id: str = "submission") -> MessageSendRequest:
+    return MessageSendRequest(**_request(conversation_id=conversation_id).model_dump(), submission_id=submission_id)
+
+
+async def _settle_send_async(*, service: MessageSendService, status: MessageSendStatus) -> MessageSendStatus:
+    async with asyncio.timeout(10):
+        while status.state not in (MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED):
+            status = await service.get_status_async(
+                attack_result_id=status.attack_result_id, send_id=status.send_id, wait_ms=1000
+            )
+    return status
+
+
+@pytest.mark.timeout(20)
+@pytest.mark.usefixtures("patch_central_database")
+class TestAsyncMessageSend:
+    async def test_failure_is_not_terminal_until_evidence_reads_and_finalization_finish_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        mock_memory: MagicMock,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+    ) -> None:
+        reading, release = asyncio.Event(), asyncio.Event()
+        calls = 0
+        stored_error = MessagePiece(role="assistant", original_value="failure", response_error="processing")
+
+        async def read_pieces_async(**_: Any) -> list[MessagePiece]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return []
+            if calls == 2:
+                reading.set()
+                await release.wait()
+            return [stored_error]
+
+        async def fail_async(**kwargs: Any) -> None:
+            kwargs["send_context"].mark_target_invoked()
+            raise RuntimeError("target failed")
+
+        send_dependencies[1].side_effect = fail_async
+        with patch.object(mock_memory, "get_message_pieces_async", side_effect=read_pieces_async):
+            status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+            try:
+                await reading.wait()
+                during = await message_send_service.get_status_async(
+                    attack_result_id="attack", send_id=status.send_id, wait_ms=1
+                )
+                assert during.state == MessageSendState.SENDING
+                assert during.failure_stage == MessageSendFailureStage.SENDING
+                assert message_send_service._scheduler._conversations == {"main"}
+            finally:
+                release.set()
+                final = await _settle_send_async(service=message_send_service, status=status)
+        assert final.state == MessageSendState.FAILED
+        assert not message_send_service._scheduler._conversations
+
+    async def test_shutdown_waiting_for_validation_survives_cancellation_without_dispatch_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+    ) -> None:
+        validating, release = asyncio.Event(), asyncio.Event()
+        validate = message_send_service._validate_message_async
+
+        async def hold_validation_async(**kwargs: Any) -> Any:
+            validated = await validate(**kwargs)
+            validating.set()
+            await release.wait()
+            return validated
+
+        with patch.object(message_send_service, "_validate_message_async", side_effect=hold_validation_async):
+            submission = asyncio.create_task(
+                message_send_service.submit_async(attack_result_id="attack", request=_submission())
+            )
+            await validating.wait()
+            shutdown = asyncio.create_task(message_send_service.shutdown_async())
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            try:
+                assert not shutdown.done()
+            finally:
+                release.set()
+                await asyncio.gather(submission, shutdown, return_exceptions=True)
+                await message_send_service.shutdown_async()
+        with pytest.raises(ManualSendQueueFullError, match="shutting down"):
+            submission.result()
+        send_dependencies[1].assert_not_awaited()
+        assert not message_send_service._scheduler._conversations
+
+    async def test_default_budget_admits_64_operations_with_only_four_dispatching_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        mock_memory: MagicMock,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+    ) -> None:
+        ar = mock_memory.get_attack_results_async.return_value[0]
+        ar.related_conversations = {
+            ConversationReference(conversation_id=f"conversation-{index}", conversation_type=ConversationType.PRUNED)
+            for index in range(64)
+        }
+
+        started = asyncio.Event()
+
+        async def hold_async(**_: Any) -> None:
+            if send_dependencies[1].await_count == 4:
+                started.set()
+            await asyncio.Event().wait()
+
+        send_dependencies[1].side_effect = hold_async
+        try:
+            for index in range(64):
+                await message_send_service.submit_async(
+                    attack_result_id="attack",
+                    request=_submission(conversation_id=f"conversation-{index}", submission_id=str(index)),
+                )
+            assert len(message_send_service._scheduler._conversations) == 64
+            await started.wait()
+            assert send_dependencies[1].await_count == 4
+            with pytest.raises(ManualSendQueueFullError):
+                await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+        finally:
+            await message_send_service.shutdown_async()
+        assert not message_send_service._scheduler._conversations
+
+    async def test_cancelled_admission_releases_ownership_without_creating_a_handle_async(
+        self, *, message_send_service: MessageSendService, send_dependencies: tuple[MagicMock, AsyncMock]
+    ) -> None:
+        validating = asyncio.Event()
+
+        async def hold_validation_async(**_: Any) -> None:
+            validating.set()
+            await asyncio.Event().wait()
+
+        with patch.object(message_send_service, "_validate_message_async", side_effect=hold_validation_async):
+            submission = asyncio.create_task(
+                message_send_service.submit_async(attack_result_id="attack", request=_submission())
+            )
+            await validating.wait()
+            submission.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await submission
+        assert not message_send_service._scheduler._conversations
+        assert not message_send_service._sends
+        assert not message_send_service._submissions
+        send_dependencies[1].assert_not_awaited()
+
+    async def test_accepts_before_target_finishes_and_status_cancellation_does_not_cancel_send_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        service, ar, target, _ = real_send_context
+        started, release = asyncio.Event(), asyncio.Event()
+        send = target._send_prompt_to_target_async
+
+        async def hold_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            started.set()
+            await release.wait()
+            return await send(normalized_conversation=normalized_conversation)
+
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=hold_async) as provider:
+            status = await service.submit_async(
+                attack_result_id=ar.attack_result_id, request=_submission(conversation_id=ar.conversation_id)
+            )
+            assert status.state == MessageSendState.QUEUED
+            await started.wait()
+            read = asyncio.create_task(
+                service.get_status_async(attack_result_id=ar.attack_result_id, send_id=status.send_id, wait_ms=1000)
+            )
+            await asyncio.sleep(0)
+            read.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await read
+            current = await service.get_status_async(
+                attack_result_id=ar.attack_result_id, send_id=status.send_id, wait_ms=1
+            )
+            assert current.state == MessageSendState.SENDING
+            assert service._scheduler._conversations == {ar.conversation_id}
+            release.set()
+            current = await _settle_send_async(service=service, status=status)
+            assert current.state == MessageSendState.COMPLETED
+            assert current.request_turn_number == 0
+            provider.assert_awaited_once()
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=ar.conversation_id)
+        assert [piece.role for piece in pieces] == ["user", "assistant"]
+        assert not service._scheduler._conversations
+        next_send = await service.submit_async(
+            attack_result_id=ar.attack_result_id,
+            request=_submission(conversation_id=ar.conversation_id, submission_id="next"),
+        )
+        next_send = await _settle_send_async(service=service, status=next_send)
+        assert next_send.request_turn_number == 2
+        current.state = MessageSendState.FAILED
+        assert (
+            await service.get_status_async(attack_result_id=ar.attack_result_id, send_id=status.send_id)
+        ).state == MessageSendState.COMPLETED
+
+    @pytest.mark.parametrize("invalid", ["attack", "conversation", "target", "converter"])
+    async def test_validation_does_not_accept_or_write_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        mock_memory: MagicMock,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+        invalid: str,
+    ) -> None:
+        target_service, send = send_dependencies
+        request = _submission()
+        if invalid == "attack":
+            mock_memory.get_attack_results_async.return_value = []
+        elif invalid == "conversation":
+            request.target_conversation_id = "foreign"
+        elif invalid == "target":
+            target_service.get_target_object.return_value = None
+        else:
+            request.pieces[0].applied_converter_ids = ["missing"]
+        with patch(
+            "pyrit.backend.services.message_send_service.resolve_applied_converter_identifiers",
+            side_effect=ValueError("Converter not found") if invalid == "converter" else None,
+            return_value={},
+        ):
+            with pytest.raises(ValueError):
+                await message_send_service.submit_async(attack_result_id="attack", request=request)
+        assert not message_send_service._sends
+        assert not message_send_service._submissions
+        assert not message_send_service._scheduler._conversations
+        send.assert_not_awaited()
+        mock_memory.add_message_to_memory_async.assert_not_awaited()
+        mock_memory.update_attack_result_by_id_async.assert_not_awaited()
+
+    @pytest.mark.parametrize("ordered_field", ["pieces", "request", "response", "applied", "pipelines"])
+    async def test_retained_submission_deduplication_preserves_order_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+        ordered_field: str,
+    ) -> None:
+        request = _submission()
+        request.pieces.append(MessagePieceRequest(original_value="second"))
+        request.request_converter_configurations = [
+            ConverterConfigurationRequest(converter_ids=["first", "second"]),
+            ConverterConfigurationRequest(converter_ids=["second"]),
+        ]
+        request.response_converter_configurations = [ConverterConfigurationRequest(converter_ids=["first", "second"])]
+        request.pieces[0].applied_converter_ids = ["first", "second"]
+        status = await message_send_service.submit_async(attack_result_id="attack", request=request)
+        duplicate = await message_send_service.submit_async(attack_result_id="attack", request=request)
+        assert duplicate.send_id == status.send_id
+        await _settle_send_async(service=message_send_service, status=status)
+        duplicate = await message_send_service.submit_async(attack_result_id="attack", request=request)
+        assert duplicate.send_id == status.send_id
+        changed = request.model_copy(deep=True)
+        if ordered_field == "pieces":
+            changed.pieces.reverse()
+        elif ordered_field == "request":
+            changed.request_converter_configurations[0].converter_ids.reverse()
+        elif ordered_field == "response":
+            changed.response_converter_configurations[0].converter_ids.reverse()
+        elif ordered_field == "pipelines":
+            changed.request_converter_configurations.reverse()
+        else:
+            changed.pieces[0].applied_converter_ids.reverse()
+        with pytest.raises(ManualSendConflictError, match="different message request"):
+            await message_send_service.submit_async(attack_result_id="attack", request=changed)
+        send_dependencies[1].assert_awaited_once()
+
+    async def test_admission_is_shared_with_synchronous_sends_and_context_async(
+        self, *, message_send_service: MessageSendService, send_dependencies: tuple[MagicMock, AsyncMock]
+    ) -> None:
+        scheduler = ManualSendScheduler(max_concurrency=1, max_operations=2)
+        message_send_service._scheduler = scheduler
+        peer = MessageSendService(scheduler=scheduler)
+        async with scheduler.operation_async():
+            first = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+            second = await message_send_service.submit_async(
+                attack_result_id="attack", request=_submission(conversation_id="second", submission_id="second")
+            )
+            for send in [True, False]:
+                with pytest.raises(ManualSendConflictError):
+                    await peer.add_message_async(attack_result_id="attack", request=_request(send=send))
+                with pytest.raises(ManualSendQueueFullError):
+                    await peer.add_message_async(
+                        attack_result_id="attack", request=_request(conversation_id="third", send=send)
+                    )
+            assert len(scheduler._conversations) == 2
+        await _settle_send_async(service=message_send_service, status=first)
+        await _settle_send_async(service=message_send_service, status=second)
+
+    @pytest.mark.parametrize("stored_evidence", [False, True])
+    async def test_preparation_failure_uses_dispatch_stage_not_saved_messages_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        mock_memory: MagicMock,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+        stored_evidence: bool,
+    ) -> None:
+        send_dependencies[1].side_effect = RuntimeError("preparation failed")
+        mock_memory.get_message_pieces_async.side_effect = [
+            [],
+            [MessagePiece(role="assistant", original_value="evidence", response_error="processing")]
+            if stored_evidence
+            else [],
+        ] + [[]]
+        status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+        status = await _settle_send_async(service=message_send_service, status=status)
+        assert status.state == MessageSendState.FAILED
+        assert status.failure_stage == MessageSendFailureStage.PREPARATION
+        assert status.error
+
+    @pytest.mark.parametrize("failure", ["conversion", "normalization", "validation", "target", "metadata"])
+    async def test_real_sqlite_failure_stages_preserve_evidence_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+        failure: str,
+    ) -> None:
+        service, ar, target, converter = real_send_context
+        request = _submission(conversation_id=ar.conversation_id)
+        request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        owner, method = {
+            "conversion": (converter, "convert_async"),
+            "normalization": (target, "_get_normalized_conversation_async"),
+            "validation": (target, "_validate_request"),
+            "target": (target, "_send_prompt_to_target_async"),
+            "metadata": (sqlite_instance, "update_attack_result_by_id_async"),
+        }[failure]
+        with patch.object(owner, method, side_effect=RuntimeError("controlled failure")):
+            status = await service.submit_async(attack_result_id=ar.attack_result_id, request=request)
+            status = await _settle_send_async(service=service, status=status)
+        assert status.state == MessageSendState.FAILED
+        assert (
+            status.failure_stage
+            == {
+                "conversion": MessageSendFailureStage.PREPARATION,
+                "normalization": MessageSendFailureStage.PREPARATION,
+                "validation": MessageSendFailureStage.PREPARATION,
+                "target": MessageSendFailureStage.SENDING,
+                "metadata": MessageSendFailureStage.FINALIZATION,
+            }[failure]
+        )
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=ar.conversation_id)
+        assert len(pieces) == (2 if failure in ("target", "metadata") else 0)
+        if failure == "target":
+            assert pieces[-1].response_error == "processing"
+        assert not service._scheduler._conversations
+        assert request.pieces[0].original_value == "Hello"
+
+    @pytest.mark.parametrize("preflight_method", ["_get_normalized_conversation_async", "_validate_request"])
+    async def test_preflight_retry_preserves_history_and_provider_boundary_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+        preflight_method: str,
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        status = await service.submit_async(
+            attack_result_id=attack.attack_result_id, request=_submission(conversation_id=attack.conversation_id)
+        )
+        assert (await _settle_send_async(service=service, status=status)).state == MessageSendState.COMPLETED
+        original = await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)
+
+        with (
+            patch.object(target, preflight_method, side_effect=RuntimeError("preflight failed")),
+            patch.object(target, "_send_prompt_to_target_async") as provider,
+        ):
+            rejected = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=_submission(conversation_id=attack.conversation_id, submission_id="rejected"),
+            )
+            rejected = await _settle_send_async(service=service, status=rejected)
+            provider.assert_not_awaited()
+        assert rejected.state == MessageSendState.FAILED
+        assert rejected.failure_stage == MessageSendFailureStage.PREPARATION
+        assert rejected.request_turn_number == 2
+        unchanged = await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)
+        assert [piece.id for piece in unchanged] == [piece.id for piece in original]
+
+        send = target._send_prompt_to_target_async
+        histories: list[list[str]] = []
+        provider_states: list[MessageSendState] = []
+
+        async def observe_provider_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            histories.append([message.get_value() for message in normalized_conversation])
+            current = await service.get_status_async(attack_result_id=attack.attack_result_id, send_id=retried.send_id)
+            provider_states.append(current.state)
+            return await send(normalized_conversation=normalized_conversation)
+
+        request = _submission(conversation_id=attack.conversation_id, submission_id="retry")
+        request.pieces[0].original_value = "retry"
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=observe_provider_async):
+            retried = await service.submit_async(attack_result_id=attack.attack_result_id, request=request)
+            retried = await _settle_send_async(service=service, status=retried)
+        assert retried.state == MessageSendState.COMPLETED
+        assert retried.request_turn_number == 2
+        assert histories == [["Hello", "default", "retry"]]
+        assert provider_states == [MessageSendState.SENDING]
+
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=RuntimeError("provider failed")):
+            failed = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=_submission(conversation_id=attack.conversation_id, submission_id="provider-failure"),
+            )
+            failed = await _settle_send_async(service=service, status=failed)
+        assert failed.state == MessageSendState.FAILED
+        assert failed.failure_stage == MessageSendFailureStage.SENDING
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)
+        assert len(pieces) == 6
+        assert pieces[-1].response_error == "processing"
+        assert not service._scheduler._conversations
+
+    async def test_terminal_retention_is_bounded_and_expiring_without_replaying_async(
+        self, *, message_send_service: MessageSendService, send_dependencies: tuple[MagicMock, AsyncMock]
+    ) -> None:
+        statuses = []
+        with patch.object(message_send_service, "MAX_TERMINAL_SENDS", 2):
+            for index in range(3):
+                status = await message_send_service.submit_async(
+                    attack_result_id="attack", request=_submission(submission_id=str(index))
+                )
+                statuses.append(await _settle_send_async(service=message_send_service, status=status))
+            assert len(message_send_service._sends) == len(message_send_service._submissions) == 2
+            with pytest.raises(MessageSendNotFoundError):
+                await message_send_service.get_status_async(attack_result_id="attack", send_id=statuses[0].send_id)
+            with pytest.raises(MessageSendNotFoundError):
+                await message_send_service.get_status_async(attack_result_id="other", send_id=statuses[-1].send_id)
+            with patch.object(message_send_service, "TERMINAL_TTL_SECONDS", 0):
+                with pytest.raises(MessageSendNotFoundError, match="do not automatically resend"):
+                    await message_send_service.get_status_async(attack_result_id="attack", send_id=statuses[-1].send_id)
+        assert not message_send_service._sends
+        assert not message_send_service._submissions
+        assert send_dependencies[1].await_count == 3
+
+    @pytest.mark.parametrize("before_start", [True, False])
+    async def test_shutdown_interrupts_accepted_work_and_stops_admission_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+        before_start: bool,
+    ) -> None:
+        started = asyncio.Event()
+
+        async def hold_async(**kwargs: Any) -> None:
+            kwargs["send_context"].mark_target_invoked()
+            started.set()
+            await asyncio.Event().wait()
+
+        send_dependencies[1].side_effect = hold_async
+        status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+        if not before_start:
+            await started.wait()
+        await message_send_service.shutdown_async()
+        status = await message_send_service.get_status_async(attack_result_id="attack", send_id=status.send_id)
+        assert status.state == MessageSendState.INTERRUPTED
+        assert status.failure_stage == MessageSendFailureStage.INTERRUPTED
+        assert not message_send_service._scheduler._conversations
+        for operation in [
+            message_send_service.submit_async(attack_result_id="attack", request=_submission()),
+            message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False)),
+        ]:
+            with pytest.raises(ManualSendQueueFullError, match="shutting down"):
+                await operation
+
+    async def test_repeated_shutdown_cancellation_joins_metadata_write_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        mock_memory: MagicMock,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+    ) -> None:
+        started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def hold_write_async(**_: Any) -> None:
+            started.set()
+            await release.wait()
+            finished.set()
+
+        with patch.object(mock_memory, "update_attack_result_by_id_async", side_effect=hold_write_async):
+            status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+            await started.wait()
+            assert (
+                await message_send_service.get_status_async(attack_result_id="attack", send_id=status.send_id)
+            ).state == MessageSendState.FINALIZING
+            shutdown = asyncio.create_task(message_send_service.shutdown_async())
+            task = message_send_service._sends[status.send_id].task
+            assert task is not None
+            try:
+                await asyncio.sleep(0)
+                for _ in range(2):
+                    task.cancel()
+                    shutdown.cancel()
+                    await asyncio.sleep(0)
+                    assert not shutdown.done()
+                    assert message_send_service._scheduler._conversations == {"main"}
+            finally:
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await shutdown
+        assert finished.is_set()
+        assert not message_send_service._scheduler._conversations
+        assert not message_send_service._scheduler._metadata_updates
+        assert (
+            await message_send_service.get_status_async(attack_result_id="attack", send_id=status.send_id)
+        ).state == MessageSendState.INTERRUPTED

@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
 import pyrit
 import pyrit.backend.services.pagination as backend_pagination
@@ -37,8 +38,12 @@ from pyrit.backend.services.attack_service import (
     AttackService,
     get_attack_service,
 )
-from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendScheduler
-from pyrit.backend.services.message_send_service import MessageSendService
+from pyrit.backend.services.manual_send_scheduler import (
+    ManualSendConflictError,
+    ManualSendQueueFullError,
+    ManualSendScheduler,
+)
+from pyrit.backend.services.message_send_service import MessageSendService, get_message_send_service
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -79,7 +84,7 @@ def mock_memory() -> MagicMock:
 def attack_service(mock_memory):
     """Create an attack service with mocked memory."""
     with patch.object(CentralMemory, "get_memory_instance", return_value=mock_memory):
-        service = AttackService()
+        service = AttackService(message_send_service=MessageSendService(scheduler=ManualSendScheduler()))
         yield service
 
 
@@ -227,6 +232,31 @@ class TestAttackServiceInit:
             service = AttackService()
 
             assert service._memory is service._message_send_service._memory is PromptNormalizer()._memory is mock_memory
+
+    def test_default_facades_share_message_send_owner(self) -> None:
+        first, second = get_attack_service(), AttackService()
+        assert first._message_send_service is second._message_send_service is get_message_send_service()
+
+    def test_injected_sender_preserves_scheduler(self) -> None:
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        service = AttackService(message_send_service=sender)
+        assert service._message_send_service is sender
+        assert sender._scheduler is scheduler
+        assert sender is not get_message_send_service()
+
+    async def test_shared_shutdown_rejects_synchronous_facade_async(self) -> None:
+        service = get_attack_service()
+        await get_message_send_service().shutdown_async()
+        with pytest.raises(ManualSendQueueFullError, match="shutting down"):
+            await service.add_message_async(
+                attack_result_id="attack",
+                request=AddMessageRequest(
+                    pieces=[MessagePieceRequest(original_value="Hello")],
+                    target_conversation_id="conversation",
+                    send=False,
+                ),
+            )
 
 
 # ============================================================================
@@ -1430,10 +1460,9 @@ class TestAddMessage:
     ) -> None:
         ar = make_attack_result(conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False)
         await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar])
-        service, peer = AttackService(), AttackService()
         scheduler = ManualSendScheduler()
-        service._message_send_service = MessageSendService(scheduler=scheduler)
-        peer._message_send_service = MessageSendService(scheduler=scheduler)
+        sender = MessageSendService(scheduler=scheduler)
+        service, peer = AttackService(message_send_service=sender), AttackService(message_send_service=sender)
         started, release = asyncio.Event(), asyncio.Event()
         read = getattr(service, read_method)
 
@@ -1644,6 +1673,49 @@ class TestAddMessage:
             assert result.messages.target_response_status.response_error == "processing"
             assert result.messages.target_response_status.request_turn_number == 0
             assert result.messages.target_response_status.response_turn_number == 1
+
+    @pytest.mark.parametrize("failure", ["normalization", "validation", "target"])
+    async def test_real_preflight_and_provider_errors_preserve_synchronous_response_async(
+        self, *, sqlite_instance: SQLiteMemory, failure: str
+    ) -> None:
+        attack = make_attack_result(
+            conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+        target = MockPromptTarget()
+        service = AttackService()
+        method = {
+            "normalization": "_get_normalized_conversation_async",
+            "validation": "_validate_request",
+            "target": "_send_prompt_to_target_async",
+        }[failure]
+        with (
+            patch("pyrit.backend.services.message_send_service.get_target_service") as registry,
+            patch.object(target, method, side_effect=RuntimeError("controlled failure")),
+        ):
+            registry.return_value.get_target_object.return_value = target
+            result = await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=AddMessageRequest(
+                    pieces=[MessagePieceRequest(original_value="Hello")],
+                    target_conversation_id=attack.conversation_id,
+                    target_registry_name="target",
+                ),
+            )
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)
+        assert [piece.role for piece in pieces] == ["user", "assistant"]
+        assert pieces[-1].response_error == "processing"
+        assert "controlled failure" in pieces[-1].original_value
+        status = result.messages.target_response_status
+        assert status is not None
+        assert status.response_error == "processing"
+        assert (status.request_turn_number, status.response_turn_number) == (0, 1)
+        reloaded = await service.get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert reloaded is not None
+        assert reloaded.target_response_status == status
+        assert reloaded.messages == result.messages.messages
 
     async def test_add_message_raises_when_attack_not_found_after_update(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when attack disappears after update."""
@@ -2158,11 +2230,12 @@ class TestCreateRelatedConversation:
             assert metadata is not None
             assert metadata.target_identifier == target_identifier
             assert metadata.attack_result_id == attack.attack_result_id
-            rows = await asyncio.to_thread(
-                sqlite_instance._query_entries,
-                ConversationEntry,
-                conditions=ConversationEntry.conversation_id == conversation_id,
-            )
+            async with await sqlite_instance.get_session_async() as session:
+                rows = (
+                    await session.scalars(
+                        select(ConversationEntry).where(ConversationEntry.conversation_id == conversation_id)
+                    )
+                ).all()
             assert rows[0].target_identifier_hash == target_identifier.hash
         assert target.prompt_sent == ["Hello", "Hello"]
         owned = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=attack.attack_result_id)
@@ -2194,17 +2267,19 @@ class TestCreateRelatedConversation:
                 request=CreateConversationRequest(source_conversation_id=source_id, cutoff_index=0),
             )
             assert branch is not None
-            rows = await asyncio.to_thread(
-                sqlite_instance._query_entries,
-                ConversationEntry,
-                conditions=ConversationEntry.conversation_id == branch.conversation_id,
-            )
+            async with await sqlite_instance.get_session_async() as session:
+                rows = (
+                    await session.scalars(
+                        select(ConversationEntry).where(ConversationEntry.conversation_id == branch.conversation_id)
+                    )
+                ).all()
             expected_rows.append((branch.conversation_id, rows[0].pyrit_version, rows[0].target_identifier))
             pieces = await sqlite_instance.get_message_pieces_async(conversation_id=branch.conversation_id)
             assert [piece.original_prompt_id for piece in pieces] == [original.id]
             source_id = branch.conversation_id
 
-        rows = await asyncio.to_thread(sqlite_instance._query_entries, ConversationEntry)
+        async with await sqlite_instance.get_session_async() as session:
+            rows = (await session.scalars(select(ConversationEntry))).all()
         assert {row.conversation_id: (row.pyrit_version, row.target_identifier) for row in rows} == {
             conversation_id: (version, identifier) for conversation_id, version, identifier in expected_rows
         }

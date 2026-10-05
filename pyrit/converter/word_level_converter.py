@@ -44,8 +44,13 @@ class WordLevelConverter(Converter):
                 If None, splits by any whitespace. Defaults to " ".
             **kwargs: Forwarded to ``Converter.__init__`` to support cooperative multiple inheritance
                 (e.g., ``converter_target`` when mixed with LLM-based converters).
+
+        Raises:
+            ValueError: If ``word_split_separator`` is an empty string.
         """
         super().__init__(**kwargs)
+        if word_split_separator == "":
+            raise ValueError("word_split_separator must be None or a non-empty string.")
         self._word_selection_strategy = word_selection_strategy or AllWordsSelectionStrategy()
         self._word_split_separator = word_split_separator
 

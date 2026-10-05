@@ -33,6 +33,7 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
+    ToolExecutionMetadata,
 )
 from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -63,6 +64,12 @@ ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 class _SerializedPiece:
     item: dict[str, Any]
     placement: Literal["inline", "top_level"]
+
+
+@dataclass(frozen=True)
+class _ToolDispatchResult:
+    output: object
+    invoked: bool
 
 
 class MessagePieceType(str, Enum):
@@ -661,8 +668,8 @@ class OpenAIResponseTarget(OpenAITarget):
             for tool_call_section in tool_call_sections:
                 tool_output = await self._execute_call_section_async(tool_call_section)
                 tool_piece = self._make_tool_piece(
-                    tool_output,
-                    tool_call_section["call_id"],
+                    result=tool_output,
+                    call_id=tool_call_section["call_id"],
                     reference_piece=message_piece,
                 )
                 tool_message = Message(message_pieces=[tool_piece])
@@ -899,7 +906,7 @@ class OpenAIResponseTarget(OpenAITarget):
                     calls.append(cast("dict[str, Any]", section))
         return calls
 
-    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> object:
+    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> _ToolDispatchResult:
         """
         Execute a function call using the matching tool.
 
@@ -907,9 +914,8 @@ class OpenAIResponseTarget(OpenAITarget):
             tool_call_section: The function_call section dict.
 
         Returns:
-            A JSON-serializable payload that will be sent as function_call_output.
-            If fail_on_missing_function=False and a function is missing or no function is not called, returns:
-            {"error": "function_not_found", "missing_function": "<name>", "available_functions": [...]}
+            The output payload and whether the tool was invoked. Tolerant dispatch failures
+            retain their error payload with invoked=False.
 
         Raises:
             ValueError: If the function call section is missing a 'name' field.
@@ -920,10 +926,10 @@ class OpenAIResponseTarget(OpenAITarget):
         if not name:
             if self._fail_on_missing_function:
                 raise ValueError("Function call section missing 'name' field")
-            return {
-                "error": "missing_function_name",
-                "tool_call_section": tool_call_section,
-            }
+            return _ToolDispatchResult(
+                output={"error": "missing_function_name", "tool_call_section": tool_call_section},
+                invoked=False,
+            )
 
         args_json = tool_call_section.get("arguments", "{}")
         try:
@@ -933,50 +939,54 @@ class OpenAIResponseTarget(OpenAITarget):
             if self._fail_on_missing_function:
                 raise ValueError(f"Malformed arguments for function '{name}': {args_json}") from None
             logger.warning("Malformed arguments for function '%s': %s", name, args_json)
-            return {
-                "error": "malformed_arguments",
-                "function": name,
-                "raw_arguments": args_json,
-            }
+            return _ToolDispatchResult(
+                output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                invoked=False,
+            )
         await self._initialize_tools_async()
         configured_tool = next((tool for tool in self._tools if tool.name == name), None)
         if configured_tool is not None:
             if not isinstance(args, dict):
                 if self._fail_on_missing_function:
                     raise ValueError(f"Arguments for function '{name}' must be a JSON object")
-                return {
-                    "error": "malformed_arguments",
-                    "function": name,
-                    "raw_arguments": args_json,
-                }
-            return await configured_tool.execute_async(arguments=args)
+                return _ToolDispatchResult(
+                    output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                    invoked=False,
+                )
+            return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
         custom_function = self._custom_functions.get(name)
         if custom_function is not None:
-            return await custom_function(cast("dict[str, Any]", args))
+            return _ToolDispatchResult(output=await custom_function(cast("dict[str, Any]", args)), invoked=True)
 
         if self._fail_on_missing_function:
             raise KeyError(f"Function '{name}' is not registered")
         available_functions = sorted({*(tool.name for tool in self._tools), *self._custom_functions})
         logger.warning("Function '%s' not registered. Available: %s", name, available_functions)
-        return {
-            "error": "function_not_found",
-            "missing_function": name,
-            "available_functions": available_functions,
-        }
+        return _ToolDispatchResult(
+            output={
+                "error": "function_not_found",
+                "missing_function": name,
+                "available_functions": available_functions,
+            },
+            invoked=False,
+        )
 
-    def _make_tool_piece(self, output: object, call_id: str, *, reference_piece: MessagePiece) -> MessagePiece:
+    def _make_tool_piece(
+        self, *, result: _ToolDispatchResult, call_id: str, reference_piece: MessagePiece
+    ) -> MessagePiece:
         """
         Create a function_call_output MessagePiece.
 
         Args:
-            output: The tool output to wrap.
+            result: The dispatch result to record.
             call_id: The call ID for the function call.
             reference_piece: A reference piece to copy conversation context from.
 
         Returns:
             A MessagePiece containing the function call output.
         """
+        output = result.output
         output_str = output if isinstance(output, str) else json.dumps(output, separators=(",", ":"))
         return MessagePiece(
             role="tool",
@@ -986,4 +996,5 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
+            prompt_metadata=ToolExecutionMetadata(invoked=result.invoked).to_metadata(),
         )

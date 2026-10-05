@@ -18,6 +18,7 @@ skipped_files = [
     "10_1_playwright_target.ipynb",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.ipynb",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.ipynb",  # WebSocket Copilot target requires manual pasting tokens
+    "github_copilot_target.ipynb",  # requires GitHub Copilot SDK credentials and model access
 ]
 
 

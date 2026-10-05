@@ -1,20 +1,37 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Manual-message preparation, dispatch, and attack metadata updates."""
+"""Shared manual-message execution and bounded, worker-local asynchronous progress."""
 
 import asyncio
+import hashlib
+import json
 import logging
+import time
+import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Coroutine
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from functools import partial
+from functools import lru_cache, partial
 from typing import Any
 
 from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
 from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
+from pyrit.backend.models.message_sends import (
+    MessageSendFailureStage,
+    MessageSendRequest,
+    MessageSendState,
+    MessageSendStatus,
+)
 from pyrit.backend.services.converter_service import get_converter_service
-from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler, get_manual_send_scheduler
+from pyrit.backend.services.manual_send_scheduler import (
+    ManualSendConflictError,
+    ManualSendQueueFullError,
+    ManualSendScheduler,
+    get_manual_send_scheduler,
+)
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.attack_result_scope import attack_result_id_scope
@@ -27,11 +44,58 @@ from pyrit.models import (
     ComponentIdentifier,
     Conversation,
     ConverterIdentifier,
+    Message,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 logger = logging.getLogger(__name__)
+
+
+class MessageSendNotFoundError(LookupError):
+    """A transient handle is missing, expired, or belongs to another attack."""
+
+
+@dataclass(kw_only=True)
+class _ValidatedMessage:
+    target: PromptTarget | None
+    request_configurations: list[ConverterConfiguration]
+    response_configurations: list[ConverterConfiguration]
+    applied_identifiers: dict[int, list[ConverterIdentifier]]
+
+
+@dataclass(kw_only=True)
+class _Send:
+    status: MessageSendStatus
+    submission_id: str
+    fingerprint: str
+    reservation: ExitStack
+    task: asyncio.Task[None] | None = None
+
+
+class _MessageSendContext(TargetSendContext):
+    def __init__(self, progress: MessageSendStatus) -> None:
+        self.conversation_id = progress.conversation_id
+        self._progress = progress
+        self._target_invocation_count = 0
+
+    @property
+    def target_invocation_count(self) -> int:
+        return self._target_invocation_count
+
+    def begin_send(self) -> None:
+        pass
+
+    def select_history(self, *, messages: list[Message]) -> list[Message]:
+        return messages
+
+    def mark_target_invoked(self) -> None:
+        self._target_invocation_count += 1
+        self._progress.state = MessageSendState.SENDING
+
+    def finish_send(self, *, succeeded: bool) -> None:
+        pass
 
 
 def resolve_applied_converter_identifiers(
@@ -58,6 +122,19 @@ def resolve_applied_converter_identifiers(
 class MessageSendService:
     """Prepare manual messages and dispatch through the existing ``PromptNormalizer``."""
 
+    TERMINAL_TTL_SECONDS = 600
+    MAX_TERMINAL_SENDS = 128
+    FAILURE_MESSAGES = {
+        MessageSendFailureStage.PREPARATION: "Message preparation failed before target dispatch. Check server logs.",
+        MessageSendFailureStage.SENDING: "Message sending failed. Inspect saved messages before sending again.",
+        MessageSendFailureStage.FINALIZATION: (
+            "Sending finished, but attack details could not be finalized. Inspect saved messages before sending again."
+        ),
+        MessageSendFailureStage.INTERRUPTED: (
+            "Send interrupted. Provider delivery may be unknown. Inspect saved messages; do not automatically resend."
+        ),
+    }
+
     def __init__(
         self,
         *,
@@ -66,6 +143,92 @@ class MessageSendService:
         """Initialize the manual-message service with the application's memory."""
         self._memory = CentralMemory.get_memory_instance()
         self._scheduler = scheduler if scheduler is not None else get_manual_send_scheduler()
+        self._sends: dict[str, _Send] = {}
+        self._submissions: dict[tuple[str, str], str] = {}
+        self._terminal: OrderedDict[str, float] = OrderedDict()
+        self._accept_lock = asyncio.Lock()
+        self._closing = False
+        self._shutdown_task: asyncio.Task[None] | None = None
+
+    async def submit_async(self, *, attack_result_id: str, request: MessageSendRequest) -> MessageSendStatus:
+        """
+        Validate and admit one background send, deduplicating only retained worker-local submissions.
+
+        Returns:
+            MessageSendStatus: A detached progress snapshot, not confirmation of delivery.
+        """
+        payload = json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        async with self._accept_lock:
+            if self._closing:
+                raise ManualSendQueueFullError("Manual message operations are shutting down")
+            self._expire_terminal_sends()
+            submission_key = (attack_result_id, request.submission_id)
+            existing_id = self._submissions.get(submission_key)
+            if existing_id is not None:
+                existing = self._sends[existing_id]
+                if existing.fingerprint != fingerprint:
+                    raise ManualSendConflictError("submission_id was already used with a different message request")
+                return existing.status.model_copy(deep=True)
+
+            with ExitStack() as reservation:
+                reservation.enter_context(self._scheduler.reserve(conversation_id=request.target_conversation_id))
+                owned_request = request.model_copy(deep=True)
+                validated = await self._validate_message_async(attack_result_id=attack_result_id, request=owned_request)
+                if self._closing:
+                    raise ManualSendQueueFullError("Manual message operations are shutting down")
+                operation = _Send(
+                    status=MessageSendStatus(
+                        send_id=str(uuid.uuid4()),
+                        attack_result_id=attack_result_id,
+                        conversation_id=request.target_conversation_id,
+                    ),
+                    submission_id=request.submission_id,
+                    fingerprint=fingerprint,
+                    reservation=reservation.pop_all(),
+                )
+                self._sends[operation.status.send_id] = operation
+                self._submissions[submission_key] = operation.status.send_id
+                operation.task = asyncio.create_task(
+                    self._run_send_async(operation=operation, request=owned_request, validated=validated)
+                )
+                operation.task.add_done_callback(partial(self._on_send_done, operation=operation))
+                return operation.status.model_copy(deep=True)
+
+    async def get_status_async(self, *, attack_result_id: str, send_id: str, wait_ms: int = 0) -> MessageSendStatus:
+        """
+        Read a detached snapshot, optionally waiting for completion without cancelling execution.
+
+        Returns:
+            MessageSendStatus: The current worker-local progress snapshot.
+        """
+        if not 0 <= wait_ms <= 1000:
+            raise ValueError("wait_ms must be between 0 and 1000")
+        self._expire_terminal_sends()
+        operation = self._sends.get(send_id)
+        if operation is None or operation.status.attack_result_id != attack_result_id:
+            raise MessageSendNotFoundError(
+                "Send status is unavailable or expired. Refresh saved messages; do not automatically resend."
+            )
+        if operation.task is not None and wait_ms:
+            await asyncio.wait({operation.task}, timeout=wait_ms / 1000)
+        return operation.status.model_copy(deep=True)
+
+    async def shutdown_async(self) -> None:
+        """Stop admission, cancel accepted sends, and join their unavoidable writes before releasing ownership."""
+        self._closing = True
+        self._scheduler.stop_admission()
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._settle_sends_async())
+        cancelled = False
+        while not self._shutdown_task.done():
+            try:
+                await asyncio.shield(self._shutdown_task)
+            except asyncio.CancelledError:
+                cancelled = True
+        self._shutdown_task.result()
+        if cancelled:
+            raise asyncio.CancelledError
 
     async def add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
         """
@@ -93,6 +256,12 @@ class MessageSendService:
             yield
 
     async def _add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
+        validated = await self._validate_message_async(attack_result_id=attack_result_id, request=request)
+        await self._execute_validated_message_async(
+            attack_result_id=attack_result_id, request=request, validated=validated
+        )
+
+    async def _validate_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> _ValidatedMessage:
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found")
@@ -122,22 +291,104 @@ class MessageSendService:
         if request.send and target is None:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
 
+        return _ValidatedMessage(
+            target=target,
+            request_configurations=request_converter_configs,
+            response_configurations=response_converter_configs,
+            applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
+        )
+
+    async def _execute_validated_message_async(
+        self,
+        *,
+        attack_result_id: str,
+        request: AddMessageRequest,
+        validated: _ValidatedMessage,
+        progress: MessageSendStatus | None = None,
+    ) -> None:
         async with self._scheduler.operation_async():
+            if progress is not None:
+                progress.state = MessageSendState.PREPARING
             with attack_result_id_scope(attack_result_id=attack_result_id):
-                await self._memory.add_conversation_to_memory_async(
-                    conversation=Conversation(
-                        conversation_id=msg_conversation_id,
-                        target_identifier=target.get_identifier() if target else None,
-                        attack_result_id=attack_result_id,
+                await self._complete_memory_write_async(
+                    partial(
+                        self._memory.add_conversation_to_memory_async,
+                        conversation=Conversation(
+                            conversation_id=request.target_conversation_id,
+                            target_identifier=validated.target.get_identifier() if validated.target else None,
+                            attack_result_id=attack_result_id,
+                        ),
                     )
                 )
                 await self._execute_message_async(
                     attack_result_id=attack_result_id,
                     request=request,
-                    target=target,
-                    request_converter_configurations=request_converter_configs,
-                    response_converter_configurations=response_converter_configs,
+                    target=validated.target,
+                    request_converter_configurations=validated.request_configurations,
+                    response_converter_configurations=validated.response_configurations,
+                    applied_converter_identifiers=validated.applied_identifiers,
+                    progress=progress,
                 )
+
+    async def _run_send_async(
+        self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage
+    ) -> None:
+        progress = operation.status
+        try:
+            await self._execute_validated_message_async(
+                attack_result_id=progress.attack_result_id, request=request, validated=validated, progress=progress
+            )
+        except asyncio.CancelledError:
+            self._record_failure(progress=progress, interrupted=True)
+        except Exception:
+            logger.exception("Message send '%s' failed during %s", progress.send_id, progress.state)
+            self._record_failure(progress=progress)
+
+    def _on_send_done(self, task: asyncio.Task[None], *, operation: _Send) -> None:
+        # A task cancelled before its first step never enters _run_send_async.
+        if task.cancelled():
+            self._record_failure(progress=operation.status, interrupted=True)
+        operation.reservation.close()
+        operation.status.state = (
+            MessageSendState.INTERRUPTED
+            if operation.status.failure_stage == MessageSendFailureStage.INTERRUPTED
+            else MessageSendState.FAILED
+            if operation.status.failure_stage
+            else MessageSendState.COMPLETED
+        )
+        operation.task = None
+        self._terminal[operation.status.send_id] = time.monotonic()
+        self._expire_terminal_sends()
+
+    async def _settle_sends_async(self) -> None:
+        async with self._accept_lock:
+            tasks = [operation.task for operation in self._sends.values() if operation.task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _expire_terminal_sends(self) -> None:
+        cutoff = time.monotonic() - self.TERMINAL_TTL_SECONDS
+        while self._terminal:
+            oldest_id = next(iter(self._terminal))
+            if len(self._terminal) <= self.MAX_TERMINAL_SENDS and self._terminal[oldest_id] > cutoff:
+                break
+            self._terminal.pop(oldest_id)
+            operation = self._sends.pop(oldest_id)
+            self._submissions.pop((operation.status.attack_result_id, operation.submission_id))
+
+    @classmethod
+    def _record_failure(cls, *, progress: MessageSendStatus, interrupted: bool = False) -> None:
+        if interrupted:
+            stage = MessageSendFailureStage.INTERRUPTED
+        elif progress.state in (MessageSendState.QUEUED, MessageSendState.PREPARING):
+            stage = MessageSendFailureStage.PREPARATION
+        elif progress.state == MessageSendState.FINALIZING:
+            stage = MessageSendFailureStage.FINALIZATION
+        else:
+            stage = MessageSendFailureStage.SENDING
+        progress.failure_stage = stage
+        progress.error = cls.FAILURE_MESSAGES[stage]
 
     async def _execute_message_async(
         self,
@@ -147,16 +398,19 @@ class MessageSendService:
         target: PromptTarget | None,
         request_converter_configurations: list[ConverterConfiguration],
         response_converter_configurations: list[ConverterConfiguration],
+        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
+        progress: MessageSendStatus | None = None,
     ) -> None:
         msg_conversation_id = request.target_conversation_id
         preconverted_indexes = {
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
-        applied_converter_identifiers = resolve_applied_converter_identifiers(request.pieces)
         last_response_id: str | None = None
 
         existing = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
+        if progress is not None:
+            progress.request_turn_number = sequence
 
         if request.send:
             assert target is not None  # validated before acquiring the execution slot
@@ -171,8 +425,11 @@ class MessageSendService:
                     response_converter_configurations=response_converter_configurations,
                     preconverted_indexes=preconverted_indexes,
                     applied_converter_identifiers=applied_converter_identifiers,
+                    send_context=_MessageSendContext(progress=progress) if progress is not None else None,
                 )
             except Exception:
+                if progress is not None:
+                    self._record_failure(progress=progress)
                 # PromptNormalizer persists a full error piece (response_error +
                 # traceback) to memory *before* re-raising. Surface that stored
                 # piece inline so the send (POST) response matches the
@@ -188,6 +445,8 @@ class MessageSendService:
                     attack_result_id,
                     msg_conversation_id,
                 )
+            if progress is not None:
+                progress.state = MessageSendState.FINALIZING
             current_pieces = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
             last_response = next(
                 (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
@@ -309,11 +568,9 @@ class MessageSendService:
                     )
                     update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
 
-        (
-            await self._memory.update_attack_result_by_id_async(
-                attack_result_id=attack_result_id,
-                update_fields=update_fields,
-            )
+        await self._memory.update_attack_result_by_id_async(
+            attack_result_id=attack_result_id,
+            update_fields=update_fields,
         )
 
     @staticmethod
@@ -432,6 +689,7 @@ class MessageSendService:
         response_converter_configurations: list[ConverterConfiguration],
         preconverted_indexes: set[int],
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
+        send_context: TargetSendContext | None = None,
     ) -> None:
         """Send message to target via normalizer and store response."""
         await self._persist_base64_pieces_async(request)
@@ -459,6 +717,7 @@ class MessageSendService:
             conversation_id=conversation_id,
             request_converter_configurations=request_converter_configurations,
             response_converter_configurations=response_converter_configurations,
+            send_context=send_context,
         )
         # PromptNormalizer stores both request and response in memory automatically
 
@@ -493,10 +752,8 @@ class MessageSendService:
         target_identifier: ComponentIdentifier | None,
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
-        (
-            await self._memory.add_conversation_to_memory_async(
-                conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
-            )
+        await self._memory.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
         )
         for index, p in enumerate(request.pieces):
             piece = request_piece_to_pyrit_message_piece(
@@ -506,7 +763,7 @@ class MessageSendService:
                 sequence=sequence,
             )
             piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
-            (await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece]))
+            await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece])
 
     @staticmethod
     async def _complete_memory_write_async(write: Callable[[], Coroutine[Any, Any, None]]) -> None:
@@ -650,3 +907,9 @@ class MessageSendService:
             for configuration in configurations
             for converter in configuration.converters
         ]
+
+
+@lru_cache(maxsize=1)
+def get_message_send_service() -> MessageSendService:
+    """Return this worker's shared manual-message owner."""
+    return MessageSendService()
