@@ -213,21 +213,17 @@ class TestListConverterTypes:
         assert "text" in base64_entry.supported_input_types
         assert "text" in base64_entry.supported_output_types
 
-    async def test_types_include_every_registered_converter(self) -> None:
-        """The projection surfaces every registered converter, including base/helper classes.
-
-        Whether to display a given converter is left to the caller (e.g. the frontend),
-        so the service hides nothing and reports which ones the API can construct.
-        """
+    async def test_types_omit_converters_that_need_python_objects(self) -> None:
+        """Converters whose required parameters take Python objects cannot be built from the API."""
         service = ConverterService()
 
         result = await service.list_converter_types_async()
 
-        constructible = {item.converter_type: item.constructible for item in result.items}
-        assert constructible["Base64Converter"] is True
-        assert constructible["SearchReplaceConverter"] is True
-        assert constructible["SelectiveTextConverter"] is False
-        assert constructible["TextJailbreakConverter"] is False
+        converter_types = [item.converter_type for item in result.items]
+        assert "Base64Converter" in converter_types
+        assert "SearchReplaceConverter" in converter_types
+        assert "SelectiveTextConverter" not in converter_types
+        assert "TextJailbreakConverter" not in converter_types
 
     async def test_types_serialize_parameter_type(self) -> None:
         """Type entries render the raw annotation into a human-readable type_name."""
@@ -261,15 +257,24 @@ class TestListConverterTypes:
         target_param = next(param for param in persuasion_entry.parameters if param.name == "converter_target")
         assert target_param.reference_type == "target"
 
-    async def test_types_preserve_all_registry_parameters(self, upload_service: ConverterService) -> None:
+    async def test_types_expose_only_external_inputs(self, upload_service: ConverterService) -> None:
         result = await upload_service.list_converter_types_async()
         metadata_by_name = {
             metadata.class_name: metadata for metadata in upload_service._registry.get_all_registered_class_metadata()
         }
+        expected = {
+            name
+            for name, metadata in metadata_by_name.items()
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+        }
 
-        assert {entry.converter_type for entry in result.items} == set(metadata_by_name)
+        assert {entry.converter_type for entry in result.items} == expected
         for entry in result.items:
-            assert entry.parameters == list(metadata_by_name[entry.converter_type].parameters)
+            assert entry.parameters == [
+                parameter
+                for parameter in metadata_by_name[entry.converter_type].parameters
+                if parameter.is_external_input
+            ]
 
     @pytest.mark.parametrize(
         ("converter_type", "parameter_name", "type_name", "required", "is_list"),
@@ -415,15 +420,26 @@ class TestCreateConverter:
         with pytest.raises(ValueError, match="not found"):
             await service.create_converter_async(request=request)
 
-    async def test_create_converter_rejects_wrong_parameter_type(self) -> None:
-        """A JSON value that does not match the declared type is a validation error, not a crash."""
+    async def test_create_converter_rejects_parameters_that_take_python_objects(self) -> None:
         service = ConverterService()
-        request = CreateConverterRequest(name="caesar", type="CaesarConverter", params={"caesar_offset": [1]})
+        request = CreateConverterRequest(
+            name="jailbreak", type="TextJailbreakConverter", params={"jailbreak_template": {"name": "x"}}
+        )
 
-        with pytest.raises(ValueError, match="caesar_offset"):
+        with pytest.raises(ValueError, match="'jailbreak_template' of 'TextJailbreakConverter' cannot be set"):
             await service.create_converter_async(request=request)
 
-        assert service.get_converter_object(converter_id="caesar") is None
+        assert service.get_converter_object(converter_id="jailbreak") is None
+
+    async def test_create_converter_accepts_string_for_string_union_parameter(self) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="replace", type="SearchReplaceConverter", params={"pattern": "a", "replace": "b"}
+        )
+
+        result = await service.create_converter_async(request=request)
+
+        assert result.converter_id == "replace"
 
     async def test_create_converter_success(self) -> None:
         """Test successful converter creation."""
@@ -779,9 +795,7 @@ class TestPersistDataUriParams:
 
         assert list(service._upload_path.iterdir()) == []
 
-    async def test_create_converter_cleans_upload_when_construction_fails(
-        self, upload_service: ConverterService
-    ) -> None:
+    async def test_create_converter_cleans_upload_when_creation_fails(self, upload_service: ConverterService) -> None:
         service = upload_service
         params = {
             "existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n"),
@@ -789,7 +803,7 @@ class TestPersistDataUriParams:
         }
         request = CreateConverterRequest(name="invalid-pdf", type="PDFConverter", params=params)
 
-        with pytest.raises(ValueError, match="Invalid font_color"):
+        with pytest.raises(ValueError, match="'font_color' of 'PDFConverter' cannot be set through the API"):
             await service.create_converter_async(request=request)
 
         assert service._registry.instances.get("invalid-pdf") is None

@@ -394,16 +394,7 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
-- Constructor parameters are the registry's input contract. Each derived `Parameter` has an `input_kind` that says how callers supply it:
-  - `scalar`: `str`, `int`, `float`, `bool`, `Path`, `Path | str`, `Literal[...]`, or an `Enum`, optionally nullable. JSON callers send one string, number, or boolean; choices match by value or name.
-  - `collection`: a list, tuple, set, `Sequence`, `Collection`, or string-keyed `dict` / `Mapping` of scalar or collection values, never `Path`. JSON callers send an array or object; arrays become the declared tuple or set.
-  - `reference`: a parameter the component's identifier marks as a registry reference. Callers send a registry name, or a list of names.
-  - `structured`: a `StructuredParameterValue`. Callers send one of its declared variants.
-  - `in_process_only`: any other type (a class, callable, or protocol), or a parameter marked `opaque`. JSON is rejected; Python callers pass a live object.
-  - `unsupported`: no annotation, `Any`, or an annotation that cannot be resolved at runtime. JSON is rejected; resolve the annotation to make the parameter configurable.
-- A union takes JSON when one of its members does (e.g. `SeedPrompt | str` takes a string), and a JSON value becomes the first member it matches. A `Path` inside a wider union or a collection is not JSON input, so JSON cannot name server files.
-- The resolver enforces this contract for every caller: JSON for an `in_process_only` or `unsupported` parameter is rejected, not passed to the constructor. Live Python objects pass through unchanged, and constructors still own component-specific validation.
-- A component with a required parameter that is not JSON input is not `constructible`; registry metadata and the REST catalog report this so clients do not offer it.
+- The registry accepts only explicitly supported external inputs, permits opaque Python objects only for in-process callers, and leaves component validation to constructors.
 
 ## [Setup](./setup/0_setup)
 

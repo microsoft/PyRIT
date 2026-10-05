@@ -15,11 +15,10 @@ from docx import Document
 from pyrit.common.logger import logger
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
-from pyrit.models import SeedPrompt  # noqa: TC001 - registry annotation resolution
 
 if TYPE_CHECKING:
     from pyrit.memory import DataTypeSerializer
-    from pyrit.models import ComponentIdentifier, PromptDataType
+    from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 
 
 @dataclass

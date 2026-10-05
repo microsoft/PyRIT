@@ -152,10 +152,10 @@ class TargetService:
         """
         List all available target types from the target class registry.
 
-        Returns every registered target type with its derived constructor
-        parameters, whether its required parameters can be supplied through the
-        API (``constructible``), and the auth modes it supports, all projected from
-        the registry's ``TargetMetadata``. Deciding which entries to surface to a
+        Returns every target that external callers can build, with the
+        constructor parameters they may supply and the auth modes it supports,
+        all projected from the registry's ``TargetMetadata``; targets that need a
+        Python object for a required parameter are left out. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -166,12 +166,12 @@ class TargetService:
         items: list[TargetTypeEntry] = [
             TargetTypeEntry(
                 target_type=metadata.class_name,
-                parameters=list(metadata.parameters),
-                constructible=metadata.constructible,
+                parameters=[parameter for parameter in metadata.parameters if parameter.is_external_input],
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
         ]
         return TargetTypeResponse(items=items)
 
@@ -220,6 +220,7 @@ class TargetService:
             name=target_registry_name,
             type_name=request.type,
             params=params,
+            external_input=True,
         )
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
 

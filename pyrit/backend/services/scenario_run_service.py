@@ -78,7 +78,7 @@ from pyrit.models.catalog.scenario import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
-from pyrit.registry.resolution import resolve_declared_params
+from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import override_default_adversarial_target
 
@@ -246,6 +246,13 @@ class ScenarioRunService:
         Returns:
             ScenarioRunSummary: Current scheduled run state.
         """
+        registry = ScenarioRegistry.get_registry_singleton()
+        if request.scenario_params and request.scenario_name in registry:
+            reject_non_external_params(
+                params=request.scenario_params,
+                declared=registry.get_class(request.scenario_name).supported_parameters(),
+                owner=request.scenario_name,
+            )
         async with self._reserve_resume_request_async(request.scenario_result_id), self._launch_lock:
             await self._validate_resume_admission_async(scenario_result_id=request.scenario_result_id)
             return await self._start_run_locked_async(request=request)

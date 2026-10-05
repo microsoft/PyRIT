@@ -247,16 +247,6 @@ class TestListTargetTypes:
         assert "OpenAIChatTarget" in target_types
         assert "AzureMLChatTarget" in target_types
 
-    async def test_types_report_whether_required_parameters_can_be_supplied(self) -> None:
-        service = TargetService()
-
-        result = await service.list_target_types_async()
-
-        constructible = {item.target_type: item.constructible for item in result.items}
-        assert constructible["OpenAIChatTarget"] is True
-        assert constructible["WebsocketTarget"] is False
-        assert constructible["PlaywrightTarget"] is False
-
     async def test_types_include_declarative_auth_facts(self) -> None:
         """Type entries surface the per-class auth facts the frontend needs."""
         service = TargetService()
@@ -282,16 +272,32 @@ class TestListTargetTypes:
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
-    async def test_types_preserve_all_registry_parameters(self) -> None:
+    async def test_types_expose_only_external_inputs(self) -> None:
         service = TargetService()
         result = await service.list_target_types_async()
         metadata_by_name = {
             metadata.class_name: metadata for metadata in service._registry.get_all_registered_class_metadata()
         }
+        expected = {
+            name
+            for name, metadata in metadata_by_name.items()
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+        }
 
-        assert {entry.target_type for entry in result.items} == set(metadata_by_name)
+        assert {entry.target_type for entry in result.items} == expected
         for entry in result.items:
-            assert entry.parameters == list(metadata_by_name[entry.target_type].parameters)
+            assert entry.parameters == [
+                parameter for parameter in metadata_by_name[entry.target_type].parameters if parameter.is_external_input
+            ]
+
+    async def test_types_keep_string_api_key_and_omit_object_only_targets(self) -> None:
+        service = TargetService()
+        result = await service.list_target_types_async()
+
+        entries = {entry.target_type: entry for entry in result.items}
+        assert "api_key" in {parameter.name for parameter in entries["OpenAIChatTarget"].parameters}
+        assert "custom_configuration" not in {parameter.name for parameter in entries["OpenAIChatTarget"].parameters}
+        assert not {"PlaywrightTarget", "PlaywrightCopilotTarget", "WebsocketTarget"} & set(entries)
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
@@ -339,13 +345,6 @@ class TestListTargetTypes:
                 False,
                 ["text/plain", "text/html"],
             ),
-            (
-                "PlaywrightCopilotTarget",
-                "copilot_type",
-                "CopilotType",
-                False,
-                ["consumer", "m365"],
-            ),
         ],
     )
     async def test_types_include_enum_parameters(
@@ -370,6 +369,15 @@ class TestListTargetTypes:
 
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
+
+    async def test_create_target_rejects_parameters_that_take_python_objects(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="text", type="TextTarget", params={"custom_configuration": {}})
+
+        with pytest.raises(ValueError, match="'custom_configuration' of 'TextTarget' cannot be set through the API"):
+            await service.create_target_async(request=request)
+
+        assert service.get_target_object(target_registry_name="text") is None
 
     async def test_create_target_raises_for_invalid_type(self) -> None:
         """Test that create_target raises for invalid target type."""
@@ -426,12 +434,16 @@ class TestCreateTarget:
             )
 
     async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
-        """Every target construction path is owned by the registry."""
+        """Every target construction path is owned by the registry, through its external-input path."""
         service = TargetService()
-        with patch.object(service._registry, "create_instance", wraps=service._registry.create_instance) as create:
+        with patch.object(
+            service._registry,
+            "create_instance_from_external_input",
+            wraps=service._registry.create_instance_from_external_input,
+        ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once()
+        create.assert_called_once_with("TextTarget", params={})
 
     async def test_create_gandalf_target_coerces_level_string(self, sqlite_instance) -> None:
         """A Gandalf level from the JSON request is coerced to its enum before construction."""

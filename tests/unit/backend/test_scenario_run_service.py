@@ -57,6 +57,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -64,6 +65,7 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
 )
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
@@ -157,6 +159,37 @@ def _make_request(
         include_baseline=include_baseline,
         scenario_params=scenario_params,
     )
+
+
+@pytest.mark.parametrize(
+    ("scenario_params", "rejected"),
+    [
+        ({"dataset_config": "x"}, "'dataset_config' of 'airt.scam' cannot be set through the API"),
+        ({"objective_target": {"name": "x"}}, "airt.scam.objective_target: expected a registry name"),
+        ({"unknown": None}, "Unknown parameter 'unknown' for 'airt.scam'"),
+        ({"max_concurrency": 2}, None),
+    ],
+)
+async def test_start_run_accepts_only_external_scenario_params(
+    patch_central_database: MagicMock, scenario_params: dict[str, Any], rejected: str | None
+) -> None:
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.__contains__.return_value = True
+    registry.get_class.return_value = Scam
+    service = ScenarioRunService()
+    request = _make_request(scenario_name="airt.scam", scenario_params=scenario_params)
+
+    with (
+        patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=registry),
+        patch.object(service, "_start_run_locked_async", new_callable=AsyncMock) as start,
+    ):
+        if rejected:
+            with pytest.raises(ValueError, match=rejected):
+                await service.start_run_async(request=request)
+        else:
+            await service.start_run_async(request=request)
+
+    assert start.await_count == (0 if rejected else 1)
 
 
 def _make_db_scenario_result(

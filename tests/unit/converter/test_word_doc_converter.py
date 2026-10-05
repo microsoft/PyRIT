@@ -10,7 +10,7 @@ from docx import Document
 
 from pyrit.converter import ConverterResult, WordDocConverter
 from pyrit.models import SeedPrompt
-from pyrit.registry.resolution import derive_parameters, resolve_constructor_args
+from pyrit.registry.resolution import derive_parameters
 
 
 @pytest.fixture
@@ -170,12 +170,6 @@ def test_existing_docx_is_declared_as_path_parameter() -> None:
     """The registry must see ``existing_docx`` as a ``Path`` so API callers upload the file."""
     parameter = next(param for param in derive_parameters(cls=WordDocConverter) if param.name == "existing_docx")
     assert parameter.is_path
-
-
-def test_prompt_template_json_value_is_rejected() -> None:
-    """The registry must resolve ``prompt_template`` so JSON values are checked before construction."""
-    with pytest.raises(ValueError, match="prompt_template"):
-        resolve_constructor_args(cls=WordDocConverter, raw_args={"prompt_template": "hello"})
 
 
 def test_build_identifier_without_template() -> None:

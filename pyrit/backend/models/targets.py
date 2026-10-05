@@ -36,9 +36,6 @@ class TargetTypeEntry(BaseModel):
         default_factory=list,
         description="Constructor parameters for dynamic form generation",
     )
-    constructible: bool = Field(
-        True, description="Whether every required parameter can be supplied through this API (see input_kind)"
-    )
     supported_auth_modes: list[Literal["api_key", "identity"]] = Field(
         default_factory=_default_auth_modes,
         description="Authentication modes this target type supports",

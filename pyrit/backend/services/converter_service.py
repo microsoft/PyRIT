@@ -112,10 +112,11 @@ class ConverterService:
         """
         List all available converter types from the converter class registry.
 
-        Returns every registered converter type. ``constructible`` is False when a
-        required parameter cannot be supplied through the API. Deciding which
-        entries to surface to a user is a presentation concern owned by the caller
-        (e.g. the frontend), not this service.
+        Returns every converter that external callers can build, with only the
+        parameters they may supply; converters that need a Python object for a
+        required parameter are left out. Deciding which entries to surface to a
+        user is a presentation concern owned by the caller (e.g. the frontend),
+        not this service.
 
         Returns:
             ConverterTypeResponse containing all available converter classes.
@@ -125,12 +126,12 @@ class ConverterService:
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=list(metadata.parameters),
-                constructible=metadata.constructible,
+                parameters=[parameter for parameter in metadata.parameters if parameter.is_external_input],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
             for metadata in self._registry.get_all_registered_class_metadata()
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
         ]
 
         return ConverterTypeResponse(items=items)
@@ -201,6 +202,7 @@ class ConverterService:
                 type_name=request.type,
                 params=params,
                 registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
+                external_input=True,
             )
         except (Exception, asyncio.CancelledError):
             await self._remove_owned_artifacts_async(paths=owned_paths)

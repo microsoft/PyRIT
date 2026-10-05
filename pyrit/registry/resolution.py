@@ -19,10 +19,10 @@ responsibilities:
 - **Resolve from a constructor** (``resolve_constructor_args``): derive the
   contract for a class and turn a flat dict of raw arguments into
   constructor-ready keyword arguments — coercing simple string values via
-  ``Parameter.coerce_value``, converting other JSON values under the registry
-  input contract (``Parameter.input_kind`` / ``Parameter.coerce_json_value``),
-  and resolving registry-reference parameters by name from the owning domain's
-  registry. Defaults are left to the constructor.
+  ``Parameter.coerce_value`` and resolving registry-reference parameters by name
+  from the owning domain's registry. Defaults are left to the constructor.
+  Callers building from external input (REST, CLI) select the external path,
+  which accepts only parameters with ``Parameter.is_external_input``.
 - **Resolve from a declared list** (``resolve_declared_params``): the sibling for
   a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
   ``supported_parameters()``). It has no references, coerces every supplied
@@ -44,6 +44,7 @@ import logging
 import re
 import types
 from collections.abc import Collection, Sequence
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
 
 from pydantic import TypeAdapter, ValidationError
@@ -58,7 +59,7 @@ from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 from pyrit.models.parameter import display_choices as display_choices
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
@@ -410,8 +411,7 @@ def _resolve_single_reference(
     Resolve a single registry-reference value to a stored instance.
 
     A string value is looked up by name in the paired registry. An already-built
-    instance passes through unchanged. Other JSON data (a number or an object) can
-    never name an instance, so it is rejected instead of reaching the constructor.
+    instance passes through unchanged.
 
     Args:
         value (Any): The raw value (a registry name, or an instance to pass through).
@@ -423,15 +423,9 @@ def _resolve_single_reference(
         Any: The resolved instance.
 
     Raises:
-        ValueError: If the name is not registered, or the value is JSON data rather than a name
-            or instance.
+        ValueError: If the name is not registered.
     """
     if not isinstance(value, str):
-        if value is not None and _is_json_data(value):
-            raise ValueError(
-                f"{owner}.{name}: expected a registry name or instance for this reference, "
-                f"but got {type(value).__name__}."
-            )
         return value
 
     registry = getter()
@@ -486,9 +480,8 @@ def _resolve_registry_reference(
         Any: The resolved instance, or a list of resolved instances.
 
     Raises:
-        ValueError: If a name is not registered, a value is JSON data rather than a
-            name or instance, or the value's shape (list vs. scalar) does not match the
-            reference's arity.
+        ValueError: If a name is not registered, or the value's shape (list vs.
+            scalar) does not match the reference's arity.
     """
     if get_origin(annotation) is list:
         if not isinstance(value, list):
@@ -531,8 +524,7 @@ def resolve_reference_value(
         Any: The resolved instance, or the value unchanged when already an instance.
 
     Raises:
-        ValueError: If no registry is wired for ``component_type``, the name is not registered,
-            or the value is JSON data rather than a name or instance.
+        ValueError: If no registry is wired for ``component_type``, or the name is not registered.
     """
     getter = _registry_getter_for_component_type(component_type)
     if getter is None:
@@ -545,17 +537,15 @@ def resolve_constructor_args(
     cls: type,
     raw_args: dict[str, Any],
     identifier_type: type[ComponentIdentifier] | None = None,
+    external_input: bool = False,
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
 
     Derives the ``Parameter`` contract for ``cls`` and applies it to
     ``raw_args``. For each raw argument: validate it is a declared parameter;
-    resolve registry-reference parameters by name; build structured inputs from
-    their declared variants; coerce simple string values via
-    ``Parameter.coerce_value``; convert other JSON values via
-    ``Parameter.coerce_json_value``, which rejects JSON for parameters that take
-    only Python objects; pass live Python objects through unchanged.
+    resolve registry-reference parameters by name; coerce simple string values
+    via ``Parameter.coerce_value``; pass everything else through unchanged.
 
     Args:
         cls (type): The class being built.
@@ -563,16 +553,22 @@ def resolve_constructor_args(
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
             whose ``Param.*`` markers declare which parameters are registry
             references. When None, no parameter is treated as a reference.
+        external_input (bool): Whether ``raw_args`` come from an external caller (REST, CLI).
+            External callers may set only parameters with ``Parameter.is_external_input``
+            and must name registry references. Defaults to False (in-process callers, which
+            may pass any Python object).
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
 
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
-            reference cannot be resolved, a simple value cannot be coerced, or a
-            JSON value is not accepted for the parameter.
+            reference cannot be resolved, a simple value cannot be coerced, or
+            external input sets a parameter that is not an external input.
     """
     by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
+    if external_input:
+        reject_non_external_params(params=raw_args, declared=list(by_name.values()), owner=cls.__name__)
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():
@@ -582,6 +578,7 @@ def resolve_constructor_args(
                 f"Unknown parameter '{name}' for '{cls.__name__}'. Valid parameters: {sorted(by_name.keys())}"
             )
 
+        value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
             getter = _registry_getter_for_component_type(param.reference.component_type)
             if getter is None:
@@ -598,44 +595,61 @@ def resolve_constructor_args(
             )
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
-        elif isinstance(value, str) and param.is_string_coercible:
+        elif (isinstance(value, str) and param.is_string_coercible) or (
+            isinstance(value_type, type) and issubclass(value_type, Enum)
+        ):
             try:
                 resolved[name] = param.coerce_value(value)
             except (ValueError, TypeError) as e:
                 raise ValueError(f"Parameter '{name}' of '{cls.__name__}': {e}") from e
-        elif _is_json_data(value):
-            resolved[name] = param.coerce_json_value(value, owner=cls.__name__)
         else:
             resolved[name] = value
 
     return resolved
 
 
-def _is_json_data(value: Any) -> bool:
+def reject_non_external_params(*, params: Mapping[str, Any], declared: Sequence[Parameter], owner: str) -> None:
     """
-    Return whether a value holds only JSON data rather than live Python objects.
+    Reject external input that is not an explicitly supported external input.
 
-    Returns:
-        bool: True for None, strings, numbers, booleans, and lists or string-keyed dicts of
-            them (exact built-in types, so subclasses and enums count as live objects), without
-            cycles.
+    Every name must be declared and have ``Parameter.is_external_input``, and registry
+    references must be given by name. Values are otherwise left to the component.
+
+    Args:
+        params (Mapping[str, Any]): The parameter values supplied by an external caller.
+        declared (Sequence[Parameter]): The parameters the component declares.
+        owner (str): The owning class or scenario name, for error messages.
+
+    Raises:
+        ValueError: If ``params`` sets an undeclared parameter or one that is not an external
+            input, or gives a registry reference as anything but a name.
     """
-    pending = [value]
-    seen: set[int] = set()
-    while pending:
-        item = pending.pop()
-        if item is None or type(item) in (str, int, float, bool):
-            continue
-        if id(item) in seen or type(item) not in (dict, list):
-            return False
-        seen.add(id(item))
-        if type(item) is dict:
-            if not all(type(key) is str for key in item):
-                return False
-            pending.extend(item.values())
-        else:
-            pending.extend(item)
-    return True
+    declared_by_name = {parameter.name: parameter for parameter in declared}
+    for name, value in params.items():
+        parameter = declared_by_name.get(name)
+        if parameter is None:
+            external_names = sorted(
+                known for known, candidate in declared_by_name.items() if candidate.is_external_input
+            )
+            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {external_names}")
+        if not parameter.is_external_input:
+            raise ValueError(
+                f"Parameter '{name}' of '{owner}' cannot be set through the API; pass it from Python instead."
+            )
+        if parameter.reference is not None:
+            _require_reference_names(value=value, owner=owner, name=name)
+
+
+def _require_reference_names(*, value: Any, owner: str, name: str) -> None:
+    """
+    Require external input for a registry reference to be a registry name or a list of names.
+
+    Raises:
+        ValueError: If the value is neither null, a name, nor a list of names.
+    """
+    names = value if isinstance(value, list) else [value]
+    if value is not None and not all(isinstance(item, str) for item in names):
+        raise ValueError(f"{owner}.{name}: expected a registry name, but got {type(value).__name__}.")
 
 
 def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:

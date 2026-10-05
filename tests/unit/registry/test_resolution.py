@@ -5,20 +5,16 @@
 Tests for the shared registry constructor-argument resolution primitive.
 """
 
-import contextlib
-import json
-from collections.abc import Collection
-from dataclasses import dataclass
+from collections.abc import Callable
 from enum import Enum
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import Any, Literal
 
 import pytest
 
 from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
-from pyrit.models.identifiers import ConverterIdentifier, ScorerIdentifier, TargetIdentifier
+from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
@@ -26,11 +22,9 @@ from pyrit.registry.resolution import (
     _registry_getter_for_component_type,
     derive_parameters,
     display_choices,
+    reject_non_external_params,
     resolve_constructor_args,
 )
-
-if TYPE_CHECKING:
-    from pyrit.prompt_target import PromptTarget as _TypeCheckingOnlyTarget
 
 
 class MockPromptTarget(PromptTarget):
@@ -144,79 +138,6 @@ class _NeedsTargets:
 
     def __init__(self, *, targets: list[PromptTarget]) -> None:
         self.targets = targets
-
-
-@dataclass
-class _Settings:
-    level: int = 0
-
-
-class _Provider(Protocol):
-    def provide(self) -> str: ...
-
-
-class _Sized(Protocol):
-    def __len__(self) -> int: ...
-
-
-class _Unresolved:
-    """Helper whose annotation names a type-checking-only import, as many components do."""
-
-    def __init__(self, *, target: "_TypeCheckingOnlyTarget | None" = None) -> None:
-        self.target = target
-
-
-class _Handle:
-    """A live object type that no JSON value can represent."""
-
-
-class _Bag(list[int]):
-    """A live list subclass that callers pass as an existing object."""
-
-
-class _JsonShaped:
-    """Helper whose constructor takes container and object parameters that JSON callers supply."""
-
-    def __init__(
-        self,
-        *,
-        color: tuple[int, int, int] = (0, 0, 0),
-        weights: list[int] | None = None,
-        extra: dict[str, int] | None = None,
-        speed: _Speed | None = None,
-        speeds: list[_Speed] | None = None,
-        modes: list[Literal["a", "b"] | None] | None = None,
-        note: str | None = None,
-        words: Collection[str] | None = None,
-        settings: _Settings | None = None,
-        location: _Speed | Path | None = None,
-        provider: _Provider | None = None,
-        sized: _Sized | None = None,
-        options: dict[str, Any] | None = None,
-        handle: _Handle | None = None,
-        groups: dict[str, Collection[str]] | None = None,
-        choices: Collection[str] | _Handle | None = None,
-        bag: _Bag | None = None,
-        anything: Collection | None = None,
-    ) -> None:
-        self.color = color
-        self.weights = weights
-        self.extra = extra
-        self.speed = speed
-        self.speeds = speeds
-        self.modes = modes
-        self.note = note
-        self.words = words
-        self.settings = settings
-        self.location = location
-        self.provider = provider
-        self.sized = sized
-        self.options = options
-        self.handle = handle
-        self.groups = groups
-        self.choices = choices
-        self.bag = bag
-        self.anything = anything
 
 
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
@@ -340,243 +261,148 @@ class TestResolveConstructorArgs:
         with pytest.raises(ValueError, match="is empty"):
             _resolve(_NeedsTarget, {"converter_target": "missing"}, identifier_type=ConverterIdentifier)
 
-    @pytest.mark.parametrize(
-        ("cls", "raw_args"),
-        [
-            (_SimpleOnly, {"count": {"value": 1}}),
-            (_SimpleOnly, {"count": [5]}),
-            (_SimpleOnly, {"count": True}),
-            (_SimpleOnly, {"count": 1.5}),
-            (_SimpleOnly, {"count": None}),
-            (_SimpleOnly, {"ratio": {"value": 1}}),
-            (_SimpleOnly, {"flag": 1}),
-            (_SimpleOnly, {"ratio": 10**400}),
-            (_JsonShaped, {"note": 5}),
-            (_JsonShaped, {"weights": [1, "2"]}),
-            (_JsonShaped, {"extra": "not-an-object"}),
-            (_JsonShaped, {"color": [1, 2]}),
-            (_JsonShaped, {"color": None}),
-            (_JsonShaped, {"words": [1, "a"]}),
-            (_JsonShaped, {"words": "the"}),
-            (_JsonShaped, {"groups": {"group": [1]}}),
-            (_JsonShaped, {"choices": {}}),
-            (_JsonShaped, {"anything": 7}),
-            (_JsonShaped, {"modes": ["c"]}),
-        ],
-    )
-    def test_rejects_json_value_of_wrong_type(self, cls: type, raw_args: dict[str, object]) -> None:
-        with pytest.raises(ValueError, match="expects"):
-            _resolve(cls, raw_args)
 
-    @pytest.mark.parametrize(
-        ("cls", "raw_args"),
-        [
-            (_SimpleOnly, {"ratio": 1}),
-            (_SimpleOnly, {"count": 3, "flag": False}),
-            (_JsonShaped, {"weights": [1, 2], "extra": {"a": 1}}),
-            (_JsonShaped, {"note": None, "settings": None}),
-            (_JsonShaped, {"words": ["the", "a"]}),
-            (_JsonShaped, {"groups": {"group": ["one", "two"]}}),
-            (_JsonShaped, {"choices": ["the", "a"]}),
-            (_JsonShaped, {"anything": [1, "a"]}),
-            (_JsonShaped, {"modes": []}),
-            (_JsonShaped, {"modes": ["a", None]}),
-        ],
-    )
-    def test_accepts_matching_json_value_unchanged(self, cls: type, raw_args: dict[str, object]) -> None:
-        assert _resolve(cls, raw_args) == raw_args
+class _Handle:
+    """A Python object no external caller can supply."""
 
-    def test_json_array_becomes_tuple_for_tuple_parameter(self) -> None:
-        assert _resolve(_JsonShaped, {"color": [10, 20, 30]})["color"] == (10, 20, 30)
 
-    def test_rejects_json_for_in_process_only_parameter(self) -> None:
-        with pytest.raises(ValueError, match="settings.*accepts only a Python object"):
-            _resolve(_JsonShaped, {"settings": {"level": 1}})
+class _Mixed:
+    """Helper whose constructor mixes external inputs with Python-object parameters."""
 
-    def test_union_takes_json_only_through_its_json_members(self) -> None:
-        assert _resolve(_JsonShaped, {"location": "fast"}) == {"location": _Speed.FAST}
-        with pytest.raises(ValueError, match="location"):
-            _resolve(_JsonShaped, {"location": "/tmp/x"})
-        path = Path("/tmp/x")
-        assert _resolve(_JsonShaped, {"location": path})["location"] is path
-
-    def test_live_objects_pass_through_unchecked(self) -> None:
-        color = object()
-        weights = [object()]
-        options = {"timeout": (5.0, 10.0)}
-        extra: dict[str, object] = {}
-        extra["self"] = extra
-        bag = _Bag([1, 2])
-        live = {"color": color, "weights": weights, "options": options, "extra": extra, "bag": bag}
-
-        resolved = _resolve(_JsonShaped, live)
-
-        assert all(resolved[name] is value for name, value in live.items())
-
-    def test_deeply_nested_json_value_is_rejected(self) -> None:
-        nested: object = 1
-        for _ in range(500):
-            nested = [nested]
-
-        with pytest.raises(ValueError, match="expects"):
-            _resolve(_SimpleOnly, {"count": nested})
-
-    @pytest.mark.parametrize("raw_args", [{"provider": "anything"}, {"sized": 7}, {"sized": [1, 2]}])
-    def test_protocol_parameter_takes_only_live_objects(self, raw_args: dict[str, object]) -> None:
-        with pytest.raises(ValueError, match="accepts only a Python object"):
-            _resolve(_JsonShaped, raw_args)
-
-    def test_protocol_parameter_accepts_live_object_and_none(self) -> None:
-        sized = _Bag([1, 2])
-
-        assert _resolve(_JsonShaped, {"provider": None, "sized": sized}) == {"provider": None, "sized": sized}
-
-    def test_unresolved_annotation_rejects_json(self) -> None:
-        target = MockPromptTarget()
-
-        with pytest.raises(ValueError, match="does not support"):
-            _resolve(_Unresolved, {"target": {"a": 1}})
-        assert _resolve(_Unresolved, {"target": None}) == {"target": None}
-        assert _resolve(_Unresolved, {"target": target})["target"] is target
-
-    def test_json_value_for_object_parameter_is_rejected(self) -> None:
-        handle = _Handle()
-
-        with pytest.raises(ValueError, match="handle"):
-            _resolve(_JsonShaped, {"handle": {}})
-        assert _resolve(_JsonShaped, {"handle": None}) == {"handle": None}
-        assert _resolve(_JsonShaped, {"handle": handle})["handle"] is handle
-
-    @pytest.mark.parametrize(
-        ("registry_type", "identifier_type", "type_name", "raw_args", "message"),
-        [
-            (TargetRegistry, TargetIdentifier, "TextTarget", {"custom_configuration": {}}, "accepts only"),
-            (TargetRegistry, TargetIdentifier, "A2ATarget", {"auth_token": {"token": "x"}}, "expects"),
-            (
-                TargetRegistry,
-                TargetIdentifier,
-                "OpenAIResponseTarget",
-                {"tool_providers": [{"name": "x"}]},
-                "accepts only",
-            ),
-            (ConverterRegistry, ConverterIdentifier, "TokenBijectionConverter", {"tokenizer": "name"}, "accepts only"),
-            (
-                ConverterRegistry,
-                ConverterIdentifier,
-                "TextJailbreakConverter",
-                {"jailbreak_template": {}},
-                "accepts only",
-            ),
-        ],
-    )
-    def test_registered_component_rejects_json_for_object_parameter(
+    def __init__(
         self,
-        registry_type: type,
-        identifier_type: type,
-        type_name: str,
-        raw_args: dict[str, object],
-        message: str,
+        *,
+        count: int = 1,
+        words: list[str] | None = None,
+        key: str | Callable[[], str] | None = None,
+        handle: _Handle | None = None,
+        options: dict[str, Any] | None = None,
     ) -> None:
-        cls = registry_type.get_registry_singleton().get_class(type_name)
+        self.count = count
+        self.words = words
+        self.key = key
+        self.handle = handle
+        self.options = options
 
-        with pytest.raises(ValueError, match=message):
-            _resolve(cls, raw_args, identifier_type=identifier_type)
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestExternalInput:
+    """The external path accepts only supported inputs; the in-process path is unchanged."""
+
+    def test_external_accepts_supported_inputs(self) -> None:
+        raw_args: dict[str, object] = {"count": "3", "words": ["a", "b"], "key": "secret"}
+
+        resolved = resolve_constructor_args(cls=_Mixed, raw_args=raw_args, external_input=True)
+
+        assert resolved == {"count": 3, "words": ["a", "b"], "key": "secret"}
+
+    @pytest.mark.parametrize("raw_args", [{"handle": {}}, {"handle": None}, {"options": {"a": 1}}])
+    def test_external_rejects_parameters_that_take_python_objects(self, raw_args: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            resolve_constructor_args(cls=_Mixed, raw_args=raw_args, external_input=True)
+
+    def test_external_still_rejects_unknown_parameters(self) -> None:
+        with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
+            resolve_constructor_args(cls=_Mixed, raw_args={"nope": 1}, external_input=True)
+
+    def test_in_process_callers_keep_passing_python_objects(self) -> None:
+        handle = _Handle()
+        options = {"dtype": object()}
+
+        resolved = _resolve(_Mixed, {"handle": handle, "options": options, "key": print})
+
+        assert resolved["handle"] is handle
+        assert resolved["options"] is options
+        assert resolved["key"] is print
+
+    def test_external_values_of_supported_parameters_reach_the_constructor(self) -> None:
+        assert resolve_constructor_args(cls=_Mixed, raw_args={"words": "a, b"}, external_input=True) == {
+            "words": "a, b"
+        }
+
+    @pytest.mark.parametrize("value", [{"name": "my_target"}, 5, True])
+    def test_external_reference_must_be_a_name(self, target_registry: TargetRegistry, value: object) -> None:
+        with pytest.raises(ValueError, match="expected a registry name"):
+            resolve_constructor_args(
+                cls=_NeedsTarget,
+                raw_args={"converter_target": value},
+                identifier_type=ConverterIdentifier,
+                external_input=True,
+            )
+
+    def test_external_list_reference_must_be_names(self, target_registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="expected a registry name"):
+            resolve_constructor_args(
+                cls=_NeedsTargets,
+                raw_args={"targets": ["my_target", {"name": "x"}]},
+                identifier_type=TargetIdentifier,
+                external_input=True,
+            )
+
+        resolved = resolve_constructor_args(
+            cls=_NeedsTargets,
+            raw_args={"targets": ["my_target"]},
+            identifier_type=TargetIdentifier,
+            external_input=True,
+        )
+        assert resolved["targets"] == [target_registry.instances.get("my_target")]
+
+    def test_external_reference_resolves_name(self, target_registry: TargetRegistry) -> None:
+        resolved = resolve_constructor_args(
+            cls=_NeedsTarget,
+            raw_args={"converter_target": "my_target"},
+            identifier_type=ConverterIdentifier,
+            external_input=True,
+        )
+
+        assert resolved["converter_target"] is target_registry.instances.get("my_target")
+
+    def test_reject_non_external_params_checks_names_and_references(self) -> None:
+        declared = derive_parameters(cls=_Mixed)
+        reference = derive_parameters(cls=_NeedsTarget, identifier_type=ConverterIdentifier)
+
+        reject_non_external_params(params={"count": 1, "key": "k"}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="'handle' of 'demo' cannot be set through the API"):
+            reject_non_external_params(params={"handle": None}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="Unknown parameter 'unknown' for 'demo'"):
+            reject_non_external_params(params={"unknown": None}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="demo.converter_target: expected a registry name"):
+            reject_non_external_params(params={"converter_target": {"name": "x"}}, declared=reference, owner="demo")
 
     @pytest.mark.parametrize(
         ("registry_type", "identifier_type", "type_name", "raw_args"),
         [
-            (ConverterRegistry, ConverterIdentifier, "FlipConverter", {"converter_target": {"name": "x"}}),
-            (TargetRegistry, TargetIdentifier, "RoundRobinTarget", {"targets": [{"name": "x"}]}),
+            (TargetRegistry, TargetIdentifier, "TextTarget", {"custom_configuration": {}}),
+            (TargetRegistry, TargetIdentifier, "OpenAIChatTarget", {"httpx_client_kwargs": {"timeout": 5}}),
+            (ConverterRegistry, ConverterIdentifier, "TextJailbreakConverter", {"jailbreak_template": "x"}),
+            (ConverterRegistry, ConverterIdentifier, "PDFConverter", {"font_color": [1, 2, 3]}),
         ],
     )
-    def test_registry_reference_rejects_json_object(
+    def test_registered_components_reject_object_parameters_from_external_input(
         self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
     ) -> None:
         cls = registry_type.get_registry_singleton().get_class(type_name)
 
-        with pytest.raises(ValueError, match="registry name or instance"):
-            _resolve(cls, raw_args, identifier_type=identifier_type)
-
-    def test_registered_target_accepts_string_token(self) -> None:
-        cls = TargetRegistry.get_registry_singleton().get_class("A2ATarget")
-
-        assert _resolve(cls, {"auth_token": "token"}, identifier_type=TargetIdentifier) == {"auth_token": "token"}
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type, external_input=True)
 
     @pytest.mark.parametrize(
-        ("type_name", "raw_args", "expected"),
+        ("registry_type", "identifier_type", "type_name", "raw_args"),
         [
-            ("ImageCompressionConverter", {"background_color": [10, 20, 30]}, {"background_color": (10, 20, 30)}),
-            ("SATAMaskingConverter", {"stopwords": ["the", "a"]}, {"stopwords": ["the", "a"]}),
+            (TargetRegistry, TargetIdentifier, "OpenAIChatTarget", {"api_key": "key", "temperature": 0.5}),
+            (ConverterRegistry, ConverterIdentifier, "SearchReplaceConverter", {"pattern": "a", "replace": "b"}),
         ],
     )
-    def test_registered_converter_json_values(
-        self, type_name: str, raw_args: dict[str, object], expected: dict[str, object]
+    def test_registered_components_accept_string_inputs_from_external_input(
+        self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
     ) -> None:
-        cls = ConverterRegistry.get_registry_singleton().get_class(type_name)
+        cls = registry_type.get_registry_singleton().get_class(type_name)
 
-        assert _resolve(cls, raw_args, identifier_type=ConverterIdentifier) == expected
+        resolved = resolve_constructor_args(
+            cls=cls, raw_args=raw_args, identifier_type=identifier_type, external_input=True
+        )
 
-    @pytest.mark.parametrize(
-        ("registry_type", "identifier_type"),
-        [(ConverterRegistry, ConverterIdentifier), (TargetRegistry, TargetIdentifier)],
-    )
-    def test_registered_parameters_only_raise_value_error(self, registry_type: type, identifier_type: type) -> None:
-        registry = registry_type.get_registry_singleton()
-        for type_name in registry.get_class_names():
-            cls = registry.get_class(type_name)
-            for parameter in derive_parameters(cls=cls, identifier_type=identifier_type):
-                for value in (None, 1, 1.5, True, "text", [], [1, "a"], {"a": [1]}):
-                    with contextlib.suppress(ValueError):
-                        _resolve(cls, {parameter.name: value}, identifier_type=identifier_type)
-
-    @pytest.mark.parametrize(
-        ("registry_type", "identifier_type"),
-        [(ConverterRegistry, ConverterIdentifier), (TargetRegistry, TargetIdentifier)],
-    )
-    def test_registered_json_defaults_are_accepted(self, registry_type: type, identifier_type: type) -> None:
-        registry = registry_type.get_registry_singleton()
-        for type_name in registry.get_class_names():
-            cls = registry.get_class(type_name)
-            for parameter in derive_parameters(cls=cls, identifier_type=identifier_type):
-                if parameter.input_kind not in ("scalar", "collection") or parameter.default is None:
-                    continue
-                try:
-                    value = json.loads(json.dumps(parameter.default))
-                except (TypeError, ValueError):
-                    continue
-                _resolve(cls, {parameter.name: value}, identifier_type=identifier_type)
-
-    @pytest.mark.parametrize(
-        ("registry_type", "identifier_type"),
-        [
-            (ConverterRegistry, ConverterIdentifier),
-            (TargetRegistry, TargetIdentifier),
-            (ScorerRegistry, ScorerIdentifier),
-        ],
-    )
-    def test_registered_choices_are_accepted(self, registry_type: type, identifier_type: type) -> None:
-        registry = registry_type.get_registry_singleton()
-        for type_name in registry.get_class_names():
-            cls = registry.get_class(type_name)
-            for parameter in derive_parameters(cls=cls, identifier_type=identifier_type):
-                if parameter.reference is not None or not parameter.choices:
-                    continue
-                value = [parameter.choices[0]] if parameter.is_list else parameter.choices[0]
-                _resolve(cls, {parameter.name: value}, identifier_type=identifier_type)
-
-    def test_enum_list_is_coerced_from_json_choices(self) -> None:
-        live = [_Speed.SLOW]
-
-        assert _resolve(_JsonShaped, {"speeds": ["fast"]}) == {"speeds": [_Speed.FAST]}
-        assert _resolve(_JsonShaped, {"speeds": live})["speeds"] is live
-        with pytest.raises(ValueError, match="speeds"):
-            _resolve(_JsonShaped, {"speeds": ["bogus"]})
-
-    def test_collection_parameter_rejects_wrong_member_type(self) -> None:
-        cls = ConverterRegistry.get_registry_singleton().get_class("SATAMaskingConverter")
-
-        with pytest.raises(ValueError, match="stopwords"):
-            _resolve(cls, {"stopwords": [1, "a"]}, identifier_type=ConverterIdentifier)
+        assert resolved == raw_args
 
 
 class TestDeriveParameters:

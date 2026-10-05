@@ -3,10 +3,10 @@
 
 """Unit tests for the unified Parameter model and its coercion methods."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Protocol, Union
+from typing import Any, Literal, Union
 
 import pytest
 from pydantic import ValidationError
@@ -87,7 +87,6 @@ class TestParameterSerialization:
             "choices": None,
             "is_list": False,
             "reference_type": None,
-            "input_kind": "scalar",
             "variants": None,
         }
 
@@ -525,153 +524,62 @@ class TestCoercionParity:
         assert param.coerce_value(raw) == expected
 
 
-class _Greeter(Protocol):
-    def greet(self) -> str: ...
-
-
-class TestInputKind:
-    """``input_kind`` states how registry callers supply each parameter."""
+class TestIsExternalInput:
+    """``is_external_input`` marks the parameters REST, CLI, and GUI callers may supply."""
 
     @pytest.mark.parametrize(
-        ("param_type", "expected"),
+        "param_type",
         [
-            (str, "scalar"),
-            (int | None, "scalar"),
-            (Path, "scalar"),
-            (Path | str | None, "scalar"),
-            (Literal["a", "b"], "scalar"),
-            (_Speed, "scalar"),
-            (_Speed | Path, "scalar"),
-            (_Unsupported | str, "scalar"),
-            (list[str], "collection"),
-            (tuple[int, int], "collection"),
-            (set[str], "collection"),
-            (Sequence[str] | None, "collection"),
-            (dict[str, Any], "collection"),
-            (Mapping[str, list[str]], "collection"),
-            (list[dict[str, Any]], "collection"),
-            (str | list[str], "collection"),
-            (_Unsupported, "in_process_only"),
-            (Callable[[str], str], "in_process_only"),
-            (_Greeter | None, "in_process_only"),
-            (list[Path], "in_process_only"),
-            (Sequence[Path | str], "in_process_only"),
-            (dict[int, str], "in_process_only"),
-            (list[str | bytes], "in_process_only"),
-            (None, "unsupported"),
-            (Any, "unsupported"),
-            ("SeedPrompt | None", "unsupported"),
-            (list["SeedPrompt"], "unsupported"),
+            str,
+            int | None,
+            Path,
+            Path | str,
+            Literal["a", "b"],
+            _Speed,
+            list[str],
+            list[_Speed] | None,
+            str | list[str],
+            str | Callable[[], str] | None,
+            _Speed | str,
         ],
     )
-    def test_value_parameter_kinds(self, param_type: object, expected: str) -> None:
-        parameter = Parameter(name="p", description="d", param_type=param_type)
-
-        assert parameter.input_kind == expected
-        assert parameter.model_dump()["input_kind"] == expected
-        assert parameter.is_json_configurable is (expected in ("scalar", "collection"))
+    def test_supported_external_types(self, param_type: object) -> None:
+        assert Parameter(name="p", description="d", param_type=param_type).is_external_input
 
     @pytest.mark.parametrize(
-        ("param_type", "expected"),
+        "param_type",
         [
-            (int, "scalar"),
-            (list[str], "collection"),
-            (tuple[int, int], "collection"),
-            (_Unsupported, "in_process_only"),
-            ("SeedPrompt | None", "unsupported"),
+            None,
+            Any,
+            "SeedPrompt | None",
+            _Unsupported,
+            Callable[[], str],
+            tuple[int, int],
+            dict[str, str],
+            Sequence[str],
+            list[Path],
+            list[Path | str],
+            int | tuple[int, int],
+            _Speed | Path,
+            str | Path | int,
+            str | dict[str, str],
+            str | _Unsupported,
+            str | list[Path],
+            list[list[str]],
+            int | Literal["4", "8"],
         ],
     )
-    def test_input_kind_survives_wire_round_trip(self, param_type: object, expected: str) -> None:
-        restored = Parameter.model_validate(Parameter(name="p", description="d", param_type=param_type).model_dump())
+    def test_other_types_take_python_objects_only(self, param_type: object) -> None:
+        assert not Parameter(name="p", description="d", param_type=param_type).is_external_input
 
-        assert restored.input_kind == expected
-        assert restored.model_dump()["input_kind"] == expected
-
-    def test_reference_structured_and_opaque_kinds(self) -> None:
+    def test_references_and_structured_inputs_are_external(self) -> None:
         reference = Parameter(
             name="t", description="d", reference=RegistryReference(component_type=ComponentType.TARGET)
         )
         structured = Parameter(name="s", description="d", param_type=_Unsupported, variants={"one": []})
-        opaque = Parameter(name="o", description="d", param_type=str, opaque=True)
 
-        assert (reference.input_kind, structured.input_kind, opaque.input_kind) == (
-            "reference",
-            "structured",
-            "in_process_only",
-        )
-        assert reference.is_json_configurable and structured.is_json_configurable
-        assert not opaque.is_json_configurable
+        assert reference.is_external_input
+        assert structured.is_external_input
 
-
-class TestCoerceJsonValue:
-    """``coerce_json_value`` applies the registry contract to JSON input."""
-
-    @pytest.mark.parametrize(
-        ("param_type", "value", "expected"),
-        [
-            (int, 3, 3),
-            (float, 2, 2.0),
-            (str | None, None, None),
-            (_Speed, "fast", _Speed.FAST),
-            (Literal[1, 2], "2", 2),
-            (Path, "/data/input.png", Path("/data/input.png")),
-            (Path | str, "relative.png", "relative.png"),
-            (tuple[int, int], [1, 2], (1, 2)),
-            (tuple[str, ...], ["a", "b"], ("a", "b")),
-            (set[str], ["a", "a"], {"a"}),
-            (frozenset[int], [1], frozenset({1})),
-            (list[_Speed], ["slow"], [_Speed.SLOW]),
-            (dict[str, list[str]], {"k": ["v"]}, {"k": ["v"]}),
-            (str | list[str], "x", "x"),
-            (str | list[str], ["x"], ["x"]),
-            (_Speed | Path, "slow", _Speed.SLOW),
-            (_Unsupported | str, "text", "text"),
-        ],
-    )
-    def test_converts_matching_json(self, param_type: object, value: object, expected: object) -> None:
-        parameter = Parameter(name="p", description="d", param_type=param_type)
-
-        converted = parameter.coerce_json_value(value, owner="Owner")
-
-        assert converted == expected
-        assert type(converted) is type(expected)
-
-    @pytest.mark.parametrize(
-        ("param_type", "value"),
-        [
-            (int, True),
-            (int, 1.5),
-            (bool, 1),
-            (str, 5),
-            (float, "1.5"),
-            (int, None),
-            (tuple[int, int], [1]),
-            (list[str], "abc"),
-            (list[Path], ["/etc/hostname"]),
-            (_Speed | Path, "/etc/hostname"),
-            (dict[str, int], {"k": "v"}),
-            (set[str], [["nested"]]),
-            (list[_Speed], ["bogus"]),
-            (float, 10**400),
-        ],
-    )
-    def test_rejects_mismatched_json(self, param_type: object, value: object) -> None:
-        parameter = Parameter(name="p", description="d", default=REQUIRED_VALUE, param_type=param_type)
-
-        with pytest.raises(ValueError, match="Parameter 'p' of 'Owner'"):
-            parameter.coerce_json_value(value, owner="Owner")
-
-    @pytest.mark.parametrize(
-        ("param_type", "message"),
-        [(_Unsupported, "accepts only a Python object"), (Any, "does not support"), (None, "does not support")],
-    )
-    def test_rejects_json_for_parameters_without_json_input(self, param_type: object, message: str) -> None:
-        parameter = Parameter(name="p", description="d", param_type=param_type)
-
-        with pytest.raises(ValueError, match=message):
-            parameter.coerce_json_value({"a": 1}, owner="Owner")
-
-    def test_none_is_accepted_when_default_is_none(self) -> None:
-        parameter = Parameter(name="p", description="d", default=None, param_type=_Unsupported)
-
-        assert parameter.coerce_json_value(None, owner="Owner") is None
+    def test_opaque_parameter_is_not_external(self) -> None:
+        assert not Parameter(name="o", description="d", param_type=str, opaque=True).is_external_input

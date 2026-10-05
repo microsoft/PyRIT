@@ -8,6 +8,7 @@ Tests for backend scenario service and routes.
 import asyncio
 import threading
 from collections import OrderedDict
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -131,6 +132,44 @@ def _make_scenario_metadata(
         include_baseline_by_default=include_baseline_by_default,
         uses_default_adversarial_target=uses_default_adversarial_target,
     )
+
+
+def test_catalog_lists_only_external_scenario_parameters() -> None:
+    metadata = replace(
+        _make_scenario_metadata(),
+        supported_parameters=(
+            Parameter(name="dataset_config", description="Dataset source configuration.", opaque=True),
+            Parameter(name="max_concurrency", description="Maximum concurrency.", param_type=int, default=4),
+        ),
+    )
+
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+
+    assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
+
+
+@pytest.mark.parametrize(
+    ("scenario_params", "message"),
+    [
+        ({"dataset_config": "x"}, "'dataset_config' of 'airt.scam' cannot be set through the API"),
+        ({"objective_target": {"name": "x"}}, "airt.scam.objective_target: expected a registry name"),
+        ({"unknown": None}, "Unknown parameter 'unknown' for 'airt.scam'"),
+    ],
+)
+async def test_configured_estimate_rejects_unsupported_scenario_params_async(
+    scenario_params: dict[str, object], message: str
+) -> None:
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+        service = ScenarioService()
+        with pytest.raises(ValueError, match=message):
+            await service.estimate_scenario_run_size_async(
+                scenario_name="airt.scam",
+                request=ScenarioRunSizeEstimateRequest(scenario_params=scenario_params),
+            )
+
+    registry.create_and_estimate_async.assert_not_called()
 
 
 @pytest.mark.parametrize("uses_default", [False, True])
@@ -1090,6 +1129,9 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._registry = MagicMock()
         service._registry.get_registered_class_metadata.return_value = metadata
+        service._registry.get_class.return_value.supported_parameters.return_value = [
+            Parameter(name=name, description="", param_type=int) for name in ("first", "second")
+        ]
         service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
         first = asyncio.create_task(
             service.estimate_scenario_run_size_async(
@@ -1247,6 +1289,9 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._registry = MagicMock()
         service._registry.get_registered_class_metadata.return_value = metadata
+        service._registry.get_class.return_value.supported_parameters.return_value = [
+            Parameter(name="request_index", description="", param_type=int)
+        ]
         service._configured_estimate_semaphore = asyncio.Semaphore(2)
         service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
 
@@ -1447,6 +1492,10 @@ class TestScenarioServiceGetScenario:
         introspection_instance._technique_class = _EstimateTechnique
         introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
         scenario_class = MagicMock(return_value=introspection_instance)
+        scenario_class.supported_parameters.return_value = [
+            Parameter(name=name, description="", param_type=int)
+            for name in ("num_jailbreaks", "num_jailbreak_attempts")
+        ]
         objective_target = MagicMock()
 
         with (
