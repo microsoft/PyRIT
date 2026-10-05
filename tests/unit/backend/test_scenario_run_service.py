@@ -2236,8 +2236,7 @@ async def test_legacy_plan_techniques_agree_across_projections(
     run_id = str(scenario_result.id)
     service = ScenarioRunService()
     summaries = tuple(
-        ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"])
-        for name in techniques
+        ScenarioTechniqueSummary(name=name, description=f"{name} description", tags=["default"]) for name in techniques
     )
     metadata = ScenarioMetadata(
         class_name=Scenario.__name__,
