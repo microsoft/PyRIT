@@ -79,8 +79,8 @@ async function clickNativeSpinner(input: Locator, direction: 'up' | 'down'): Pro
   if (!box) throw new Error('Expected a visible numeric input.')
   const paddingRight = await input.evaluate((element) => parseFloat(getComputedStyle(element).paddingRight))
   // Chromium's native spinner is a UA shadow control, not an accessible button.
+  // Native spinners auto-repeat when held, so a single-step check must not hold the mouse down.
   await input.click({
-    delay: 200,
     position: { x: box.width - paddingRight - 8, y: box.height / 2 + (direction === 'up' ? -4 : 4) },
   })
 }
