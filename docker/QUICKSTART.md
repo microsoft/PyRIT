@@ -119,6 +119,9 @@ in this shell before running Compose:
 docker compose --profile gui up -d --force-recreate pyrit-gui
 ```
 
+Add `--build` to the command above if you also want to rebuild PyRIT from the
+updated checkout.
+
 This briefly interrupts the GUI; finish any in-progress work first. If the
 existing installation is exposed to an untrusted network, restrict ingress
 before updating it. Check any custom Compose overrides for broader publication.
@@ -154,6 +157,12 @@ Verify:
 - From another machine with a known network path to the Docker host, a TCP
   connection to its LAN address on port 8000 fails. Any HTTP response, including
   401 or 403, means the service is reachable and fails this network-isolation check.
+
+**Docker version caveat:** On Docker Engine versions older than 28.0.0, passing
+this LAN-address check does not rule out the
+[documented access from hosts on the same L2 network to localhost-published ports](https://docs.docker.com/engine/network/port-publishing/#publishing-ports).
+Upgrade Docker Engine to 28.0.0 or later, or keep network-level ingress
+restrictions in place.
 
 The Docker CI workflow's **Validate Compose Bindings** job checks resolved
 Compose bindings without starting containers; other jobs build and run images.
