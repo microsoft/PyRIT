@@ -19,6 +19,7 @@ from pyrit.converter import (
 )
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    CoTHijackingAttack,
     CrescendoAttack,
     PAIRAttack,
     PromptSendingAttack,
@@ -43,6 +44,54 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=PAIRAttack,
             description="Runs the PAIR algorithm, using an adversarial model to iteratively rewrite jailbreak prompts.",
             technique_tags=["multi_turn"],
+        ),
+        AttackTechniqueFactory(
+            name="cot_hijacking",
+            attack_class=CoTHijackingAttack,
+            description=(
+                "Embeds an objective in parallel reasoning puzzles and iteratively refines the strongest prompt."
+            ),
+            technique_tags=["multi_turn"],
+            attack_kwargs={
+                "puzzle_prompts": {
+                    "category_theory": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_category_theory.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "sudoku": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH / "cot_hijacking" / "puzzle_generation_sudoku.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "logic_grid": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH / "cot_hijacking" / "puzzle_generation_logic_grid.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "skyscrapers": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_skyscrapers.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "logic_grid_enhanced": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_logic_grid_enhanced.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                    "skyscrapers_memetic": SeedPrompt.from_yaml_with_required_parameters(
+                        template_path=EXECUTOR_SEED_PROMPT_PATH
+                        / "cot_hijacking"
+                        / "puzzle_generation_skyscrapers_memetic.yaml",
+                        required_parameters=["objective", "puzzle_type", "previous_response", "previous_score"],
+                    ),
+                },
+            },
+            adversarial_system_prompt=SeedPrompt.from_yaml_with_required_parameters(
+                template_path=EXECUTOR_SEED_PROMPT_PATH / "cot_hijacking" / "adversarial_system_prompt.yaml",
+                required_parameters=["objective", "max_turns"],
+            ),
         ),
         AttackTechniqueFactory(
             name="skeleton_key",

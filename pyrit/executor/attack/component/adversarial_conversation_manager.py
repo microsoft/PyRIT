@@ -445,7 +445,7 @@ class _AdversarialConversationManager:
         cls,
         *,
         config: AttackAdversarialConfig,
-        default_system_prompt_path: str | Path,
+        default_system_prompt_path: str | Path | None,
         system_prompt_required_parameters: list[str],
         system_prompt_error_message: str | None = None,
         resolve_user_messages: bool = False,
@@ -461,7 +461,8 @@ class _AdversarialConversationManager:
 
         Args:
             config: The adversarial configuration supplied to the attack.
-            default_system_prompt_path: Fallback system-prompt YAML path when the config declares none.
+            default_system_prompt_path: Fallback system-prompt YAML path when the config declares
+                none, or None when the caller requires an explicitly configured prompt.
             system_prompt_required_parameters: Parameters the resolved system prompt must support.
             system_prompt_error_message: Optional custom error for system-prompt validation failures.
             resolve_user_messages: When True (template mode, e.g. Red Teaming), coerce
@@ -474,9 +475,10 @@ class _AdversarialConversationManager:
             message templates.
 
         Raises:
-            ValueError: If the system prompt is missing required parameters, a response schema is
-                declared on both the system prompt and the first message, or a configured prompt value
-                is neither a string nor a SeedPrompt.
+            ValueError: If no system prompt or fallback path is configured, the system prompt is
+                missing required parameters, a response schema is declared on both the system prompt
+                and the first message, or a configured prompt value is neither a string nor a
+                SeedPrompt.
         """
         system_prompt = resolve_adversarial_system_prompt(
             config=config,

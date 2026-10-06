@@ -3,14 +3,17 @@
 
 """Tests for the ``extra`` scenario attack techniques."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from pyrit.converter import CodeAttackConverter
-from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack import CoTHijackingAttack, PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.setup.initializers.techniques import core, extra
@@ -27,6 +30,10 @@ def _code_attack_framed_factory():
     return next(factory for factory in extra.get_technique_factories() if factory.name == "code_attack_framed")
 
 
+def _cot_hijacking_factory():
+    return next(factory for factory in extra.get_technique_factories() if factory.name == "cot_hijacking")
+
+
 def _wired_converters(factory):
     converter_config = factory._attack_kwargs["attack_converter_config"]
     return [converter for group in converter_config.request_converters for converter in group.converters]
@@ -34,6 +41,36 @@ def _wired_converters(factory):
 
 class _NonEditableHistoryMockTarget(MockPromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
+
+
+class TestCoTHijackingTechnique:
+    """Tests for the opt-in CoT Hijacking technique package."""
+
+    def test_factory_packages_all_prompts(self):
+        factory = _cot_hijacking_factory()
+
+        assert factory.attack_class is CoTHijackingAttack
+        assert factory.technique_tags == ["multi_turn"]
+        assert set(factory._attack_kwargs["puzzle_prompts"]) == {
+            "category_theory",
+            "sudoku",
+            "logic_grid",
+            "skyscrapers",
+            "logic_grid_enhanced",
+            "skyscrapers_memetic",
+        }
+
+        for prompt in factory._attack_kwargs["puzzle_prompts"].values():
+            assert set(prompt.parameters or []) == {
+                "objective",
+                "puzzle_type",
+                "previous_response",
+                "previous_score",
+            }
+
+        config = factory._build_adversarial_config(create_time_target=MagicMock(spec=PromptTarget))
+        assert isinstance(config.system_prompt, SeedPrompt)
+        assert set(config.system_prompt.parameters or []) == {"objective", "max_turns"}
 
 
 @pytest.mark.usefixtures("patch_central_database")
