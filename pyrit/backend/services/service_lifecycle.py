@@ -7,6 +7,7 @@ from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.initializer_service import get_initializer_service
+from pyrit.backend.services.instance_persistence_service import get_instance_persistence_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import reset_scenario_run_service_async
@@ -36,6 +37,8 @@ async def close_services_async() -> None:
         try:
             if get_scenario_service.cache_info().currsize:
                 await get_scenario_service().close_async()
+            if get_instance_persistence_service.cache_info().currsize:
+                await get_instance_persistence_service().close_async()
             if get_converter_service.cache_info().currsize:
                 await get_converter_service().close_async()
             await reset_scenario_run_service_async()
@@ -45,6 +48,7 @@ async def close_services_async() -> None:
                 get_converter_service,
                 get_dataset_service,
                 get_initializer_service,
+                get_instance_persistence_service,
                 get_manual_send_scheduler,
                 get_message_send_service,
                 get_scenario_service,

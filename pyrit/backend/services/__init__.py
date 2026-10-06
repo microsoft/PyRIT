@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from pyrit.backend.services.converter_service import ConverterService, get_converter_service
     from pyrit.backend.services.dataset_service import DatasetService, get_dataset_service
     from pyrit.backend.services.initializer_service import InitializerService, get_initializer_service
+    from pyrit.backend.services.instance_persistence_service import (
+        InstancePersistenceService,
+        get_instance_persistence_service,
+    )
     from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
     from pyrit.backend.services.scenario_service import ScenarioService, get_scenario_service
     from pyrit.backend.services.target_service import TargetService, get_target_service
@@ -30,6 +34,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "get_dataset_service": "pyrit.backend.services.dataset_service",
     "InitializerService": "pyrit.backend.services.initializer_service",
     "get_initializer_service": "pyrit.backend.services.initializer_service",
+    "InstancePersistenceService": "pyrit.backend.services.instance_persistence_service",
+    "get_instance_persistence_service": "pyrit.backend.services.instance_persistence_service",
     "ScenarioService": "pyrit.backend.services.scenario_service",
     "get_scenario_service": "pyrit.backend.services.scenario_service",
     "ScenarioRunService": "pyrit.backend.services.scenario_run_service",

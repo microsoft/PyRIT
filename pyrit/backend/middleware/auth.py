@@ -58,16 +58,27 @@ def authorization_environment(request: Request) -> Mapping[str, str]:
     return cast("Mapping[str, str]", environment) if isinstance(environment, dict) else os.environ
 
 
-def require_admin(request: Request) -> None:
-    """Require an administrator when authentication is enabled."""
+def has_admin_access(request: Request) -> bool:
+    """
+    Return whether the caller is an administrator.
+
+    Without authentication, only a server that sets ``PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true``
+    grants administrator access.
+
+    Returns:
+        bool: Whether the caller has administrator access.
+    """
     user = getattr(request.state, "user", None)
     if user is None:
-        allow_unauthenticated = (
+        return (
             authorization_environment(request).get("PYRIT_ALLOW_UNAUTHENTICATED_ADMIN", "").strip().casefold() == "true"
         )
-        if allow_unauthenticated:
-            return
-    if not isinstance(user, AuthenticatedUser) or not user.is_admin:
+    return isinstance(user, AuthenticatedUser) and user.is_admin
+
+
+def require_admin(request: Request) -> None:
+    """Require an administrator when authentication is enabled."""
+    if not has_admin_access(request):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrator access is required",

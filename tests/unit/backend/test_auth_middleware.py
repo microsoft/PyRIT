@@ -12,7 +12,13 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware, require_admin
+from pyrit.backend.middleware.auth import (
+    AuthenticatedUser,
+    AuthenticationError,
+    EntraAuthMiddleware,
+    has_admin_access,
+    require_admin,
+)
 
 
 def _make_middleware(*, allowed_group_ids: str = "allowed-group", admin_group_id: str = "") -> EntraAuthMiddleware:
@@ -89,6 +95,23 @@ def test_require_admin_allows_explicit_local_development_override() -> None:
 
     with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}, clear=False):
         require_admin(request)
+
+
+@pytest.mark.parametrize(
+    ("user", "allow_unauthenticated", "expected"),
+    [
+        (AuthenticatedUser(oid="1", name="Admin", email="a@example.com", groups=[], is_admin=True), "", True),
+        (AuthenticatedUser(oid="2", name="User", email="u@example.com", groups=[]), "true", False),
+        (None, "true", True),
+        (None, "", False),
+    ],
+)
+def test_has_admin_access(user: AuthenticatedUser | None, allow_unauthenticated: str, expected: bool) -> None:
+    request = Request({"type": "http"})
+    request.state.user = user
+
+    with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": allow_unauthenticated}, clear=False):
+        assert has_admin_access(request) is expected
 
 
 async def test_authenticate_with_graph_resolves_groups_when_restricted() -> None:

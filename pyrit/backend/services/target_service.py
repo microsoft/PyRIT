@@ -4,11 +4,12 @@
 """
 Target service for managing target instances.
 
-Handles creation and retrieval of target instances.
-Uses TargetRegistry as the source of truth for instances.
+Handles creation, replacement, deletion, and retrieval of target instances.
+Uses TargetRegistry as the source of truth for live instances.
 
 Targets can be:
-- Created via API request (instantiated from request params, then registered)
+- Created via API request (built from request params, saved as a recipe, then registered)
+- Restored from saved recipes when the backend starts or reinitializes
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
@@ -16,7 +17,7 @@ import asyncio
 import logging
 import uuid
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
@@ -25,11 +26,21 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
     TargetTypeEntry,
     TargetTypeResponse,
+    UpdateTargetRequest,
+)
+from pyrit.backend.services.instance_persistence_service import (
+    BuiltInstance,
+    InstanceConflictError,
+    InstanceKindHandler,
+    get_instance_persistence_service,
 )
 from pyrit.common import REQUIRED_VALUE
+from pyrit.models import ComponentType
+from pyrit.models.catalog.instance_recipe import InstanceRecipe
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.parameter import Parameter
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import RegistryEntry
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +54,18 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 }
 
 
-class TargetService:
+class TargetService(InstanceKindHandler[TargetInstance]):
     """
     Service for managing target instances.
 
     Uses TargetRegistry as the sole source of truth for class discovery,
     parameter coercion, reference resolution, and construction. Endpoint
-    validation remains owned by the target classes.
+    validation remains owned by the target classes. Targets created through
+    the API are saved by the instance persistence service, which calls back
+    into this service to build and map them.
     """
+
+    kind: ClassVar[ComponentType] = ComponentType.TARGET
 
     def __init__(self) -> None:
         """Initialize the target service."""
@@ -64,6 +79,16 @@ class TargetService:
             TargetInstance with metadata derived from the object.
         """
         return target_object_to_instance(target_registry_name, target_obj)
+
+    def _build_instance_from_entry(self, entry: RegistryEntry[Any]) -> TargetInstance:
+        """
+        Build a TargetInstance, with its saved version, from a registry entry.
+
+        Returns:
+            TargetInstance with metadata derived from the entry's object.
+        """
+        target = self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
+        return target.model_copy(update={"version": get_instance_persistence_service().get_version(entry)})
 
     async def list_targets_async(
         self,
@@ -79,14 +104,13 @@ class TargetService:
             cursor: Pagination cursor (target_registry_name to start after).
 
         Returns:
-            TargetListResponse containing paginated targets.
+            TargetListResponse containing paginated targets and the saved targets
+            that could not be restored.
         """
-        items = [
-            self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
-            for entry in self._registry.instances.get_all_instances()
-        ]
+        items = [self._build_instance_from_entry(entry) for entry in self._registry.instances.get_all_instances()]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None
+        persistence = get_instance_persistence_service()
         return TargetListResponse(
             items=page,
             pagination=PaginationInfo(
@@ -95,6 +119,8 @@ class TargetService:
                 next_cursor=next_cursor,
                 prev_cursor=cursor,
             ),
+            unrestorable=persistence.get_unrestorable(self.kind),
+            restore_error=persistence.restore_error,
         )
 
     @staticmethod
@@ -123,10 +149,19 @@ class TargetService:
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.instances.get(target_registry_name)
-        if obj is None:
+        entry = self._registry.instances.get_entry(target_registry_name)
+        if entry is None:
             return None
-        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
+        return self._build_instance_from_entry(entry)
+
+    def describe_missing_target(self, *, target_registry_name: str) -> str:
+        """
+        Explain why no target is registered under a name.
+
+        Returns:
+            str: Why a saved target was not restored, or that the name was not found.
+        """
+        return get_instance_persistence_service().describe_missing(kind=self.kind, name=target_registry_name)
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
         """
@@ -212,63 +247,160 @@ class TargetService:
         ]
         return TargetTypeResponse(items=items)
 
-    async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
+    async def create_target_async(self, *, request: CreateTargetRequest, is_admin: bool = False) -> TargetInstance:
         """
-        Create a new target instance from API request.
+        Create, save, and register a new target instance from an API request.
 
         Class discovery, strict parameter validation, scalar coercion, registry
         reference resolution, and construction are owned by the
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
         by the target classes themselves. This service only enforces the
         request-level auth contract: for ``identity`` it confirms the target
-        supports it and omits the api_key plus any registry-flagged
-        identity-conflicting parameters so the target validates its own
-        endpoint and authenticates itself. The response is built before the
-        target is registered, so a failed request leaves no registered target.
+        supports it, omits the api_key, and refuses a credential reference that
+        would replace the identity, so the target validates its own endpoint and
+        authenticates itself. The target is saved before it is registered, so a
+        failed request leaves neither a saved nor a registered target.
 
         Args:
-            request: The create target request with type, params, and auth_mode.
+            request: The create target request with name, type, params, credentials, and auth_mode.
+            is_admin: Whether the caller may reference server environment variables as credentials.
 
         Returns:
-            TargetInstance with the new target's details.
+            TargetInstance with the new target's details and saved version.
 
         Raises:
-            ValueError: If the target type is not registered or identity auth is
-                requested but unsupported by the target type. Construction errors
-                (unknown params, incompatible inner targets, unrecognized identity
-                endpoints) are raised by the registry / target classes.
+            ValueError: If the target type is not registered, identity auth is
+                requested but unsupported by the target type, or a credential is
+                sent as a value. Construction errors (unknown params, incompatible
+                inner targets, unrecognized identity endpoints) are raised by the
+                registry / target classes.
         """
-        if request.type not in self._registry:
+        recipe = InstanceRecipe(
+            kind=self.kind,
+            # LEGACY COMPATIBILITY: Older clients omit the name. Remove this generated
+            # fallback when the temporary registry compatibility routes are removed.
+            name=request.name or f"compat_{uuid.uuid4().hex}",
+            type=request.type,
+            params=request.params,
+            credentials=request.credentials,
+            auth_mode=request.auth_mode,
+        )
+        return await self.create_saved_async(recipe=recipe, is_admin=is_admin)
+
+    async def update_target_async(
+        self, *, target_registry_name: str, request: UpdateTargetRequest, is_admin: bool = False
+    ) -> TargetInstance:
+        """
+        Replace a saved target with a new configuration.
+
+        Returns:
+            TargetInstance with the replacement's details and new saved version.
+        """
+        recipe = InstanceRecipe(
+            kind=self.kind,
+            name=target_registry_name,
+            type=request.type,
+            params=request.params,
+            credentials=request.credentials,
+            auth_mode=request.auth_mode,
+        )
+        return await self.update_saved_async(recipe=recipe, expected_version=request.version, is_admin=is_admin)
+
+    async def delete_target_async(
+        self, *, target_registry_name: str, expected_version: str | None, is_admin: bool = False
+    ) -> bool:
+        """
+        Delete a saved target and unregister the target built from it.
+
+        Returns:
+            bool: Whether a saved target was deleted.
+        """
+        return await self.delete_saved_async(
+            name=target_registry_name, expected_version=expected_version, is_admin=is_admin
+        )
+
+    def normalize_recipe(self, recipe: InstanceRecipe) -> InstanceRecipe:
+        """
+        Check that the target type exists and supports the requested authentication.
+
+        Returns:
+            InstanceRecipe: The recipe, without any api_key value when identity authentication is requested.
+
+        Raises:
+            ValueError: If the type is unknown, or identity authentication is unsupported or combined
+                with a value or reference that the type metadata marks as replacing it.
+        """
+        if recipe.type not in self._registry:
             raise ValueError(
-                f"Target type '{request.type}' not found. Available types: {self._registry.get_class_names()}"
+                f"Target type '{recipe.type}' not found. Available types: {self._registry.get_class_names()}"
             )
+        if recipe.auth_mode != "identity":
+            return recipe
+        if "identity" not in self._registry.get_class(recipe.type).supported_auth_modes:
+            raise ValueError(f"Target type '{recipe.type}' does not support identity-based authentication.")
+        metadata = self._registry.get_registered_class_metadata(recipe.type)
+        identity_conflicting = {
+            parameter.name for parameter in (metadata.parameters if metadata else ()) if parameter.identity_conflicting
+        }
+        conflicting = sorted(
+            (({"api_key"} | identity_conflicting) & recipe.credentials.keys())
+            | (identity_conflicting & recipe.params.keys())
+        )
+        if conflicting:
+            raise ValueError(
+                f"Identity authentication does not use {', '.join(conflicting)}: a value or referenced credential "
+                "there would replace the identity. Remove it or choose API key authentication."
+            )
+        # Omit any api_key so the target validates its own endpoint and authenticates itself.
+        return recipe.model_copy(update={"params": {k: v for k, v in recipe.params.items() if k != "api_key"}})
 
-        target_cls = self._registry.get_class(request.type)
-        params: dict[str, Any] = dict(request.params)
+    async def build_async(self, *, recipe: InstanceRecipe, credentials: dict[str, object]) -> BuiltInstance:
+        """
+        Construct a target without registering it.
 
-        if request.auth_mode == "identity":
-            if "identity" not in target_cls.supported_auth_modes:
-                raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
-            # Omit any api_key so the target validates its own endpoint and authenticates itself.
-            params.pop("api_key", None)
-            # Omit any other parameter the registry metadata marks as conflicting with
-            # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
-            # can't silently override the selected auth mode by also supplying it.
-            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
-            if metadata is not None:
-                for parameter in metadata.parameters:
-                    if parameter.identity_conflicting:
-                        params.pop(parameter.name, None)
-        params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        The constructor parameters a target derives from its authentication mode, such as
+        ``AzureBlobStorageTarget``'s explicit ``auth_mode``, are applied at each build rather than saved.
 
-        # LEGACY COMPATIBILITY: The current configuration UI omits the name.
-        # Remove this generated fallback after that UI sends an explicit name.
-        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        self._registry.instances.validate_name_available(target_registry_name)
-        target_obj = self._registry.create_instance(request.type, **params)
-        target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-        self._registry.instances.register(target_obj, name=target_registry_name)
-        return target
+        Returns:
+            BuiltInstance: The constructed target.
+        """
+        auth_parameters = self._registry.get_class(recipe.type).get_auth_mode_parameters(
+            auth_mode=recipe.auth_mode or "api_key"
+        )
+        return BuiltInstance(
+            instance=self._registry.create_instance(recipe.type, **{**recipe.params, **credentials, **auth_parameters})
+        )
+
+    def to_response(self, *, name: str, instance: Any) -> TargetInstance:
+        """
+        Map a constructed target to its API response.
+
+        Returns:
+            TargetInstance: The response, without a version.
+        """
+        return self._build_instance_from_object(target_registry_name=name, target_obj=instance)
+
+    async def release_entry_async(self, entry: RegistryEntry[Any]) -> None:
+        """
+        Leave a replaced or deleted target to whoever still uses it, as a live reinitialization does.
+
+        An attack may still be sending through the old target, so its own cleanup, such as closing
+        cached connections, is not run here.
+        """
+
+    async def delete_unsaved_async(self, *, name: str) -> bool:
+        """
+        Refuse to delete a target that is not saved.
+
+        Returns:
+            bool: ``False``, because no unsaved target is deleted.
+
+        Raises:
+            InstanceConflictError: If an initializer registered the name.
+        """
+        if name in self._registry.instances:
+            raise InstanceConflictError(f"Target '{name}' is registered by an initializer and is not saved.")
+        return False
 
 
 @lru_cache(maxsize=1)

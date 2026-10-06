@@ -4,18 +4,17 @@
 """Tests for the scorer backend service."""
 
 import asyncio
-import threading
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.backend.models.scorers import CreateScorerRequest
+from pyrit.backend.services.instance_persistence_service import InstanceConflictError
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation
 from pyrit.registry import ScorerRegistry
-from pyrit.registry.instance_registry import DefaultInstanceRegistry
 from pyrit.score.scorer import Scorer
 
 
@@ -109,28 +108,21 @@ async def test_concurrent_creates_across_services_do_not_replace_instance() -> N
     registry = ScorerRegistry.get_registry_singleton()
     registry.register_class(_ServiceScorer)
     services = [ScorerService(), ScorerService()]
-    ready = threading.Barrier(2, timeout=5)
-    normalize_tags = DefaultInstanceRegistry._normalize_tags
 
-    def prepare_registration(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
-        ready.wait()
-        return normalize_tags(tags)
-
-    with patch.object(registry.instances, "_normalize_tags", side_effect=prepare_registration):
-        results = await asyncio.gather(
-            *(
-                service.create_scorer_async(
-                    request=CreateScorerRequest(name="contended", type="_ServiceScorer", params={"label": label})
-                )
-                for service, label in zip(services, ("first", "second"), strict=True)
-            ),
-            return_exceptions=True,
-        )
+    results = await asyncio.gather(
+        *(
+            service.create_scorer_async(
+                request=CreateScorerRequest(name="contended", type="_ServiceScorer", params={"label": label})
+            )
+            for service, label in zip(services, ("first", "second"), strict=True)
+        ),
+        return_exceptions=True,
+    )
 
     successes = [result for result in results if not isinstance(result, BaseException)]
     failures = [result for result in results if isinstance(result, BaseException)]
     assert len(successes) == len(failures) == 1
-    assert isinstance(failures[0], ValueError)
+    assert isinstance(failures[0], InstanceConflictError)
     assert "already exists" in str(failures[0])
     registered = registry.instances.get("contended")
     assert registered is not None

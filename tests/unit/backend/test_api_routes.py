@@ -1247,11 +1247,13 @@ class TestTargetRoutes:
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_target_async = AsyncMock(return_value=None)
+            mock_service.describe_missing_target.return_value = "Target 'nonexistent' not found"
             mock_get_service.return_value = mock_service
 
             response = client.get("/api/targets/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+            assert response.json()["detail"] == "Target 'nonexistent' not found"
 
     def test_list_targets_includes_target_specific_params(self, client: TestClient) -> None:
         """Test that target_specific_params (e.g. reasoning_effort) are included in list response."""
@@ -1465,11 +1467,13 @@ class TestConverterRoutes:
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_converter_async = AsyncMock(return_value=None)
+            mock_service.describe_missing_converter.return_value = "Converter 'nonexistent' not found"
             mock_get_service.return_value = mock_service
 
             response = client.get("/api/converters/nonexistent")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+            assert response.json()["detail"] == "Converter 'nonexistent' not found"
 
     def test_delete_converter_success(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:

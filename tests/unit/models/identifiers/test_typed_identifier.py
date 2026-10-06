@@ -274,7 +274,7 @@ class TestComponentType:
         assert ComponentIdentifier.get_multiline_parameter_names() == frozenset()
 
     def test_target_identity_conflicting_parameter_names(self):
-        assert TargetIdentifier.get_identity_conflicting_parameter_names() == frozenset({"sas_token"})
+        assert TargetIdentifier.get_identity_conflicting_parameter_names() == frozenset({"headers", "sas_token"})
 
     def test_base_identifier_has_no_identity_conflicting_parameters(self):
         assert ComponentIdentifier.get_identity_conflicting_parameter_names() == frozenset()

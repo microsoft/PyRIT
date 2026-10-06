@@ -602,3 +602,43 @@ async def test_shutdown_cancellation_before_entry_and_during_close_async(runtime
     finally:
         release.set()
         await asyncio.gather(shutdown, return_exceptions=True)
+
+
+async def test_apply_restores_saved_instances_after_initializers_and_sources(runtime: RuntimeLifecycle) -> None:
+    config = await runtime._load_async()
+    order = MagicMock()
+    with patch.object(lifecycle_module, "restore_saved_instances_async", new_callable=AsyncMock) as restore:
+        order.attach_mock(config.apply_prepared_reinitialization_async, "initializers")
+        order.attach_mock(runtime._management_async, "sources")
+        order.attach_mock(restore, "restore")
+        await apply_async(runtime)
+
+    assert runtime.state == "ready"
+    assert [entry[0] for entry in order.mock_calls] == ["initializers", "sources", "restore"]
+
+
+async def test_startup_restores_saved_instances_after_initializers(runtime: RuntimeLifecycle) -> None:
+    config = await runtime._load_async()
+    scenario_runs = MagicMock(spec=ScenarioRunService)
+    order = MagicMock()
+    with (
+        patch.object(config, "initialize_pyrit_async", new_callable=AsyncMock) as initialize,
+        patch.object(lifecycle_module, "restore_saved_instances_async", new_callable=AsyncMock) as restore,
+        patch.object(lifecycle_module, "get_scenario_run_service", return_value=scenario_runs),
+    ):
+        order.attach_mock(initialize, "initializers")
+        order.attach_mock(restore, "restore")
+        order.attach_mock(scenario_runs.reconcile_interrupted_runs_async, "reconcile")
+        await runtime.startup_async()
+
+    assert runtime.state == "ready"
+    assert [entry[0] for entry in order.mock_calls] == ["initializers", "restore", "reconcile"]
+
+
+async def test_management_configures_instance_recipe_source(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], instance_recipes_source=str(tmp_path))
+    persistence = MagicMock()
+    with patch.object(lifecycle_module, "get_instance_persistence_service", return_value=persistence):
+        await RuntimeLifecycle._management_async(runtime, config)
+
+    persistence.configure_source.assert_called_once_with(str(tmp_path))

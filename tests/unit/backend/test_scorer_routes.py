@@ -180,7 +180,7 @@ def test_failed_scorer_creation_never_registers_instance(
     assert client.get(f"/api/scorers/{name}").status_code == 404
 
 
-def test_duplicate_name_returns_400_and_does_not_replace_instance(compatibility_headers: dict[str, str]) -> None:
+def test_duplicate_name_returns_409_and_does_not_replace_instance(compatibility_headers: dict[str, str]) -> None:
     registry = _register_test_scorers()
     first = registry.create_named_instance(name="duplicate", type_name="_RouteLeafScorer", params={"label": "first"})
     client = TestClient(app, headers=compatibility_headers)
@@ -189,7 +189,7 @@ def test_duplicate_name_returns_400_and_does_not_replace_instance(compatibility_
         "/api/scorers", json={"name": "duplicate", "type": "_RouteLeafScorer", "params": {"label": "second"}}
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert registry.instances.get("duplicate") is first
 
 
