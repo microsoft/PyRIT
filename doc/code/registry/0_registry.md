@@ -67,6 +67,11 @@ only when replacement is intended. Converter and target registries also reject
 reserved route names such as `catalog` and `types`. Use `.instances.unregister(name)`
 to remove an instance.
 
+The instance registry checks and inserts each name under one lock. Concurrent
+creation can build more than one component for the same name, but only one
+registration succeeds unless replacement is requested. The backend does not
+need a separate registration lock.
+
 Constructor annotations define parameter metadata and coercion. Enum parameters
 accept member names or values. Types that inherit `StructuredParameterValue` declare their
 allowed variants through `get_registry_input_variants()`; the registry
@@ -79,6 +84,16 @@ and a string stays a string. It never passes a URL through `Path`. Both union
 orders have the same metadata, `type_name: "Path | str"`, including after a JSON
 round-trip. Optional forms accept `None` in Python; the display type omits `None`,
 as it does for other optional parameters.
+
+The backend exposes scorer types at `GET /api/scorers/types`, lists registered
+instances at `GET /api/scorers`, retrieves one at `GET /api/scorers/{name}`, and
+creates one with `POST /api/scorers` (`name`, `type`, and optional `params`). The
+type response uses the registry's shared `Parameter` contract. Instance responses
+include the complete `ScorerIdentifier`, including nested scorer and target
+identifiers; target identifiers apply their existing credential-exclusion rules.
+Construction and reference resolution remain owned by `ScorerRegistry`.
+Scorer list responses build identifiers only for the requested page. Runtime
+replacement clears the cached scorer service so requests use the new registry.
 
 The backend owns file-upload handling and cleanup, not the registry. See the
 [registry API migration notes](../../gui/0_gui.md#registry-api-migration-notes)

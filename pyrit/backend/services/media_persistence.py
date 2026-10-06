@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import mimetypes
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -17,8 +18,10 @@ from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.memory import data_serializer_factory
+from pyrit.models import MEDIA_PATH_DATA_TYPES
 
 if TYPE_CHECKING:
+    from pyrit.backend.models.attacks import MessagePieceRequest
     from pyrit.models import PromptDataType
 
 
@@ -90,6 +93,7 @@ async def persist_media_value_async(
     use_data_uri_mime_type: bool = True,
     require_valid_base64_after_path_error: bool = False,
     serializer_factory: SerializerFactory = data_serializer_factory,
+    created_paths: list[str] | None = None,
 ) -> MediaPersistenceResult:
     """
     Classify and, when needed, persist one path-typed media value.
@@ -129,7 +133,7 @@ async def persist_media_value_async(
         origin = MediaOrigin.DATA_URI
     else:
         try:
-            if Path(value).is_file():
+            if await asyncio.to_thread(Path(value).is_file):
                 return MediaPersistenceResult(
                     value=value,
                     origin=MediaOrigin.LOCAL_PATH,
@@ -152,7 +156,17 @@ async def persist_media_value_async(
         data_type=data_type,
         extension=extension,
     )
-    await serializer.save_b64_image_async(data=payload)
+    if created_paths is None:
+        await serializer.save_b64_image_async(data=payload)
+    else:
+        # Record ownership before writing so partial writes can also be removed.
+        created_paths.append(str(await serializer.get_data_filename_async()))
+        write_task = asyncio.create_task(serializer.save_b64_image_async(data=payload))
+        try:
+            await asyncio.shield(write_task)
+        except asyncio.CancelledError:
+            await write_task
+            raise
     return MediaPersistenceResult(
         value=str(serializer.value),
         origin=origin,
@@ -161,3 +175,59 @@ async def persist_media_value_async(
         mime_type=mime_type or data_uri_mime_type,
         extension=extension,
     )
+
+
+async def persist_message_pieces_async(
+    *,
+    pieces: Sequence[MessagePieceRequest],
+    persisted_paths: list[str] | None = None,
+    serializer_factory: SerializerFactory = data_serializer_factory,
+) -> None:
+    """
+    Resolve original and converted media independently, updating values in-place.
+
+    The frontend sends binary media (images, audio, etc.) as base64 strings
+    with a ``*_path`` data_type.  The PyRIT target layer expects ``*_path``
+    values to be **file paths**, so we decode the base64 data, write it to
+    the results store, and replace the request values with the resulting
+    file path before the message is built.
+
+    If the value is already an HTTP(S) URL (e.g. an Azure Blob Storage URL
+    from a remixed/copied message), it is kept as-is since the file already
+    exists in storage.
+    """
+    for piece in pieces:
+        original_value = piece.original_value
+        converted_value = piece.converted_value
+        converted_type = piece.converted_value_data_type or piece.data_type
+        if piece.data_type in MEDIA_PATH_DATA_TYPES:
+            result = await persist_media_value_async(
+                value=original_value,
+                data_type=piece.data_type,
+                mime_type=piece.mime_type,
+                serializer_factory=serializer_factory,
+                created_paths=persisted_paths,
+            )
+            if result.resolved:
+                original_value = result.value
+                if converted_value is None or (
+                    converted_value == piece.original_value and converted_type == piece.data_type
+                ):
+                    converted_value = original_value
+
+        if (
+            converted_value is not None
+            and converted_type in MEDIA_PATH_DATA_TYPES
+            and (converted_value != original_value or converted_type != piece.data_type)
+        ):
+            result = await persist_media_value_async(
+                value=converted_value,
+                data_type=converted_type,
+                serializer_factory=serializer_factory,
+                created_paths=persisted_paths,
+            )
+            if result.resolved:
+                converted_value = result.value
+
+        piece.original_value = original_value
+        piece.converted_value = converted_value

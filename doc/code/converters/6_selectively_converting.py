@@ -82,13 +82,22 @@ target = TextTarget(text_stream=open(os.devnull, "w", encoding="utf-8"))  # noqa
 #
 # ### Custom Markers in Pipelines
 #
-# For attacks, pass `PromptNormalizer(start_token="<<", end_token=">>")` as `prompt_normalizer`.
-# This recognizes ASCII-marked regions such as `Decode: <<<<hello>>>>` in request and response converter chains.
+# For attacks, pass
+# `PromptNormalizer(start_token="<|pyrit_start_8f3a|>", end_token="<|pyrit_end_8f3a|>")` as `prompt_normalizer`.
+# This recognizes ASCII-marked regions in request and response converter chains:
+#
+# ```text
+# Decode: <|pyrit_start_8f3a|><|pyrit_start_8f3a|>hello<|pyrit_end_8f3a|><|pyrit_end_8f3a|>
+# ```
+#
 # Use the same delimiters on any `SelectiveTextConverter` with `TokenSelectionStrategy`.
 #
 # API clients can set `start_token` and `end_token` on `ConverterPreviewRequest` and `AddMessageRequest`.
 # These settings also apply to queued message sends. Empty delimiters are rejected.
 # Unicode markers remain the defaults. The GUI selection button still inserts those default markers.
+# Choose markers that are unlikely to appear in prompts or replies. If response converters are configured,
+# an unmatched marker in a reply raises before that reply is stored. Longer markers reduce accidental matches
+# but do not eliminate them.
 
 # %%
 # Just put tokens around what you want to convert

@@ -2170,6 +2170,45 @@ class TestConcurrentMessages:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestNormalizerPersistence:
+    async def test_obscure_markers_preserve_common_reply_syntax_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        start_token, end_token = "<|pyrit_start_8f3a|>", "<|pyrit_end_8f3a|>"
+        request_value = f"Decode: {start_token}{start_token}test{end_token}{end_token}"
+        reply_value = f"echo x >> log\n>>> print('hello')\nSelected: {start_token}test{end_token}"
+        request = AddMessageRequest(
+            target_conversation_id=attack.conversation_id,
+            target_registry_name="target",
+            pieces=[MessagePieceRequest(original_value=request_value)],
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["base64"])],
+            response_converter_configurations=[ConverterConfigurationRequest(converter_ids=["base64"])],
+            start_token=start_token,
+            end_token=end_token,
+        )
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value=reply_value,
+                    conversation_id=normalized_conversation[-1].get_piece().conversation_id,
+                ).to_message()
+            ]
+
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async):
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+        assert len(messages) == 2
+        assert messages[0].get_piece().original_value == request_value
+        assert messages[0].get_value() == f"Decode: {start_token}dGVzdA=={end_token}"
+        assert messages[1].get_piece().original_value == reply_value
+        assert messages[1].get_value() == "echo x >> log\n>>> print('hello')\nSelected: dGVzdA=="
+
     async def test_custom_markers_request_response_and_preconverted_async(
         self,
         *,
