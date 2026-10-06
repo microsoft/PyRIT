@@ -13,7 +13,7 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import AuthenticatedUser, require_admin
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr, ProblemDetail
 from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
     EnvironmentFileContent,
@@ -279,7 +279,7 @@ async def list_environment_files(  # pyrit-async-suffix-exempt
     },
 )
 async def get_environment_file(  # pyrit-async-suffix-exempt
-    file_id: str,
+    file_id: IdentifierStr,
     request: Request,
 ) -> EnvironmentFileContent:
     """
@@ -312,7 +312,7 @@ async def get_environment_file(  # pyrit-async-suffix-exempt
     responses={404: {"model": ProblemDetail, "description": "Environment file not found"}},
 )
 async def update_environment_file(  # pyrit-async-suffix-exempt
-    file_id: str,
+    file_id: IdentifierStr,
     body: UpdateEnvironmentFileRequest,
     request: Request,
 ) -> EnvironmentFileContent:

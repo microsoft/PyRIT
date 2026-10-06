@@ -63,6 +63,20 @@ def client(sdk: Any) -> Iterator[NonCallableMagicMock]:
         yield client
 
 
+@pytest.fixture
+def mock_copilot_startup_io(*, sdk: Any, sqlite_instance: MemoryInterface) -> Iterator[None]:
+    async def construct_client_async(constructor: Callable[..., Any], **kwargs: Any) -> Any:
+        assert constructor is sdk.CopilotClient
+        return constructor(**kwargs)
+
+    # Cleanup timing must not depend on database I/O or dispatching a mock constructor to a worker.
+    with (
+        patch.object(asyncio, "to_thread", side_effect=construct_client_async),
+        patch.object(sqlite_instance, "get_conversation_messages_async", AsyncMock(return_value=[])),
+    ):
+        yield
+
+
 def _assistant_reply(text: str) -> SessionEvent:
     from copilot.generated.session_events import AssistantMessageData, SessionEvent, SessionEventType
 
@@ -2017,7 +2031,7 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
     assert sessions == {"unrelated-session-id"}
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 @pytest.mark.parametrize("failure_stage", ["start", "status"])
 @pytest.mark.parametrize("stop_failure", ["caller-cancel", "runtime-error", "sdk-cancel"])
 async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(
