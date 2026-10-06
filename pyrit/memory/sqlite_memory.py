@@ -125,9 +125,12 @@ def _cleanup_interrupted_sqlite_connection(context: ExceptionContext) -> None:
 
     try:
         dbapi_connection.run_async(lambda _: _finish_sqlite_cleanup_async(greenlet_spawn(close_and_invalidate)))
-    except Exception as error:
+    except (asyncio.CancelledError, Exception) as error:
         if cancelled:
-            raise context.original_exception from error
+            cause = (
+                error.__cause__ if isinstance(error, asyncio.CancelledError) and error.__cause__ is not None else error
+            )
+            raise context.original_exception from cause
         raise
 
 
@@ -183,7 +186,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     Cancellation finalizes active cursors and closes interrupted connections before
     returning to the caller. Session cleanup also finishes under repeated cancellation.
-    Failed session rollbacks discard the connection without replacing cancellation.
+    Failed disconnects and session rollbacks preserve the original cancellation
+    and expose cleanup failures as its cause.
 
     Note: this is replacing the old DuckDB implementation.
     """

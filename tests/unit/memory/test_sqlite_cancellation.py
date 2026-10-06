@@ -353,54 +353,82 @@ async def test_cancelled_database_worker_finishes_before_return_async(
 
 
 @pytest.mark.parametrize("additional_cancellations", [0, 1, 2])
+@pytest.mark.parametrize("cancel_during_invalidation", [False, True], ids=["session-close", "invalidation"])
 async def test_invalidation_failure_preserves_cancellation_and_cause_async(
-    *, sqlite_memory_async: SQLiteMemory, persistable_score_async: Score, additional_cancellations: int
+    *,
+    sqlite_memory_async: SQLiteMemory,
+    persistable_score_async: Score,
+    additional_cancellations: int,
+    cancel_during_invalidation: bool,
 ) -> None:
     started, release = asyncio.Event(), asyncio.Event()
-    closing_session, release_session, session_closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
-    fetchall, invalidate, close = Cursor.fetchall, SQLAlchemyConnection.invalidate, AsyncSession.close
+    closing_cleanup, release_cleanup = asyncio.Event(), asyncio.Event()
+    connection_closed, session_closed = asyncio.Event(), asyncio.Event()
+    fetchall, invalidate = Cursor.fetchall, SQLAlchemyConnection.invalidate
+    close_connection, close_session = Connection.close, AsyncSession.close
     original = ValueError("connection invalidation failed")
+    original_cancellation: asyncio.CancelledError | None = None
 
     async def delayed_fetchall_async(cursor: Cursor) -> Iterable[Any]:
+        nonlocal original_cancellation
         started.set()
-        await release.wait()
+        try:
+            await release.wait()
+        except asyncio.CancelledError as error:
+            original_cancellation = error
+            raise
         return await fetchall(cursor)
 
     def failing_invalidate(*args: Any, **kwargs: Any) -> None:
         invalidate(*args, **kwargs)
         raise original
 
+    async def delayed_connection_close_async(connection: Connection) -> None:
+        if cancel_during_invalidation:
+            closing_cleanup.set()
+            await release_cleanup.wait()
+        await close_connection(connection)
+        connection_closed.set()
+
     async def delayed_session_close_async(session: AsyncSession) -> None:
-        closing_session.set()
-        await release_session.wait()
-        await close(session)
+        if not cancel_during_invalidation:
+            closing_cleanup.set()
+            await release_cleanup.wait()
+        await close_session(session)
         session_closed.set()
 
     with (
         patch.object(Cursor, "fetchall", new=delayed_fetchall_async),
         patch.object(SQLAlchemyConnection, "invalidate", autospec=True, side_effect=failing_invalidate),
+        patch.object(Connection, "close", new=delayed_connection_close_async),
         patch.object(AsyncSession, "close", new=delayed_session_close_async),
     ):
         task = asyncio.create_task(sqlite_memory_async.add_scores_to_memory_async(scores=[persistable_score_async]))
         try:
             await asyncio.wait_for(started.wait(), timeout=5)
             task.cancel("cancel failed cleanup")
-            await asyncio.wait_for(closing_session.wait(), timeout=5)
+            await asyncio.wait_for(closing_cleanup.wait(), timeout=5)
             for _ in range(additional_cancellations):
-                task.cancel("cancel session cleanup again")
+                task.cancel("cancel cleanup again")
                 await asyncio.sleep(0)
                 assert not task.done()
-            release_session.set()
-            with pytest.raises(asyncio.CancelledError, match="cancel failed cleanup") as raised:
+            assert not session_closed.is_set()
+            if cancel_during_invalidation:
+                assert not connection_closed.is_set()
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError) as raised:
                 await task
         finally:
             release.set()
-            release_session.set()
+            release_cleanup.set()
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+    assert connection_closed.is_set()
     assert session_closed.is_set()
+    assert original_cancellation is not None
+    assert raised.value is original_cancellation
     assert raised.value.__cause__ is original
     assert await sqlite_memory_async.get_scores_async() == []
     await _assert_error_result_write_async(sqlite_memory_async)
