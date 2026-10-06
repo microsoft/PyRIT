@@ -66,9 +66,9 @@ a component in one operation. The instance registry stores objects; it does not
 construct them.
 
 Duplicate names raise `ValueError`. Use `.instances.register(..., replace=True)`
-only when replacement is intended. Converter and target registries also reject
-reserved route names such as `catalog` and `types`. Use `.instances.unregister(name)`
-to remove an instance.
+only when replacement is intended. Converter, target, and scorer registries also
+reject reserved route names: `types`, and `preview` for converters. Use
+`.instances.unregister(name)` to remove an instance.
 
 The instance registry checks and inserts each name under one lock. Concurrent
 creation can build more than one component for the same name, but only one
@@ -89,14 +89,21 @@ round-trip. Optional forms accept `None` in Python; the display type omits `None
 as it does for other optional parameters.
 
 The backend exposes scorer types at `GET /api/scorers/types`, lists registered
-instances at `GET /api/scorers`, retrieves one at `GET /api/scorers/{name}`, and
-creates one with `POST /api/scorers` (`name`, `type`, and optional `params`). The
+instances at `GET /api/scorers`, retrieves one at `GET /api/scorers/{name}`,
+creates one with `POST /api/scorers` (`name`, `type`, and optional `params` and
+`credentials`), replaces a saved one with `PUT /api/scorers/{name}`, and deletes
+one with `DELETE /api/scorers/{name}?version=`. The
 type response uses the registry's shared `Parameter` contract. Instance responses
 include the complete `ScorerIdentifier`, including nested scorer and target
 identifiers; target identifiers apply their existing credential-exclusion rules.
 Construction and reference resolution remain owned by `ScorerRegistry`.
 Scorer list responses build identifiers only for the requested page. Runtime
 replacement clears the cached scorer service so requests use the new registry.
+
+The backend, not the registry, saves the instances created through its API and
+rebuilds them in reference order after the initializers run. The registry keeps
+only the live objects; an entry built from a saved recipe records the recipe's
+version and the instances it references in its metadata.
 
 The backend owns file-upload handling and cleanup, not the registry. See the
 [registry API migration notes](../../gui/0_gui.md#registry-api-migration-notes)

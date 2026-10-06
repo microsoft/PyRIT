@@ -507,11 +507,18 @@ New runs save the adversarial target selection with their launch configuration. 
 Click "New Target" to open the creation dialog. Fill in:
 
 - **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
+- **Name** (required): The registry name. The target is saved under this name and restored when PyRIT restarts.
 - **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
 - **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
-- **API Key** (optional): Stored in memory only (not persisted to disk)
+- **API key environment variable** (optional): The name of a server environment variable that holds the key, such as `OPENAI_CHAT_KEY`. Only the name is saved; the key never leaves the server. Leave it blank to use the target's default variable, or choose identity-based authentication. Naming a variable requires administrator access.
 
 For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
+
+#### Saved Targets
+
+Targets and converters created in the GUI or through the API are saved and rebuilt when the backend restarts or reinitializes, after the instances they reference. Saved targets have a **Delete** action. A saved target that cannot be rebuilt, for example because its environment variable is no longer set or an initializer now registers the same name, is listed above the table with the reason, and can be deleted there unless its saved document could not be read from storage at all. The converter registry does the same for converters. When a converter takes a credential, such as `azure_speech_key`, the creation dialog asks for the name of the server environment variable that holds it, as the target dialog does for the API key and for other credential parameters, such as `sas_token` or an `HTTPTarget`'s `http_request`.
+
+Saved instances are stored in `~/.pyrit/instance_recipes` by default. Set `instance_recipes_source` in `.pyrit_conf` to use another directory or an Azure Blob container.
 
 #### Auto-Populating Targets
 
@@ -543,10 +550,10 @@ Before replacement, PyRIT validates the saved configuration, environment sources
 and required environment values. Custom initializer scripts are trusted code. Importing a script or constructing its
 initializer can have side effects during validation.
 
-Reinitialization resets setup-owned component registries and recreates backend services. Components created only
-through the GUI must be recreated. The same memory object and persisted history are retained, including an in-memory
-database. Changing the memory type, Azure SQL connection, or Azure results storage configuration requires a backend
-restart and is rejected before replacement.
+Reinitialization resets setup-owned component registries and recreates backend services. Targets, converters, and
+scorers created through the GUI or API are saved and rebuilt after the initializers run. The same memory object and
+persisted history are retained, including an in-memory database. Changing the memory type, Azure SQL connection, or
+Azure results storage configuration requires a backend restart and is rejected before replacement.
 
 Live apply does not stop or drain work. It rejects the request if a scenario, preparation, send, estimate, or other
 runtime operation is active. Wait for the work to finish, or cancel it with its existing control, and then retry.
@@ -596,21 +603,100 @@ returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat
 returned IDs as opaque registry names, not UUIDs or identifier hashes.
 
+Targets, converters, and scorers created through REST are saved and rebuilt when the
+backend restarts or reinitializes, after the instances they reference. Credential
+parameters (`api_key`, `headers`, `http_request`, `sas_token`, and similar) cannot be
+sent as values; a request that does gets 400. Name a server environment variable
+instead, for example `"credentials": {"api_key": {"env_var": "OPENAI_CHAT_KEY"}}`.
+Only the variable name is saved, and naming one requires administrator access (403
+otherwise). An `HTTPTarget` requires `http_request`, so only an administrator can
+create one, with its raw request in a server environment variable. A parameter that
+takes a mapping, such as `headers`, reads a JSON object of strings from its
+variable. Type metadata marks credential parameters with `"sensitive": true`. Other
+values are saved as sent, so a value that carries a credential is rejected (400): a
+URL with a user name or password, an Azure SAS signature, or a key in its query
+string (a URL written in another URL's query, such as a proxy's upstream URL, counts too),
+and, inside free-form settings such as `extra_body_parameters` or
+`httpx_client_kwargs`, a text or number field named like a credential, such as
+`Authorization` or `api_key`, or a `key`, `code`, or `sig` in query parameters
+(`params`, as a map, a list of pairs, or a query string) or in authentication
+settings (`authentication`). Names are compared by their letters and
+digits in any letter case, so `X-Api-Key` and `xapikey` are the same name. A switch
+value such as `true` or `0` is not treated as a credential. Send credentials through
+`credentials` instead. These checks catch the common ways a credential is written,
+not every one: a token in a URL path, such as a webhook URL, is not detected, so
+keep credentials out of other values. With `"auth_mode": "identity"`, a credential
+reference for `api_key`, or a reference or value for a parameter that type metadata
+marks `identity_conflicting` (`headers` and `sas_token`), is rejected, because it would
+replace the identity. Names shaped like a saved document name
+(`target_<name>_<12 hex digits>`) are reserved. An `HTTPTarget` identifier shows its
+request URL with any user name, password, or credential query value replaced by
+`***`. Percent-encode a credential written into a URL, as URLs require: an unencoded
+`/`, `?`, or `#` can end a user name or password early, leaving the rest
+unrecognized, and in a URL written inside another URL's query, an unencoded `&` or
+`#` leaves the credential unrecognized entirely.
+
+Responses for saved instances carry a `version`. `PUT /api/targets/{name}`,
+`PUT /api/converters/{name}`, and `PUT /api/scorers/{name}` replace a saved instance
+(`type`, `params`, `credentials`, and the `version` that was read); parameters and
+credentials the request omits are removed. `DELETE` with `?version=` deletes one. A
+stale version returns 409, and a delete without a version returns 428. A saved
+instance that other saved instances reference cannot be deleted, and cannot be
+replaced while it is restored (409). A restored instance counts by what it was built
+from, even after its saved document changes outside the API, until a restart or
+reinitialization rebuilds it. Until then it keeps protecting what it holds and stays
+protected while others hold it, even if its document can no longer be parsed. With
+the document's current version, a replace applies to it while this PyRIT can still
+use the document, and a delete by its name (or by its document name when this PyRIT
+cannot use the document) removes it; deleting one whose document no longer exists is
+refused (409). A saved instance whose type is no longer registered counts as
+referencing every name its parameter values hold, until it is changed or deleted. A
+saved instance whose name an initializer now registers is not applied: it cannot be
+replaced, and deleting it removes only the saved copy, because the instances that
+reference the name use the registered one. A saved document that cannot be parsed,
+or that a newer PyRIT wrote, cannot be replaced (409); an administrator can delete
+it, even while saved instances reference it, and create the instance again. Until
+then, if it is a JSON object, it counts as referencing every name in its fields
+other than `schema_version`, `kind`, `name`, and `type`, so a saved instance it
+names cannot be deleted. Converters that are not saved can still be deleted without
+a version.
+
+List responses include `unrestorable`, the saved instances the last restore could
+not rebuild with the reason for each, and `restore_error` when the restore failed as
+a whole, for example because the store could not be read. An instance that
+references a saved instance the restore could not rebuild is not rebuilt either,
+even when another instance now holds that name, and creating or replacing an
+instance with such a reference is refused (409) until that saved instance is
+deleted. While `restore_error` is set, creating or replacing an instance that
+references others is refused (409) until a restart or reinitialization restores the
+saved instances, and while the store also still cannot be listed, creating or
+replacing any instance is refused (503), because a restart could not rebuild it. A
+saved document that cannot be parsed and does not say which instance it belongs to,
+or names an instance the API cannot address or a reserved name, is listed under its
+document name, which `DELETE` accepts. A document that could not be read from
+storage is listed without a `version`. While a saved document cannot be read from
+storage, deleting a saved instance, or replacing a restored one, is refused (503),
+because that document may reference it. Files in the store whose names do not have
+the shape of a saved document name are ignored. `GET` for an unrestorable name that
+no live instance holds returns 404 with the reason.
+
 Constructor parameters typed as `Path` accept base64 data-URI uploads through REST,
 not server filesystem paths. Parameters typed as `Path | str` also accept Azure
 Blob URLs. This applies to `AddImageVideoConverter.video_path` and
 `ImageOverlayConverter.base_image`. Other local file inputs remain `Path`.
 Uploads stay in backend-owned temporary storage until deletion or shutdown,
-including with Azure-backed memory. Converter outputs still use configured result
-storage. Uploads can contain any file type; the media endpoint renders only
+including with Azure-backed memory. A saved converter keeps its uploads in its
+saved recipe and writes them again when it is restored. Converter outputs still
+use configured result storage. Uploads can contain any file type; the media endpoint renders only
 allowlisted image, audio, and video extensions inline. Other files, including PDF,
 SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
 
 **Temporary compatibility, scheduled for removal with the chat migration:**
 the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
 registry metadata for the current UI. Create requests without a name receive a
-generated `compat_...` name. New clients should not depend on these routes or
-unnamed creation.
+generated `compat_...` name and are saved like named ones, so delete them when they
+are no longer needed. New clients should not depend on these routes or unnamed
+creation.
 
 ## Connection Health
 
