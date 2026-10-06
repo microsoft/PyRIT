@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pytest import LogCaptureFixture
     from sqlalchemy.engine import Dialect
 
-MAIN_REVISION = "6ea3eb4b61c3"
+MAIN_REVISION = "34a18645c7e9"
 ANALYTICS_REVISION = "901e6c7bf9d4"
 
 
@@ -64,7 +64,7 @@ def insert_result(connection: Connection, *, identifier: dict[str, Any] | None, 
 
 @pytest.mark.parametrize(
     "starting_revision",
-    ["aca1eba410d9", MAIN_REVISION],
+    ["aca1eba410d9", "6ea3eb4b61c3", MAIN_REVISION],
 )
 def test_analytics_migration_upgrades_from_main_revisions(*, tmp_path: Path, starting_revision: str) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'merge.sqlite'}")
@@ -87,6 +87,9 @@ def test_analytics_migration_upgrades_from_main_revisions(*, tmp_path: Path, sta
             )
             assert "conditions" in {column["name"] for column in inspect(connection).get_columns("SeedPromptEntries")}
             assert "adversarial_prompt_template" in {
+                column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
+            }
+            assert "use_score_as_feedback" in {
                 column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
             }
             assert "attack_result_id" in {column["name"] for column in inspect(connection).get_columns("Conversations")}
@@ -172,6 +175,9 @@ def test_evaluation_hash_migration_backfills_supported_history_and_preserves_uns
             assert set(connection.execute(text('SELECT id FROM "AttackResultEntries"')).scalars()) == set(expected_rows)
             assert "objective_target_eval_hash_v1" not in {
                 column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
+            }
+            assert "use_score_as_feedback" in {
+                column["name"] for column in inspect(connection).get_columns("AttackIdentifiers")
             }
             command.upgrade(config, "head")
             assert (

@@ -107,7 +107,7 @@ method also accepts this mode. Both default to
 `LATEST_PER_CONVERSATION`, including existing History callers. Turn bounds apply
 after selection, and neither mode deletes or rewrites stored duplicates.
 
-Revision `901e6c7bf9d4` follows the published `main` head `6ea3eb4b61c3`. It
+Revision `901e6c7bf9d4` follows the published `main` head `34a18645c7e9`. It
 bounds `outcome` to 16 characters and adds the computed
 `resolved_atomic_attack_identifier_hash` lookup. The lookup
 prefers the canonical reference and falls back to the saved legacy JSON hash.

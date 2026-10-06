@@ -5,7 +5,7 @@
 Index attack analytics and backfill the frozen v1 objective-target identity.
 
 Revision ID: 901e6c7bf9d4
-Revises: 6ea3eb4b61c3
+Revises: 34a18645c7e9
 Create Date: 2026-10-03 04:46:09.282494
 """
 
@@ -22,7 +22,7 @@ from pyrit.memory.memory_models import CustomUUID
 from pyrit.models import ComponentIdentifier
 
 revision: str = "901e6c7bf9d4"
-down_revision: str | None = "6ea3eb4b61c3"
+down_revision: str | None = "34a18645c7e9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

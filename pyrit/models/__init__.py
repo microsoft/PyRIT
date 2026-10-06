@@ -240,6 +240,7 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_trace_context import RequestTraceContext
+    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AllAvailableDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
@@ -251,6 +252,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioDatasetSizeEstimateKind": "pyrit.models.scenario_dataset_size_estimate",
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
+    "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
     "AttackAnalyticsCell": "pyrit.models.analytics",
     "AttackAnalyticsConverterDirection": "pyrit.models.analytics",
     "AttackAnalyticsDimension": "pyrit.models.analytics",

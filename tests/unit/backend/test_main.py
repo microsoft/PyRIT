@@ -30,6 +30,7 @@ from pyrit.backend.services.converter_service import ConverterService, get_conve
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
@@ -89,6 +90,7 @@ class TestLifespan:
     ) -> None:
         service = get_message_send_service()
         converter = get_converter_service()
+        get_scorer_service()
         with (
             patch.object(service, "shutdown_async", side_effect=asyncio.CancelledError),
             patch.object(converter, "close_async", wraps=converter.close_async) as close,
@@ -99,6 +101,7 @@ class TestLifespan:
         assert get_message_send_service.cache_info().currsize == 0
         assert get_manual_send_scheduler.cache_info().currsize == 0
         assert get_converter_service.cache_info().currsize == 0
+        assert get_scorer_service.cache_info().currsize == 0
 
     @pytest.mark.parametrize("scenario_failure", [False, True])
     async def test_manual_sends_stop_before_converter_cleanup_and_caches_reset_async(

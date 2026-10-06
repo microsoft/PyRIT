@@ -377,7 +377,7 @@ async def reset_memory_singletons():
 
 @pytest.mark.usefixtures("reset_memory_singletons")
 class TestInitializePyritSilent:
-    """Tests that the silent flag suppresses all console output during initialization."""
+    """Tests that initialization keeps the console free of schema-migration noise."""
 
     def setup_method(self) -> None:
         """Clear default values before each test."""
@@ -392,9 +392,17 @@ class TestInitializePyritSilent:
         assert captured.out == ""
 
     @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
-    async def test_initialize_not_silent_prints_migration_message(self, mock_load_environment, capsys):
-        """Without silent, the Alembic schema-check message is printed and tagged as Alembic output."""
+    async def test_initialize_not_silent_produces_no_migration_output(self, mock_load_environment, capsys):
+        """An in-memory database is built from nothing, so initialization reports no migration work."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=False, load_defaults=False)
 
         captured = capsys.readouterr()
-        assert "[pyrit:alembic] No new upgrade operations detected." in captured.out
+        assert "[pyrit:alembic]" not in captured.out
+
+    @pytest.mark.parametrize("silent", [True, False])
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initialize_forwards_silent_to_memory(self, mock_load_environment, silent):
+        """An in-memory database is quiet either way, so stdout alone cannot prove silent is wired."""
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=silent, load_defaults=False)
+
+        assert CentralMemory.get_memory_instance()._silent is silent

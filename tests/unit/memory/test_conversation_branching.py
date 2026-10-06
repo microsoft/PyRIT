@@ -77,6 +77,14 @@ async def _copy_async(
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicConversationBranching:
+    def test_history_snapshot_locks_sql_server_rows_and_ranges(self) -> None:
+        session = MagicMock(spec=Session)
+        session.execute.return_value.scalars.return_value = []
+        MemoryInterface._check_conversation_history(session=session, expected={str(uuid.uuid4()): []})
+        statement = session.execute.call_args.args[0]
+        assert "WITH (UPDLOCK, HOLDLOCK)" in str(statement.compile(dialect=mssql.dialect()))
+        assert "UPDLOCK" not in str(statement.compile(dialect=sqlite.dialect()))
+
     @pytest.mark.parametrize("persisted_owner", [False, True])
     async def test_branch_rejects_another_owner(self, *, sqlite_instance: SQLiteMemory, persisted_owner: bool) -> None:
         attack, source = await _store_attack_async(sqlite_instance)
