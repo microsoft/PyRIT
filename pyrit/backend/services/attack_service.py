@@ -15,6 +15,9 @@ ARCHITECTURE:
 - AI-generated attacks may have multiple related conversations
 """
 
+import asyncio
+import json
+import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -40,15 +43,23 @@ from pyrit.backend.models.attacks import (
     CreateConversationRequest,
     CreateConversationResponse,
     MessagePieceRequest,
+    MessageRequest,
     MessageView,
     PrependedMessageRequest,
+    SaveConversationRequest,
     TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
+from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
+from pyrit.backend.services.media_persistence import persist_message_pieces_async
+from pyrit.backend.services.message_send_service import (
+    MessageSendService,
+    get_message_send_service,
+    resolve_applied_converter_identifiers,
+)
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -57,7 +68,13 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, CentralMemory
+from pyrit.memory import (
+    AttackResultKeysetCursor,
+    CentralMemory,
+    data_serializer_factory,
+    set_message_piece_sha256_async,
+)
+from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -66,8 +83,14 @@ from pyrit.models import (
     ComponentIdentifier,
     Conversation,
     ConversationStats,
+    Message,
     MessagePiece,
+    TargetIdentifier,
 )
+from pyrit.models.messages.tool_content import validate_tool_conversation
+from pyrit.prompt_target import PromptTarget
+
+logger = logging.getLogger(__name__)
 
 
 def _get_latest_target_response_status(messages: list[MessageView]) -> TargetResponseStatus | None:
@@ -92,7 +115,7 @@ def _get_latest_target_response_status(messages: list[MessageView]) -> TargetRes
 
 
 class AttackObjectiveConflictError(Exception):
-    """The attack already has a different objective."""
+    """The shared objective changed while it was being edited."""
 
 
 class AttackService:
@@ -102,10 +125,12 @@ class AttackService:
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, message_send_service: MessageSendService | None = None) -> None:
         """Initialize the attack service."""
         self._memory = CentralMemory.get_memory_instance()
-        self._message_send_service = MessageSendService()
+        self._message_send_service = (
+            message_send_service if message_send_service is not None else get_message_send_service()
+        )
 
     # ========================================================================
     # Public API Methods
@@ -374,63 +399,22 @@ class AttackService:
         Raises:
             ValueError: If the target is not found.
         """
-        target_service = get_target_service()
-        target_instance = await target_service.get_target_async(target_registry_name=request.target_registry_name)
-        if not target_instance:
-            raise ValueError(f"Target instance '{request.target_registry_name}' not found")
-
-        # Get the actual target object so we can capture its ComponentIdentifier
-        target_obj = target_service.get_target_object(target_registry_name=request.target_registry_name)
-        target_identifier = target_obj.get_identifier() if target_obj else None
-
-        now = datetime.now(UTC)
-
-        # Merge source label with any user-supplied labels
-        labels = dict(request.labels) if request.labels else {}
-        labels.setdefault("source", "gui")
-
-        # --- Branch via duplication (preferred for tracking) ---------------
+        target_identifier = await self._get_save_target_async(request.target_registry_name)
+        copied: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
-            conversation_id = await self._duplicate_conversation_up_to_async(
+            conversation, copied = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,
                 cutoff_index=request.cutoff_index,
-                remap_assistant_to_simulated=True,
                 target_identifier=target_identifier,
             )
         else:
-            conversation_id = str(uuid.uuid4())
-
-        # Create AttackResult. An absent request.name persists as an empty
-        # objective rather than a sentinel placeholder string -- both
-        # AttackResult.objective and the database column are non-nullable,
-        # but an empty string is a valid value the frontend already treats
-        # as "no explicit objective".
-        attack_result = AttackResult(
-            conversation_id=conversation_id,
+            conversation = Conversation(conversation_id=str(uuid.uuid4()), target_identifier=target_identifier)
+        attack_result = self._new_manual_attack(
+            request=request,
+            conversation=conversation,
             objective=request.name or "",
-            atomic_attack_identifier=AtomicAttackIdentifier.build(
-                attack_identifier=AttackIdentifier(
-                    class_name=request.name or "ManualAttack",
-                    class_module="pyrit.backend",
-                    objective_target=target_identifier,
-                ),
-            ),
-            outcome=AttackOutcome.UNDETERMINED,
-            timestamp=now,
-            metadata={
-                "created_at": now.isoformat(),
-                "target_registry_name": request.target_registry_name,
-            },
-            operator=request.operator,
-            operation=request.operation,
-            labels=labels,
+            attack_name=request.name or "ManualAttack",
         )
-
-        # Store in memory
-        (await self._memory.add_attack_results_to_memory_async(attack_results=[attack_result]))
-
-        # Store prepended conversation messages if provided. A system_prompt is lowered to a
-        # single system-role message at the front, composing with any prepended_conversation.
         prepended = list(request.prepended_conversation or [])
         if request.system_prompt:
             prepended.insert(
@@ -440,17 +424,78 @@ class AttackService:
                     pieces=[MessagePieceRequest(original_value=request.system_prompt)],
                 ),
             )
-        if prepended:
-            await self._store_prepended_messages_async(
-                conversation_id=conversation_id,
-                prepended=prepended,
-                target_identifier=target_identifier,
+        persisted_paths: list[str] = []
+        inserted = False
+        try:
+            pieces = await self._prepare_message_pieces_async(
+                messages=prepended,
+                conversation_id=conversation.conversation_id,
+                persisted_paths=persisted_paths,
+                start_sequence=max((piece.sequence for piece in copied), default=-1) + 1,
             )
-
+            task = asyncio.create_task(
+                self._memory.add_conversation_branches_to_attack_async(
+                    attack_result_id=attack_result.attack_result_id,
+                    conversations=[conversation],
+                    message_pieces=[*copied, *pieces],
+                    new_attack=attack_result,
+                )
+            )
+            try:
+                inserted = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                inserted = await task
+                raise
+            if not inserted:
+                raise AttackStateConflictError("The attack could not be created")
+        finally:
+            if not inserted:
+                await self._cleanup_saved_media_async(persisted_paths)
         return CreateAttackResponse(
             attack_result_id=attack_result.attack_result_id,
-            conversation_id=conversation_id,
-            created_at=now,
+            conversation_id=conversation.conversation_id,
+            created_at=attack_result.timestamp,
+        )
+
+    @staticmethod
+    def _new_manual_attack(
+        *,
+        request: CreateAttackRequest | SaveConversationRequest,
+        conversation: Conversation,
+        objective: str,
+        attack_result_id: str | None = None,
+        attack_name: str = "ManualAttack",
+    ) -> AttackResult:
+        """
+        Build manual attack metadata for normal creation and editor saves.
+
+        Returns:
+            The attack ready for persistence with its conversation.
+        """
+        now = datetime.now(UTC)
+        return AttackResult(
+            attack_result_id=attack_result_id or str(uuid.uuid4()),
+            conversation_id=conversation.conversation_id,
+            objective=objective,
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
+                    class_name=attack_name,
+                    class_module="pyrit.backend",
+                    objective_target=TargetIdentifier.from_component_identifier(conversation.target_identifier)
+                    if conversation.target_identifier
+                    else None,
+                )
+            ),
+            outcome=AttackOutcome.UNDETERMINED,
+            timestamp=now,
+            operator=request.operator,
+            operation=request.operation,
+            labels={"source": "gui", **(request.labels or {})},
+            metadata={
+                "created_at": now.isoformat(),
+                "target_unbound": conversation.target_identifier is None,
+                **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
+            },
         )
 
     async def update_attack_async(self, *, attack_result_id: str, request: UpdateAttackRequest) -> AttackSummary | None:
@@ -477,22 +522,331 @@ class AttackService:
             update_fields["outcome"] = outcome_map[request.outcome].value
         if request.objective is not None:
             existing_objective = results[0].objective
-            if existing_objective and existing_objective != request.objective:
-                raise AttackObjectiveConflictError(f"Attack '{attack_result_id}' already has an objective")
-            if not existing_objective:
-                update_fields["objective"] = request.objective
-                update_fields["objective_sha256"] = to_sha256(request.objective)
-            elif request.outcome is None:
+            if request.expected_objective is not None and existing_objective != request.expected_objective:
+                raise AttackObjectiveConflictError("The objective changed. Reload before saving.")
+            if existing_objective == request.objective and request.outcome is None:
                 return await self.get_attack_async(attack_result_id=attack_result_id)
-
-        (
+            update_fields.update(self._objective_update_fields(old=existing_objective, new=request.objective))
+        if request.objective is None:
             await self._memory.update_attack_result_by_id_async(
                 attack_result_id=attack_result_id,
                 update_fields=update_fields,
             )
-        )
+            return await self.get_attack_async(attack_result_id=attack_result_id)
+        try:
+            await self._memory.update_attack_result_conditionally_async(
+                attack_result_id=attack_result_id,
+                expected_fields={"objective": results[0].objective},
+                update_fields=update_fields,
+            )
+        except AttackStateConflictError as exc:
+            raise AttackObjectiveConflictError(str(exc)) from exc
 
         return await self.get_attack_async(attack_result_id=attack_result_id)
+
+    async def save_conversation_async(self, *, request: SaveConversationRequest) -> AddMessageResponse:
+        """
+        Save a complete draft without changing source pieces or invoking a target.
+
+        Returns:
+            The stored attack and conversation.
+        """
+        fingerprint = to_sha256(json.dumps(request.model_dump(mode="json"), sort_keys=True))
+        conversation_id = str(request.save_id)
+        attack_result_id = (
+            str(request.attack_result_id)
+            if request.destination == "same_attack"
+            else str(uuid.uuid5(request.save_id, "attack"))
+        )
+        existing = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+        if existing and existing[0].metadata.get(f"conversation_save:{conversation_id}") == fingerprint:
+            return await self._saved_conversation_response_async(
+                attack_result_id=attack_result_id,
+                conversation_id=conversation_id,
+            )
+        source_pieces = await self._get_save_source_async(request=request)
+        same_attack = request.destination == "same_attack"
+        new_attack: AttackResult | None = None
+        expected_fields: dict[str, Any] = {}
+        update_fields: dict[str, Any] = {}
+        if same_attack:
+            attack_result_id = str(request.attack_result_id)
+            results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+            if not results:
+                raise ValueError("The destination attack does not exist")
+            attack = results[0]
+            if attack.operator and attack.operator != request.operator:
+                raise PermissionError("Cannot save to an attack owned by another operator")
+            identifier = attack.get_attack_strategy_identifier()
+            target_identifier = identifier.get_child("objective_target") if identifier else None
+            if request.target_registry_name:
+                selected_target = await self._get_save_target_async(request.target_registry_name)
+                if (
+                    target_identifier is None
+                    or selected_target is None
+                    or selected_target.hash != target_identifier.hash
+                ):
+                    raise ValueError("Same attack must keep its target. Choose New attack for a different target.")
+            expected_fields = {"operator": attack.operator}
+            if attack.atomic_attack_identifier:
+                expected_fields["atomic_attack_identifier_hash"] = attack.atomic_attack_identifier.hash
+            if request.objective is not None and request.objective != attack.objective:
+                expected_fields["objective"] = (
+                    request.expected_objective if request.expected_objective is not None else attack.objective
+                )
+                update_fields = self._objective_update_fields(old=attack.objective, new=request.objective)
+        else:
+            attack_result_id = str(uuid.uuid5(request.save_id, "attack"))
+            target_identifier = await self._get_save_target_async(request.target_registry_name)
+            new_attack = self._new_manual_attack(
+                request=request,
+                attack_result_id=attack_result_id,
+                conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier),
+                objective=request.objective or "",
+            )
+        target = await self._validate_editor_target_async(
+            target_identifier=target_identifier,
+            registry_name=request.target_registry_name,
+        )
+        persisted_paths: list[str] = []
+        inserted = False
+        try:
+            pieces = await self._prepare_message_pieces_async(
+                messages=request.messages,
+                source_pieces=source_pieces,
+                conversation_id=conversation_id,
+                persisted_paths=persisted_paths,
+                target=target,
+            )
+            save_task = asyncio.create_task(
+                self._memory.add_conversation_branches_to_attack_async(
+                    attack_result_id=attack_result_id,
+                    conversations=[Conversation(conversation_id=conversation_id, target_identifier=target_identifier)],
+                    message_pieces=pieces,
+                    request_fingerprint=fingerprint,
+                    new_attack=new_attack,
+                    expected_fields=expected_fields,
+                    update_fields=update_fields,
+                    source_conversation=Conversation(
+                        conversation_id=str(request.source_conversation_id), target_identifier=target_identifier
+                    )
+                    if same_attack
+                    and request.source_conversation_id
+                    and request.source_attack_result_id == request.attack_result_id
+                    else None,
+                )
+            )
+            try:
+                inserted = await asyncio.shield(save_task)
+            except asyncio.CancelledError:
+                inserted = await save_task
+                raise
+        finally:
+            if not inserted:
+                await self._cleanup_saved_media_async(persisted_paths)
+        return await self._saved_conversation_response_async(
+            attack_result_id=attack_result_id,
+            conversation_id=conversation_id,
+        )
+
+    async def _cleanup_saved_media_async(self, paths: list[str]) -> None:
+        """Remove only files created for a failed or duplicate save attempt."""
+        if not paths:
+            return
+        storage = self._memory.results_storage_io
+        if storage is None:
+            raise RuntimeError("Storage is not configured for draft media cleanup")
+        for path in paths:
+            try:
+                await storage.delete_file_async(path)
+            except Exception:
+                logger.exception("Failed to clean media created for an unsaved conversation: %s", path)
+                raise
+
+    async def _saved_conversation_response_async(
+        self, *, attack_result_id: str, conversation_id: str
+    ) -> AddMessageResponse:
+        """
+        Reload a committed draft, including retries after a lost response.
+
+        Returns:
+            The stored attack and conversation.
+        """
+        attack_summary = await self.get_attack_async(attack_result_id=attack_result_id)
+        messages = await self.get_conversation_messages_async(
+            attack_result_id=attack_result_id,
+            conversation_id=conversation_id,
+        )
+        if attack_summary is None or messages is None:
+            raise ValueError("The saved conversation could not be reloaded")
+        return AddMessageResponse(attack=attack_summary, messages=messages)
+
+    async def _get_save_source_async(self, *, request: SaveConversationRequest) -> dict[uuid.UUID, MessagePiece]:
+        """
+        Load source pieces only from a verified, visible conversation.
+
+        Returns:
+            Source pieces keyed by their immutable IDs.
+        """
+        if request.source_conversation_id is None:
+            return {}
+        results = await self._memory.get_attack_results_async(
+            attack_result_ids=[str(request.source_attack_result_id)],
+        )
+        if not results or str(request.source_conversation_id) not in results[0].get_active_conversation_ids():
+            raise ValueError("The source conversation does not belong to the source attack")
+        pieces = await self._memory.get_message_pieces_async(
+            conversation_id=str(request.source_conversation_id),
+        )
+        return {piece.id: piece for piece in pieces}
+
+    async def _get_save_target_async(self, registry_name: str | None) -> TargetIdentifier | None:
+        """
+        Resolve an optional target without calling it.
+
+        Returns:
+            The target identity, or None for an unbound draft.
+        """
+        if registry_name is None:
+            return None
+        service = get_target_service()
+        if await service.get_target_async(target_registry_name=registry_name) is None:
+            raise ValueError(f"Target instance '{registry_name}' not found")
+        target = service.get_target_object(target_registry_name=registry_name)
+        if target is None:
+            raise ValueError("The selected target is no longer registered")
+        return TargetIdentifier.from_component_identifier(target.get_identifier())
+
+    async def _prepare_message_pieces_async(
+        self,
+        *,
+        messages: Sequence[MessageRequest],
+        conversation_id: str,
+        persisted_paths: list[str],
+        source_pieces: dict[uuid.UUID, MessagePiece] | None = None,
+        target: PromptTarget | None = None,
+        start_sequence: int = 0,
+    ) -> list[MessagePiece]:
+        """
+        Prepare new identities and preserve verified source content and provenance.
+
+        Returns:
+            Ordered pieces ready for one transaction.
+        """
+        prepared_messages: list[Message] = []
+        prepared_pieces: list[tuple[MessagePiece, MessagePieceRequest]] = []
+        for sequence, message in enumerate(messages, start=start_sequence):
+            prepared: list[MessagePiece] = []
+            for piece in message.pieces:
+                source = (source_pieces or {}).get(piece.source_piece_id) if piece.source_piece_id else None
+                if piece.source_piece_id is not None and source is None:
+                    raise ValueError("A source piece does not belong to the source conversation")
+                if source_pieces is not None and piece.original_prompt_id is not None:
+                    raise ValueError("Use source_piece_id; source lineage is assigned by the server")
+                request_piece = piece.model_copy(deep=True)
+                converted = request_piece.converted_value
+                same_values = source is not None and (
+                    request_piece.original_value == source.original_value
+                    and request_piece.data_type == source.original_value_data_type
+                    and (converted if converted is not None else request_piece.original_value) == source.converted_value
+                    and (request_piece.converted_value_data_type or request_piece.data_type)
+                    == source.converted_value_data_type
+                    and message.role.replace("simulated_", "") == source.api_role
+                )
+                if source:
+                    request_piece.original_prompt_id = str(source.original_prompt_id) if same_values else None
+                if source and same_values:
+                    request_piece.prompt_metadata = dict(source.prompt_metadata)
+                elif source:
+                    request_piece.prompt_metadata = dict(request_piece.prompt_metadata or {})
+                saved = request_piece_to_pyrit_message_piece(
+                    piece=request_piece,
+                    role=message.role,
+                    conversation_id=conversation_id,
+                    sequence=sequence,
+                )
+                saved.set_simulated_role()
+                saved.prompt_metadata.pop("source_piece_id", None)
+                if source:
+                    saved.prompt_metadata["source_piece_id"] = str(source.id)
+                if same_values and source and piece.applied_converter_ids is None:
+                    saved.converter_identifiers = list(source.converter_identifiers)
+                    saved.response_error = source.response_error
+                else:
+                    applied = resolve_applied_converter_identifiers([request_piece])
+                    saved.converter_identifiers = list(applied.get(0, []))
+                prepared.append(saved)
+                prepared_pieces.append((saved, request_piece))
+            prepared_messages.append(Message(message_pieces=prepared))
+        if target:
+            target.validate_history(prepared_messages)
+        elif source_pieces is not None:
+            validate_tool_conversation(prepared_messages)
+        for saved, request_piece in prepared_pieces:
+            await self._persist_base64_pieces_async(pieces=[request_piece], persisted_paths=persisted_paths)
+            saved.original_value = request_piece.original_value
+            converted_value = request_piece.converted_value
+            saved.converted_value = converted_value if converted_value is not None else saved.original_value
+            await set_message_piece_sha256_async(saved)
+        return [saved for saved, _ in prepared_pieces]
+
+    async def _validate_editor_target_async(
+        self,
+        *,
+        target_identifier: ComponentIdentifier | None,
+        registry_name: str | None,
+    ) -> PromptTarget | None:
+        """
+        Resolve a registered target that supports editable, multi-turn history.
+
+        Returns:
+            The resolved target for provider preflight, or None for an unbound draft.
+
+        Raises:
+            ValueError: If a bound target is unavailable or cannot replay the draft.
+        """
+        if target_identifier is None:
+            return None
+        service = get_target_service()
+        target = await service.get_target_async(target_registry_name=registry_name) if registry_name else None
+        if not registry_name:
+            cursor = None
+            while True:
+                page = await service.list_targets_async(cursor=cursor)
+                target = next((item for item in page.items if item.identifier.hash == target_identifier.hash), None)
+                cursor = page.pagination.next_cursor
+                if target is not None or not cursor:
+                    break
+        if target is None or target.identifier.hash != target_identifier.hash:
+            raise ValueError("The attack target is not registered. Choose New attack without a target.")
+        capabilities = target.capabilities
+        if not capabilities.supports_editable_history or not capabilities.supports_multi_turn:
+            raise ValueError("The selected target does not support editable history. Select a different target.")
+        target_object = service.get_target_object(target_registry_name=target.target_registry_name)
+        if target_object is None:
+            raise ValueError("The selected target is no longer registered")
+        if not isinstance(target_object, PromptTarget):
+            raise ValueError("The selected registry entry is not a prompt target")
+        return target_object
+
+    @staticmethod
+    def _objective_update_fields(*, old: str, new: str) -> dict[str, Any]:
+        """
+        Prepare objective changes without deleting historical scores.
+
+        Returns:
+            Fields to update, or an empty mapping when the objective is unchanged.
+        """
+        if old == new:
+            return {}
+        return {
+            "objective": new,
+            "objective_sha256": to_sha256(new),
+            "outcome": AttackOutcome.UNDETERMINED.value,
+            "outcome_reason": None,
+            "automated_score_id": None,
+            "human_score_id": None,
+        }
 
     async def remove_human_score_async(self, *, attack_result_id: str) -> AttackSummary | None:
         """
@@ -696,6 +1050,7 @@ class AttackService:
         Returns:
             AddMessageResponse: Updated attack and messages after sending or storing.
         """
+        await self._bind_requested_target_async(attack_result_id=attack_result_id, request=request)
         async with self._message_send_service.add_message_context_async(
             attack_result_id=attack_result_id, request=request
         ):
@@ -712,54 +1067,79 @@ class AttackService:
 
             return AddMessageResponse(attack=attack_detail, messages=attack_messages)
 
+    async def submit_message_send_async(
+        self, *, attack_result_id: str, request: MessageSendRequest
+    ) -> MessageSendStatus:
+        """
+        Bind saved draft history before admitting an asynchronous manual send.
+
+        Returns:
+            The sending service's transient progress handle.
+        """
+        await self._bind_requested_target_async(attack_result_id=attack_result_id, request=request)
+        return await self._message_send_service.submit_async(attack_result_id=attack_result_id, request=request)
+
+    async def _bind_requested_target_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
+        """Apply the same first-send target binding to both manual-message endpoints."""
+        if not request.send:
+            return
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+        if results and results[0].metadata.get("target_unbound") is True:
+            if request.target_conversation_id not in results[0].get_active_conversation_ids():
+                raise ValueError(f"Conversation '{request.target_conversation_id}' is not part of this attack")
+            await self._bind_manual_target_async(attack=results[0], registry_name=request.target_registry_name)
+
+    async def _bind_manual_target_async(self, *, attack: AttackResult, registry_name: str | None) -> AttackResult:
+        """
+        Bind an explicitly unbound manual attack before its first send.
+
+        Returns:
+            The reloaded, target-bound attack.
+        """
+        if not registry_name:
+            raise ValueError("Select a target before sending")
+        target = await self._get_save_target_async(registry_name)
+        conversations = {
+            conversation_id: await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+            for conversation_id in attack.get_active_conversation_ids()
+        }
+        target_object = await self._validate_editor_target_async(
+            target_identifier=target,
+            registry_name=registry_name,
+        )
+        if target_object:
+            for conversation in conversations.values():
+                target_object.validate_history(conversation)
+        atomic = AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="ManualAttack",
+                class_module="pyrit.backend",
+                objective_target=target,
+            )
+        )
+        metadata = {"target_unbound": False, "target_registry_name": registry_name}
+        await self._memory.update_attack_result_conditionally_async(
+            attack_result_id=attack.attack_result_id,
+            expected_fields={
+                "atomic_attack_identifier_hash": attack.atomic_attack_identifier.hash
+                if attack.atomic_attack_identifier
+                else None
+            },
+            update_fields={"atomic_attack_identifier": atomic.model_dump(), "attack_metadata": metadata},
+            conversation_target=target,
+            expected_conversation_pieces={
+                conversation_id: [piece for message in messages for piece in message.message_pieces]
+                for conversation_id, messages in conversations.items()
+            },
+        )
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        if not results:
+            raise ValueError("The attack no longer exists")
+        return results[0]
+
     # ========================================================================
     # Private Helper Methods - Duplicate / Branch
     # ========================================================================
-
-    async def _duplicate_conversation_up_to_async(
-        self,
-        *,
-        source_conversation_id: str,
-        cutoff_index: int,
-        remap_assistant_to_simulated: bool = False,
-        target_identifier: ComponentIdentifier | None = None,
-    ) -> str:
-        """
-        Duplicate messages from a conversation up to and including a turn index.
-
-        Uses the memory layer's ``duplicate_messages`` so that each new
-        piece gets a fresh ``id`` and ``timestamp`` while preserving
-        ``original_prompt_id`` for tracking lineage.
-
-        Args:
-            source_conversation_id: The conversation to copy from.
-            cutoff_index: Include messages with sequence <= cutoff_index.
-            remap_assistant_to_simulated: When True, pieces with role
-                ``assistant`` are changed to ``simulated_assistant`` so the
-                branched context is inert and won't confuse the target.
-
-            target_identifier (ComponentIdentifier | None): The target the new conversation
-                is held with, if known. Recorded once for the duplicated conversation.
-
-        Returns:
-            The new conversation ID containing the duplicated messages.
-        """
-        conversation, all_pieces = await self._prepare_conversation_up_to_async(
-            source_conversation_id=source_conversation_id,
-            cutoff_index=cutoff_index,
-            target_identifier=target_identifier,
-        )
-
-        # Apply optional overrides to the fresh pieces before persisting
-        for piece in all_pieces:
-            if remap_assistant_to_simulated:
-                piece.set_simulated_role()
-
-        if all_pieces:
-            (await self._memory.add_conversation_to_memory_async(conversation=conversation))
-            (await self._memory.add_message_pieces_to_memory_async(message_pieces=list(all_pieces)))
-
-        return conversation.conversation_id
 
     async def _prepare_conversation_up_to_async(
         self,
@@ -778,36 +1158,22 @@ class AttackService:
         new_id, pieces = await self._memory.duplicate_messages_async(
             messages=[message for message in messages if message.sequence <= cutoff_index]
         )
+        for piece in pieces:
+            piece.set_simulated_role()
         return Conversation(conversation_id=new_id, target_identifier=target_identifier), pieces
 
     # ========================================================================
     # Private Helper Methods - Store Messages
     # ========================================================================
 
-    async def _store_prepended_messages_async(
-        self,
-        *,
-        conversation_id: str,
-        prepended: list[Any],
-        target_identifier: ComponentIdentifier | None = None,
+    @staticmethod
+    async def _persist_base64_pieces_async(
+        *, pieces: Sequence[MessagePieceRequest], persisted_paths: list[str] | None = None
     ) -> None:
-        """Store prepended conversation messages in memory."""
-        if not prepended:
-            return
-        applied_by_message = [resolve_applied_converter_identifiers(msg.pieces) for msg in prepended]
-        await self._memory.add_conversation_to_memory_async(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
+        """Persist prepared draft media and track files owned by this save."""
+        await persist_message_pieces_async(
+            pieces=pieces, persisted_paths=persisted_paths, serializer_factory=data_serializer_factory
         )
-        for seq, msg in enumerate(prepended):
-            for index, p in enumerate(msg.pieces):
-                piece = request_piece_to_pyrit_message_piece(
-                    piece=p,
-                    role=msg.role,
-                    conversation_id=conversation_id,
-                    sequence=seq,
-                )
-                piece.converter_identifiers.extend(applied_by_message[seq].get(index, []))
-                (await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
 
 # ============================================================================

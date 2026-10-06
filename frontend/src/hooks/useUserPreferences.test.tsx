@@ -12,6 +12,7 @@ const chosenPreferences: UserPreferences = {
     objective: { registryName: 'objective', identifierHash: 'objective-hash' },
     adversarial: { registryName: 'adversarial', identifierHash: 'adversarial-hash' },
   },
+  hiddenTargetRegistryNames: ['hidden-target'],
   labels: { operation: 'op_demo', team: 'red', removed: null },
   theme: 'dark',
   chatMarkdown: true,
@@ -55,6 +56,10 @@ describe('useUserPreferences', () => {
       result.current.updatePreferences((current) => ({ ...current, theme: 'dark' }))
       result.current.updatePreferences((current) => ({ ...current, labels: { operation: 'op_new' } }))
       result.current.updatePreferences((current) => ({ ...current, targets: chosenPreferences.targets }))
+      result.current.updatePreferences((current) => ({
+        ...current,
+        hiddenTargetRegistryNames: chosenPreferences.hiddenTargetRegistryNames,
+      }))
       result.current.updatePreferences((current) => ({ ...current, chatMarkdown: true }))
     })
     expect(readUserPreferences('tenant:alice')).toEqual({
@@ -73,6 +78,20 @@ describe('useUserPreferences', () => {
       ...current, targets: { ...current.targets, adversarial: chosenPreferences.targets.adversarial },
     })))
     expect(readUserPreferences('tenant:alice').targets).toEqual(chosenPreferences.targets)
+  })
+
+  it('merges hidden targets selected in two tabs', () => {
+    const first = renderHook(() => useUserPreferences(), { wrapper })
+    const second = renderHook(() => useUserPreferences(), { wrapper })
+    const hideTarget = (registryName: string) => (current: UserPreferences): UserPreferences => ({
+      ...current,
+      hiddenTargetRegistryNames: [...new Set([...current.hiddenTargetRegistryNames, registryName])].sort(),
+    })
+
+    act(() => first.result.current.updatePreferences(hideTarget('target-a')))
+    act(() => second.result.current.updatePreferences(hideTarget('target-b')))
+
+    expect(readUserPreferences('tenant:alice').hiddenTargetRegistryNames).toEqual(['target-a', 'target-b'])
   })
 
   it('synchronizes only the current account and handles a cross-tab clear', () => {
@@ -199,6 +218,21 @@ describe('useUserPreferences', () => {
     expect(readUserPreferences('tenant:bob')).toEqual(DEFAULT_USER_PREFERENCES)
   })
 
+  it('defaults hidden targets when reading preferences saved before visibility controls', () => {
+    const olderPreferences = {
+      targets: chosenPreferences.targets,
+      labels: chosenPreferences.labels,
+      theme: chosenPreferences.theme,
+      chatMarkdown: chosenPreferences.chatMarkdown,
+    }
+    window.localStorage.setItem('pyrit.userPreferences.v1.tenant:alice', JSON.stringify(olderPreferences))
+
+    expect(readUserPreferences('tenant:alice')).toEqual({
+      ...chosenPreferences,
+      hiddenTargetRegistryNames: [],
+    })
+  })
+
   it('migrates legacy local settings on the next write without falling back after a clear', () => {
     window.localStorage.setItem('pyrit.targetDefaults.v1.local', JSON.stringify(chosenPreferences.targets))
     window.localStorage.setItem('pyrit.globalLabels', JSON.stringify({ operation: 'op_legacy', team: 'blue' }))
@@ -207,6 +241,7 @@ describe('useUserPreferences', () => {
     const preferences = readUserPreferences('local')
     expect(preferences).toEqual({
       ...chosenPreferences,
+      hiddenTargetRegistryNames: [],
       labels: { operation: 'op_legacy', team: 'blue' },
     })
     writeUserPreferences('local', DEFAULT_USER_PREFERENCES)
@@ -221,6 +256,7 @@ describe('useUserPreferences', () => {
     JSON.stringify({ ...chosenPreferences, labels: { bad: 5 } }),
     JSON.stringify({ ...chosenPreferences, theme: 'unknown' }),
     JSON.stringify({ ...chosenPreferences, chatMarkdown: 'markdown' }),
+    JSON.stringify({ ...chosenPreferences, hiddenTargetRegistryNames: [5] }),
   ])('reports invalid stored preferences instead of silently accepting them: %s', (stored: string) => {
     window.localStorage.setItem('pyrit.userPreferences.v1.tenant:alice', stored)
     const { result } = renderHook(() => useUserPreferences(), { wrapper })

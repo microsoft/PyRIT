@@ -117,46 +117,113 @@ async def test_cancelled_refresh_releases_lock_and_updates_partially_loaded_summ
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    assert not read_model._cache_lock.locked()
 
     memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
     refreshed = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="run"), timeout=5)
     assert len(refreshed.results) == 2
     assert refreshed.summary.overall.completed == 2
     assert refreshed.summary.overall.succeeded == 2
+    assert memory.get_scenario_attack_result_deltas_async.call_args.kwargs["cursor"] == AttackResultKeysetCursor(
+        timestamp=second.timestamp, attack_result_id=second.attack_result_id
+    )
+    assert initial.deltas == (first,)
+    assert initial.summary.overall.completed == 1
 
 
-async def test_sync_and_async_snapshots_share_cache_and_cursor() -> None:
+async def test_async_snapshots_share_cache_and_cursor() -> None:
     memory = MagicMock(spec=MemoryInterface)
     deltas = [_make_delta(run_id="shared", index=index) for index in range(3)]
     memory.get_scenario_attack_result_deltas_async.side_effect = [
         ([deltas[0]], False),
+        ([deltas[1]], False),
         ([deltas[2]], False),
     ]
-    memory.get_scenario_attack_result_deltas.return_value = ([deltas[1]], False)
     read_model = ScenarioProgressReadModel(memory=memory)
 
     first = await _get_snapshot_async(read_model=read_model, run_id="shared")
-    with pytest.warns(DeprecationWarning):
-        second = read_model.get_snapshot(
-            scenario_result_id="shared",
-            plan=None,
-            plan_complete=False,
-            active_group_ids=(),
-            terminal=False,
-            objective_scorer_identifier=None,
-        )
+    second = await _get_snapshot_async(read_model=read_model, run_id="shared")
     third = await _get_snapshot_async(read_model=read_model, run_id="shared")
 
     assert [snapshot.summary.overall.completed for snapshot in (first, second, third)] == [1, 2, 3]
-    assert (
-        memory.get_scenario_attack_result_deltas.call_args.kwargs["cursor"].attack_result_id
-        == deltas[0].attack_result_id
-    )
-    assert (
-        memory.get_scenario_attack_result_deltas_async.call_args.kwargs["cursor"].attack_result_id
-        == deltas[1].attack_result_id
-    )
+    assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas_async.call_args_list] == [
+        None,
+        AttackResultKeysetCursor(timestamp=deltas[0].timestamp, attack_result_id=deltas[0].attack_result_id),
+        AttackResultKeysetCursor(timestamp=deltas[1].timestamp, attack_result_id=deltas[1].attack_result_id),
+    ]
+    memory.get_scenario_attack_result_deltas.assert_not_called()
+    assert first.deltas == (deltas[0],)
+    assert second.deltas == tuple(deltas[:2])
     assert third.deltas == tuple(deltas)
+
+
+async def test_cancelled_waiter_preserves_global_refresh_lock() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def get_deltas_async(
+        *, scenario_result_id: str, cursor: AttackResultKeysetCursor | None, limit: int
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        if scenario_result_id == "owner":
+            entered.set()
+            await release.wait()
+        return [_make_delta(run_id=scenario_result_id)], False
+
+    memory.get_scenario_attack_result_deltas_async.side_effect = get_deltas_async
+    read_model = ScenarioProgressReadModel(memory=memory)
+    owner = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="owner"))
+    waiter_started = asyncio.Event()
+
+    async def wait_for_snapshot_async() -> ScenarioProgressSnapshot:
+        waiter_started.set()
+        return await _get_snapshot_async(read_model=read_model, run_id="cancelled")
+
+    waiter = None
+    successor = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        waiter = asyncio.create_task(wait_for_snapshot_async())
+        await asyncio.wait_for(waiter_started.wait(), timeout=5)
+        assert not waiter.done()
+        memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert read_model._cache_lock.locked()
+
+        successor = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="successor"))
+        await asyncio.sleep(0)
+        assert not successor.done()
+        memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
+        release.set()
+        snapshots = await asyncio.wait_for(asyncio.gather(owner, successor), timeout=5)
+        assert [snapshot.results[0].conversation_id for snapshot in snapshots] == [
+            "conversation-owner-0",
+            "conversation-successor-0",
+        ]
+        assert not read_model._cache_lock.locked()
+    finally:
+        release.set()
+        tasks = [task for task in (owner, waiter, successor) if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_storage_error_releases_refresh_lock() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async.side_effect = RuntimeError("storage failed")
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    with pytest.raises(RuntimeError, match="storage failed"):
+        await _get_snapshot_async(read_model=read_model, run_id="run")
+    assert not read_model._cache_lock.locked()
+
+    memory.get_scenario_attack_result_deltas_async.side_effect = None
+    memory.get_scenario_attack_result_deltas_async.return_value = ([_make_delta(run_id="run")], False)
+    snapshot = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="run"), timeout=5)
+    assert snapshot.summary.overall.completed == 1
 
 
 async def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:

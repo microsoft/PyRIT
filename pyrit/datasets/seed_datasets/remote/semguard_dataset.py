@@ -133,7 +133,7 @@ class _SemGuardDataset(_RemoteDatasetLoader):
         return "semguard"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the SemGuard Arabic Security Dataset and return as SeedDataset.
 

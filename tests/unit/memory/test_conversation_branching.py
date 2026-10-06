@@ -20,6 +20,7 @@ from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     Base,
+    ConversationEntry,
     ConverterIdentifierEntry,
     PromptConverterIdentifierEntry,
     TargetIdentifierEntry,
@@ -61,6 +62,7 @@ async def _store_attack_async(memory: MemoryInterface) -> tuple[AttackResult, Co
         target_identifier=TargetIdentifier(class_name="ExampleTarget", class_module="tests.unit"),
     )
     attack = AttackResult(conversation_id=source.conversation_id, objective="Atomic branches")
+    source.attack_result_id = attack.attack_result_id
     (await memory.add_attack_results_to_memory_async(attack_results=[attack]))
     (await memory.add_conversation_to_memory_async(conversation=source))
     return attack, source
@@ -75,6 +77,52 @@ async def _copy_async(
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicConversationBranching:
+    def test_history_snapshot_locks_sql_server_rows_and_ranges(self) -> None:
+        session = MagicMock(spec=Session)
+        session.execute.return_value.scalars.return_value = []
+        MemoryInterface._check_conversation_history(session=session, expected={str(uuid.uuid4()): []})
+        statement = session.execute.call_args.args[0]
+        assert "WITH (UPDLOCK, HOLDLOCK)" in str(statement.compile(dialect=mssql.dialect()))
+        assert "UPDLOCK" not in str(statement.compile(dialect=sqlite.dialect()))
+
+    @pytest.mark.parametrize("persisted_owner", [False, True])
+    async def test_branch_rejects_another_owner(self, *, sqlite_instance: SQLiteMemory, persisted_owner: bool) -> None:
+        attack, source = await _store_attack_async(sqlite_instance)
+        branch = Conversation(conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()))
+        if persisted_owner:
+            await sqlite_instance.add_conversation_to_memory_async(conversation=branch)
+            branch.attack_result_id = None
+        with pytest.raises(ValueError):
+            await sqlite_instance.add_conversation_branches_to_attack_async(
+                attack_result_id=attack.attack_result_id,
+                source_conversation=source,
+                conversations=[branch],
+                message_pieces=[],
+            )
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert stored.related_conversations == set()
+
+    async def test_concurrent_ownership_claims_have_one_winner(self, file_memory: SQLiteMemory) -> None:
+        conversation_id = str(uuid.uuid4())
+        await file_memory.add_conversation_to_memory_async(conversation=Conversation(conversation_id=conversation_id))
+        owners = [str(uuid.uuid4()), str(uuid.uuid4())]
+        outcomes = await asyncio.gather(
+            *(
+                file_memory.add_conversation_to_memory_async(
+                    conversation=Conversation(conversation_id=conversation_id, attack_result_id=owner)
+                )
+                for owner in owners
+            ),
+            return_exceptions=True,
+        )
+        assert sum(outcome is None for outcome in outcomes) == 1
+        [error] = [outcome for outcome in outcomes if outcome is not None]
+        assert isinstance(error, ValueError)
+        assert "cannot be assigned" in str(error)
+        stored = await file_memory.get_conversation_metadata_async(conversation_id=conversation_id)
+        assert stored is not None
+        assert stored.attack_result_id == owners[outcomes.index(None)]
+
     async def test_copied_pieces_keep_all_lineage_metadata_order_and_identifier_links(
         self, sqlite_instance: SQLiteMemory
     ) -> None:
@@ -420,6 +468,32 @@ class TestAtomicConversationBranching:
                 attack_result_id=str(uuid.uuid4()), conversation_id=str(uuid.uuid4())
             )
         )
+
+
+@pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])
+def test_owner_claim_is_conditional_and_refreshes_stale_state(dialect: object) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    session = MagicMock(spec=Session)
+    stale = ConversationEntry(conversation=Conversation(conversation_id="shared"))
+    session.get.return_value = stale
+    winner = uuid.uuid4()
+
+    def refresh(entry: ConversationEntry) -> None:
+        entry.attack_result_id = winner
+
+    session.refresh.side_effect = refresh
+    with pytest.raises(ValueError, match="cannot be assigned"):
+        MemoryInterface._insert_conversation_in_session(
+            memory,
+            session=session,
+            conversation=Conversation(conversation_id="shared", attack_result_id=str(uuid.uuid4())),
+        )
+    statement = session.execute.call_args.args[0]
+    sql = str(statement.compile(dialect=dialect))
+    assert "IS NULL" in sql
+    assert "WHERE" in sql
+    assert "conversation_id" in sql
+    session.refresh.assert_called_once_with(stale)
 
 
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])

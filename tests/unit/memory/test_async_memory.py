@@ -63,35 +63,99 @@ def test_public_sync_memory_method_is_deprecated(name: str, sqlite_instance: SQL
     assert warning.call_args.kwargs["new_item"] == f"MemoryInterface.{name}_async"
 
 
+def _sync_memory_references(*, tree: ast.Module, sync_names: set[str]) -> list[str]:
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    compatibility_functions: set[ast.FunctionDef] = set()
+    for node in ast.walk(tree):
+        container = parents.get(node)
+        if (
+            isinstance(node, ast.FunctionDef)
+            and isinstance(container, (ast.ClassDef, ast.Module))
+            and any(
+                isinstance(method, ast.AsyncFunctionDef) and method.name == node.name + "_async"
+                for method in container.body
+            )
+        ):
+            compatibility_functions.add(node)
+
+    def reference_name(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return node.id if isinstance(node, ast.Name) else None
+
+    # Follow local compatibility helpers too, so a sync printer cannot hide a memory read.
+    blocked_names = sync_names.copy()
+    while True:
+        helpers = {
+            function.name
+            for function in compatibility_functions
+            if any(reference_name(node) in blocked_names for node in ast.walk(function))
+        }
+        if helpers <= blocked_names:
+            break
+        blocked_names.update(helpers)
+
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Attribute, ast.Name)) or reference_name(node) not in blocked_names:
+            continue
+        owner = parents.get(node)
+        while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (
+                isinstance(owner, ast.Call)
+                and isinstance(owner.func, ast.Name)
+                and owner.func.id == "legacy_sync_override"
+            ):
+                break
+            owner = parents.get(owner)
+        else:
+            if owner not in compatibility_functions:
+                violations.append(f"{node.lineno}: {ast.unparse(node)}")
+    return violations
+
+
+@pytest.mark.parametrize(
+    "caller,expected",
+    [
+        ("async def use_async():\n    memory.get_message_pieces()", True),
+        ("async def use_async():\n    read()", True),
+        ("def __str__():\n    printer.read()", True),
+        ("async def use_async():\n    await read_async()", False),
+        ("@legacy_sync_override(lambda: read)\nasync def use_async():\n    pass", False),
+    ],
+)
+def test_sync_memory_guard_follows_compatibility_helpers(*, caller: str, expected: bool) -> None:
+    source = (
+        "def read():"
+        "\n    return memory.get_message_pieces()"
+        "\nasync def read_async():"
+        "\n    return await memory.get_message_pieces_async()"
+        f"\n{caller}\n"
+    )
+    assert bool(_sync_memory_references(tree=ast.parse(source), sync_names={"get_message_pieces"})) is expected
+
+
 def test_library_does_not_reference_sync_memory_outside_compatibility() -> None:
     root = Path(__file__).resolve().parents[3] / "pyrit"
+    memory_tree = ast.parse((root / "memory" / "memory_interface.py").read_text(encoding="utf-8"))
+    memory_class = next(
+        node for node in memory_tree.body if isinstance(node, ast.ClassDef) and node.name == "MemoryInterface"
+    )
+    async_names = {node.name for node in memory_class.body if isinstance(node, ast.AsyncFunctionDef)}
     sync_names = {
-        name
-        for name, method in inspect.getmembers(MemoryInterface, inspect.isfunction)
-        if not name.startswith("_")
-        and not inspect.iscoroutinefunction(method)
-        and hasattr(MemoryInterface, name + "_async")
+        node.name
+        for node in memory_class.body
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_") and node.name + "_async" in async_names
     }
     violations = []
     for path in root.rglob("*.py"):
         if "memory" in path.relative_to(root).parts:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Attribute) or node.attr not in sync_names:
-                continue
-            owner = parents.get(node)
-            while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                owner = parents.get(owner)
-            if isinstance(owner, ast.FunctionDef):
-                container = parents.get(owner)
-                if isinstance(container, (ast.ClassDef, ast.Module)) and any(
-                    isinstance(method, ast.AsyncFunctionDef) and method.name == owner.name + "_async"
-                    for method in container.body
-                ):
-                    continue
-            violations.append(f"{path.relative_to(root)}:{node.lineno}: {ast.unparse(node)}")
+        violations.extend(
+            f"{path.relative_to(root)}:{reference}"
+            for reference in _sync_memory_references(tree=tree, sync_names=sync_names)
+        )
     assert not violations, "\n".join(violations)
 
 

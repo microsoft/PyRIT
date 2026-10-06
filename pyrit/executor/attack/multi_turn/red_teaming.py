@@ -306,6 +306,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
                 await self._memory.add_conversation_to_memory_async(
                     conversation=Conversation(
                         conversation_id=context.session.adversarial_chat_conversation_id,
+                        attack_result_id=context.attack_result_id,
                         target_identifier=self._adversarial_chat.get_identifier(),
                     )
                 )

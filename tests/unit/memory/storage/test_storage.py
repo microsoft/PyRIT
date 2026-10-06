@@ -19,6 +19,28 @@ def azure_blob_storage_io():
     return AzureBlobStorageIO(container_url="dummy")
 
 
+async def test_disk_storage_deletes_only_requested_file_async(tmp_path: Path) -> None:
+    storage = DiskStorageIO()
+    owned, neighbor = tmp_path / "owned.txt", tmp_path / "neighbor.txt"
+    await storage.write_file_async(owned, b"remove")
+    await storage.write_file_async(neighbor, b"keep")
+    await storage.delete_file_async(owned)
+    await storage.delete_file_async(owned)
+    assert not await storage.path_exists_async(owned)
+    assert await storage.read_file_async(neighbor) == b"keep"
+
+
+async def test_blob_storage_deletion_closes_client_on_failure_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    client = AsyncMock()
+    client.delete_blob.side_effect = OSError("storage unavailable")
+    storage._client_async = client
+    with pytest.raises(OSError, match="storage unavailable"):
+        await storage.delete_file_async("https://account.blob.core.windows.net/container/owned.txt")
+    client.delete_blob.assert_awaited_once_with("owned.txt")
+    client.close.assert_awaited_once()
+
+
 async def test_disk_storage_io_read_file():
     storage = DiskStorageIO()
     path = "sample.txt"

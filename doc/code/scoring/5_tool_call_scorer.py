@@ -252,7 +252,14 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # For a remote agent, use the normal HTTP transport. The agent must accept W3C
 # trace context and export its tool spans. Supply a `TraceClient` that can read
 # those spans; sending a header does not create a trace-store connection.
-# Provider-specific SDK targets are not changed by this example.
+#
+# `LiteLLMChatTarget` accepts the same `trace_config` and also disables tracing by
+# default. When enabled, each request sends a fresh `traceparent` through LiteLLM's
+# `extra_headers`, and PyRIT saves the same context on the request. Enable it only
+# when the provider or gateway accepts W3C trace context. While it is enabled, manual
+# trace headers in `headers`, `extra_headers` or `provider_specific_header` are
+# rejected. A model-call span is not tool evidence; the scorer still needs execution
+# spans for the named tool.
 
 # %% [markdown]
 # ## Use another trace source
@@ -270,3 +277,25 @@ print(f"Saved attack tool evidence: {replayed.get_value()}")
 # Other sources can use the same protocol with their own scorable types.
 # The caller owns instrumentation and trace retrieval. Automatic request
 # correlation does not install a remote collector or a backend adapter.
+
+# %% [markdown]
+# ## Score tool calls without traces
+#
+# `MessageToolCallScorer` reads the same `ToolsCalled` condition from stored
+# messages instead of spans. A tool counts only when a model-authored
+# `function_call` piece is paired, by call ID, with a later `function_call_output`
+# piece in the conversation through the scored response. `OpenAIResponseTarget`
+# records `ToolExecutionMetadata` on each output piece. The scorer uses this
+# dispatch status, not the returned payload: a tool-reported error still counts
+# as an invocation, while a dispatch failure does not. Older outputs without
+# metadata use a conservative fallback; payloads shaped like PyRIT dispatch
+# errors cannot prove invocation and remain undetermined.
+# Injected history in the `simulated_assistant` and `simulated_tool` roles does
+# not count either.
+#
+# Stored messages are partial evidence. Hosted tools, several response section
+# types, and targets that execute tools themselves leave no output pieces, so the
+# scorer returns true or undetermined and never false. `OpenAIResponseTarget`
+# records these pieces when it runs `custom_functions`. Combine it with
+# `OtelToolCallScorer` under `TrueFalseScoreAggregator.OR` when trace evidence is
+# also available.

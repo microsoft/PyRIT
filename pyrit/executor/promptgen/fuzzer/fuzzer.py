@@ -235,28 +235,23 @@ class FuzzerResult(PromptGeneratorStrategyResult):
 
     def __str__(self) -> str:
         """
-        Return a formatted string representation of the fuzzer result.
+        Return a summary without reading memory.
 
-        This method creates a FuzzerResultPrinter instance and captures its output
-        to return as a string, allowing for convenient printing with print(result).
+        Use ``print_formatted_async`` to include stored conversations and scores.
 
         Returns:
-            str: Formatted string representation of the result.
+            str: Execution statistics and successful templates.
         """
-        import io
-        from contextlib import redirect_stdout
-
-        # Capture the printer output
-        output_buffer = io.StringIO()
-
-        # Create printer with colors disabled for string output
-        printer = FuzzerResultPrinter(enable_colors=False)
-
-        # Redirect stdout to capture the printer output
-        with redirect_stdout(output_buffer):
-            printer.print_result(self)
-
-        return output_buffer.getvalue()
+        return "\n".join(
+            [
+                "FuzzerResult",
+                f"Total Queries: {self.total_queries}",
+                f"Templates Explored: {self.templates_explored}",
+                f"Successful Templates: {len(self.successful_templates)}",
+                f"Jailbreak Conversations: {len(self.jailbreak_conversation_ids)}",
+                *(escape_control_characters(template) for template in self.successful_templates),
+            ]
+        )
 
     def __repr__(self) -> str:
         """

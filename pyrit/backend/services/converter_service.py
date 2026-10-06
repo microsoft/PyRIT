@@ -173,8 +173,9 @@ class ConverterService:
         """
         Create a new converter instance from API request.
 
-        Instantiates the converter with the given type and params,
-        then registers it in the registry.
+        Instantiates the converter with the given type and params and builds the
+        response before registering it, so a request that fails at any step leaves
+        no registered converter and removes its uploaded files.
 
         Args:
             request: The create converter request with type and params.
@@ -194,20 +195,20 @@ class ConverterService:
             params=request.params,
         )
         try:
-            converter_obj = self._registry.create_named_instance(
+            # Uploads may have yielded to another request that took the name.
+            self._registry.instances.validate_name_available(request.name)
+            converter_obj = self._registry.create_instance(request.type, **params)
+            converter = self._build_instance_from_object(converter_id=request.name, converter_obj=converter_obj)
+            self._registry.instances.register(
+                converter_obj,
                 name=request.name,
-                type_name=request.type,
-                params=params,
-                registry_metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
+                metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
             )
         except (Exception, asyncio.CancelledError):
             await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
 
-        return self._build_instance_from_object(
-            converter_id=request.name,
-            converter_obj=converter_obj,
-        )
+        return converter
 
     async def preview_conversion_async(self, *, request: ConverterPreviewRequest) -> ConverterPreviewResponse:
         """

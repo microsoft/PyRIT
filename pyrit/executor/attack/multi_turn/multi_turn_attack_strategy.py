@@ -140,7 +140,9 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
             (
                 await memory.add_conversation_to_memory_async(
                     conversation=Conversation(
-                        conversation_id=new_conversation_id, target_identifier=self._objective_target.get_identifier()
+                        conversation_id=new_conversation_id,
+                        target_identifier=self._objective_target.get_identifier(),
+                        attack_result_id=context.attack_result_id,
                     )
                 )
             )
