@@ -2001,7 +2001,7 @@ def _make_cache_candidate(
     candidate.atomic_attack_name = atomic_attack_name
     candidate.technique_eval_hash = "technique-hash"
     candidate.objectives = objectives
-    candidate.seed_groups = [object() for _ in objectives]
+    candidate.seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=objective)]) for objective in objectives]
     candidate.attack_technique.get_identifier.return_value = technique_identifier
     return candidate
 
@@ -2042,6 +2042,21 @@ def _make_exact_cached_result(
         attribution_data={"parent_collection": "attack_a", "parent_eval_hash": "technique-hash"},
         labels={"source": "prior"},
     )
+
+
+def _make_cache_reuse_candidate(*, seed_groups: list[AttackSeedGroup]) -> MagicMock:
+    candidate = MagicMock(spec=AtomicAttack)
+    candidate.atomic_attack_name = "attack_a"
+    candidate.display_group = "adv_target"
+    candidate.technique_name = None
+    candidate.technique_eval_hash = "technique-hash"
+    candidate.seed_groups = list(seed_groups)
+    candidate.drop_seed_groups_with_hashes.side_effect = lambda *, hashes: setattr(
+        candidate,
+        "seed_groups",
+        [group for group in candidate.seed_groups if to_sha256(group.objective.value) not in hashes],
+    )
+    return candidate
 
 
 def _make_compatible_parent(*, parent_id: str, version: int = AdversarialBenchmark.VERSION) -> MagicMock:
@@ -2357,17 +2372,7 @@ class TestReusableCachedResults:
             objective: AttackSeedGroup(seeds=[SeedObjective(value=objective)])
             for objective in ("legacy cached", "attributed cached", "fresh")
         }
-        candidate = MagicMock(spec=AtomicAttack)
-        candidate.atomic_attack_name = "attack_a"
-        candidate.display_group = "adv_target"
-        candidate.technique_name = None
-        candidate.technique_eval_hash = "technique-hash"
-        candidate.seed_groups = list(seed_groups.values())
-        candidate.drop_seed_groups_with_hashes.side_effect = lambda *, hashes: setattr(
-            candidate,
-            "seed_groups",
-            [group for group in candidate.seed_groups if to_sha256(group.objective.value) not in hashes],
-        )
+        candidate = _make_cache_reuse_candidate(seed_groups=list(seed_groups.values()))
         # One original without seed attribution, one attributed to a seed ID from an older run.
         legacy = _make_exact_cached_result(objective="legacy cached", scorer_identifier=scorer, parent_id="old")
         attributed = _make_exact_cached_result(
@@ -2390,7 +2395,8 @@ class TestReusableCachedResults:
 
         copies = bench._memory.add_attack_results_to_memory_async.call_args.kwargs["attack_results"]
         assert [group.objective.value for group in candidate.seed_groups] == ["fresh"]
-        assert plan.atomic_groups[0].seed_group_ids == [group.logical_id for group in seed_groups.values()]
+        expected_seed_ids = sorted(group.logical_id for group in seed_groups.values())
+        assert sorted(plan.atomic_groups[0].seed_group_ids) == expected_seed_ids
         assert {copy.objective: copy.attribution_data["seed_group_id"] for copy in copies} == {
             "legacy cached": seed_groups["legacy cached"].logical_id,
             "attributed cached": seed_groups["attributed cached"].logical_id,
@@ -2416,3 +2422,44 @@ class TestReusableCachedResults:
         assert statistics.overall.completed == 3
         assert statistics.overall.succeeded == 1
         assert statistics.unattributed_attempts == 0
+
+    async def test_cached_objective_shared_by_two_seed_groups_plans_one_unit(self):
+        """A cached result satisfies one planned unit even if two seed groups share its objective."""
+        scorer = _make_scorer_identifier(question="achieved")
+        first = AttackSeedGroup(seeds=[SeedObjective(value="cached"), SeedPrompt(value="context one")])
+        second = AttackSeedGroup(seeds=[SeedObjective(value="cached"), SeedPrompt(value="context two")])
+        fresh = AttackSeedGroup(seeds=[SeedObjective(value="fresh")])
+        candidate = _make_cache_reuse_candidate(seed_groups=[first, second, fresh])
+        cached = _make_exact_cached_result(objective="cached", scorer_identifier=scorer, parent_id="old")
+
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._memory = MagicMock(spec=MemoryInterface)
+        bench._scenario_result_id = str(uuid.uuid4())
+        bench._collect_reusable_cached_results_async = AsyncMock(return_value={"attack_a": [cached]})
+        await bench._apply_reusable_cached_results_async(atomic_attacks=[candidate])
+        bench._atomic_attacks = [candidate]
+        plan = bench._build_run_plan()
+        await bench._persist_precomputed_cached_results_async()
+
+        [copy] = bench._memory.add_attack_results_to_memory_async.call_args.kwargs["attack_results"]
+        assert sorted(plan.atomic_groups[0].seed_group_ids) == sorted([first.logical_id, fresh.logical_id])
+        assert copy.attribution_data["seed_group_id"] == first.logical_id
+        fresh_result = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="fresh",
+            outcome=AttackOutcome.SUCCESS,
+            attribution_data={
+                "parent_collection": "attack_a",
+                "parent_eval_hash": "technique-hash",
+                "seed_group_id": fresh.logical_id,
+            },
+        )
+        result = ScenarioResult(
+            scenario_identifier=ScenarioIdentifier(class_name="AdversarialBenchmark", class_module="test"),
+            attack_results={"attack_a": [copy, fresh_result]},
+            metadata={SCENARIO_RUN_PLAN_METADATA_KEY: plan.model_dump(mode="json", exclude_none=True)},
+        )
+        statistics = compute_scenario_statistics(result)
+        assert statistics.overall.planned == 2
+        assert statistics.overall.completed == 2
+        assert statistics.overall.success_percentage == 100
