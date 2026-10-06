@@ -166,6 +166,12 @@ For a `SelectiveTextConverter` with `TokenSelectionStrategy`, setting
 `preserve_tokens=True` keeps each converted region's marker pair for the next stage.
 That stage does not consume a marker layer. The default, `preserve_tokens=False`,
 consumes the innermost pairs as described above.
+Python callers can request the same behavior on ordinary converters with
+`convert_tokens_async(..., keep_tokens=True)`. Without markers, this wraps the
+whole text result; it does not wrap non-text outputs.
+Native token-selection wrappers nested with the same markers share one selection:
+if either preserves tokens, they retain one pair instead of adding duplicate pairs.
+Explicit nested marker pairs in the input remain intact.
 
 API clients can set non-empty `start_token` and `end_token` strings on converter
 preview and message requests, including queued sends. The same settings control

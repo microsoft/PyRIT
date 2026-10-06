@@ -161,6 +161,60 @@ async def test_convert_tokens_custom_delimiters_leave_default_markers_literal_as
 @pytest.mark.parametrize(
     ("prompt", "expected"),
     [
+        ("keep ⟪test⟫ / ⟪test2⟫", "keep ⟪dGVzdA==⟫ / ⟪dGVzdDI=⟫"),
+        ("keep ⟪⟪test⟫⟫", "keep ⟪⟪dGVzdA==⟫⟫"),
+        ("⟪test⟫⟪test2⟫", "⟪dGVzdA==⟫⟪dGVzdDI=⟫"),
+        ("keep ⟪⟫", "keep ⟪⟫"),
+        ("test", "⟪dGVzdA==⟫"),
+        ("", "⟪⟫"),
+    ],
+)
+async def test_convert_tokens_keep_tokens_async(*, prompt: str, expected: str) -> None:
+    result = await Base64Converter().convert_tokens_async(prompt=prompt, keep_tokens=True)
+    assert result.output_text == expected
+    assert result.output_type == "text"
+
+
+@pytest.mark.parametrize(("start_token", "end_token"), [("<<", ">>"), ("[.*", ".*]"), ("|", "|")])
+async def test_convert_tokens_keep_tokens_uses_call_delimiters_async(*, start_token: str, end_token: str) -> None:
+    result = await Base64Converter().convert_tokens_async(
+        prompt=f"keep {start_token}test{end_token}",
+        start_token=start_token,
+        end_token=end_token,
+        keep_tokens=True,
+    )
+    assert result.output_text == f"keep {start_token}dGVzdA=={end_token}"
+
+
+async def test_convert_tokens_keep_tokens_preserves_multiline_unmarked_text_async() -> None:
+    result = await RandomCapitalLettersConverter(percentage=100).convert_tokens_async(
+        prompt="keep\r\n⟪one\ntwo⟫\tend", keep_tokens=True
+    )
+    assert result.output_text == "keep\r\n⟪ONE\nTWO⟫\tend"
+
+
+async def test_convert_tokens_keep_tokens_does_not_guess_generated_boundaries_async() -> None:
+    converter = Base64Converter()
+    with patch.object(converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="before ⟪new⟫ after", output_type="text")
+        result = await converter.convert_tokens_async(prompt="keep ⟪test⟫", keep_tokens=True)
+    assert result.output_text == "keep ⟪before ⟪new⟫ after⟫"
+    convert.assert_awaited_once_with(prompt="test", input_type="text")
+
+
+@pytest.mark.parametrize("input_type", ["text", "image_path"])
+async def test_convert_tokens_keep_tokens_does_not_wrap_nontext_output_async(*, input_type: PromptDataType) -> None:
+    converter = Base64Converter()
+    expected = ConverterResult(output_text="output.png", output_type="image_path")
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, return_value=expected) as convert:
+        result = await converter.convert_tokens_async(prompt="unmarked", input_type=input_type, keep_tokens=True)
+    assert result is expected
+    convert.assert_awaited_once_with(prompt="unmarked", input_type=input_type)
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
         ("before ⟪⟪one⟫⟫ after", "before ⟪ONE⟫ after"),
         ("⟪⟪⟪one⟫⟫⟫ and ⟪⟪⟪two⟫⟫⟫", "⟪⟪ONE⟫⟫ and ⟪⟪TWO⟫⟫"),
         ("⟪one⟫ and ⟪⟪two⟫⟫", "ONE and ⟪TWO⟫"),

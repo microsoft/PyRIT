@@ -115,6 +115,14 @@ class ContextFailingConverter(Converter):
         raise ValueError("conversion failed")
 
 
+@pytest.mark.parametrize(("start_token", "end_token"), [("", "⟫"), ("⟪", ""), ("", "")])
+def test_prompt_normalizer_rejects_empty_markers_before_memory_lookup(*, start_token: str, end_token: str) -> None:
+    with patch.object(CentralMemory, "get_memory_instance") as memory:
+        with pytest.raises(ValueError, match="tokens must be non-empty"):
+            PromptNormalizer(start_token=start_token, end_token=end_token)
+    memory.assert_not_called()
+
+
 def assert_message_piece_hashes_set(request: Message):
     assert request
     assert request.message_pieces

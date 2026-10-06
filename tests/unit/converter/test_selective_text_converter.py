@@ -24,9 +24,11 @@ from pyrit.converter.text_selection_strategy import (
     RegexSelectionStrategy,
     TokenSelectionStrategy,
     WordIndexSelectionStrategy,
+    WordPositionSelectionStrategy,
     WordProportionSelectionStrategy,
+    WordRegexSelectionStrategy,
 )
-from pyrit.models import Message
+from pyrit.models import Message, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 
@@ -96,6 +98,32 @@ async def test_token_selection_custom_delimiter_entry_paths_async(
     assert direct.output_text == selected.output_text == expected
 
 
+@pytest.mark.parametrize("keep_tokens", [False, True])
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+async def test_token_selection_keep_tokens_retains_the_call_markers_async(
+    *, keep_tokens: bool, preserve_tokens: bool
+) -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+    )
+    result = await converter.convert_tokens_async(
+        prompt="keep ⟪literal⟫ [[test]]", start_token="[", end_token="]", keep_tokens=keep_tokens
+    )
+    expected = "keep ⟪literal⟫ [[dGVzdA==]]" if keep_tokens or preserve_tokens else "keep ⟪literal⟫ [dGVzdA==]"
+    assert result.output_text == expected
+
+
+async def test_legacy_token_override_rejects_keep_tokens_without_calling_it_async() -> None:
+    legacy = _LegacyTokenConverter()
+    converter = SelectiveTextConverter(sub_converter=legacy, selection_strategy=TokenSelectionStrategy())
+    with patch.object(legacy, "convert_tokens_async", wraps=legacy.convert_tokens_async) as convert:
+        with pytest.raises(ValueError, match="custom convert_tokens_async override"):
+            await converter.convert_tokens_async(prompt="a ⟪b⟫ c", keep_tokens=True)
+    convert.assert_not_awaited()
+
+
 @pytest.mark.parametrize("token_entry", [False, True])
 async def test_token_selection_preserves_generated_markers_async(*, token_entry: bool) -> None:
     sub_converter = Base64Converter()
@@ -147,12 +175,163 @@ async def test_token_selection_rejects_nontext_output_async(*, preserve_tokens: 
             await converter.convert_async(prompt="⟪test⟫")
 
 
+@pytest.mark.parametrize("token_entry", [False, True])
+@pytest.mark.parametrize("outer_preserves", [False, True])
+@pytest.mark.parametrize("inner_preserves", [False, True])
+@pytest.mark.parametrize("depth", [1, 2])
+async def test_nested_token_wrappers_preserve_one_pair_per_selection_async(
+    *, token_entry: bool, outer_preserves: bool, inner_preserves: bool, depth: int
+) -> None:
+    inner = SelectiveTextConverter(
+        sub_converter=ROT13Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=inner_preserves,
+    )
+    outer = SelectiveTextConverter(
+        sub_converter=inner,
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=outer_preserves,
+    )
+    prompt = f"prefix {'⟪' * depth}word{'⟫' * depth} suffix"
+    result = (
+        await outer.convert_tokens_async(prompt=prompt) if token_entry else await outer.convert_async(prompt=prompt)
+    )
+    remaining = depth if outer_preserves or inner_preserves else depth - 1
+    assert result.output_text == f"prefix {'⟪' * remaining}jbeq{'⟫' * remaining} suffix"
+    if remaining:
+        later = await Base64Converter().convert_tokens_async(prompt=result.output_text)
+        assert later.output_text == f"prefix {'⟪' * (remaining - 1)}amJlcQ=={'⟫' * (remaining - 1)} suffix"
+
+
+async def test_nested_programmatic_wrapper_keeps_its_separate_selection_async() -> None:
+    inner = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=WordRegexSelectionStrategy(pattern=r"\d+"),
+        preserve_tokens=True,
+    )
+    outer = SelectiveTextConverter(
+        sub_converter=inner, selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    result = await outer.convert_async(prompt="keep ⟪code 123⟫ after")
+    assert result.output_text == "keep ⟪code ⟪MTIz⟫⟫ after"
+
+
+async def test_custom_selective_subclass_conversion_is_not_collapsed_async() -> None:
+    class CustomSelectiveConverter(SelectiveTextConverter):
+        async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+            return ConverterResult(output_text=prompt.upper(), output_type="text")
+
+    inner = CustomSelectiveConverter(
+        sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    outer = SelectiveTextConverter(
+        sub_converter=inner, selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    result = await outer.convert_async(prompt="keep ⟪word⟫ after")
+    assert result.output_text == "keep ⟪WORD⟫ after"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("pipeline_entry", [False, True])
+async def test_three_stage_selective_chain_preserves_original_regions_async(*, pipeline_entry: bool) -> None:
+    converters = [
+        SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=WordPositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
+            preserve_tokens=True,
+        ),
+        SelectiveTextConverter(
+            sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        ),
+        SelectiveTextConverter(
+            sub_converter=Base64Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+        ),
+    ]
+    expected = [
+        "tell me how ⟪dG8=⟫ ⟪ZG8=⟫ ⟪aXQ=⟫",
+        "tell me how ⟪qT8=⟫ ⟪MT8=⟫ ⟪nKD=⟫",
+        "tell me how ⟪cVQ4PQ==⟫ ⟪TVQ4PQ==⟫ ⟪bktEPQ==⟫",
+    ]
+    value = "tell me how to do it"
+    normalizer = PromptNormalizer()
+    for converter, output in zip(converters, expected, strict=True):
+        if pipeline_entry:
+            message = Message.from_prompt(prompt=value, role="user")
+            await normalizer.convert_values_async(
+                converter_configurations=[ConverterConfiguration(converters=[converter])], message=message
+            )
+            value = message.get_value()
+        else:
+            value = (await converter.convert_async(prompt=value)).output_text
+        assert value == output
+
+
+class _LegacyTokenConverter(ROT13Converter):
+    async def convert_tokens_async(
+        self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
+    ) -> ConverterResult:
+        return ConverterResult(
+            output_text=prompt.replace(start_token, "").replace(end_token, "").upper(), output_type="text"
+        )
+
+
+@pytest.mark.parametrize("token_entry", [False, True])
+@pytest.mark.parametrize("nested_wrapper", [False, True])
+@pytest.mark.parametrize("matching_markers", [False, True])
+async def test_legacy_token_override_is_delegated_without_new_arguments_async(
+    *, token_entry: bool, nested_wrapper: bool, matching_markers: bool
+) -> None:
+    legacy = _LegacyTokenConverter()
+    sub_converter: Converter = legacy
+    if nested_wrapper:
+        sub_converter = SelectiveTextConverter(
+            sub_converter=legacy,
+            selection_strategy=TokenSelectionStrategy(),
+            start_token="[" if matching_markers else "⟪",
+            end_token="]" if matching_markers else "⟫",
+        )
+    converter = SelectiveTextConverter(
+        sub_converter=sub_converter, selection_strategy=TokenSelectionStrategy(), start_token="[", end_token="]"
+    )
+    with patch.object(legacy, "convert_tokens_async", wraps=legacy.convert_tokens_async) as convert:
+        result = (
+            await converter.convert_tokens_async(prompt="a [b] c", start_token="[", end_token="]")
+            if token_entry
+            else await converter.convert_async(prompt="a [b] c")
+        )
+    # A different marker pair is a separate selection, not a wrapper to collapse.
+    assert result.output_text == ("a B c" if nested_wrapper and not matching_markers else "A B C")
+    assert convert.await_count == 1
+    assert "keep_tokens" not in convert.await_args.kwargs
+
+
+@pytest.mark.parametrize("token_entry", [False, True])
+@pytest.mark.parametrize("nested_wrapper", [False, True])
+async def test_legacy_token_override_preservation_fails_before_conversion_async(
+    *, token_entry: bool, nested_wrapper: bool
+) -> None:
+    legacy = _LegacyTokenConverter()
+    converter = SelectiveTextConverter(
+        sub_converter=legacy, selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    if nested_wrapper:
+        converter = SelectiveTextConverter(sub_converter=converter, selection_strategy=TokenSelectionStrategy())
+    with patch.object(legacy, "convert_tokens_async", wraps=legacy.convert_tokens_async) as convert:
+        with pytest.raises(ValueError, match="custom convert_tokens_async override"):
+            if token_entry:
+                await converter.convert_tokens_async(prompt="a ⟪b⟫ c")
+            else:
+                await converter.convert_async(prompt="a ⟪b⟫ c")
+    convert.assert_not_awaited()
+
+
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("preserve_tokens", [False, True])
 @pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
 @pytest.mark.parametrize("nested_wrapper", [False, True])
+@pytest.mark.parametrize("inner_preserves", [False, True])
 async def test_token_selection_seeded_pipeline_entry_paths_async(
-    *, preserve_tokens: bool, start_token: str, end_token: str, nested_wrapper: bool
+    *, preserve_tokens: bool, start_token: str, end_token: str, nested_wrapper: bool, inner_preserves: bool
 ) -> None:
     original_seed = get_configured_random_seed()
     configure_random_seed(seed=42)
@@ -162,6 +341,7 @@ async def test_token_selection_seeded_pipeline_entry_paths_async(
             sub_converter = SelectiveTextConverter(
                 sub_converter=sub_converter,
                 selection_strategy=TokenSelectionStrategy(),
+                preserve_tokens=inner_preserves,
                 start_token=start_token,
                 end_token=end_token,
             )

@@ -213,13 +213,20 @@ class Converter(Identifiable):
         return False
 
     async def convert_tokens_async(
-        self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType = "text",
+        start_token: str = "⟪",
+        end_token: str = "⟫",
+        keep_tokens: bool = False,
     ) -> ConverterResult:
         """
-        Convert innermost marked regions, consuming their delimiters and preserving all other text.
+        Convert innermost marked regions, optionally retaining their delimiters.
 
         Regions may be empty, span multiple lines, and nest. Each call converts all
-        innermost regions and retains their outer delimiters for later calls. Identical
+        innermost regions and retains their outer delimiters for later calls. With
+        keep_tokens=True, the selected pairs are retained too. Identical
         start and end delimiters form flat pairs. Without delimiters, the entire prompt
         is converted, including non-text inputs. Selected regions require text input
         and text output. All delimiters are validated before any conversion is invoked.
@@ -231,6 +238,8 @@ class Converter(Identifiable):
                 relatively distinct.
             end_token (str): The token indicating the end of a substring to be converted. Defaults to "⟫" which is
                 relatively distinct.
+            keep_tokens (bool): Retain each selected pair around its converted text. With no markers,
+                wrap the whole text result. Non-text results are unchanged. Defaults to False.
 
         Returns:
             ConverterResult: The prompt with specified substrings converted.
@@ -246,7 +255,10 @@ class Converter(Identifiable):
 
         spans = self._get_token_spans(prompt=prompt, start_token=start_token, end_token=end_token)
         if not spans:
-            return await self.convert_async(prompt=prompt, input_type=input_type)
+            result = await self._convert_unmarked_async(prompt=prompt, input_type=input_type)
+            if keep_tokens and result.output_type == "text":
+                return ConverterResult(output_text=f"{start_token}{result.output_text}{end_token}", output_type="text")
+            return result
 
         if not self.input_supported("text") or not self.output_supported("text"):
             raise ValueError("Selected-region conversion requires a converter supporting text input and text output.")
@@ -260,10 +272,14 @@ class Converter(Identifiable):
         parts: list[str] = []
         previous_end = 0
         for (start, end), converted in zip(spans, converted_parts, strict=True):
-            parts.extend((prompt[previous_end:start], converted.output_text))
+            text = f"{start_token}{converted.output_text}{end_token}" if keep_tokens else converted.output_text
+            parts.extend((prompt[previous_end:start], text))
             previous_end = end
         parts.append(prompt[previous_end:])
         return ConverterResult(output_text="".join(parts), output_type="text")
+
+    async def _convert_unmarked_async(self, *, prompt: str, input_type: PromptDataType) -> ConverterResult:
+        return await self.convert_async(prompt=prompt, input_type=input_type)
 
     async def _replace_text_match_async(self, match: str) -> ConverterResult:
         result = await self.convert_async(prompt=match, input_type="text")
