@@ -248,6 +248,24 @@ class Converter(Identifiable):
             ValueError: If delimiters are empty, regions are malformed, or selected
                 regions cannot be converted from text to text.
         """
+        return await self._convert_token_regions_async(
+            prompt=prompt,
+            input_type=input_type,
+            start_token=start_token,
+            end_token=end_token,
+            keep_tokens=keep_tokens,
+        )
+
+    async def _convert_token_regions_async(
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType,
+        start_token: str,
+        end_token: str,
+        keep_tokens: bool,
+        convert_text_async: Callable[[str], Awaitable[ConverterResult]] | None = None,
+    ) -> ConverterResult:
         if not start_token or not end_token:
             raise ValueError("Start and end tokens must be non-empty.")
         if input_type != "text" and (start_token in prompt or end_token in prompt):
@@ -255,7 +273,11 @@ class Converter(Identifiable):
 
         spans = self._get_token_spans(prompt=prompt, start_token=start_token, end_token=end_token)
         if not spans:
-            result = await self._convert_unmarked_async(prompt=prompt, input_type=input_type)
+            result = (
+                await convert_text_async(prompt)
+                if convert_text_async
+                else await self.convert_async(prompt=prompt, input_type=input_type)
+            )
             if keep_tokens and result.output_type == "text":
                 return ConverterResult(output_text=f"{start_token}{result.output_text}{end_token}", output_type="text")
             return result
@@ -263,10 +285,8 @@ class Converter(Identifiable):
         if not self.input_supported("text") or not self.output_supported("text"):
             raise ValueError("Selected-region conversion requires a converter supporting text input and text output.")
 
-        tasks = [
-            self._replace_text_match_async(prompt[start + len(start_token) : end - len(end_token)])
-            for start, end in spans
-        ]
+        convert_region_async = convert_text_async or self._replace_text_match_async
+        tasks = [convert_region_async(prompt[start + len(start_token) : end - len(end_token)]) for start, end in spans]
         converted_parts = await asyncio.gather(*tasks)
 
         parts: list[str] = []
@@ -277,9 +297,6 @@ class Converter(Identifiable):
             previous_end = end
         parts.append(prompt[previous_end:])
         return ConverterResult(output_text="".join(parts), output_type="text")
-
-    async def _convert_unmarked_async(self, *, prompt: str, input_type: PromptDataType) -> ConverterResult:
-        return await self.convert_async(prompt=prompt, input_type=input_type)
 
     async def _replace_text_match_async(self, match: str) -> ConverterResult:
         result = await self.convert_async(prompt=match, input_type="text")

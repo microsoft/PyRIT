@@ -281,6 +281,7 @@ assert "Decode: nTIfoT8=" in stream.getvalue()
 # does not create a new selection. If either wrapper preserves tokens, they retain one pair for that selection.
 # Explicit input layers remain intact. Different marker pairs and programmatic selection strategies
 # are separate selections; their boundaries are not collapsed.
+# Per-call markers determine the outer selection, even when they differ from its constructor defaults.
 #
 # Converter-generated marker text is not evidence that a wrapper already preserved its boundaries.
 # The wrapper keeps its own pair, and generated markers are not processed again during the same call.
@@ -304,6 +305,13 @@ for prompt, expected in [
     print(result.output_text)
     assert result.output_text == expected
 
+# %%
+mixed = await outer.convert_tokens_async(  # type: ignore
+    prompt="prefix [⟪word⟫] suffix", start_token="[", end_token="]"
+)
+print(mixed.output_text)
+assert mixed.output_text == "prefix [⟪jbeq⟫] suffix"
+
 # %% [markdown]
 # ## Limits and Custom Converters
 #
@@ -311,6 +319,9 @@ for prompt, expected in [
 # Malformed markers raise before any selected region is converted.
 # For the same seed and execution context, native token-selection calls produce the same result
 # through direct calls, attack pipelines, and API previews.
+#
+# Selective subclasses that override `convert_async` still receive the selected text.
+# They can call `super().convert_async` to reuse selection without losing their own transformation.
 #
 # A custom converter can override `convert_tokens_async` to own whole-prompt behavior.
 # A token-selection wrapper with `preserve_tokens=False` and the default `keep_tokens=False`
@@ -321,10 +332,3 @@ for prompt, expected in [
 # selected-region boundaries from an arbitrary returned string.
 # For per-region preservation, implement the transformation in `convert_async` and use the shared token parser.
 # No signature probing, whole-prompt preservation fallback, or additional pipeline framework is needed.
-
-# %% [markdown]
-# ## Contributors
-#
-# [**Utkarsh Bahuguna (u7k4rs6)**](https://github.com/u7k4rs6) contributed the original
-# per-region marker-preservation fix and composition regression cases in
-# [#2893](https://github.com/microsoft/PyRIT/pull/2893).

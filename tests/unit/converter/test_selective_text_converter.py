@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
@@ -229,6 +230,133 @@ async def test_custom_selective_subclass_conversion_is_not_collapsed_async() -> 
     )
     result = await outer.convert_async(prompt="keep ⟪word⟫ after")
     assert result.output_text == "keep ⟪WORD⟫ after"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("pipeline_entry", [False, True])
+@pytest.mark.parametrize("marked", [False, True])
+async def test_top_level_selective_subclass_override_is_used_async(*, pipeline_entry: bool, marked: bool) -> None:
+    class CustomSelectiveConverter(SelectiveTextConverter):
+        async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+            return ConverterResult(output_text=prompt.upper(), output_type="text")
+
+    converter = CustomSelectiveConverter(sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy())
+    prompt = "keep ⟪word⟫ after" if marked else "word"
+    if pipeline_entry:
+        message = Message.from_prompt(prompt=prompt, role="user")
+        await PromptNormalizer().convert_values_async(
+            converter_configurations=[ConverterConfiguration(converters=[converter])], message=message
+        )
+        value = message.get_value()
+    else:
+        value = (await converter.convert_tokens_async(prompt=prompt)).output_text
+    assert value == ("keep WORD after" if marked else "WORD")
+
+
+@pytest.mark.parametrize("marked", [False, True])
+async def test_selective_subclass_can_delegate_to_super_async(*, marked: bool) -> None:
+    class DelegatingSelectiveConverter(SelectiveTextConverter):
+        async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+            result = await super().convert_async(prompt=prompt, input_type=input_type)
+            return ConverterResult(output_text=f"{result.output_text}!", output_type="text")
+
+    converter = DelegatingSelectiveConverter(
+        sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy()
+    )
+    prompt = "keep ⟪word⟫ after" if marked else "word"
+    result = await converter.convert_tokens_async(prompt=prompt)
+    assert result.output_text == ("keep jbeq! after" if marked else "jbeq!")
+
+
+async def test_selective_subclass_can_inherit_native_selection_async() -> None:
+    class InheritedSelectiveConverter(SelectiveTextConverter):
+        pass
+
+    converter = InheritedSelectiveConverter(
+        sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    result = await converter.convert_tokens_async(prompt="keep ⟪word⟫ after")
+    assert result.output_text == "keep ⟪jbeq⟫ after"
+
+
+async def test_selective_subclass_token_override_is_used_by_direct_conversion_async() -> None:
+    class CustomTokenSelectiveConverter(SelectiveTextConverter):
+        async def convert_tokens_async(
+            self, *, prompt: str, input_type: PromptDataType = "text", start_token: str = "⟪", end_token: str = "⟫"
+        ) -> ConverterResult:
+            return ConverterResult(output_text=prompt.upper(), output_type="text")
+
+    converter = CustomTokenSelectiveConverter(
+        sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy()
+    )
+    result = await converter.convert_async(prompt="word")
+    assert result.output_text == "WORD"
+
+
+async def test_selective_subclass_randomness_keeps_its_own_operation_scope_async() -> None:
+    class RandomSelectiveConverter(SelectiveTextConverter):
+        async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+            generator = self._get_random_generator(stream="custom-conversion")
+            value = "".join(character.upper() if generator.random() < 0.5 else character for character in prompt)
+            return ConverterResult(output_text=value, output_type="text")
+
+    original_seed = get_configured_random_seed()
+    configure_random_seed(seed=42)
+    try:
+        converter = RandomSelectiveConverter(
+            sub_converter=ROT13Converter(), selection_strategy=TokenSelectionStrategy()
+        )
+        direct = await converter.convert_async(prompt="abcdefghijklmno")
+        selected = await converter.convert_tokens_async(prompt="keep ⟪abcdefghijklmno⟫ after")
+        repeated = await converter.convert_async(prompt="abcdefghijklmno")
+        assert direct.output_text == repeated.output_text
+        assert selected.output_text == f"keep {direct.output_text} after"
+    finally:
+        configure_random_seed(seed=original_seed)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("pipeline_entry", [False, True])
+@pytest.mark.parametrize("inner_uses_call_markers", [False, True])
+async def test_nested_wrappers_use_active_call_markers_async(
+    *, pipeline_entry: bool, inner_uses_call_markers: bool
+) -> None:
+    inner = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=True,
+        start_token="[" if inner_uses_call_markers else "⟪",
+        end_token="]" if inner_uses_call_markers else "⟫",
+    )
+    outer = SelectiveTextConverter(
+        sub_converter=inner, selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    prompt = "keep [test] after" if inner_uses_call_markers else "keep [⟪test⟫] after"
+    if pipeline_entry:
+        message = Message.from_prompt(prompt=prompt, role="user")
+        await PromptNormalizer(start_token="[", end_token="]").convert_values_async(
+            converter_configurations=[ConverterConfiguration(converters=[outer])], message=message
+        )
+        value = message.get_value()
+    else:
+        value = (await outer.convert_tokens_async(prompt=prompt, start_token="[", end_token="]")).output_text
+    expected = "keep [dGVzdA==] after" if inner_uses_call_markers else "keep [⟪dGVzdA==⟫] after"
+    assert value == expected
+
+
+async def test_concurrent_nested_wrappers_do_not_share_call_markers_async() -> None:
+    inner = SelectiveTextConverter(
+        sub_converter=Base64Converter(), selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    outer = SelectiveTextConverter(
+        sub_converter=inner, selection_strategy=TokenSelectionStrategy(), preserve_tokens=True
+    )
+    square, unicode = await asyncio.gather(
+        outer.convert_tokens_async(prompt="keep [⟪test⟫] after", start_token="[", end_token="]"),
+        outer.convert_tokens_async(prompt="keep ⟪⟪test⟫⟫ after"),
+    )
+    assert square.output_text == "keep [⟪dGVzdA==⟫] after"
+    assert unicode.output_text == "keep ⟪⟪dGVzdA==⟫⟫ after"
 
 
 @pytest.mark.usefixtures("patch_central_database")
