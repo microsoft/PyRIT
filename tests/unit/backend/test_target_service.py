@@ -297,7 +297,7 @@ class TestListTargetTypes:
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
-    async def test_types_preserve_all_registry_parameters(self) -> None:
+    async def test_types_preserve_registry_parameter_order_without_mutating_metadata(self) -> None:
         service = TargetService()
         result = await service.list_target_types_async()
         metadata_by_name = {
@@ -306,7 +306,16 @@ class TestListTargetTypes:
 
         assert {entry.target_type for entry in result.items} == set(metadata_by_name)
         for entry in result.items:
-            assert entry.parameters == list(metadata_by_name[entry.target_type].parameters)
+            registry_parameters = metadata_by_name[entry.target_type].parameters
+            assert [parameter.name for parameter in entry.parameters] == [
+                parameter.name for parameter in registry_parameters
+            ]
+
+        registry_openai = {
+            parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters
+        }
+        assert registry_openai["endpoint"].required is False
+        assert registry_openai["model_name"].required is False
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()

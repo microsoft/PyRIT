@@ -12,7 +12,7 @@ from pyrit.auth import (
     get_azure_async_token_provider,
     is_azure_ml_endpoint,
 )
-from pyrit.common import REQUIRED_VALUE, default_values, net_utility
+from pyrit.common import default_values, net_utility
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,
@@ -67,7 +67,7 @@ class AzureMLChatTarget(PromptTarget):
     def __init__(
         self,
         *,
-        endpoint: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        endpoint: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         model_name: str = "",
         max_new_tokens: int = 400,

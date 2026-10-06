@@ -11,7 +11,7 @@ from pyrit.auth import (
     get_default_azure_scope,
     is_azure_openai_endpoint,
 )
-from pyrit.common import REQUIRED_VALUE, default_values, net_utility
+from pyrit.common import default_values, net_utility
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -66,7 +66,7 @@ class PromptShieldTarget(PromptTarget):
     def __init__(
         self,
         *,
-        endpoint: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        endpoint: str | None = None,
         api_key: str | Callable[[], str] | None = None,
         api_version: str | None = "2024-09-01",
         field: PromptShieldEntryField | None = None,
