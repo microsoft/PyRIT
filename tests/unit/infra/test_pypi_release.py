@@ -7,7 +7,7 @@ import io
 import json
 import sys
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -37,6 +37,7 @@ def _resolve(*, metadata: object, override: str = "") -> str:
     lookup.assert_called_once()
     expected = f"https://pypi.org/pypi/pyrit/{override}/json" if override else "https://pypi.org/pypi/pyrit/json"
     assert lookup.call_args.args == (expected,)
+    assert lookup.call_args.kwargs == {"timeout": 30}
     return version
 
 
@@ -145,7 +146,8 @@ def test_non_yanked_sdist_is_a_published_distribution() -> None:
 
 @pytest.mark.parametrize("override", ["", "1.10.0"])
 @pytest.mark.parametrize(
-    "error", [URLError("unavailable"), HTTPError("https://pypi.org", 404, "Not Found", None, None)]
+    "error",
+    [URLError("unavailable"), HTTPError("https://pypi.org", 404, "Not Found", None, None), TimeoutError("timed out")],
 )
 def test_lookup_errors_propagate_without_fallback(*, override: str, error: OSError) -> None:
     with patch.object(select_pypi_version, "urlopen", side_effect=error) as lookup:
@@ -173,7 +175,7 @@ def test_cli_prints_only_the_resolved_version(*, capsys: pytest.CaptureFixture[s
     assert output.err == ""
 
 
-@pytest.mark.parametrize("error", [URLError("unavailable"), ValueError("invalid metadata")])
+@pytest.mark.parametrize("error", [URLError("unavailable"), ValueError("invalid metadata"), TimeoutError("timed out")])
 def test_cli_reports_errors_without_outputting_a_version(
     *, capsys: pytest.CaptureFixture[str], error: Exception
 ) -> None:
@@ -187,3 +189,24 @@ def test_cli_reports_errors_without_outputting_a_version(
     assert stopped.value.code == 1
     assert output.out == ""
     assert "::error::PyPI release selection failed:" in output.err
+
+
+@pytest.mark.parametrize("override", ["", "1.10.0"])
+def test_response_read_timeout_fails_without_outputting_a_version(
+    *, capsys: pytest.CaptureFixture[str], override: str
+) -> None:
+    response = MagicMock(spec=io.BytesIO)
+    response.__enter__.return_value = response
+    response.read.side_effect = TimeoutError("PyPI response read timed out")
+    with (
+        patch.object(sys, "argv", ["select_pypi_version.py", "--version", override]),
+        patch.object(select_pypi_version, "urlopen", return_value=response),
+        pytest.raises(SystemExit) as stopped,
+    ):
+        select_pypi_version.main()
+    output = capsys.readouterr()
+    assert stopped.value.code == 1
+    assert output.out == ""
+    assert "::error::PyPI release selection failed: PyPI response read timed out" in output.err
+    response.read.assert_called_once()
+    response.__exit__.assert_called_once()

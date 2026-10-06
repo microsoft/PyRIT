@@ -46,12 +46,12 @@ checkout. PyPI Docker builds preserve and validate the installed wheel's stamp, 
 replace it with the Docker repository commit. Pre-guarded PyPI wheels intentionally
 fail this validation; use the coordinated release, not an older fallback.
 
-The Docker workflow automatically resolves PyPI's latest stable, non-yanked release
-at execution time and tests that exact version. No repository variable is required;
-`PYRIT_PYPI_VERSION` is no longer used. To validate an explicit published release,
-including a prerelease, pass `pypiVersion` when manually running the workflow. Both
-paths require valid PyPI metadata and non-yanked published distributions, with no
-older-version fallback.
+Manually running the Docker workflow automatically resolves PyPI's latest stable,
+non-yanked release at execution time and tests that exact version. To validate an
+explicit published release, including a prerelease, pass `pypiVersion`. Both paths
+require valid PyPI metadata and non-yanked published distributions, with no
+older-version fallback. PyPI checks are temporarily manual-only; after publishing
+and validating `1.2.0`, restore automatic checks on `main` as described in step 10.
 
 Publish a coordinated wheel/sdist before expecting the PyPI image path to pass.
 If the latest release predates compatibility stamping, selection still identifies
@@ -463,6 +463,19 @@ where the changes are:
 
 The PR should be made from your fork and should be a different branch than the releases branch you created earlier,
 named after the next development version, for example `1.2.0.dev0`.
+
+### Restore automatic PyPI Docker checks after 1.2.0
+
+Complete [#3007](https://github.com/microsoft/PyRIT/issues/3007) after publishing
+`1.2.0`. First run `docker_build` manually with `pypiVersion=1.2.0`, then without an
+override to exercise latest-release selection. Confirm the published package has
+matching Python/frontend stamps and that the production image, import, GUI, and
+Jupyter checks pass without relaxing compatibility validation.
+
+Restore `main`-push eligibility on `build-and-test-pypi` and all four `pypi-*-check`
+gates while retaining manual dispatches. Update the event-condition tests and
+temporary manual-only documentation, then verify the restored checks on `main`
+before closing the issue.
 
 ### Update the documentation site versions
 

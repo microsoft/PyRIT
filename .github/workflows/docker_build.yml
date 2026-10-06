@@ -108,7 +108,8 @@ jobs:
   build-and-test-pypi:
     name: Build and test (PyPI)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # Restore main-push checks after validating 1.2.0: https://github.com/microsoft/PyRIT/issues/3007
+    if: github.event_name == 'workflow_dispatch'
     outputs:
       production: ${{ steps.production.outcome }}
       import: ${{ steps.import.outcome }}
@@ -119,6 +120,7 @@ jobs:
 
       - name: Select PyPI release
         id: pypi-version
+        timeout-minutes: 5
         env:
           PYRIT_PYPI_VERSION: ${{ inputs.pypiVersion }}
         shell: bash
@@ -215,7 +217,7 @@ jobs:
   pypi-production-check:
     name: Build Production (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results
@@ -233,7 +235,7 @@ jobs:
   pypi-import-check:
     name: Test Import (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results
@@ -251,7 +253,7 @@ jobs:
   pypi-gui-check:
     name: Test GUI (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results
@@ -269,7 +271,7 @@ jobs:
   pypi-jupyter-check:
     name: Test Jupyter (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results

@@ -61,7 +61,7 @@ def resolve_pypi_version(version: str = "") -> str:
     if version:
         _validate_version(version)
     url = f"https://pypi.org/pypi/pyrit/{version}/json" if version else "https://pypi.org/pypi/pyrit/json"
-    with urlopen(url) as response:
+    with urlopen(url, timeout=30) as response:
         metadata = json.load(response)
     info = metadata.get("info") if isinstance(metadata, dict) else None
     if not isinstance(info, dict) or not isinstance(info.get("name"), str) or info["name"].lower() != "pyrit":
