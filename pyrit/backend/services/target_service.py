@@ -180,9 +180,7 @@ class TargetService:
             *(_ENV_BACKED_REQUIRED_PARAMETERS.get(base.__name__, frozenset()) for base in target_cls.__mro__)
         )
         return [
-            parameter.model_copy(update={"default": REQUIRED_VALUE})
-            if parameter.name in required_names
-            else parameter
+            parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
             for parameter in parameters
         ]
 

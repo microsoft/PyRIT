@@ -311,9 +311,7 @@ class TestListTargetTypes:
                 parameter.name for parameter in registry_parameters
             ]
 
-        registry_openai = {
-            parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters
-        }
+        registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
         assert registry_openai["endpoint"].required is False
         assert registry_openai["model_name"].required is False
 
