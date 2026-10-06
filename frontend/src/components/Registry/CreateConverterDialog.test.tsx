@@ -337,6 +337,50 @@ describe('CreateConverterDialog', () => {
     },
   )
 
+  it('sends a credential parameter as the name of a server environment variable', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'azure_speech_region', type_name: 'str | None', required: false, default: null },
+      { name: 'azure_speech_key', type_name: 'str | None', required: false, default: null, sensitive: true },
+    ], 'AzureSpeechTextToAudioConverter')
+    renderDialog()
+    await selectConverterType('AzureSpeechTextToAudioConverter')
+
+    await user.type(screen.getByRole('textbox', { name: 'azure_speech_region' }), 'westus')
+    await user.type(
+      screen.getByRole('textbox', { name: 'azure_speech_key environment variable' }),
+      'AZURE_SPEECH_KEY',
+    )
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'AzureSpeechTextToAudioConverter',
+      type: 'AzureSpeechTextToAudioConverter',
+      params: { azure_speech_region: 'westus' },
+      credentials: { azure_speech_key: { env_var: 'AZURE_SPEECH_KEY' } },
+    })
+  })
+
+  it('does not send a credential value typed where a variable name belongs', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'azure_speech_key', type_name: 'str | None', required: false, default: null, sensitive: true },
+    ], 'AzureSpeechTextToAudioConverter')
+    renderDialog()
+    await selectConverterType('AzureSpeechTextToAudioConverter')
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'azure_speech_key environment variable' }),
+      'sk-live-secret',
+    )
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(
+      screen.getByText('Use letters, digits, and underscores, not starting with a digit.'),
+    ).toBeInTheDocument()
+    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
+  })
+
   it('selects a registered target for a target reference parameter', async () => {
     mockedConvertersApi.listConverterTypes.mockResolvedValue({
       items: [

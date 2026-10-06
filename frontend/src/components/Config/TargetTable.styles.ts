@@ -119,7 +119,12 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
   actionCell: {
-    width: '100px',
+    width: '170px',
+  },
+  actionButtons: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXS,
   },
   rowAction: {
     ...mobileTouchTarget,

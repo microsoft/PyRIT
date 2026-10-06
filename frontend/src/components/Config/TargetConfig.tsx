@@ -1,16 +1,26 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   tokens,
   Text,
   Button,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Link,
+  MessageBar,
+  MessageBarBody,
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import UnrestorableInstances from '@/components/Registry/UnrestorableInstances'
 import { useRuntime } from '@/hooks/useRuntime'
+import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import { listRegisteredTargets } from '@/services/targetRegistry'
-import type { TargetInstance } from '@/types'
+import { listTargetRegistry } from '@/services/targetRegistry'
+import type { TargetInstance, UnrestorableInstance } from '@/types'
 import CreateTargetDialog from './CreateTargetDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
@@ -23,6 +33,12 @@ interface TargetConfigProps {
   onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
+/** A saved target the user asked to delete, with the version it was read at. */
+interface SavedTargetDeletion {
+  name: string
+  version: string
+}
+
 export default function TargetConfig({
   defaultObjectiveTarget,
   defaultAdversarialTarget,
@@ -33,9 +49,18 @@ export default function TargetConfig({
   const { generation, ready } = useRuntime()
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
+  const [unrestorable, setUnrestorable] = useState<UnrestorableInstance[]>([])
+  const [restoreError, setRestoreError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [targetToDelete, setTargetToDelete] = useState<SavedTargetDeletion | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  // Deleting a target unmounts the control that opened the confirmation, so
+  // focus moves to New Target once the render that closes the dialog commits.
+  const [focusNewTargetRequest, setFocusNewTargetRequest] = useState(0)
+  const newTargetRef = useRef<HTMLButtonElement>(null)
   // Counter used to re-trigger the fetch effect from event handlers (Refresh,
   // dialog close) without invoking setState synchronously in the effect body.
   const [refetchCount, setRefetchCount] = useState(0)
@@ -50,12 +75,14 @@ export default function TargetConfig({
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const items = await listRegisteredTargets()
+        const snapshot = await listTargetRegistry()
         if (cancelled) return
-        setTargets(items)
+        setTargets(snapshot.targets)
+        setUnrestorable(snapshot.unrestorable)
+        setRestoreError(snapshot.restoreError)
         setError(null)
         setLoading(false)
-        onTargetsLoaded?.(items)
+        onTargetsLoaded?.(snapshot.targets)
       } catch (err) {
         if (cancelled) return
         if (n < maxRetries) {
@@ -74,6 +101,10 @@ export default function TargetConfig({
     }
   }, [refetchCount, generation, ready, onTargetsLoaded])
 
+  useEffect(() => {
+    if (focusNewTargetRequest > 0) newTargetRef.current?.focus()
+  }, [focusNewTargetRequest])
+
   const fetchTargets = useCallback(() => {
     setLoading(true)
     setError(null)
@@ -84,6 +115,27 @@ export default function TargetConfig({
     setDialogOpen(false)
     fetchTargets()
   }, [fetchTargets])
+
+  const requestDeletion = (name: string, version: string) => {
+    setDeleteError(null)
+    setTargetToDelete({ name, version })
+  }
+
+  const deleteTarget = async () => {
+    if (!targetToDelete) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await targetsApi.deleteTarget(targetToDelete.name, targetToDelete.version)
+      setTargetToDelete(null)
+      setFocusNewTargetRequest((count) => count + 1)
+      fetchTargets()
+    } catch (err) {
+      setDeleteError(toApiError(err).detail)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className={styles.root} data-testid="target-config">
@@ -105,6 +157,7 @@ export default function TargetConfig({
             Refresh
           </Button>
           <Button
+            ref={newTargetRef}
             className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
@@ -125,6 +178,17 @@ export default function TargetConfig({
         <div className={styles.errorState}>
           <Text>Error: {error}</Text>
         </div>
+      )}
+
+      {!loading && !error && (
+        <UnrestorableInstances
+          noun="target"
+          instances={unrestorable}
+          restoreError={restoreError}
+          onDelete={(_event, instance) => {
+            if (instance.version) requestDeletion(instance.name, instance.version)
+          }}
+        />
       )}
 
       {!loading && !error && targets.length === 0 && (
@@ -163,6 +227,9 @@ export default function TargetConfig({
           defaultAdversarialTarget={defaultAdversarialTarget}
           onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
+          onDeleteTarget={(target) => {
+            if (target.version) requestDeletion(target.target_registry_name, target.version)
+          }}
         />
       )}
 
@@ -172,6 +239,35 @@ export default function TargetConfig({
         onCreated={handleTargetCreated}
         existingTargets={targets}
       />
+
+      <Dialog
+        open={targetToDelete !== null}
+        onOpenChange={(_, data) => { if (!data.open && !deleting) setTargetToDelete(null) }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Delete saved target?</DialogTitle>
+            <DialogContent className={styles.deleteDialogContent}>
+              {deleteError && (
+                <MessageBar intent="error">
+                  <MessageBarBody>{deleteError}</MessageBarBody>
+                </MessageBar>
+              )}
+              <Text>
+                {targetToDelete
+                  ? `Delete "${targetToDelete.name}"? It is removed now and is not restored when PyRIT restarts.`
+                  : ''}
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button disabled={deleting} onClick={() => setTargetToDelete(null)}>Cancel</Button>
+              <Button appearance="primary" disabled={deleting} onClick={() => void deleteTarget()}>
+                {deleting ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   )
 }

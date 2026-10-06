@@ -33,7 +33,8 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance, TargetTypeEntry } from '@/types'
+import type { Parameter, TargetInstance, TargetTypeEntry } from '@/types'
+import { environmentVariableError } from '@/utils/credentialReference'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -90,6 +91,22 @@ const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = FALLBACK_TARGET_TYPES.ma
 type AuthMode = 'api_key' | 'identity'
 type TypeMetadataStatus = 'loading' | 'loaded' | 'error'
 
+// Mirrors REGISTRY_INSTANCE_NAME_PATTERN in pyrit/backend/models/common.py.
+const TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const TARGET_NAME_RULE = 'Use up to 64 letters, digits, dots, dashes, or underscores, starting with a letter or digit.'
+const CREDENTIAL_VARIABLE_HINT =
+  'Name of a server environment variable that holds the value. Only the name is saved, never the value. '
+  + 'Naming a variable requires administrator access.'
+
+interface TargetFieldErrors {
+  name?: string
+  targetType?: string
+  endpoint?: string
+  modelName?: string
+  underlyingModel?: string
+  apiKey?: string
+}
+
 function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
@@ -125,6 +142,41 @@ function isParameterValueSet(value: ParameterFormValue | undefined): boolean {
     return value.length > 0
   }
   return value !== undefined && value.type.length > 0
+}
+
+function formText(value: ParameterFormValue | undefined): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+interface CredentialVariableFieldProps {
+  parameter: Parameter
+  value: ParameterFormValue
+  disabled: boolean
+  label: string
+  extraHint?: string
+  onChange: (name: string, value: ParameterFormValue) => void
+}
+
+/** A credential parameter is set by naming the server environment variable that holds it, never by its value. */
+function CredentialVariableField({ parameter, value, disabled, label, extraHint, onChange }: CredentialVariableFieldProps) {
+  const variableError = environmentVariableError(formText(value))
+  return (
+    <Field
+      label={`${label} environment variable`}
+      hint={extraHint ?? [parameter.description, CREDENTIAL_VARIABLE_HINT].filter(Boolean).join(' ')}
+      required={parameter.required}
+      validationMessage={variableError ?? undefined}
+      validationState={variableError ? 'error' : 'none'}
+    >
+      <Input
+        value={typeof value === 'string' ? value : ''}
+        disabled={disabled}
+        placeholder="e.g. TEAM_TARGET_SECRET"
+        data-testid={`target-param-${parameter.name}`}
+        onChange={(_, data) => onChange(parameter.name, data.value)}
+      />
+    </Field>
+  )
 }
 
 // Mirrors backend's hostname-suffix check (list in target_service.py).
@@ -220,23 +272,18 @@ function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
 
 export default function CreateTargetDialog({ open, onClose, onCreated, existingTargets }: CreateTargetDialogProps) {
   const styles = useCreateTargetDialogStyles()
+  const [targetName, setTargetName] = useState('')
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [modelName, setModelName] = useState('')
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('api_key')
-  const [apiKey, setApiKey] = useState('')
+  const [apiKeyVariable, setApiKeyVariable] = useState('')
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<{
-    targetType?: string
-    endpoint?: string
-    modelName?: string
-    underlyingModel?: string
-    apiKey?: string
-  }>({})
+  const [fieldErrors, setFieldErrors] = useState<TargetFieldErrors>({})
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -355,6 +402,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     return null
   })()
   const showIdentityEndpointError = identityEndpointError !== null
+  const nameFormatError = targetName && !TARGET_NAME_PATTERN.test(targetName) ? TARGET_NAME_RULE : null
+  const nameError = fieldErrors.name ?? nameFormatError
+  const apiKeyVariableError = isIdentity || !hasApiKeyField ? null : environmentVariableError(apiKeyVariable)
+  // Credential parameters are sent as the names of the environment variables that hold them.
+  const credentialParameters = metadataDrivenParameters.filter((parameter) => parameter.sensitive)
+  const credentialVariableInvalid = !isRoundRobin && credentialParameters.some(
+    (parameter) => environmentVariableError(formText(parameterValues[parameter.name])) !== null,
+  )
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -432,13 +487,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }
 
   const resetForm = () => {
+    setTargetName('')
     setTargetType('')
     setEndpoint('')
     setModelName('')
     setHasDifferentUnderlying(false)
     setUnderlyingModel('')
     setAuthMode('api_key')
-    setApiKey('')
+    setApiKeyVariable('')
     setParameterValues({})
     setError(null)
     setFieldErrors({})
@@ -451,6 +507,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }
 
   const handleSubmit = async () => {
+    if (!targetName || nameFormatError) {
+      setFieldErrors((current) => ({ ...current, name: targetName ? undefined : 'Please provide a name' }))
+      return
+    }
+
     // For RoundRobinTarget, validation is different: we need ≥2 selected targets, not endpoint
     if (isRoundRobin) {
       if (selectedInnerTargets.length < 2) {
@@ -475,6 +536,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
       try {
         await targetsApi.createTarget({
+          name: targetName,
           type: 'RoundRobinTarget',
           params: {
             targets: selectedInnerTargets.map((t) => t.registryName),
@@ -493,27 +555,34 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       return
     }
 
-    const errors: {
-      targetType?: string
-      endpoint?: string
-      modelName?: string
-      underlyingModel?: string
-      apiKey?: string
-    } = {}
+    const errors: TargetFieldErrors = {}
     if (!targetType) errors.targetType = 'Please select a target type'
     if (endpointRequired && !endpoint) errors.endpoint = 'Please provide an endpoint URL'
     if (modelNameRequired && !modelName) errors.modelName = 'Please provide a model name'
     if (underlyingModelRequired && !underlyingModel) {
       errors.underlyingModel = 'Please provide the underlying model'
     }
-    if (apiKeyRequired && !apiKey) errors.apiKey = 'Please provide an API key'
+    if (apiKeyRequired && !apiKeyVariable) errors.apiKey = 'Please name the environment variable that holds the API key'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return
     }
     setFieldErrors({})
+    if (apiKeyVariableError || credentialVariableInvalid) return
+    const missingCredential = credentialParameters.find(
+      (parameter) => parameter.required
+        && !(isIdentity && parameter.identity_conflicting)
+        && !formText(parameterValues[parameter.name]),
+    )
+    if (missingCredential) {
+      setError(`${missingCredential.name} is required.`)
+      return
+    }
 
-    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
+    const metadataParams = buildParametersFromForm(
+      metadataDrivenParameters.filter((parameter) => !parameter.sensitive),
+      parameterValues,
+    )
     if (!metadataParams.ok) {
       setError(metadataParams.error)
       return
@@ -534,7 +603,15 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
+      // Credentials never leave the server: only the variables that hold them are sent and saved.
+      const credentials: Record<string, { env_var: string }> = {}
+      if (hasApiKeyField && !isIdentity && apiKeyVariable) credentials.api_key = { env_var: apiKeyVariable }
+      for (const parameter of credentialParameters) {
+        const variable = formText(parameterValues[parameter.name])
+        if (variable && !(isIdentity && parameter.identity_conflicting)) {
+          credentials[parameter.name] = { env_var: variable }
+        }
+      }
 
       if (
         (underlyingModelRequired || hasDifferentUnderlying)
@@ -545,8 +622,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
 
       await targetsApi.createTarget({
+        name: targetName,
         type: targetType,
         params,
+        ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
       })
 
@@ -559,6 +638,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const renderMetadataParameter = (parameter: Parameter) => {
+    const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
+    const fieldProps = {
+      parameter,
+      value: parameterValues[parameter.name] ?? '',
+      disabled: submitting || identityConflict,
+      label: getParameterLabel(parameter.name),
+      extraHint: identityConflict ? 'Ignored with Identity-based authentication.' : undefined,
+      onChange: (name: string, value: ParameterFormValue) => setParameterValues((current) => ({
+        ...current,
+        [name]: value,
+      })),
+    }
+    return parameter.sensitive
+      ? <CredentialVariableField key={parameter.name} {...fieldProps} />
+      : <ParameterField key={parameter.name} {...fieldProps} showDefaultHint allowEmptyList testIdPrefix="target-param" />
   }
 
   return (
@@ -686,6 +783,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   )}
                 </section>
               )}
+
+              <Field
+                className={styles.formField}
+                label="Name"
+                hint="Unique registry name. The target is saved under this name and restored when PyRIT restarts."
+                required
+                validationMessage={nameError ?? undefined}
+                validationState={nameError ? 'error' : 'none'}
+              >
+                <Input
+                  placeholder="e.g. team-gpt-4o"
+                  value={targetName}
+                  onChange={(_, data) => {
+                    setTargetName(data.value)
+                    setFieldErrors((current) => ({ ...current, name: undefined }))
+                  }}
+                />
+              </Field>
 
               {/* === RoundRobinTarget form: select existing targets === */}
               {isRoundRobin && (
@@ -873,28 +988,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     </Field>
                   )}
 
-                  {requiredMetadataParameters.map((parameter) => {
-                    const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
-                    return (
-                      <ParameterField
-                        key={parameter.name}
-                        parameter={parameter}
-                        value={parameterValues[parameter.name] ?? ''}
-                        disabled={submitting || identityConflict}
-                        label={getParameterLabel(parameter.name)}
-                        showDefaultHint
-                        allowEmptyList
-                        testIdPrefix="target-param"
-                        extraHint={identityConflict
-                          ? 'Ignored with Identity-based authentication.'
-                          : undefined}
-                        onChange={(name, value) => setParameterValues((current) => ({
-                          ...current,
-                          [name]: value,
-                        }))}
-                      />
-                    )
-                  })}
+                  {requiredMetadataParameters.map(renderMetadataParameter)}
 
                   {showAuthField && (
                     <Field label="Authentication">
@@ -904,7 +998,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           const next = data.value as AuthMode
                           setAuthMode(next)
                           if (next === 'identity') {
-                            setApiKey('')
+                            setApiKeyVariable('')
                             setParameterValues((current) => {
                               const cleared = { ...current }
                               for (const parameter of metadataDrivenParameters) {
@@ -931,17 +1025,22 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
                   {hasApiKeyField && !isIdentity && (
                     <Field
-                      label="API Key"
-                      hint={apiKeyParameter?.description || undefined}
+                      label="API key environment variable"
+                      hint={[
+                        apiKeyParameter?.description,
+                        'Name of a server environment variable that holds the key, such as OPENAI_CHAT_KEY.',
+                        'Only the name is saved, never the key.',
+                        apiKeyRequired ? null : 'Leave blank to use the target\'s default variable.',
+                        'Naming a variable requires administrator access.',
+                      ].filter(Boolean).join(' ')}
                       required={apiKeyRequired}
-                      validationMessage={fieldErrors.apiKey}
-                      validationState={fieldErrors.apiKey ? 'error' : 'none'}
+                      validationMessage={fieldErrors.apiKey ?? apiKeyVariableError ?? undefined}
+                      validationState={fieldErrors.apiKey || apiKeyVariableError ? 'error' : 'none'}
                     >
                       <Input
-                        type="password"
-                        placeholder="API key (stored in memory only)"
-                        value={apiKey}
-                        onChange={(_, data) => setApiKey(data.value)}
+                        placeholder="e.g. OPENAI_CHAT_KEY"
+                        value={apiKeyVariable}
+                        onChange={(_, data) => setApiKeyVariable(data.value)}
                       />
                     </Field>
                   )}
@@ -952,28 +1051,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         Advanced settings
                       </summary>
                       <div className={styles.advancedSettingsFields}>
-                        {optionalMetadataParameters.map((parameter) => {
-                          const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
-                          return (
-                            <ParameterField
-                              key={parameter.name}
-                              parameter={parameter}
-                              value={parameterValues[parameter.name] ?? ''}
-                              disabled={submitting || identityConflict}
-                              label={getParameterLabel(parameter.name)}
-                              showDefaultHint
-                              allowEmptyList
-                              testIdPrefix="target-param"
-                              extraHint={identityConflict
-                                ? 'Ignored with Identity-based authentication.'
-                                : undefined}
-                              onChange={(name, value) => setParameterValues((current) => ({
-                                ...current,
-                                [name]: value,
-                              }))}
-                            />
-                          )
-                        })}
+                        {optionalMetadataParameters.map(renderMetadataParameter)}
                         {customFunctionsReason && (
                           <MessageBar intent="info">
                             <MessageBarBody>
@@ -1014,13 +1092,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               disabled={
                 submitting ||
                 !targetType ||
+                !targetName ||
+                nameFormatError !== null ||
+                apiKeyVariableError !== null ||
+                credentialVariableInvalid ||
                 (isRoundRobin
                   ? selectedInnerTargets.length < 2 ||
                     selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
                   : (endpointRequired && !endpoint) || showIdentityEndpointError)
                   || (modelNameRequired && !modelName)
                   || (underlyingModelRequired && !underlyingModel)
-                  || (apiKeyRequired && !apiKey)
+                  || (apiKeyRequired && !apiKeyVariable)
                   || requiredMetadataParameterMissing
               }
             >

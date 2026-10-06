@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import {
@@ -70,7 +71,7 @@ async function createTarget(
 ): Promise<string> {
   const resp = await request.post("/api/targets", {
     headers: compatibilityHeaders(),
-    data: { type: targetType, params, auth_mode: authMode },
+    data: { name: `e2e-flow-${randomUUID()}`, type: targetType, params, auth_mode: authMode },
   });
   expect(resp.ok()).toBeTruthy();
   const body = await resp.json();
@@ -261,7 +262,6 @@ const INPUT_IMAGE_BASE64 = readFileSync(
 
 const DUMMY_OPENAI_PARAMS = {
   endpoint: "https://e2e-dummy.openai.azure.com",
-  api_key: "e2e-dummy-key",
   model_name: "e2e-dummy-model",
 };
 
@@ -271,7 +271,7 @@ interface TargetVariant {
   label: string;
   /** Target class name. */
   targetType: string;
-  /** Constructor kwargs for seeded mode (dummy credentials). */
+  /** Constructor kwargs for seeded mode (dummy endpoint; keys are never sent). */
   targetParams: Record<string, unknown>;
   /** Environment variables used to configure the target in live mode. */
   liveEnvironment: {

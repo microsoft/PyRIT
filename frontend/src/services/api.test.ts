@@ -363,6 +363,14 @@ describe("api service", () => {
       expect(result.target_registry_name).toBe("new-target");
     });
 
+    it("should delete an encoded saved target with its version", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+
+      await expect(targetsApi.deleteTarget("team/chat", "v1")).resolves.toBeUndefined();
+
+      expect(apiClient.delete).toHaveBeenCalledWith("/targets/team%2Fchat", { params: { version: "v1" } });
+    });
+
     it("should handle list targets error", async () => {
       const error = new Error("Server error");
       (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
@@ -420,6 +428,14 @@ describe("api service", () => {
       await expect(convertersApi.deleteConverter("custom/name")).resolves.toBeUndefined();
 
       expect(apiClient.delete).toHaveBeenCalledWith("/converters/custom%2Fname");
+    });
+
+    it("should delete a saved converter with the version it was read at", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+
+      await convertersApi.deleteConverter("custom/name", "v1");
+
+      expect(apiClient.delete).toHaveBeenCalledWith("/converters/custom%2Fname", { params: { version: "v1" } });
     });
   });
 

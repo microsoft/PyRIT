@@ -492,6 +492,9 @@ async function selectConverter(page: Page, converterName: string) {
 // Tests
 // ---------------------------------------------------------------------------
 
+// Saved converters are deleted with the version their create returned.
+const converterVersions = new Map<string, string>();
+
 async function registerConverter(
   request: APIRequestContext,
   type: string,
@@ -500,6 +503,7 @@ async function registerConverter(
   const name = `e2e-${randomUUID()}`;
   const response = await request.post("/api/converters", { headers: compatibilityHeaders(), data: { name, type, params } });
   expect(response.status()).toBe(201);
+  converterVersions.set(name, (await response.json()).version);
   return name;
 }
 
@@ -558,6 +562,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     for (const converterId of registeredConverters) {
       const response = await request.delete(`/api/converters/${encodeURIComponent(converterId)}`, {
         headers: compatibilityHeaders(),
+        params: { version: converterVersions.get(converterId) ?? "" },
       });
       expect(response.status()).toBe(204);
     }

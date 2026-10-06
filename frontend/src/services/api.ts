@@ -253,6 +253,11 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+
+  /** Deletes a saved target; `version` is the one returned when the target was read. */
+  deleteTarget: async (targetRegistryName: string, version: string): Promise<void> => {
+    await apiClient.delete(`/targets/${encodeURIComponent(targetRegistryName)}`, { params: { version } })
+  },
 }
 
 export const convertersApi = {
@@ -276,8 +281,14 @@ export const convertersApi = {
     return response.data
   },
 
-  deleteConverter: async (converterId: string): Promise<void> => {
-    await apiClient.delete(`/converters/${encodeURIComponent(converterId)}`)
+  /** Removes a converter; a saved converter also needs the `version` returned when it was read. */
+  deleteConverter: async (converterId: string, version?: string | null): Promise<void> => {
+    const path = `/converters/${encodeURIComponent(converterId)}`
+    if (version) {
+      await apiClient.delete(path, { params: { version } })
+    } else {
+      await apiClient.delete(path)
+    }
   },
 
   previewConversion: async (request: ConverterPreviewRequest): Promise<ConverterPreviewResponse> => {

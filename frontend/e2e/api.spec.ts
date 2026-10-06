@@ -69,15 +69,16 @@ test.describe("Targets API", () => {
     expect(Array.isArray(data.items)).toBe(true);
   });
 
-  test("should create and retrieve a target @seeded", async ({ request }) => {
+  test("should create, save, and retrieve a target @seeded", async ({ request }) => {
     test.setTimeout(90_000);
+    // Requests never carry a key: the backend reads the target's default key variable or uses Entra ID.
     const createPayload = {
+      name: `e2e-api-${Date.now()}`,
       type: "OpenAIChatTarget",
       auth_mode: "api_key",
       params: {
         endpoint: "https://e2e-test.openai.azure.com",
         model_name: "gpt-4o-e2e-test",
-        api_key: "e2e-test-key",
       },
     };
 
@@ -89,8 +90,9 @@ test.describe("Targets API", () => {
     expect(createResp.ok()).toBe(true);
 
     const created = await createResp.json();
-    expect(created).toHaveProperty("target_registry_name");
+    expect(created.target_registry_name).toBe(createPayload.name);
     expect(created.identifier.class_name).toBe("OpenAIChatTarget");
+    expect(created.version).toEqual(expect.any(String));
 
     // Retrieve via list and check it's there
     const listResp = await request.get("/api/targets?limit=200", { headers: compatibilityHeaders() });

@@ -231,6 +231,7 @@ const TARGET_TYPES: TargetTypeListResponse = {
           type_name: "str",
           required: true,
           default: null,
+          sensitive: true,
           multiline: true,
           description: "The HTTP request template containing the prompt placeholder.",
         },
@@ -364,6 +365,16 @@ async function selectTargetType(value: string): Promise<void> {
       TARGET_DISPLAY_NAMES[value]
     );
   });
+}
+
+// The Name input every submission needs. Uses fireEvent.change, like the
+// endpoint fields, because userEvent.type is slow on FluentUI Input under jsdom.
+const TEST_TARGET_NAME = "test-target";
+const NAME_PLACEHOLDER = "e.g. team-gpt-4o";
+const API_KEY_VARIABLE_PLACEHOLDER = "e.g. OPENAI_CHAT_KEY";
+
+function fillTargetName(name: string = TEST_TARGET_NAME): void {
+  fireEvent.change(screen.getByPlaceholderText(NAME_PLACEHOLDER), { target: { value: name } });
 }
 
 // The target type fetch mock (see beforeEach) resolves on mount, and its
@@ -652,7 +663,7 @@ describe("CreateTargetDialog", () => {
       screen.queryByRole("radio", { name: /Identity-based/ })
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByPlaceholderText("API key (stored in memory only)")
+      screen.queryByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER)
     ).not.toBeInTheDocument();
 
     // Selecting an identity-capable type should reveal the Authentication field.
@@ -693,6 +704,7 @@ describe("CreateTargetDialog", () => {
 
     // Select target type
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     // Fill the endpoint & model names
     const endpointInput = screen.getByPlaceholderText(
@@ -708,6 +720,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIChatTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -734,6 +747,7 @@ describe("CreateTargetDialog", () => {
 
     // Select target type
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     // Fill endpoint & model names
     const endpointInput = screen.getByPlaceholderText(
@@ -756,6 +770,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIChatTarget",
         params: {
           endpoint: "https://api.azure.com",
@@ -782,6 +797,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -797,6 +813,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIChatTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -820,6 +837,7 @@ describe("CreateTargetDialog", () => {
 
     // Select target type
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     // Fill endpoint
     const endpointInput = screen.getByPlaceholderText(
@@ -835,7 +853,7 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should include API key in params when provided", async () => {
+  it("should send the API key environment variable as a credential reference, never a key", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "openai_chat_keyed",
@@ -850,6 +868,7 @@ describe("CreateTargetDialog", () => {
 
     // Select target type
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     // Fill endpoint — use fireEvent.change because userEvent.type truncates
     // URLs containing periods in FluentUI Input under jsdom.
@@ -858,22 +877,62 @@ describe("CreateTargetDialog", () => {
     );
     fireEvent.change(endpointInput, { target: { value: "https://api.openai.com" } });
 
-    // Fill API key — use fireEvent.change for the same reason as endpoint input.
-    fireEvent.change(screen.getByPlaceholderText("API key (stored in memory only)"), {
-      target: { value: "sk-test-key-123" },
+    fireEvent.change(screen.getByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER), {
+      target: { value: "TEAM_OPENAI_KEY" },
     });
 
     await user.click(screen.getByText("Create Target"));
 
     await waitFor(() => {
-      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith(
-        expect.objectContaining({
-          params: expect.objectContaining({
-            api_key: "sk-test-key-123",
-          }),
-        })
-      );
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
     });
+    const [request] = mockedTargetsApi.createTarget.mock.calls[0];
+    expect(request.credentials).toEqual({ api_key: { env_var: "TEAM_OPENAI_KEY" } });
+    expect(request.params).not.toHaveProperty("api_key");
+  });
+
+  it("should reject an API key variable that is not an environment variable name", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER), {
+      target: { value: "sk-pasted-secret" },
+    });
+
+    expect(screen.getByText(/letters, digits, and underscores/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
+    fireEvent.submit(screen.getByTestId("create-target-form"));
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
+  it("should require a valid name before creating a target", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
+
+    fireEvent.submit(screen.getByTestId("create-target-form"));
+    expect(await screen.findByText("Please provide a name")).toBeInTheDocument();
+
+    fillTargetName("has spaces");
+    expect(screen.getByText(/up to 64 letters, digits, dots, dashes, or underscores/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
   });
 
   it("should display supported target initializer guidance", async () => {
@@ -920,6 +979,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
     await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
 
     // Submit via form (bypass disabled button by submitting the form directly)
@@ -945,6 +1005,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -974,6 +1035,7 @@ describe("CreateTargetDialog", () => {
 
     // Select AzureMLChatTarget type
     await selectTargetType("AzureMLChatTarget");
+    fillTargetName();
 
     // Fill endpoint
     const endpointInput = screen.getByPlaceholderText(
@@ -992,6 +1054,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "AzureMLChatTarget",
         params: {
           endpoint: "https://my-llama.eastus.inference.ml.azure.com/score",
@@ -1056,6 +1119,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("AzureMLChatTarget");
+    fillTargetName();
 
     // Fill endpoint — use fireEvent.change because userEvent.type truncates
     // URLs containing periods in FluentUI Input under jsdom.
@@ -1085,6 +1149,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "AzureMLChatTarget",
         params: {
           endpoint: "https://my-model.eastus.inference.ml.azure.com/score",
@@ -1112,6 +1177,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
     await user.click(screen.getByText("Advanced settings"));
 
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
@@ -1130,6 +1196,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIChatTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -1154,6 +1221,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIResponseTarget");
+    fillTargetName();
     await user.click(screen.getByText("Advanced settings"));
 
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
@@ -1172,6 +1240,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIResponseTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -1196,6 +1265,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAICompletionTarget");
+    fillTargetName();
     await user.click(screen.getByText("Advanced settings"));
 
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
@@ -1209,6 +1279,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAICompletionTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -1232,6 +1303,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAICompletionTarget");
+    fillTargetName();
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
       target: { value: "https://api.openai.com" },
     });
@@ -1241,6 +1313,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAICompletionTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -1264,6 +1337,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
       target: { value: "https://api.openai.com" },
     });
@@ -1280,6 +1354,7 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIChatTarget",
         params: {
           endpoint: "https://api.openai.com",
@@ -1303,6 +1378,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
     await user.click(screen.getByText("Advanced settings"));
 
     const extraBody = screen.getByLabelText("Extra Body Parameters");
@@ -1358,20 +1434,17 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("HTTPTarget");
+    fillTargetName();
 
     expect(screen.queryByLabelText("Endpoint URL")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER)).not.toBeInTheDocument();
     expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
 
-    // A real raw HTTP request template needs actual line breaks between the
-    // request line, headers, and body — the backend parser splits on real
-    // newlines, not on literal "\r\n" characters. The http_request field
-    // must render as a multiline control (Textarea) for this to be entered.
-    const httpRequestTemplate = "POST /chat HTTP/1.1\nHost: example.com\nContent-Type: application/json\n\n{\"message\": \"{PROMPT}\"}";
-    const httpRequestField = screen.getByLabelText(/Http Request/);
-    expect(httpRequestField.tagName).toBe("TEXTAREA");
-    fireEvent.change(httpRequestField, {
-      target: { value: httpRequestTemplate },
+    // The raw request template commonly carries an Authorization or Cookie
+    // header, so it is a credential: the form names the server environment
+    // variable that holds it instead of taking the template itself.
+    fireEvent.change(screen.getByLabelText(/Http Request environment variable/), {
+      target: { value: "RAW_HTTP_REQUEST" },
     });
 
     expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
@@ -1379,10 +1452,10 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "HTTPTarget",
-        params: {
-          http_request: httpRequestTemplate,
-        },
+        params: {},
+        credentials: { http_request: { env_var: "RAW_HTTP_REQUEST" } },
       });
     });
   });
@@ -1397,9 +1470,10 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("AzureBlobStorageTarget");
+    fillTargetName();
 
     expect(screen.queryByLabelText("Endpoint URL")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER)).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Identity-based/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
@@ -1407,7 +1481,7 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
   });
 
-  it("should mask the sas_token parameter and drop it once identity auth is selected", async () => {
+  it("should take the sas_token variable and drop it once identity auth is selected", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
       target_registry_name: "blob_target",
@@ -1421,13 +1495,12 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("AzureBlobStorageTarget");
+    fillTargetName();
     await user.click(screen.getByText("Advanced settings"));
 
-    const sasTokenField = screen.getByLabelText(/Sas Token/);
-    expect(sasTokenField).toHaveAttribute("type", "password");
-
-    fireEvent.change(sasTokenField, { target: { value: "sv=2024&sig=secret" } });
-    expect(sasTokenField).toHaveValue("sv=2024&sig=secret");
+    const sasTokenField = screen.getByLabelText(/Sas Token environment variable/);
+    fireEvent.change(sasTokenField, { target: { value: "BLOB_SAS_TOKEN" } });
+    expect(sasTokenField).toHaveValue("BLOB_SAS_TOKEN");
 
     // Selecting identity-based auth must clear and disable sas_token so it
     // can't silently override the chosen auth mode (SAS takes precedence
@@ -1441,9 +1514,79 @@ describe("CreateTargetDialog", () => {
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "AzureBlobStorageTarget",
         params: {},
         auth_mode: "identity",
+      });
+    });
+  });
+
+  it("should not let a hidden API key variable block a target type without an API key field", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "blob_target",
+      target_type: "AzureBlobStorageTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    fireEvent.change(screen.getByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER), {
+      target: { value: "has-dash" },
+    });
+
+    await selectTargetType("AzureBlobStorageTarget");
+    fillTargetName();
+
+    expect(screen.queryByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER)).not.toBeInTheDocument();
+    expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
+        type: "AzureBlobStorageTarget",
+        params: {},
+      });
+    });
+  });
+
+  it("should send a credential parameter as the variable that holds it, never as a value", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "blob_target",
+      target_type: "AzureBlobStorageTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureBlobStorageTarget");
+    fillTargetName();
+    await user.click(screen.getByText("Advanced settings"));
+
+    const sasTokenField = screen.getByLabelText(/Sas Token environment variable/);
+    fireEvent.change(sasTokenField, { target: { value: "sv=2024&sig=secret" } });
+    expect(screen.getByText(/letters, digits, and underscores/)).toBeInTheDocument();
+    expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
+
+    fireEvent.change(sasTokenField, { target: { value: "BLOB_SAS_TOKEN" } });
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
+        type: "AzureBlobStorageTarget",
+        params: {},
+        credentials: { sas_token: { env_var: "BLOB_SAS_TOKEN" } },
       });
     });
   });
@@ -1471,7 +1614,7 @@ describe("CreateTargetDialog", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("should hide the API Key field and omit api_key/include auth_mode when identity is selected", async () => {
+  it("should hide the API key variable field and send auth_mode without credentials when identity is selected", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
@@ -1486,6 +1629,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -1494,9 +1638,9 @@ describe("CreateTargetDialog", () => {
       target: { value: "https://my-resource.openai.azure.com/" },
     });
 
-    // check that API Key field is visible by default.
+    // check that the API key variable field is visible by default.
     expect(
-      screen.getByPlaceholderText("API key (stored in memory only)")
+      screen.getByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER)
     ).toBeInTheDocument();
 
     // Select identity option.
@@ -1506,15 +1650,16 @@ describe("CreateTargetDialog", () => {
       })
     );
 
-    // check that API Key field is hidden when identity mode is selected.
+    // check that the API key variable field is hidden when identity mode is selected.
     expect(
-      screen.queryByPlaceholderText("API key (stored in memory only)")
+      screen.queryByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER)
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByText("Create Target"));
 
     await waitFor(() => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        name: TEST_TARGET_NAME,
         type: "OpenAIChatTarget",
         params: {
           endpoint: "https://my-resource.openai.azure.com/",
@@ -1525,7 +1670,7 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should clear a previously-typed API key when switching to identity", async () => {
+  it("should clear a previously-typed API key variable when switching to identity", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
@@ -1540,6 +1685,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -1548,10 +1694,10 @@ describe("CreateTargetDialog", () => {
       target: { value: "https://my-resource.openai.azure.com/" },
     });
 
-    // Type a key, then switch to identity option.
+    // Name a variable, then switch to identity option.
     fireEvent.change(
-      screen.getByPlaceholderText("API key (stored in memory only)"),
-      { target: { value: "sk-typed-before-switch" } }
+      screen.getByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER),
+      { target: { value: "TYPED_BEFORE_SWITCH" } }
     );
 
     await user.click(
@@ -1563,6 +1709,7 @@ describe("CreateTargetDialog", () => {
     await waitFor(() => {
       const call = mockedTargetsApi.createTarget.mock.calls[0][0];
       expect(call.auth_mode).toBe("identity");
+      expect(call).not.toHaveProperty("credentials");
       expect(call.params).not.toHaveProperty("api_key");
     });
   });
@@ -1629,6 +1776,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fillTargetName();
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-resource.openai.azure.com/"
@@ -1715,6 +1863,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("AzureMLChatTarget");
+    fillTargetName();
 
     const endpointInput = screen.getByPlaceholderText(
       "https://your-model.region.inference.ml.azure.com/score"
@@ -1989,6 +2138,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("RoundRobinTarget");
+    fillTargetName();
     const select = screen.getByText("Select a target to add...").closest("select")!;
     await user.selectOptions(select, "a");
     await user.selectOptions(select, "b");
@@ -2039,6 +2189,7 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
     await selectTargetType("RoundRobinTarget");
+    fillTargetName();
     const select = screen.getByText("Select a target to add...").closest("select")!;
     await user.selectOptions(select, "a");
     await user.selectOptions(select, "b");
@@ -2120,9 +2271,53 @@ describe("CreateTargetDialog", () => {
       { timeout: 10000 },
     );
     const call = mockedTargetsApi.createTarget.mock.calls[0][0];
+    expect(call.name).toBe(TEST_TARGET_NAME);
     expect(call.type).toBe("RoundRobinTarget");
     expect(call.params?.targets).toEqual(["a", "b"]);
     expect(call.params?.weights).toEqual([7, 42]);
+  }, 30000);
+
+  it("should not let a hidden API key variable block a round robin target", async () => {
+    mockedTargetsApi.createTarget.mockResolvedValueOnce({
+      target_registry_name: "rr",
+    } as unknown as Awaited<ReturnType<typeof mockedTargetsApi.createTarget>>);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog
+          {...defaultProps}
+          existingTargets={[
+            makeTarget({ target_registry_name: "a", target_type: "OpenAIChatTarget", identifier_hash: "hash-a" }),
+            makeTarget({ target_registry_name: "b", target_type: "OpenAIChatTarget", identifier_hash: "hash-b" }),
+          ]}
+        />
+      </TestWrapper>
+    );
+    await selectTargetType("OpenAIChatTarget");
+    fireEvent.change(screen.getByPlaceholderText(API_KEY_VARIABLE_PLACEHOLDER), {
+      target: { value: "has-dash" },
+    });
+
+    await selectTargetType("RoundRobinTarget");
+    fillTargetName();
+    const select = screen.getByText("Select a target to add...").closest("select")!;
+    await user.selectOptions(select, "a");
+    await user.selectOptions(select, "b");
+    await waitFor(
+      () => {
+        expect(screen.getByRole("button", { name: "Create Target" })).not.toBeDisabled();
+      },
+      { timeout: 10000 },
+    );
+    await user.click(screen.getByRole("button", { name: "Create Target" }));
+
+    await waitFor(
+      () => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 10000 },
+    );
+    expect(mockedTargetsApi.createTarget.mock.calls[0][0]).not.toHaveProperty("credentials");
   }, 30000);
 
   it("removes a selected inner target when its delete button is clicked", async () => {

@@ -41,11 +41,13 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
       },
     });
     expect(created.status()).toBe(201);
+    const { version } = await created.json();
     try {
       await runTest(name);
     } finally {
       const deleted = await request.delete(`/api/converters/${encodeURIComponent(name)}`, {
         headers: compatibilityHeaders(),
+        params: { version },
       });
       expect(deleted.status()).toBe(204);
     }
@@ -104,12 +106,13 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
       const created = await request.post("/api/targets", {
         headers: compatibilityHeaders(),
         data: {
+          name: `recovery-target-${randomUUID()}`,
           type: "OpenAIChatTarget",
           auth_mode: "api_key",
+          // No key is sent: the backend reads the placeholder in OPENAI_CHAT_KEY.
           params: {
             endpoint: `http://127.0.0.1:${address.port}/v1`,
             model_name: `recovery-test-${randomUUID()}`,
-            api_key: "local-recovery-test-placeholder",
           },
         },
       });

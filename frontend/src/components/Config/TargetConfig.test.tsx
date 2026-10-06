@@ -11,6 +11,7 @@ jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
+    deleteTarget: jest.fn(),
   },
 }));
 
@@ -565,6 +566,90 @@ describe("TargetConfig", () => {
     // Close via Cancel
     await userEvent.click(screen.getByTestId("dialog-close"));
     expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
+  });
+
+  it("should delete a saved target with its version and return focus to New Target", async () => {
+    const user = userEvent.setup();
+    const savedTarget = { ...sampleTargets[0], version: "v1" };
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({ items: [savedTarget, sampleTargets[1]], pagination: { limit: 200, has_more: false } })
+      .mockResolvedValueOnce({ items: [sampleTargets[1]], pagination: { limit: 200, has_more: false } });
+    mockedTargetsApi.deleteTarget.mockResolvedValue();
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+    await user.click(await screen.findByRole("button", { name: "Delete openai_chat_gpt4" }));
+    expect(screen.queryByRole("button", { name: "Delete openai_image_dalle" })).not.toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Delete saved target?" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(mockedTargetsApi.deleteTarget).toHaveBeenCalledWith("openai_chat_gpt4", "v1");
+    await waitFor(() => {
+      expect(screen.queryByText("openai_chat_gpt4")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "New Target" })).toHaveFocus();
+    });
+  });
+
+  it("should keep the confirmation open and show why a delete failed", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [{ ...sampleTargets[0], version: "v1" }],
+      pagination: { limit: 200, has_more: false },
+    });
+    mockedTargetsApi.deleteTarget.mockRejectedValue(
+      new Error("Target 'openai_chat_gpt4' cannot be deleted because saved instances reference it"),
+    );
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+    await user.click(await screen.findByRole("button", { name: "Delete openai_chat_gpt4" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete saved target?" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(await within(dialog).findByText(/saved instances reference it/)).toBeInTheDocument();
+    expect(screen.getByText("openai_chat_gpt4")).toBeInTheDocument();
+  });
+
+  it("should explain saved targets that were not restored and let them be deleted", async () => {
+    const user = userEvent.setup();
+    const unrestorable: TargetListResponse["unrestorable"] = [{
+      kind: "target",
+      name: "team-chat",
+      type: "OpenAIChatTarget",
+      reason: "Environment variable 'TEAM_KEY' (for 'api_key') is not set.",
+      version: "v9",
+    }];
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false }, unrestorable })
+      .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
+    mockedTargetsApi.deleteTarget.mockResolvedValue();
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+    const list = await screen.findByRole("list", { name: "Saved targets that were not restored" });
+    expect(within(list).getByText("team-chat")).toBeInTheDocument();
+    expect(within(list).getByText(/'TEAM_KEY' \(for 'api_key'\) is not set/)).toBeInTheDocument();
+
+    await user.click(within(list).getByRole("button", { name: "Delete saved target team-chat" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
+
+    expect(mockedTargetsApi.deleteTarget).toHaveBeenCalledWith("team-chat", "v9");
+    await waitFor(() => {
+      expect(screen.queryByRole("list", { name: "Saved targets that were not restored" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("should report a saved target store that could not be read and still list targets", async () => {
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets,
+      pagination: { limit: 200, has_more: false },
+      restore_error: "The saved instance store is unavailable: access denied",
+    });
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+
+    expect(await screen.findByText("Saved targets could not be loaded")).toBeInTheDocument();
+    expect(screen.getByText(/store is unavailable: access denied/)).toBeInTheDocument();
+    expect(screen.getByText("openai_chat_gpt4")).toBeInTheDocument();
   });
 
 });
