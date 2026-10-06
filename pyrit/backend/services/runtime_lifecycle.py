@@ -66,10 +66,15 @@ class RuntimeLifecycle:
         """Whether admission is closed even if an accepted apply is still finishing."""
         return self._shutdown_task is not None
 
+    @property
+    def reported_state(self) -> str:
+        """Externally visible state, including admission closure before cleanup finishes."""
+        return "stopping" if self.is_stopping else self.state
+
     def status(self) -> dict[str, Any]:
         """Return status recoverable after a disconnected apply."""
         return {
-            "state": "stopping" if self.is_stopping else self.state,
+            "state": self.reported_state,
             "generation": self.generation,
             "version": self.version,
             "outcome": self.outcome,

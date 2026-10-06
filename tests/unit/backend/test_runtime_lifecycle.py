@@ -76,6 +76,23 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     await runtime.apply_task
 
 
+@pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])
+async def test_runtime_readiness_reports_state_async(*, runtime: RuntimeLifecycle, state: str | None) -> None:
+    if state is None:
+        del runtime.app.state.runtime_lifecycle
+    else:
+        runtime.state = state
+        assert runtime.status()["state"] == state
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        response = await client.get("/api/runtime")
+    assert response.status_code == 200
+    assert response.json() == {
+        "ready": state == "ready",
+        "state": state if state is not None else "failed",
+        "generation": "original" if state is not None else "",
+    }
+
+
 @pytest.mark.parametrize(
     "failures", [(), ("scenarios",), ("services",), ("memory",), ("scenarios", "services", "memory")]
 )
@@ -354,6 +371,14 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
             await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
             lifecycle_module.close_services_async.assert_not_awaited()
             assert not shutdown.done()
+            assert runtime.state == "ready"
+            assert runtime.status()["state"] == "stopping"
+            readiness = await client.get("/api/runtime")
+            assert readiness.status_code == 200
+            assert readiness.json() == {"ready": False, "state": "stopping", "generation": "original"}
+            liveness = await client.get("/api/health")
+            assert liveness.status_code == 200
+            assert liveness.json()["status"] == "healthy"
             assert (await client.post(path)).status_code == 503
             assert (await client.get("/api/config")).status_code == 503
             assert runtime.begin_apply(version="ignored")["outcome"] == "stopping"
@@ -477,7 +502,13 @@ async def test_shutdown_drains_sibling_after_request_failure_async(runtime: Runt
 
 async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_async(runtime: RuntimeLifecycle) -> None:
     entered, release, shutdown_entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    request_entered, release_request = asyncio.Event(), asyncio.Event()
     config = await runtime._load_async()
+
+    @runtime.app.get("/api/config/draining")
+    async def retained_read_async() -> None:
+        request_entered.set()
+        await release_request.wait()
 
     async def initialize_async(**kwargs: object) -> None:
         entered.set()
@@ -491,27 +522,42 @@ async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_asy
     _, version = await runtime.source.read_with_version_async()
     runtime.begin_apply(version=version)
     shutdown: asyncio.Task[None] | None = None
-    try:
-        await asyncio.wait_for(entered.wait(), timeout=5)
-        shutdown = asyncio.create_task(shutdown_async())
-        await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
-        assert runtime.status()["state"] == "stopping"
-        assert runtime.begin_apply(version=version)["outcome"] == "stopping"
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        request = asyncio.create_task(client.get("/api/config/draining"))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            await asyncio.wait_for(request_entered.wait(), timeout=5)
+            shutdown = asyncio.create_task(shutdown_async())
+            await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
+            assert runtime.state == "initializing"
+            assert runtime.status()["state"] == "stopping"
+            assert runtime.begin_apply(version=version)["outcome"] == "stopping"
             assert (await client.post("/api/config/runtime/apply", json={"version": version})).status_code == 503
-        lifecycle_module.close_services_async.assert_awaited_once()
-        release.set()
-        await asyncio.wait_for(shutdown, timeout=5)
-        assert runtime.generation != "original"
-        assert runtime.status()["state"] == "stopping"
-        assert lifecycle_module.close_services_async.await_count == 2
-    finally:
-        release.set()
-        await asyncio.gather(
-            *([runtime.apply_task] if runtime.apply_task else []),
-            *([shutdown] if shutdown else []),
-            return_exceptions=True,
-        )
+            lifecycle_module.close_services_async.assert_awaited_once()
+            release.set()
+            assert runtime.apply_task is not None
+            await asyncio.wait_for(runtime.apply_task, timeout=5)
+            assert runtime.state == "ready"
+            assert runtime.generation != "original"
+            assert not shutdown.done()
+            assert runtime.status()["state"] == "stopping"
+            readiness = await client.get("/api/runtime")
+            assert readiness.status_code == 200
+            assert readiness.json() == {"ready": False, "state": "stopping", "generation": runtime.generation}
+            assert (await client.get("/api/config")).status_code == 503
+            release_request.set()
+            await asyncio.wait_for(shutdown, timeout=5)
+            assert runtime.status()["state"] == "stopping"
+            assert lifecycle_module.close_services_async.await_count == 2
+        finally:
+            release.set()
+            release_request.set()
+            await asyncio.gather(
+                request,
+                *([runtime.apply_task] if runtime.apply_task else []),
+                *([shutdown] if shutdown else []),
+                return_exceptions=True,
+            )
 
 
 async def test_shutdown_cancellation_before_entry_and_during_close_async(runtime: RuntimeLifecycle) -> None:

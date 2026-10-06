@@ -394,7 +394,8 @@ Backend shutdown closes runtime and management admission, then waits for accepte
 to finish before stopping the scheduler and closing shared resources. This includes requests retained after a
 client disconnect and their offloaded writes. Cancelling the shutdown caller does not interrupt that cleanup;
 a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
-Shutdown can therefore wait for an outstanding operation.
+Shutdown can therefore wait for an outstanding operation. Runtime readiness reports `ready: false` and
+`state: stopping` as soon as shutdown closes admission, including while an accepted live apply finishes.
 
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
