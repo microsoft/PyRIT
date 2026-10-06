@@ -38,12 +38,14 @@ if TYPE_CHECKING:
         ScenarioRunSummary,
         ScenarioTechniqueSummary,
     )
+    from pyrit.models.catalog.scorer import ScorerInstance
     from pyrit.models.catalog.target import TargetInstance
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AttackErrorSummary": "pyrit.models.catalog.scenario",
     "AttackRetrySummary": "pyrit.models.catalog.scenario",
     "RegisteredInitializer": "pyrit.models.catalog.initializer",
+    "ScorerInstance": "pyrit.models.catalog.scorer",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
     "ScenarioDatasetSizeCap": "pyrit.models.catalog.scenario",

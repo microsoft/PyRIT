@@ -4,8 +4,10 @@
 import json
 from abc import abstractmethod
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.output._derivation import select_objective_scores
 from pyrit.output.base import PrinterBase
+from pyrit.output.conversation.source import ConversationSource
 
 
 class ConversationPrinterBase(PrinterBase):
@@ -17,6 +19,8 @@ class ConversationPrinterBase(PrinterBase):
     """
 
     _REASONING_RENDER_WARNING = "⚠ WARNING: Reasoning summary failed to render; conversation is intact."
+
+    _source: ConversationSource
 
     @staticmethod
     def _is_reasoning_piece(*, piece: MessagePiece) -> bool:
@@ -106,6 +110,59 @@ class ConversationPrinterBase(PrinterBase):
 
         return "\n".join(parts)
 
+    async def _select_objective_scores_async(
+        self,
+        *,
+        messages: list[Message],
+        objective_scorer_identifier: ComponentIdentifier | None,
+    ) -> dict[str, Score] | None:
+        """
+        Read the conversation's scores once and pick each piece's objective score.
+
+        Args:
+            messages (list[Message]): The messages being rendered.
+            objective_scorer_identifier (ComponentIdentifier | None): The scorer whose score to keep.
+                None shows every score, so nothing is picked up front.
+
+        Returns:
+            dict[str, Score] | None: Each piece's objective score keyed by piece id, or None when
+                every score is shown.
+        """
+        if objective_scorer_identifier is None:
+            return None
+        pieces = [piece for message in messages for piece in message.message_pieces]
+        if not pieces:
+            return {}
+        scores = await self._source.get_scores_async(prompt_ids=[str(piece.id) for piece in pieces])
+        return select_objective_scores(
+            pieces=pieces, scores=scores, objective_scorer_identifier=objective_scorer_identifier
+        )
+
+    async def _get_piece_scores_async(
+        self,
+        *,
+        piece: MessagePiece,
+        objective_scores: dict[str, Score] | None,
+    ) -> list[Score]:
+        """
+        Return the scores to render for a piece.
+
+        When an ``objective_scores`` dict is passed, use the scores already selected for the
+        conversation without fetching again. Otherwise, fetch all scores attached to this piece.
+
+        Args:
+            piece (MessagePiece): The piece being rendered.
+            objective_scores (dict[str, Score] | None): Objective scores selected for the
+                conversation keyed by piece id, or None to fetch every score on the piece.
+
+        Returns:
+            list[Score]: The scores to render for the piece.
+        """
+        if objective_scores is None:
+            return await self._source.get_scores_async(prompt_ids=[str(piece.id)])
+        score = objective_scores.get(str(piece.id))
+        return [score] if score is not None else []
+
     async def _display_image_async(self, piece: MessagePiece) -> None:
         """
         Display an image from a message piece. No-op by default.
@@ -121,6 +178,7 @@ class ConversationPrinterBase(PrinterBase):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages and return as a string.
@@ -129,6 +187,8 @@ class ConversationPrinterBase(PrinterBase):
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation text.

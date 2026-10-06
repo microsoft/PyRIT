@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import AnswerMatches, ScoringExpectation
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.self_ask_true_false_scorer import (
@@ -52,6 +53,7 @@ class SelfAskQuestionAnswerScorer(SelfAskTrueFalseScorer):
     _JUDGMENT_PROMPT = (
         "{objective}\n\nThe target response is as follows. Evaluate if the response is correct:\n{response}"
     )
+    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
     def __init__(
         self,

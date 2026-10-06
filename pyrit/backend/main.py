@@ -24,6 +24,7 @@ from pyrit import _compatibility
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
+from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
     attacks,
@@ -35,7 +36,9 @@ from pyrit.backend.routes import (
     initializers,
     labels,
     media,
+    message_sends,
     scenarios,
+    scorers,
     scores,
     targets,
     version,
@@ -90,6 +93,9 @@ app = CompatibilityAPI(
 # Register RFC 7807 error handlers
 register_error_handlers(app)
 
+# Innermost so route handlers read the body directly through its size check; a BaseHTTPMiddleware
+# between them would turn the 413 raised while streaming into a body-parsing error.
+app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(RuntimeAdmissionMiddleware)
 
 # Microsoft Graph-backed authentication (PKCE — no client secrets needed)
@@ -115,8 +121,10 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 # Include API routes
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
+app.include_router(message_sends.router, prefix="/api", tags=["attacks"])
 app.include_router(configuration.router, prefix="/api", tags=["config"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
+app.include_router(scorers.router, prefix="/api", tags=["scorers"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
