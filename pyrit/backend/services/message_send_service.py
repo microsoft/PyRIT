@@ -32,13 +32,12 @@ from pyrit.backend.services.manual_send_scheduler import (
     ManualSendScheduler,
     get_manual_send_scheduler,
 )
-from pyrit.backend.services.media_persistence import persist_media_value_async
+from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
-    MEDIA_PATH_DATA_TYPES,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackTechniqueIdentifier,
@@ -676,52 +675,8 @@ class MessageSendService:
 
     @staticmethod
     async def _persist_base64_pieces_async(request: AddMessageRequest) -> None:
-        """
-        Resolve original and converted media independently, updating values in-place.
-
-        The frontend sends binary media (images, audio, etc.) as base64 strings
-        with a ``*_path`` data_type.  The PyRIT target layer expects ``*_path``
-        values to be **file paths**, so we decode the base64 data, write it to
-        the results store, and replace the request values with the resulting
-        file path before the message is built.
-
-        If the value is already an HTTP(S) URL (e.g. an Azure Blob Storage URL
-        from a remixed/copied message), it is kept as-is since the file already
-        exists in storage.
-        """
-        for piece in request.pieces:
-            original_value = piece.original_value
-            converted_value = piece.converted_value
-            converted_type = piece.converted_value_data_type or piece.data_type
-            if piece.data_type in MEDIA_PATH_DATA_TYPES:
-                result = await persist_media_value_async(
-                    value=original_value,
-                    data_type=piece.data_type,
-                    mime_type=piece.mime_type,
-                    serializer_factory=data_serializer_factory,
-                )
-                if result.resolved:
-                    original_value = result.value
-                    if converted_value is None or (
-                        converted_value == piece.original_value and converted_type == piece.data_type
-                    ):
-                        converted_value = original_value
-
-            if (
-                converted_value is not None
-                and converted_type in MEDIA_PATH_DATA_TYPES
-                and (converted_value != original_value or converted_type != piece.data_type)
-            ):
-                result = await persist_media_value_async(
-                    value=converted_value,
-                    data_type=converted_type,
-                    serializer_factory=data_serializer_factory,
-                )
-                if result.resolved:
-                    converted_value = result.value
-
-            piece.original_value = original_value
-            piece.converted_value = converted_value
+        """Persist original and converted media before sending or storing a message."""
+        await persist_message_pieces_async(pieces=request.pieces, serializer_factory=data_serializer_factory)
 
     async def _send_and_store_message_async(
         self,
@@ -807,6 +762,7 @@ class MessageSendService:
                 conversation_id=conversation_id,
                 sequence=sequence,
             )
+            piece.set_simulated_role()
             piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
             await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece])
 

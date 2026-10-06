@@ -423,7 +423,10 @@ class TestScenarioPartialAttackCompletion:
         # All 5 results should be in final scenario result
         assert len(result.attack_results["resume_attack"]) == 5
 
-    async def test_run_async_cancellation_persists_progress_cleans_workers_and_resumes(self, mock_objective_target):
+    @pytest.mark.timeout(30)
+    async def test_run_async_cancellation_persists_progress_cleans_workers_and_resumes_async(
+        self, mock_objective_target: MagicMock
+    ) -> None:
         completed_attack = create_mock_atomic_attack("completed_attack", ["obj1"])
         in_flight_attack = create_mock_atomic_attack("in_flight_attack", ["obj2"])
         queued_attack = create_mock_atomic_attack("queued_attack", ["obj3"])
@@ -503,39 +506,49 @@ class TestScenarioPartialAttackCompletion:
         await scenario.initialize_async()
 
         scenario_task = asyncio.create_task(scenario.run_async())
-        await asyncio.wait_for(completed_persisted.wait(), timeout=5.0)
-        await asyncio.wait_for(in_flight_started.wait(), timeout=5.0)
-        scenario_task.cancel()
+        workers_ready = asyncio.gather(completed_persisted.wait(), in_flight_started.wait())
+        try:
+            done, _ = await asyncio.wait({scenario_task, workers_ready}, return_when=asyncio.FIRST_COMPLETED)
+            if scenario_task in done:
+                await scenario_task
+                pytest.fail("Scenario finished before reaching the cancellation checkpoint")
+            await workers_ready
+            scenario_task.cancel()
 
-        with pytest.raises(asyncio.CancelledError):
-            await scenario_task
+            with pytest.raises(asyncio.CancelledError):
+                await scenario_task
 
-        assert completed_worker_exited.is_set()
-        assert in_flight_worker_exited.is_set()
-        queued_attack.run_async.assert_not_called()
-        assert persisted_objectives == ["obj1"]
+            assert completed_worker_exited.is_set()
+            assert in_flight_worker_exited.is_set()
+            queued_attack.run_async.assert_not_called()
+            assert persisted_objectives == ["obj1"]
 
-        [cancelled_result] = await CentralMemory.get_memory_instance().get_scenario_results_async(
-            scenario_result_ids=[scenario._scenario_result_id]
-        )
-        assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
-        assert cancelled_result.error_type == "CancelledError"
-        assert cancelled_result.number_tries == 1
-        assert [result.objective for result in cancelled_result.attack_results["completed_attack"]] == ["obj1"]
+            [cancelled_result] = await CentralMemory.get_memory_instance().get_scenario_results_async(
+                scenario_result_ids=[scenario._scenario_result_id]
+            )
+            assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
+            assert cancelled_result.error_type == "CancelledError"
+            assert cancelled_result.number_tries == 1
+            assert [result.objective for result in cancelled_result.attack_results["completed_attack"]] == ["obj1"]
 
-        await asyncio.sleep(0)
-        assert persisted_objectives == ["obj1"]
+            await asyncio.sleep(0)
+            assert persisted_objectives == ["obj1"]
 
-        resumed_result = await scenario.run_async()
+            scenario_task = asyncio.create_task(scenario.run_async())
+            resumed_result = await scenario_task
 
-        assert resumed_result.scenario_run_state == ScenarioRunState.COMPLETED
-        assert resumed_result.number_tries == 2
-        assert completed_attack.run_async.call_count == 1
-        assert in_flight_attack.run_async.call_count == 2
-        assert queued_attack.run_async.call_count == 1
-        assert persisted_objectives == ["obj1", "obj2", "obj3"]
-        assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
-        assert all(len(results) == 1 for results in resumed_result.attack_results.values())
+            assert resumed_result.scenario_run_state == ScenarioRunState.COMPLETED
+            assert resumed_result.number_tries == 2
+            assert completed_attack.run_async.call_count == 1
+            assert in_flight_attack.run_async.call_count == 2
+            assert queued_attack.run_async.call_count == 1
+            assert persisted_objectives == ["obj1", "obj2", "obj3"]
+            assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
+            assert all(len(results) == 1 for results in resumed_result.attack_results.values())
+        finally:
+            workers_ready.cancel()
+            scenario_task.cancel()
+            await asyncio.gather(workers_ready, scenario_task, return_exceptions=True)
 
     async def test_run_async_cancellation_is_not_masked_by_persistence_failure(
         self, mock_objective_target: MagicMock

@@ -161,6 +161,28 @@ class PromptTarget(Identifiable):
         if self._verbose:
             logging.basicConfig(level=logging.INFO)
 
+    def validate_history(self, messages: Sequence[Message]) -> None:
+        """
+        Check history data types and tool payloads without sending or changing history.
+
+        This checks native input support, not normalization policy. Empty histories
+        and histories ending with an assistant message or unanswered call are permitted.
+        It does not load media or validate a future request.
+
+        Args:
+            messages: Complete ordered history to replay.
+
+        Raises:
+            ValueError: An effective data type is unsupported or tool history is invalid.
+        """
+        supported = set(self.capabilities.supported_input_modalities)
+        unsupported = {
+            piece.converted_value_data_type for message in messages for piece in message.message_pieces
+        } - supported
+        if unsupported:
+            raise ValueError(f"The target does not support these history data types: {', '.join(sorted(unsupported))}.")
+        self.validate_tool_history(messages)
+
     def validate_tool_history(self, messages: Sequence[Message]) -> None:
         """
         Check stored tool history without sending, normalizing, or retrieving media.
@@ -402,7 +424,8 @@ class PromptTarget(Identifiable):
             conversation_id (str): The conversation id to attach the prompt to.
 
         Raises:
-            ValueError: If the target does not support multi-turn or editable history.
+            ValueError: If the target does not support multi-turn conversations, or
+                supports neither editable history nor native system prompts.
             RuntimeError: If the conversation already has messages.
         """
         print_deprecation_message(
@@ -410,10 +433,12 @@ class PromptTarget(Identifiable):
             new_item="PromptTarget.set_system_prompt_async",
             removed_in="1.4.0",
         )
-        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+        if not self.capabilities.supports_multi_turn or not (
+            self.capabilities.supports_editable_history or self.capabilities.supports_system_prompt
+        ):
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
-                "It must support both multi-turn conversations and editable history."
+                "It must support multi-turn conversations and either editable history or native system prompts."
             )
 
         messages = self._memory.get_conversation_messages(conversation_id=conversation_id)
@@ -465,13 +490,16 @@ class PromptTarget(Identifiable):
             conversation_id (str): The conversation id to attach the prompt to.
 
         Raises:
-            ValueError: If the target does not support multi-turn or editable history.
+            ValueError: If the target does not support multi-turn conversations, or
+                supports neither editable history nor native system prompts.
             RuntimeError: If the conversation already has messages.
         """
-        if not self.capabilities.supports_multi_turn or not self.capabilities.supports_editable_history:
+        if not self.capabilities.supports_multi_turn or not (
+            self.capabilities.supports_editable_history or self.capabilities.supports_system_prompt
+        ):
             raise ValueError(
                 f"Target {type(self).__name__} does not support setting a system prompt. "
-                "It must support both multi-turn conversations and editable history."
+                "It must support multi-turn conversations and either editable history or native system prompts."
             )
 
         messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)

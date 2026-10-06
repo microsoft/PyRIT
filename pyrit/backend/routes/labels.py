@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from pyrit.backend.models.common import MAX_ITEMS, LabelFilterStr
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.memory import CentralMemory
 
@@ -39,13 +40,17 @@ async def get_label_options(  # pyrit-async-suffix-exempt
     ),
     operator: list[Annotated[str, Field(max_length=128)]] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="Narrow attack labels by operator.",
     ),
     operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="Narrow attack labels by operation.",
     ),
-    label: list[str] | None = Query(None, description="Narrow attack labels by key:value filters."),
+    label: list[LabelFilterStr] | None = Query(
+        None, max_length=MAX_ITEMS, description="Narrow attack labels by key:value filters."
+    ),
 ) -> LabelOptionsResponse:
     """
     Get unique label keys and values for filtering.
