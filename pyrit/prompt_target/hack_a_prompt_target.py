@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from pyrit.common import default_values, net_utility
+from pyrit.common import REQUIRED_VALUE, default_values, net_utility
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -302,8 +302,8 @@ class HackAPromptTarget(PromptTarget):
         challenge: HackAPromptChallenge | None = None,
         challenge_slug: str | None = None,
         competition_slug: str | None = None,
-        session_id: str | None = None,
-        cookie: str | None = None,
+        session_id: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        cookie: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
     ) -> None:

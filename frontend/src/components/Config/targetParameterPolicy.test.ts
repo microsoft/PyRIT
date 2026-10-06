@@ -62,6 +62,8 @@ describe('metadata-driven target parameters', () => {
     makeParameter({ name: 'temperature', type_name: 'float' }),
     makeParameter({ name: 'seed', type_name: 'int' }),
     makeParameter({ name: 'enabled', type_name: 'bool' }),
+    makeParameter({ name: 'allowed_upload_directory', type_name: 'str | Path | None' }),
+    makeParameter({ name: 'working_directory', type_name: 'Path | str | None' }),
     makeParameter({ name: 'mode', type_name: 'CustomEnum', choices: ['a', 'b'] }),
     makeParameter({ name: 'stop', type_name: 'list[str]', is_list: true }),
     makeParameter({ name: 'extra_body_parameters', type_name: 'dict[str, typing.Any]' }),
@@ -76,6 +78,7 @@ describe('metadata-driven target parameters', () => {
       name: 'strategy',
       variants: { fixed: [makeParameter({ name: 'count', type_name: 'int' })] },
     }),
+    makeParameter({ name: 'mixed_scalar', type_name: 'str | bytes | None' }),
     makeParameter({ name: 'mixed', type_name: 'list[str | bytes]', is_list: true }),
   ])('does not claim unsupported parameter $name is renderable', (parameter) => {
     expect(isMetadataDrivenTargetParameter('ExampleTarget', parameter)).toBe(false)

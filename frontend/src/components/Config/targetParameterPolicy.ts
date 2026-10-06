@@ -21,7 +21,7 @@ const TARGET_PARAMETER_POLICIES: Record<string, TargetParameterPolicy> = {
   },
 }
 
-const SCALAR_PARAMETER_TYPES = new Set(['bool', 'float', 'int', 'str'])
+const SCALAR_PARAMETER_TYPES = new Set(['Path', 'bool', 'float', 'int', 'str'])
 
 export function getTargetParameterPolicy(
   targetType: string,
@@ -48,7 +48,11 @@ export function isMetadataDrivenTargetParameter(targetType: string, parameter: P
     const elementType = /^list\[(.+)\]$/.exec(parameter.type_name)?.[1]
     return elementType !== undefined && SCALAR_PARAMETER_TYPES.has(elementType)
   }
-  return SCALAR_PARAMETER_TYPES.has(parameter.type_name)
+  return parameter.type_name
+    .split('|')
+    .map((part) => part.trim())
+    .filter((part) => part !== 'None')
+    .every((part) => SCALAR_PARAMETER_TYPES.has(part))
 }
 
 export function canConfigureRequiredTargetParameter(targetType: string, parameter: Parameter): boolean {

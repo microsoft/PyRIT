@@ -182,7 +182,8 @@ class TargetService:
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
         by the target classes themselves. This service only enforces the
         request-level auth contract: for ``identity`` it confirms the target
-        supports it and omits the api_key so the target validates its own
+        supports it and omits the api_key plus any registry-flagged
+        identity-conflicting parameters so the target validates its own
         endpoint and authenticates itself.
 
         Args:
@@ -210,6 +211,14 @@ class TargetService:
                 raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
+            # Omit any other parameter the registry metadata marks as conflicting with
+            # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
+            # can't silently override the selected auth mode by also supplying it.
+            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+            if metadata is not None:
+                for parameter in metadata.parameters:
+                    if parameter.identity_conflicting:
+                        params.pop(parameter.name, None)
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.

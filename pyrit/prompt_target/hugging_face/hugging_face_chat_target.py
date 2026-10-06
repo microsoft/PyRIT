@@ -8,7 +8,7 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from pyrit.common import default_values
+from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
@@ -57,7 +57,7 @@ class HuggingFaceChatTarget(PromptTarget):
         *,
         model_id: str | None = None,
         model_path: str | None = None,
-        hf_access_token: str | None = None,
+        hf_access_token: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         use_cuda: bool = False,
         tensor_format: str = "pt",
         necessary_files: list[str] | None = None,

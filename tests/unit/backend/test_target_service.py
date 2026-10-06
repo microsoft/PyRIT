@@ -257,6 +257,31 @@ class TestListTargetTypes:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    @pytest.mark.parametrize(
+        ("target_type", "parameter_names"),
+        [
+            ("OpenAIChatTarget", {"endpoint", "model_name"}),
+            ("AzureBlobStorageTarget", {"container_url"}),
+            ("HackAPromptTarget", {"cookie", "session_id"}),
+            ("HuggingFaceChatTarget", {"hf_access_token"}),
+            ("PromptShieldTarget", {"endpoint"}),
+            ("AzureMLChatTarget", {"endpoint"}),
+        ],
+    )
+    async def test_types_mark_env_backed_parameters_required(
+        self,
+        target_type: str,
+        parameter_names: set[str],
+    ) -> None:
+        """Environment-backed values enforced by targets are required metadata."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == target_type)
+        parameters = {parameter.name: parameter for parameter in entry.parameters}
+        assert all(parameters[name].required for name in parameter_names)
+
     async def test_types_include_structured_parameters(self) -> None:
         service = TargetService()
 
@@ -646,6 +671,24 @@ class TestCreateTargetEntraAuth:
         result = await service.create_target_async(request=request)
 
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
+
+    async def test_create_azure_blob_target_with_identity_discards_sas_token(self, sqlite_instance) -> None:
+        """A caller-supplied sas_token must not silently override identity-based auth."""
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureBlobStorageTarget",
+            params={
+                "container_url": "https://test.blob.core.windows.net/test",
+                "sas_token": "attacker-supplied-token",
+            },
+            auth_mode="identity",
+        )
+
+        result = await service.create_target_async(request=request)
+
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._sas_token is None  # type: ignore[attr-defined]
         assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
 
     async def test_create_openai_target_with_identity_non_azure_endpoint_raises(self, sqlite_instance) -> None:

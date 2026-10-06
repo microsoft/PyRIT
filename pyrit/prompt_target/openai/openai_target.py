@@ -23,7 +23,7 @@ from openai._exceptions import (
 )
 
 from pyrit.auth import resolve_openai_auth
-from pyrit.common import default_values
+from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
     handle_bad_request_exception,
@@ -84,8 +84,8 @@ class OpenAITarget(PromptTarget):
     def __init__(
         self,
         *,
-        model_name: str | None = None,
-        endpoint: str | None = None,
+        model_name: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
+        endpoint: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         headers: str | None = None,
         max_requests_per_minute: int | None = None,

@@ -12,7 +12,7 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
-from pyrit.common import default_values
+from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -75,7 +75,7 @@ class AzureBlobStorageTarget(PromptTarget):
     def __init__(
         self,
         *,
-        container_url: str | None = None,
+        container_url: str | None = REQUIRED_VALUE,  # type: ignore[ty:invalid-parameter-default]
         sas_token: str | None = None,
         auth_mode: AuthMode | None = None,
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
