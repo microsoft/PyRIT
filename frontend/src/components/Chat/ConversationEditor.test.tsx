@@ -33,7 +33,12 @@ const source: BackendMessage[] = [{
   ],
 }]
 
-function setupEditor(messages: ConversationDraftMessage[] = toConversationDraft(source), disabledReason?: string, target?: TargetInstance) {
+function setupEditor(
+  messages: ConversationDraftMessage[] = toConversationDraft(source),
+  disabledReason?: string,
+  target?: TargetInstance,
+  newAttackDisabledReason?: string,
+) {
   const onSaved = jest.fn()
   function EditorHarness() {
     const controller = useConversationDraft()
@@ -45,7 +50,7 @@ function setupEditor(messages: ConversationDraftMessage[] = toConversationDraft(
       })
     }, [begin])
     return controller.draft && <ConversationEditor controller={controller}
-      sameAttackDisabledReason={disabledReason} onSaved={onSaved} />
+      sameAttackDisabledReason={disabledReason} newAttackDisabledReason={newAttackDisabledReason} onSaved={onSaved} />
   }
   const router = createMemoryRouter([{
     path: '/',
@@ -111,6 +116,30 @@ describe('ConversationEditor', () => {
       destination: 'new_attack', objective: 'Objective', messages: [],
     })
     expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].target_registry_name).toBeUndefined()
+  })
+
+  it('disables New attack while defaults load without blocking saves to the same attack', async () => {
+    const user = userEvent.setup()
+    setupEditor(undefined, undefined, undefined, 'Default labels are not ready.')
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    expect(screen.getByRole('radio', { name: 'New attack' })).toBeDisabled()
+    expect(screen.getByRole('radio', { name: 'Same attack' })).toBeChecked()
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      destination: 'same_attack',
+    })))
+  })
+
+  it('blocks confirmation when a new attack is the only destination and defaults are unavailable', async () => {
+    const user = userEvent.setup()
+    setupEditor(undefined, 'No saved attack exists yet.', undefined, 'Default labels are not ready.')
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    expect(screen.getByRole('radio', { name: 'New attack' })).toBeChecked()
+    expect(screen.getByText('Default labels are not ready.')).toBeInTheDocument()
+    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' })
+    expect(confirm).toBeDisabled()
+    await user.click(confirm)
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
   })
 
   it('inserts and removes messages with roles inside the prompt and no edit toolbar', async () => {

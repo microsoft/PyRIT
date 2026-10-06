@@ -22,6 +22,7 @@ import yaml
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.text_helper import is_non_empty_string
 from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
@@ -415,7 +416,7 @@ class ConfigurationLoader(YamlLoadable):
         """
         file_path = verify_and_resolve_path(file)
         try:
-            yaml_data = yaml.safe_load(file_path.read_text("utf-8"))
+            yaml_data = safe_load_yaml(file_path.read_text("utf-8"))
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML file '{file_path}': {exc}") from exc
         if yaml_data is None:

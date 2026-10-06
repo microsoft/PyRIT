@@ -154,6 +154,7 @@ function renderFlow(): void {
                 defaultObjectiveTarget={TARGET}
                 defaultAdversarialTarget={null}
                 labels={{ operator: 'integration-test' }}
+                defaultsReady
                 onNavigate={jest.fn()}
               />
             )}

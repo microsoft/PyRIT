@@ -412,6 +412,8 @@ interface ScenarioDetailProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** False while the current generation's server defaults are still loading. */
+  defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
 }
 
@@ -432,6 +434,7 @@ function ScenarioDetailContent({
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
+  defaultsReady = false,
   labels,
   onNavigate,
 }: ScenarioDetailContentProps) {
@@ -538,6 +541,7 @@ function ScenarioDetailContent({
       defaultObjectiveTarget={defaultObjectiveTarget}
       defaultAdversarialTarget={defaultAdversarialTarget}
       labels={labels}
+      defaultsReady={defaultsReady}
       onNavigate={onNavigate}
     />
   )
@@ -549,6 +553,8 @@ interface ScenarioLaunchFormProps {
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
   labels: Record<string, string>
+  /** False while the current generation's server defaults are still loading. */
+  defaultsReady?: boolean
   onNavigate: (view: ViewName) => void
 }
 
@@ -558,6 +564,7 @@ function ScenarioLaunchForm({
   defaultObjectiveTarget,
   defaultAdversarialTarget,
   labels,
+  defaultsReady = false,
   onNavigate,
 }: ScenarioLaunchFormProps) {
   const runtime = useRuntime()
@@ -880,7 +887,7 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current || !runtime.ready || staleSelection || unavailableSelection) {
+    if (isSubmittingRef.current || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
       return
     }
 
@@ -1272,7 +1279,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
@@ -1392,7 +1399,7 @@ function ScenarioLaunchForm({
                   </Button>
                   <Button
                     appearance="primary"
-                    disabled={submitting}
+                    disabled={submitting || !runtime.ready || !defaultsReady}
                     onClick={() => void handleLaunchConfirmed()}
                     data-testid="confirm-launch-scenario-btn"
                   >

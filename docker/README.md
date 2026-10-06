@@ -11,7 +11,7 @@ This README contains technical details for working with the Docker setup locally
 The `docker_build` workflow builds the devcontainer base, builds the local-source
 production image, and runs import, GUI, and Jupyter smoke checks on one runner.
 Images stay in that runner's Docker daemon instead of being compressed, uploaded,
-downloaded, and loaded between jobs. The PyPI checks run on `main` and manual
+downloaded, and loaded between jobs. The PyPI checks temporarily run on manual
 dispatches only, using a separate runner with the same co-located build/test
 sequence. The two sequences share the existing GHA cache only for their identical
 devcontainer build inputs. Production explicitly selects the daemon's `default`
@@ -21,9 +21,25 @@ sequence publishes images.
 
 Local builds record the checked-out commit and require a clean source tree before
 building, so Python and frontend compatibility stamps describe the same source.
-PyPI checks require an exact stamped release from the `pypiVersion` dispatch input
-or the `PYRIT_PYPI_VERSION` repository variable. Missing or invalid configuration
-fails rather than selecting an arbitrary latest release.
+PyPI checks resolve the latest stable, non-yanked release from PyPI at execution
+time and pass that exact version to the production build. The optional
+`pypiVersion` dispatch input selects an explicit published version, including a
+prerelease.
+
+Automatic PyPI checks on `main` are paused until a coordinated `1.2.0` release has
+been published and validated. Restoring those checks is tracked in
+[#3007](https://github.com/microsoft/PyRIT/issues/3007).
+
+Selection uses PyPI's release ordering, without installing dependencies or sorting
+version strings. The HTTP lookup has a 30-second socket timeout, and the selection
+step has a five-minute limit; neither limit caps the Docker builds. Lookup failures,
+invalid metadata, yanked releases, and missing published distributions fail without
+an older-version fallback. The image removes
+local Python and frontend sources and uses the selected distribution's packaged
+assets. Compatibility validation remains mandatory: if the latest release predates
+the required stamps, the build identifies that version and fails until a
+coordinated release is published. Selecting a release does not establish that its
+build and smoke checks pass.
 
 The existing `Build Devcontainer`, `Build Production (local)`, `Test Import (local)`,
 `Test GUI (local)`, and `Test Jupyter (local)` check names are retained as result
@@ -33,7 +49,7 @@ execution job and its corresponding stage to succeed. A failed or cancelled
 execution job fails all its enabled gates, even if an earlier stage succeeded;
 missing or skipped stage results also fail. The two sources are independent, and
 PyPI gates use literal job names so all four remain visible as intentionally
-skipped checks on PRs and merge-queue runs, without starting gate runners. Look at
+skipped checks on pushes, PRs, and merge-queue runs, without starting gate runners. Look at
 `Build and test (local)` or `Build and test (PyPI)` for the actual build/test logs
 and step timings.
 
