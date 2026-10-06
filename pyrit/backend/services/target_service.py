@@ -183,7 +183,8 @@ class TargetService:
         by the target classes themselves. This service only enforces the
         request-level auth contract: for ``identity`` it confirms the target
         supports it and omits the api_key so the target validates its own
-        endpoint and authenticates itself.
+        endpoint and authenticates itself. The response is built before the
+        target is registered, so a failed request leaves no registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -214,12 +215,11 @@ class TargetService:
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        target_obj = self._registry.create_named_instance(
-            name=target_registry_name,
-            type_name=request.type,
-            params=params,
-        )
-        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+        self._registry.instances.validate_name_available(target_registry_name)
+        target_obj = self._registry.create_instance(request.type, **params)
+        target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+        self._registry.instances.register(target_obj, name=target_registry_name)
+        return target
 
 
 @lru_cache(maxsize=1)
