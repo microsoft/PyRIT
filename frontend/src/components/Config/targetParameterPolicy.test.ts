@@ -36,6 +36,7 @@ function makeTargetType(
 describe('target parameter ownership', () => {
   it.each([
     ['api_key', 'authentication'],
+    ['auth_mode', 'authentication'],
     ['endpoint', 'connection'],
     ['model_name', 'connection'],
     ['underlying_model', 'connection'],

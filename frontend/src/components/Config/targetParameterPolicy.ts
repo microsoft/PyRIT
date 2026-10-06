@@ -10,6 +10,7 @@ export interface TargetParameterPolicy {
 
 const TARGET_PARAMETER_POLICIES: Record<string, TargetParameterPolicy> = {
   api_key: { owner: 'authentication' },
+  auth_mode: { owner: 'authentication' },
   endpoint: { owner: 'connection' },
   model_name: { owner: 'connection' },
   underlying_model: { owner: 'connection' },
@@ -21,21 +22,6 @@ const TARGET_PARAMETER_POLICIES: Record<string, TargetParameterPolicy> = {
 }
 
 const SCALAR_PARAMETER_TYPES = new Set(['bool', 'float', 'int', 'str'])
-
-/**
- * Parameters that, if supplied, let the backend authenticate a different
- * way than the user's chosen `auth_mode`, defeating "Identity-based" auth
- * even though it's selected. `sas_token` is one such case: `AzureBlobStorageTarget`
- * prefers a supplied SAS token (or the `AZURE_STORAGE_ACCOUNT_SAS_TOKEN` env var)
- * over `DefaultAzureCredential`, so a leftover value would silently authenticate
- * with the SAS token instead of the selected identity.
- */
-const IDENTITY_CONFLICTING_PARAMETER_NAMES = new Set(['sas_token'])
-
-/** Whether a metadata-driven parameter must be excluded while identity-based auth is selected. */
-export function conflictsWithIdentityAuth(parameterName: string): boolean {
-  return IDENTITY_CONFLICTING_PARAMETER_NAMES.has(parameterName)
-}
 
 export function getTargetParameterPolicy(
   targetType: string,

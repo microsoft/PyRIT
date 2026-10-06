@@ -635,6 +635,19 @@ class TestCreateTargetEntraAuth:
                 assert target_obj._api_key_provider is _test_token_provider  # type: ignore[attr-defined]
                 assert target_obj._api_key == ""  # type: ignore[attr-defined]
 
+    async def test_create_azure_blob_target_with_identity_preserves_auth_intent(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureBlobStorageTarget",
+            params={"container_url": "https://test.blob.core.windows.net/test"},
+            auth_mode="identity",
+        )
+
+        result = await service.create_target_async(request=request)
+
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
+
     async def test_create_openai_target_with_identity_non_azure_endpoint_raises(self, sqlite_instance) -> None:
         """The target (not the service) rejects an unrecognized endpoint under identity auth."""
 

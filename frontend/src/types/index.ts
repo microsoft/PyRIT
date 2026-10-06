@@ -378,6 +378,8 @@ export interface Parameter {
   sensitive?: boolean
   /** Whether parameter controls must preserve line breaks in the entered value. */
   multiline?: boolean
+  /** Whether the value must be omitted when identity-based authentication is selected. */
+  identity_conflicting?: boolean
   description?: string | null
 }
 

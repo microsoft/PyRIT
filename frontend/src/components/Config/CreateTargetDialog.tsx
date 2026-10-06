@@ -43,7 +43,6 @@ import {
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import {
   canConfigureTargetType,
-  conflictsWithIdentityAuth,
   getTargetParameterPolicy,
   isMetadataDrivenTargetParameter,
 } from './targetParameterPolicy'
@@ -532,7 +531,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       // backend authenticate a different way than the selected identity.
       if (isIdentity) {
         for (const parameter of metadataDrivenParameters) {
-          if (conflictsWithIdentityAuth(parameter.name)) delete params[parameter.name]
+          if (parameter.identity_conflicting) delete params[parameter.name]
         }
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
@@ -877,7 +876,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   )}
 
                   {requiredMetadataParameters.map((parameter) => {
-                    const identityConflict = isIdentity && conflictsWithIdentityAuth(parameter.name)
+                    const identityConflict = isIdentity && parameter.identity_conflicting
                     return (
                       <ParameterField
                         key={parameter.name}
@@ -911,7 +910,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                             setParameterValues((current) => {
                               const cleared = { ...current }
                               for (const parameter of metadataDrivenParameters) {
-                                if (conflictsWithIdentityAuth(parameter.name)) delete cleared[parameter.name]
+                                  if (parameter.identity_conflicting) delete cleared[parameter.name]
                               }
                               return cleared
                             })
@@ -956,7 +955,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </summary>
                       <div className={styles.advancedSettingsFields}>
                         {optionalMetadataParameters.map((parameter) => {
-                          const identityConflict = isIdentity && conflictsWithIdentityAuth(parameter.name)
+                          const identityConflict = isIdentity && parameter.identity_conflicting
                           return (
                             <ParameterField
                               key={parameter.name}

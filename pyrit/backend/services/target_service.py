@@ -210,6 +210,7 @@ class TargetService:
                 raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
+        params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.

@@ -261,6 +261,7 @@ const TARGET_TYPES: TargetTypeListResponse = {
           required: false,
           default: null,
           sensitive: true,
+          identity_conflicting: true,
           description: "The optional shared access signature.",
         },
       ],

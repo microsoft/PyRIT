@@ -263,6 +263,7 @@ def _parameters_from_signature(
     reference_overrides: dict[str, ComponentType],
     sensitive_parameter_names: frozenset[str],
     multiline_parameter_names: frozenset[str],
+    identity_conflicting_parameter_names: frozenset[str],
 ) -> list[Parameter]:
     """
     Build parameters declared by one constructor signature.
@@ -276,6 +277,8 @@ def _parameters_from_signature(
             whose values must be obscured in user interfaces.
         multiline_parameter_names (frozenset[str]): Identifier-declared names
             whose values require multiline controls.
+        identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
+            names that must be omitted for identity-based authentication.
 
     Returns:
         list[Parameter]: Parameters declared by the constructor.
@@ -311,6 +314,7 @@ def _parameters_from_signature(
                 variants=_structured_variant_parameters(param_type),
                 sensitive=name in sensitive_parameter_names,
                 multiline=name in multiline_parameter_names,
+                identity_conflicting=name in identity_conflicting_parameter_names,
             )
         )
     return parameters
@@ -347,6 +351,9 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     multiline_parameter_names = (
         identifier_type.get_multiline_parameter_names() if identifier_type is not None else frozenset[str]()
     )
+    identity_conflicting_parameter_names = (
+        identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
+    )
     parameters: list[Parameter] = []
     seen: set[str] = set()
     for owner, signature in _constructor_sources(cls):
@@ -356,6 +363,7 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             reference_overrides=reference_overrides,
             sensitive_parameter_names=sensitive_parameter_names,
             multiline_parameter_names=multiline_parameter_names,
+            identity_conflicting_parameter_names=identity_conflicting_parameter_names,
         ):
             if parameter.name in seen:
                 continue
