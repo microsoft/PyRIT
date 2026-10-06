@@ -156,6 +156,7 @@ interface ConversationEditorProps {
   controller: ReturnType<typeof useConversationDraft>
   ref?: Ref<ConversationEditorHandle>
   sameAttackDisabledReason?: string
+  newAttackDisabledReason?: string
   onSaved: (response: AddMessageResponse) => void
 }
 
@@ -165,7 +166,7 @@ export interface ConversationEditorHandle {
 }
 
 export default function ConversationEditor({
-  controller, ref, sameAttackDisabledReason, onSaved,
+  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -300,6 +301,7 @@ export default function ConversationEditor({
       </div>
       </div>
       {saveDialogOpen && <SaveConversationDialog sameAttackDisabledReason={sameAttackDisabledReason}
+        newAttackDisabledReason={newAttackDisabledReason}
         validationError={validationError ?? targetError}
         initialDestination={saveDestination}
         objectiveChanged={draft?.objective.trim() !== draft?.initialObjective} saving={saving} error={error}
