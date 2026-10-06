@@ -246,6 +246,52 @@ async def test_error_result_keeps_the_allocated_result_id_async(sqlite_instance:
     assert linked[1].response_error != "none"
 
 
+@pytest.mark.parametrize("fail", [False, True])
+async def test_standalone_result_records_its_role_without_a_parent_async(
+    sqlite_instance: SQLiteMemory, fail: bool
+) -> None:
+    attack = PromptSendingAttack(objective_target=_RecordingTarget(fail=fail))
+    context = SingleTurnAttackContext(params=AttackParameters(objective="objective"))
+
+    if fail:
+        with pytest.raises(RuntimeError):
+            await attack.execute_with_context_async(context=context)
+    else:
+        await attack.execute_with_context_async(context=context)
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[context.attack_result_id])
+    assert (stored.outcome == AttackOutcome.ERROR) is fail
+    assert stored.attribution_parent_id is None
+    assert stored.attribution_data == {"result_role": "target_facing"}
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_standalone_sequential_results_record_their_roles_without_a_parent_async(
+    sqlite_instance: SQLiteMemory, fail: bool
+) -> None:
+    target = _RecordingTarget(fail=fail)
+    seed_group = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+    sequential = SequentialAttack(
+        objective_target=target,
+        child_attacks=[
+            SequentialChildAttack(strategy=PromptSendingAttack(objective_target=target), seed_group=seed_group)
+        ],
+    )
+
+    if fail:
+        with pytest.raises(RuntimeError):
+            await sequential.execute_async(objective="objective")
+    else:
+        await sequential.execute_async(objective="objective")
+
+    stored = await sqlite_instance.get_attack_results_async()
+    assert len(stored) == 2
+    assert all((result.outcome == AttackOutcome.ERROR) is fail for result in stored)
+    assert all(result.attribution_parent_id is None for result in stored)
+    assert sorted(result.attribution_data["result_role"] for result in stored) == ["orchestration", "target_facing"]
+    assert all(result.attribution_data.keys() == {"result_role"} for result in stored)
+
+
 async def test_history_from_an_earlier_execution_is_copied_into_a_new_conversation_async(
     sqlite_instance: SQLiteMemory,
 ) -> None:

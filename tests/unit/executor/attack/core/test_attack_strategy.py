@@ -894,11 +894,11 @@ class TestDefaultAttackStrategyEventHandler:
             "seed_group_id": "seed-a",
         }
 
-    async def test_on_post_execute_no_attribution_leaves_fields_none(
+    async def test_on_post_execute_no_attribution_records_only_result_role(
         self, sample_attack_context, sample_attack_result, mock_memory
     ):
-        """Outside a Scenario, _attribution is None and the attribution fields
-        on the persisted AttackResult must stay None."""
+        """Outside a Scenario, _attribution is None, so the persisted AttackResult
+        records its role but no parent link."""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
@@ -914,7 +914,7 @@ class TestDefaultAttackStrategyEventHandler:
             await handler.on_event_async(event_data)
 
         assert sample_attack_result.attribution_parent_id is None
-        assert sample_attack_result.attribution_data is None
+        assert sample_attack_result.attribution_data == {"result_role": "target_facing"}
 
     async def test_on_error_stamps_scenario_attribution_when_present(self, sample_attack_context, mock_memory):
         """Error AttackResults must also carry the attribution foreign key so
