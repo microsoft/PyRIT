@@ -440,7 +440,7 @@ class ComponentIdentifier(BaseModel):
         Returns:
             frozenset[str]: Identity-conflicting constructor parameter names.
         """
-        return frozenset({"sas_token"})
+        return frozenset[str]()
 
     @classmethod
     def get_class_attribute_values(cls, target_cls: type) -> dict[str, Any]:

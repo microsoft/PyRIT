@@ -71,4 +71,14 @@ class TargetIdentifier(ComponentIdentifier):
         Returns:
             frozenset[str]: Multiline target constructor parameter names.
         """
-        return frozenset({"http_request"})
+        return super().get_multiline_parameter_names() | frozenset({"http_request"})
+
+    @classmethod
+    def get_identity_conflicting_parameter_names(cls) -> frozenset[str]:
+        """
+        Get target constructor parameters that override identity-based authentication.
+
+        Returns:
+            frozenset[str]: Identity-conflicting target constructor parameter names.
+        """
+        return super().get_identity_conflicting_parameter_names() | frozenset({"sas_token"})
