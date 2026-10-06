@@ -357,7 +357,7 @@ class TestAnecdoctorGeneratorHelperMethods:
 
         with (
             patch("pathlib.Path.read_text", return_value="value: 'Test prompt template: {language} {type}'"),
-            patch("yaml.safe_load", return_value=mock_yaml_content),
+            patch("pyrit.executor.promptgen.anecdoctor.safe_load_yaml", return_value=mock_yaml_content),
         ):
             result = generator._load_prompt_from_yaml(yaml_filename="anecdoctor_use_fewshot.yaml")
             assert result == "Test prompt template: {language} {type}"

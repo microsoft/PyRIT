@@ -55,15 +55,26 @@ class RuntimeLifecycle:
         self.operations: set[asyncio.Task[None]] = set()
         self.management_operations: set[asyncio.Task[None]] = set()
         self.apply_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
         self.topology_supported = all(
             os.getenv(key, "1") == "1"
             for key in ("WEB_CONCURRENCY", "UVICORN_WORKERS", "PYRIT_API_WORKERS", "PYRIT_REPLICAS")
         )
 
+    @property
+    def is_stopping(self) -> bool:
+        """Whether admission is closed even if an accepted apply is still finishing."""
+        return self._shutdown_task is not None
+
+    @property
+    def reported_state(self) -> str:
+        """Externally visible state, including admission closure before cleanup finishes."""
+        return "stopping" if self.is_stopping else self.state
+
     def status(self) -> dict[str, Any]:
         """Return status recoverable after a disconnected apply."""
         return {
-            "state": self.state,
+            "state": self.reported_state,
             "generation": self.generation,
             "version": self.version,
             "outcome": self.outcome,
@@ -134,6 +145,8 @@ class RuntimeLifecycle:
         Returns:
             dict[str, Any]: Accepted operation or admission rejection.
         """
+        if self.is_stopping:
+            return {**self.status(), "outcome": "stopping"}
         if not self.topology_supported:
             return {
                 **self.status(),
@@ -232,17 +245,43 @@ class RuntimeLifecycle:
         )
 
     async def shutdown_async(self) -> None:
-        """Stop the current scheduler and close services owned by this process."""
-        if self.apply_task and not self.apply_task.done():
-            await asyncio.shield(self.apply_task)
+        """Drain admitted work before closure, deferring caller cancellation until cleanup finishes."""
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown_runtime_async())
+        cancellation: asyncio.CancelledError | None = None
+        while not self._shutdown_task.done():
+            try:
+                await asyncio.shield(self._shutdown_task)
+            except asyncio.CancelledError as error:
+                cancellation = error
+        self._shutdown_task.result()
+        if cancellation is not None:
+            raise cancellation
+
+    async def _shutdown_runtime_async(self) -> None:
+        """Finish retained requests without cancelling their offloaded writes."""
+        pending = self.operations | self.management_operations
+        if self.apply_task is not None:
+            pending.add(self.apply_task)
+        results = await asyncio.gather(*pending, return_exceptions=True)
+        errors = [result for result in results if isinstance(result, BaseException)]
         self.state = "stopping"
         try:
             service = peek_scenario_run_service()
             if service:
                 await service.shutdown_async()
-        finally:
-            try:
-                await close_services_async()
-            finally:
-                if CentralMemory._memory_instance is not None:
-                    await CentralMemory.get_memory_instance().dispose_engine_async()
+        except (Exception, asyncio.CancelledError) as error:
+            errors.append(error)
+        try:
+            await close_services_async()
+        except (Exception, asyncio.CancelledError) as error:
+            errors.append(error)
+        try:
+            if CentralMemory._memory_instance is not None:
+                await CentralMemory.get_memory_instance().dispose_engine_async()
+        except (Exception, asyncio.CancelledError) as error:
+            errors.append(error)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("Runtime shutdown failed after draining admitted work.", errors)

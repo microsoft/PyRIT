@@ -710,7 +710,11 @@ class MessageSendService:
             piece_count=len(request.pieces),
         )
 
-        normalizer = PromptNormalizer(converter_guard=self._scheduler.conversion_async)
+        normalizer = PromptNormalizer(
+            start_token=request.start_token,
+            end_token=request.end_token,
+            converter_guard=self._scheduler.conversion_async,
+        )
         await normalizer.send_prompt_async(
             message=pyrit_message,
             target=target,

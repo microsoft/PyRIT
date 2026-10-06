@@ -21,10 +21,10 @@ from pyrit.models import JsonResponseConfig, Message, MessagePiece, SeedPrompt
 
 
 @contextmanager
-def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Iterator[None]:
+def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Iterator[AsyncMock]:
     """Mock setup and retry-history I/O so timeout tests reach their intended await."""
     with (
-        patch.object(generator._target, "set_system_prompt_async", new_callable=AsyncMock),
+        patch.object(generator._target, "set_system_prompt_async", new_callable=AsyncMock) as setup,
         patch.object(generator._normalizer.memory, "get_message_pieces_async", new_callable=AsyncMock, return_value=[]),
         patch.object(
             generator._normalizer.memory,
@@ -33,7 +33,7 @@ def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Iterator[None]:
             return_value=0,
         ),
     ):
-        yield
+        yield setup
 
 
 @contextmanager
@@ -267,7 +267,7 @@ value: |
                 cleanup_cancelled.set()
 
         with (
-            _isolate_pre_send_io(generator),
+            _isolate_pre_send_io(generator) as setup,
             _controlled_timeouts() as timeouts,
             patch.object(generator, "_CLEANUP_TIMEOUT_SECONDS", 0.01),
             patch.object(
@@ -282,6 +282,7 @@ value: |
         send.assert_awaited_once()
         assert cancelled.is_set()
         assert cleanup_cancelled.is_set()
+        setup.assert_awaited_once()
         reset.assert_awaited_once()
         assert "Timed out resetting generation conversation" in caplog.text
 
@@ -349,7 +350,7 @@ value: |
                 cleanup_cancelled.set()
 
         with (
-            _isolate_pre_send_io(generator),
+            _isolate_pre_send_io(generator) as setup,
             _controlled_timeouts() as timeouts,
             patch.object(generator, "_CLEANUP_TIMEOUT_SECONDS", 0.01),
             patch.object(
@@ -358,7 +359,7 @@ value: |
                 new_callable=AsyncMock,
                 return_value=response,
                 side_effect=failure,
-            ),
+            ) as send,
             patch.object(generator._target, "reset_conversation_async", side_effect=reset_async) as reset,
         ):
             if failure is None:
@@ -377,6 +378,8 @@ value: |
         assert timeouts[1][1].expired()
         reset.assert_awaited_once()
         assert cleanup_cancelled.is_set()
+        setup.assert_awaited_once()
+        send.assert_awaited_once()
         assert "Timed out resetting generation conversation" in caplog.text
 
     async def test_cancellation_propagates_async(self) -> None:

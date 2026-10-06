@@ -394,6 +394,8 @@ export interface ConverterPreviewRequest {
   original_value: string
   converter_ids: string[]
   original_value_data_type?: string
+  start_token?: string
+  end_token?: string
 }
 
 /** One converter stage of a `/converters/preview` pipeline run. */
@@ -510,6 +512,12 @@ export interface ConversationSaveInput {
   target: TargetInstance | null
   sourceAttackId: string | null
   sourceConversationId: string | null
+  labels?: Record<string, string>
+}
+
+export interface NewAttackContext {
+  generation: string
+  ready: boolean
   labels?: Record<string, string>
 }
 
@@ -668,6 +676,8 @@ export interface AddMessageRequest extends MessageRequest {
   converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
+  start_token?: string
+  end_token?: string
   target_conversation_id: string
 }
 

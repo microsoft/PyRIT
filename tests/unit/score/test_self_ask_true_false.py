@@ -213,7 +213,7 @@ def test_true_false_question_from_yaml_loads_fields():
 
 def test_true_false_question_from_yaml_raises_on_none():
     """TrueFalseQuestion.from_yaml raises when the YAML content is not a mapping."""
-    with patch("pyrit.score.true_false.self_ask_true_false_scorer.yaml.safe_load", return_value=None):
+    with patch("pyrit.score.true_false.self_ask_true_false_scorer.safe_load_yaml", return_value=None):
         with pytest.raises(ValueError, match="Failed to load true_false_question YAML"):
             TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
 
