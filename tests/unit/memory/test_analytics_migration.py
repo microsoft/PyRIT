@@ -39,6 +39,9 @@ def test_analytics_migration_is_single_successor_of_main() -> None:
     revision = scripts.get_revision(ANALYTICS_REVISION)
     assert revision is not None
     assert revision.down_revision == MAIN_REVISION
+    published_parent = scripts.get_revision(MAIN_REVISION)
+    assert published_parent is not None
+    assert published_parent.down_revision == "6ea3eb4b61c3"
 
 
 def configuration(connection: Connection) -> Config:
