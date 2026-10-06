@@ -29,6 +29,7 @@ from sqlalchemy.util.concurrency import greenlet_spawn
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
+from pyrit.memory.analytics_sql import UnicodeLower
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -256,8 +257,29 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         if self.db_path == ":memory:":
             kwargs["poolclass"] = StaticPool
         engine = create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+        self._register_analytics_lower(engine=engine.sync_engine)
         event.listen(engine.sync_engine, "handle_error", _cleanup_interrupted_sqlite_connection)
         return engine
+
+    @staticmethod
+    def _unicode_lower(value: str | int | float | bytes | None) -> str | None:
+        """
+        Lowercase SQLite text with Unicode rules, retaining NULL semantics.
+
+        Returns:
+            str | None: The folded value, or SQL NULL.
+        """
+        return str(value).lower() if value is not None else None
+
+    @staticmethod
+    def _register_analytics_lower(*, engine: Engine) -> None:
+        """Install the analytics-only Unicode function on every pooled SQLite connection."""
+
+        @event.listens_for(engine, "connect")
+        def register(dbapi_connection: Any, connection_record: Any) -> None:
+            dbapi_connection.create_function(
+                UnicodeLower.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_lower, deterministic=True
+            )
 
     async def get_session_async(self) -> AsyncSession:
         """
@@ -336,6 +358,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
             database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
             engine = create_engine(f"sqlite:///{database}", echo=has_echo, **extra_kwargs)
+            self._register_analytics_lower(engine=engine)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:
