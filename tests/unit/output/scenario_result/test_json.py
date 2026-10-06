@@ -82,7 +82,7 @@ async def test_overview_reports_scenario_and_stats(printer):
     assert payload["target"]["model"] == "gpt-test"
     assert payload["target"]["endpoint"] == "https://example.com"
     assert payload["stats"]["total_techniques"] == 2
-    assert payload["stats"]["total_units"] == 3
+    assert payload["stats"]["total_objective_executions"] == 3
     assert payload["stats"]["total_attempts"] == 3
     assert payload["stats"]["unique_objectives"] == 3
     assert {g["name"] for g in payload["groups"]} == {"technique_a", "technique_b"}
@@ -223,7 +223,9 @@ async def test_overview_separates_units_from_attempts(printer):
 
     payload = json.loads(await printer.render_async(result))
 
-    assert payload["stats"]["total_units"] == 1
+    assert payload["stats"]["total_objective_executions"] == 1
     assert payload["stats"]["total_attempts"] == 2
     assert payload["stats"]["overall_success_rate"] == 100
-    assert payload["groups"] == [{"name": "technique_a", "num_units": 1, "num_attempts": 2, "success_rate": 100}]
+    assert payload["groups"] == [
+        {"name": "technique_a", "num_objective_executions": 1, "num_attempts": 2, "success_rate": 100}
+    ]

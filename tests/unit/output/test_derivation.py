@@ -70,8 +70,8 @@ def test_scenario_overview_empty_is_zero():
 
     overview = scenario_overview(result)
 
-    assert (overview.units, overview.attempts, overview.success_rate) == (0, 0, 0)
-    assert overview.groups == [GroupStatistics(name="s1", units=0, attempts=0, success_rate=0)]
+    assert (overview.objective_executions, overview.attempts, overview.success_rate) == (0, 0, 0)
+    assert overview.groups == [GroupStatistics(name="s1", objective_executions=0, attempts=0, success_rate=0)]
 
 
 def test_scenario_overview_folds_atomic_attacks_by_display_group():
@@ -90,7 +90,7 @@ def test_scenario_overview_folds_atomic_attacks_by_display_group():
     overview = scenario_overview(result)
 
     assert overview.success_rate == 66
-    assert overview.groups == [GroupStatistics(name="encoding", units=3, attempts=3, success_rate=66)]
+    assert overview.groups == [GroupStatistics(name="encoding", objective_executions=3, attempts=3, success_rate=66)]
 
 
 def test_scenario_overview_uses_display_group_map_even_when_plan_labels_differ():
@@ -126,7 +126,7 @@ def test_scenario_overview_uses_display_group_map_even_when_plan_labels_differ()
 
     overview = scenario_overview(result)
 
-    assert overview.groups == [GroupStatistics(name="encoding", units=1, attempts=1, success_rate=100)]
+    assert overview.groups == [GroupStatistics(name="encoding", objective_executions=1, attempts=1, success_rate=100)]
 
 
 # --- attack_score_display ---

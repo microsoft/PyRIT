@@ -292,7 +292,7 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     # key sets first so a group missing from one view fails instead of reading as 0%.
     sdk_groups = {name: (counts.completed, counts.success_percentage) for name, counts in sdk.display_groups.items()}
     report_groups = {
-        group["name"]: (group["num_units"], group["success_rate"])
+        group["name"]: (group["num_objective_executions"], group["success_rate"])
         for group in report["groups"]
         if group["num_attempts"]
     }

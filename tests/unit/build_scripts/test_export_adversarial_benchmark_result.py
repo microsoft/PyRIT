@@ -49,7 +49,7 @@ async def test_write_overview_reports_three_techniques_two_models_six_combinatio
     assert "Distinct Adversarial Models: 2" in overview
     assert "Technique/Model Combinations: 6" in overview
     assert "Total Techniques:" not in overview
-    assert "Total Units: 6" in overview
+    assert "Total Objective Executions: 6" in overview
     assert "Group: adversarial_model_a" in overview
     assert "Group: adversarial_model_b" in overview
 
@@ -73,7 +73,7 @@ async def test_write_overview_counts_planned_combinations_missing_from_loaded_at
     assert "Distinct Techniques: 3" in overview
     assert "Distinct Adversarial Models: 2" in overview
     assert "Technique/Model Combinations: 6" in overview
-    assert "Total Units: 2" in overview
+    assert "Total Objective Executions: 2" in overview
 
 
 async def test_write_overview_deduplicates_datasets_without_attack_results_async(tmp_path: Path) -> None:
@@ -90,4 +90,4 @@ async def test_write_overview_deduplicates_datasets_without_attack_results_async
     assert "Distinct Techniques: 1" in overview
     assert "Distinct Adversarial Models: 2" in overview
     assert "Technique/Model Combinations: 2" in overview
-    assert "Total Units: 0" in overview
+    assert "Total Objective Executions: 0" in overview

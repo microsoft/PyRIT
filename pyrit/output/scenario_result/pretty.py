@@ -207,7 +207,11 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
         lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
-        lines.append(self._format_colored(f"{self._indent * 2}• Total Units: {overview.units}", Fore.GREEN))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Total Objective Executions: {overview.objective_executions}", Fore.GREEN
+            )
+        )
         lines.append(self._format_colored(f"{self._indent * 2}• Total Attempts: {overview.attempts}", Fore.GREEN))
         lines.append(
             self._format_colored(
@@ -228,7 +232,11 @@ class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase
         for group in group_summaries:
             lines.append("\n")
             lines.append(self._format_colored(f"{self._indent}🔸 Group: {group.name}", Style.BRIGHT))
-            lines.append(self._format_colored(f"{self._indent * 2}• Units: {group.units}", Fore.YELLOW))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Objective Executions: {group.objective_executions}", Fore.YELLOW
+                )
+            )
             lines.append(self._format_colored(f"{self._indent * 2}• Attempts: {group.attempts}", Fore.YELLOW))
             lines.append(
                 self._format_colored(

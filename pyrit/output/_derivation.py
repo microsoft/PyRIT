@@ -58,7 +58,7 @@ class GroupStatistics(NamedTuple):
     """Effective-unit statistics for one display group, alongside its raw attempt count."""
 
     name: str
-    units: int
+    objective_executions: int
     attempts: int
     success_rate: int
 
@@ -66,7 +66,7 @@ class GroupStatistics(NamedTuple):
 class ScenarioOverview(NamedTuple):
     """Overall and per-display-group statistics for a scenario report."""
 
-    units: int
+    objective_executions: int
     attempts: int
     success_rate: int
     groups: list[GroupStatistics]
@@ -76,7 +76,8 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     """
     Summarize a scenario result for the reports, using ``pyrit.analytics.compute_scenario_statistics``.
 
-    ``units`` is the success-rate denominator; ``attempts`` counts every persisted attempt, retries included.
+    ``objective_executions`` (one objective run with one attack configuration) is the success-rate
+    denominator; ``attempts`` counts every persisted attempt, retries included.
 
     Args:
         result (ScenarioResult): The scenario result to summarize.
@@ -96,13 +97,13 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
         groups.append(
             GroupStatistics(
                 name=group_name,
-                units=counts.completed,
+                objective_executions=counts.completed,
                 attempts=len(group_results),
                 success_rate=counts.success_percentage or 0,
             )
         )
     return ScenarioOverview(
-        units=statistics.overall.completed,
+        objective_executions=statistics.overall.completed,
         attempts=statistics.attempts,
         success_rate=statistics.overall.success_percentage or 0,
         groups=groups,
