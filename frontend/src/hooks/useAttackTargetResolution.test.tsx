@@ -59,4 +59,16 @@ describe('useAttackTargetResolution', () => {
     await waitFor(() => expect(result.current.activeTarget).toBe(replacementTarget))
     expect(targetsApi.getTarget).toHaveBeenCalledWith('target')
   })
+
+  it('distinguishes a saved unbound draft from a legacy missing target after reload', () => {
+    const { result, rerender } = renderHook(({ unbound }: { unbound: boolean }) => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1, attackTarget: null,
+      attackTargetSource: 'persisted', targetUnbound: unbound,
+    }), { initialProps: { unbound: true } })
+    expect(result.current.resolutionStatus).toBe('unbound')
+    expect(result.current.activeTarget).toBeNull()
+    rerender({ unbound: false })
+    expect(result.current.resolutionStatus).toBe('legacy')
+    expect(targetsApi.getTarget).not.toHaveBeenCalled()
+  })
 })

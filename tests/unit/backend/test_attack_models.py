@@ -8,8 +8,16 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from pyrit.backend.models.attacks import MessagePieceRequest
+from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest
 from pyrit.models import PromptDataType
+
+
+def test_add_message_rejects_save_only_source_reference() -> None:
+    with pytest.raises(ValidationError, match="requires a complete conversation save"):
+        AddMessageRequest(
+            target_conversation_id="conversation",
+            pieces=[MessagePieceRequest(original_value="Copy", source_piece_id="00000000-0000-0000-0000-000000000001")],
+        )
 
 
 @pytest.mark.parametrize("data_type", get_args(PromptDataType))
