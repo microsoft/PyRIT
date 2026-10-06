@@ -1010,8 +1010,9 @@ class AttackAnalyticsQueryCompiler:
             origin (FromClause): Outer row source containing all referenced columns.
             values (list[ColumnElement[Any]]): Named non-aggregate projections.
             name (str): Statement-local alias for the projected columns.
-            force (bool): Project derived facet keys even without JSON subqueries, so
-                positional parameters cannot differ between SELECT and GROUP BY.
+            force (bool): Project derived facet and membership keys even without
+                JSON subqueries, so positional parameters cannot differ between
+                SELECT and GROUP BY.
 
         Returns:
             tuple[FromClause, list[ColumnElement[Any]]]: Joined source and replacement
@@ -1306,7 +1307,9 @@ class AttackAnalyticsQueryCompiler:
             )
             raw_values.extend([*member_keys, label.label(f"label{index}")])
         if overlapping and self.dialect == "mssql":
-            origin, projected = self._grouping_projection(origin=origin, values=raw_values, name=f"{name}_values")
+            origin, projected = self._grouping_projection(
+                origin=origin, values=raw_values, name=f"{name}_values", force=True
+            )
             label_names = {f"label{index}" for index in dimensions}
             keys = [value for value in projected if value.key not in label_names]
             values = [func.min(value).label(value.key) if value.key in label_names else value for value in projected]

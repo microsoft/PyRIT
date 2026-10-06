@@ -121,6 +121,10 @@ indexed alongside outcome. Only this one analytics revision is added to `main`.
 New writes compute it from the recorded objective target; a bounded migration
 backfills supported historical result JSON, including the older direct-attack
 layout, and normalized target identifiers where the result JSON is absent.
+Replacing an atomic attack identifier updates its normalized graph/reference
+and frozen v1 target evaluation key in the same transaction. Clearing the
+identifier clears both derived keys; updating either derived key directly is
+rejected.
 Unsupported target metadata is logged during backfill, and records without a
 supported target remain in the typed missing group; the saved result and its
 outcome are still counted.
@@ -161,13 +165,13 @@ preserves the requested metadata keys and display labels; incomplete normalized
 documents continue to use the embedded fallback.
 
 SQL Server uses full-width `OPENJSON` scalar projections before grouping, preserving
-the shared 4096-character metadata contract. Derived scalar facet keys are
-projected once before `GROUP BY`, so repeated positional parameters cannot
-change the grouped expression. Filter values use bound sets rather than one
-copied metadata expression per choice. Array sources with missing or empty
-pipeline options are projected once before their membership checks, keeping
-accepted requests under SQL Server's 2,100-parameter limit without dropping or
-sampling values.
+the shared 4096-character metadata contract. Derived scalar facet and array
+membership keys, including mixed array/scalar matrix keys, are projected before
+`GROUP BY` so positional parameter binding cannot change the grouped expression.
+Filter values use bound sets rather than one copied metadata expression per
+choice. Array sources with missing or empty pipeline options are projected once
+before their membership checks, keeping accepted requests under SQL Server's
+2,100-parameter limit without dropping or sampling values.
 
 A raw report and its first result page share a short consistent read transaction.
 Later pages and facets use fresh reads. Cursors are bound to the current filters

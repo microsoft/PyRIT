@@ -1895,6 +1895,10 @@ class MemoryInterface(abc.ABC):
             raise ValueError("update_fields must be provided to update prompt entries.")
         with closing(self._get_session()) as session:
             try:
+                if "atomic_attack_identifier" in update_fields and any(
+                    isinstance(entry, AttackResultEntry) for entry in entries
+                ):
+                    _begin_sqlite_write(session)
                 prompt_entry_ids = [entry.id for entry in entries if isinstance(entry, PromptMemoryEntry)]
                 if prompt_entry_ids and session.get_bind().dialect.name == "mssql":
                     for start in range(0, len(prompt_entry_ids), self._MAX_BIND_VARS):
@@ -1918,6 +1922,16 @@ class MemoryInterface(abc.ABC):
                     entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
+                    if isinstance(entry_in_session, AttackResultEntry):
+                        derived_fields = {"atomic_attack_identifier_hash", "objective_target_eval_hash_v1"} & (
+                            update_fields.keys()
+                        )
+                        if derived_fields:
+                            names = ", ".join(sorted(derived_fields))
+                            raise ValueError(
+                                f"Derived attack result field(s) {names} cannot be updated directly; "
+                                "update atomic_attack_identifier instead."
+                            )
                     for field, value in update_fields.items():
                         if field not in vars(entry_in_session):
                             session.rollback()
@@ -1925,13 +1939,40 @@ class MemoryInterface(abc.ABC):
                                 f"Field '{field}' does not exist in the table '{entry_in_session.__tablename__}'. "
                                 "Rolling back changes..."
                             )
-                        setattr(entry_in_session, field, value)
+                        if isinstance(entry_in_session, AttackResultEntry) and field == "atomic_attack_identifier":
+                            self._update_attack_result_identifier(
+                                session=session, entry=entry_in_session, identifier=value
+                            )
+                        else:
+                            setattr(entry_in_session, field, value)
                 session.commit()
                 return True
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error updating entries: {e}")
                 raise
+
+    def _update_attack_result_identifier(
+        self,
+        *,
+        session: Session,
+        entry: AttackResultEntry,
+        identifier: ComponentIdentifier | dict[str, Any] | None,
+    ) -> None:
+        """
+        Persist the replacement graph before switching the result's foreign key.
+
+        Args:
+            session (Session): The result update's transaction.
+            entry (AttackResultEntry): The saved result to update.
+            identifier (ComponentIdentifier | dict[str, Any] | None): The new atomic identifier, or None.
+        """
+        prepared = entry._prepare_atomic_attack_identifier(identifier=identifier)
+        if prepared is not None:
+            self._persist_identifier(
+                session=session, identifier=AtomicAttackIdentifier.from_component_identifier(prepared)
+            )
+        entry._set_atomic_attack_identifier(identifier=prepared)
 
     @abc.abstractmethod
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:

@@ -1953,20 +1953,10 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Always recompute eval_hash before dumping so the stored JSON carries the
-        # freshly computed value for DB-level filtering (never a value from storage).
-        atomic_attack_identifier = None
-        if entry.atomic_attack_identifier:
-            atomic_attack_identifier = AtomicAttackIdentifier.from_component_identifier(entry.atomic_attack_identifier)
-            atomic_attack_identifier = atomic_attack_identifier.with_eval_hash(
-                AtomicAttackEvaluationIdentifier(atomic_attack_identifier).eval_hash
-            )
+        atomic_attack_identifier = self._prepare_atomic_attack_identifier(identifier=entry.atomic_attack_identifier)
+        self._set_atomic_attack_identifier(identifier=atomic_attack_identifier)
+        if atomic_attack_identifier is not None:
             entry.atomic_attack_identifier = atomic_attack_identifier
-        self.atomic_attack_identifier = atomic_attack_identifier.model_dump() if atomic_attack_identifier else None
-        self.atomic_attack_identifier_hash = atomic_attack_identifier.hash if atomic_attack_identifier else None
-        self.objective_target_eval_hash_v1 = ObjectiveTargetAnalyticsIdentityV1.from_atomic_document(
-            document=self.atomic_attack_identifier
-        )
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions
@@ -2021,6 +2011,42 @@ class AttackResultEntry(Base):
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
         self.attribution_data = entry.attribution_data
+
+    @staticmethod
+    def _prepare_atomic_attack_identifier(
+        *, identifier: ComponentIdentifier | dict[str, Any] | None
+    ) -> ComponentIdentifier | None:
+        """
+        Validate an atomic identifier and recompute its stored evaluation hash.
+
+        Args:
+            identifier (ComponentIdentifier | dict[str, Any] | None): The replacement identifier or None.
+
+        Returns:
+            ComponentIdentifier | None: A normalized identifier with a fresh evaluation hash.
+        """
+        if identifier is None:
+            return None
+        atomic = (
+            AtomicAttackIdentifier.from_component_identifier(identifier)
+            if isinstance(identifier, ComponentIdentifier)
+            else AtomicAttackIdentifier.model_validate(identifier)
+        )
+        return atomic.with_eval_hash(AtomicAttackEvaluationIdentifier(atomic).eval_hash)
+
+    def _set_atomic_attack_identifier(self, *, identifier: ComponentIdentifier | None) -> None:
+        """
+        Set the stored identifier, normalized foreign key, and frozen target evaluation key together.
+
+        Args:
+            identifier (ComponentIdentifier | None): An identifier prepared by
+                ``_prepare_atomic_attack_identifier``, or None to clear the association.
+        """
+        self.atomic_attack_identifier = identifier.model_dump() if identifier is not None else None
+        self.atomic_attack_identifier_hash = identifier.hash if identifier is not None else None
+        self.objective_target_eval_hash_v1 = ObjectiveTargetAnalyticsIdentityV1.from_atomic_document(
+            document=self.atomic_attack_identifier
+        )
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:

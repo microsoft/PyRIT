@@ -15,10 +15,13 @@ from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
+from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackResultSelection,
@@ -30,6 +33,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioRunState,
     Score,
+    TargetIdentifier,
 )
 
 if TYPE_CHECKING:
@@ -960,6 +964,132 @@ async def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instan
         "Stale entry merge must not overwrite concurrent adversarial_chat_conversation_ids update"
     )
     assert results[0].related_conversations.pop().conversation_id == "branch-1"
+
+
+@pytest.mark.parametrize("by_id", [False, True], ids=["conversation", "result_id"])
+def test_sync_update_attack_result_identifier_refreshes_normalized_reference(
+    sqlite_instance: MemoryInterface, by_id: bool
+) -> None:
+    original_target = TargetIdentifier(
+        class_name="MockTarget", class_module="tests", underlying_model_name="model", temperature=0.1
+    )
+    replacement_target = TargetIdentifier(
+        class_name="MockTarget", class_module="tests", underlying_model_name="model", temperature=0.8
+    )
+    result = AttackResult(
+        conversation_id="sync-conversation",
+        objective="Sync update",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="ProbeAttack", class_module="tests", objective_target=original_target
+            )
+        ),
+    )
+    replacement = AtomicAttackIdentifier.build(
+        attack_identifier=AttackIdentifier(
+            class_name="ProbeAttack", class_module="tests", objective_target=replacement_target
+        )
+    )
+    with pytest.warns(DeprecationWarning):
+        sqlite_instance.add_attack_results_to_memory(attack_results=[result])
+
+    update_fields = {"atomic_attack_identifier": replacement.model_dump()}
+    with pytest.warns(DeprecationWarning):
+        if by_id:
+            updated = sqlite_instance.update_attack_result_by_id(
+                attack_result_id=result.attack_result_id, update_fields=update_fields
+            )
+        else:
+            updated = sqlite_instance.update_attack_result(
+                conversation_id=result.conversation_id, update_fields=update_fields
+            )
+    assert updated
+    entry = sqlite_instance._query_entries(
+        AttackResultEntry, conditions=AttackResultEntry.id == uuid.UUID(result.attack_result_id)
+    )[0]
+    assert entry.atomic_attack_identifier_hash == replacement.hash
+    assert entry.objective_target_eval_hash_v1 == ObjectiveTargetAnalyticsIdentityV1.hash(identifier=replacement_target)
+    assert entry.atomic_attack_identifier is not None
+    assert entry.atomic_attack_identifier["eval_hash"] == AtomicAttackEvaluationIdentifier(replacement).eval_hash
+    graph = sqlite_instance._query_entries(
+        AtomicAttackIdentifierEntry, conditions=AtomicAttackIdentifierEntry.hash == replacement.hash
+    )
+    assert len(graph) == 1
+    assert replacement.attack_technique is not None
+    assert graph[0].attack_technique_identifier_hash == replacement.attack_technique.hash
+
+    with pytest.warns(DeprecationWarning):
+        if by_id:
+            cleared = sqlite_instance.update_attack_result_by_id(
+                attack_result_id=result.attack_result_id, update_fields={"atomic_attack_identifier": None}
+            )
+        else:
+            cleared = sqlite_instance.update_attack_result(
+                conversation_id=result.conversation_id, update_fields={"atomic_attack_identifier": None}
+            )
+    assert cleared
+    cleared_entry = sqlite_instance._query_entries(
+        AttackResultEntry, conditions=AttackResultEntry.id == uuid.UUID(result.attack_result_id)
+    )[0]
+    assert cleared_entry.atomic_attack_identifier is None
+    assert cleared_entry.atomic_attack_identifier_hash is None
+    assert cleared_entry.objective_target_eval_hash_v1 is None
+
+
+@pytest.mark.parametrize("derived_field", ["atomic_attack_identifier_hash", "objective_target_eval_hash_v1"])
+async def test_update_attack_result_rejects_direct_derived_identifier_fields(
+    sqlite_instance: MemoryInterface, derived_field: str
+) -> None:
+    result = AttackResult(conversation_id="derived-field", objective="Do not overwrite derived keys")
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
+    with pytest.raises(ValueError, match="cannot be updated directly"):
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=result.attack_result_id,
+            update_fields={derived_field: "0" * 64},
+        )
+    async with await sqlite_instance.get_session_async() as session:
+        entry = await session.get(AttackResultEntry, uuid.UUID(result.attack_result_id))
+        assert entry is not None
+        assert entry.atomic_attack_identifier_hash is None
+        assert entry.objective_target_eval_hash_v1 is None
+
+
+async def test_update_attack_result_identifier_graph_and_row_roll_back_together(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    old_target = TargetIdentifier(class_name="MockTarget", class_module="tests", temperature=0.1)
+    new_target = TargetIdentifier(class_name="MockTarget", class_module="tests", temperature=0.8)
+    result = AttackResult(
+        conversation_id="rollback-conversation",
+        objective="Test atomic replacement",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="ProbeAttack", class_module="tests", objective_target=old_target
+            )
+        ),
+    )
+    replacement = AtomicAttackIdentifier.build(
+        attack_identifier=AttackIdentifier(class_name="ProbeAttack", class_module="tests", objective_target=new_target)
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
+
+    with (
+        patch.object(AttackResultEntry, "_set_atomic_attack_identifier", side_effect=ValueError("update failed")),
+        pytest.raises(ValueError, match="update failed"),
+    ):
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=result.attack_result_id,
+            update_fields={"atomic_attack_identifier": replacement.model_dump()},
+        )
+
+    async with await sqlite_instance.get_session_async() as session:
+        saved = await session.get(AttackResultEntry, uuid.UUID(result.attack_result_id))
+        assert saved is not None
+        assert result.atomic_attack_identifier is not None
+        assert saved.atomic_attack_identifier_hash == result.atomic_attack_identifier.hash
+        assert saved.objective_target_eval_hash_v1 == ObjectiveTargetAnalyticsIdentityV1.hash(identifier=old_target)
+        assert await session.get(AtomicAttackIdentifierEntry, replacement.hash) is None
+        assert await session.get(TargetIdentifierEntry, new_target.hash) is None
 
 
 async def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterface):

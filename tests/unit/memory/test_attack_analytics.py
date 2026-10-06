@@ -23,6 +23,7 @@ from sqlalchemy.exc import CompileError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.sql import Select, visitors
 from sqlalchemy.sql.functions import Function
+from sqlalchemy.sql.selectable import CTE
 
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.memory import MemoryInterface, SQLiteMemory
@@ -760,6 +761,63 @@ def test_mssql_scalar_facets_group_projected_keys_with_positional_bindings(dimen
     assert "GROUP BY facet_values.kind0, facet_values.value0" in sql
 
 
+@pytest.mark.parametrize(
+    ("method", "names", "members"),
+    [
+        ("groups", ("targeted_harm_category",), {"group_members": (0,)}),
+        ("groups", ("converter_type",), {"group_members": (0,)}),
+        ("facet", ("targeted_harm_category",), {"facet_members": (0,)}),
+        ("facet", ("converter_type",), {"facet_members": (0,)}),
+        (
+            "matrix",
+            ("targeted_harm_category", "operation"),
+            {"axis0_members": (0,), "cell_members": (0, 1)},
+        ),
+        (
+            "matrix",
+            ("operation", "targeted_harm_category"),
+            {"axis1_members": (1,), "cell_members": (0, 1)},
+        ),
+        (
+            "matrix",
+            ("targeted_harm_category", "converter_type"),
+            {"compact_cell_members": (0, 1)},
+        ),
+        (
+            "matrix",
+            ("converter_type", "operator"),
+            {"axis0_members": (0,), "cell_members": (0, 1)},
+        ),
+    ],
+)
+def test_mssql_array_membership_keys_share_projected_columns_with_positional_bindings(
+    *, method: str, names: tuple[str, ...], members: dict[str, tuple[int, ...]]
+) -> None:
+    dimensions = [AttackAnalyticsDimension(name=name) for name in names]
+    query = (
+        AttackAnalyticsFacetQuery(dimension=dimensions[0])
+        if method == "facet"
+        else AttackAnalyticsQuery(group_by=dimensions[0], compare_by=dimensions[1] if len(dimensions) == 2 else None)
+    )
+    statement = getattr(AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters), method)(query)
+    dialect = mssql.dialect(paramstyle="qmark", deprecate_large_types=True)
+    compiled = statement.compile(dialect=dialect, compile_kwargs={"render_postcompile": True})
+    assert compiled.positiontup
+
+    checked: set[str] = set()
+    for node in visitors.iterate(statement):
+        if not isinstance(node, CTE) or node.name not in members or node.name in checked:
+            continue
+        checked.add(node.name)
+        grouped = {str(key.compile(dialect=dialect)) for key in node.element._group_by_clauses}
+        for index in members[node.name]:
+            for field in ("kind", "value"):
+                reference = f"{node.name}_values.{field}{index}"
+                assert str(node.element.selected_columns[f"{field}{index}"].compile(dialect=dialect)) == reference
+                assert reference in grouped
+    assert checked == members.keys()
+
+
 @pytest.mark.parametrize("filter_name", ["converter_type", "label"])
 def test_mssql_accepted_filter_budget_stays_below_2100_positional_parameters(filter_name: str) -> None:
     filters = AttackAnalyticsFilters.model_validate(
@@ -788,12 +846,24 @@ def test_mssql_accepted_filter_budget_stays_below_2100_positional_parameters(fil
         compare_by=AttackAnalyticsDimension(name="model"),
     )
     facet = AttackAnalyticsFacetQuery(filters=filters, dimension=AttackAnalyticsDimension(name="operation"))
+    harm = AttackAnalyticsDimension(name="targeted_harm_category")
+    array_query = AttackAnalyticsQuery(
+        filters=filters, group_by=harm, compare_by=AttackAnalyticsDimension(name="operation")
+    )
+    compact_array_query = AttackAnalyticsQuery(
+        filters=filters, group_by=harm, compare_by=AttackAnalyticsDimension(name="converter_type")
+    )
+    array_facet = AttackAnalyticsFacetQuery(filters=filters, dimension=harm)
     statements = (
         lambda compiler: compiler.totals(),
         lambda compiler: compiler.groups(query),
         lambda compiler: compiler.matrix(query),
         lambda compiler: compiler.facet(facet),
         lambda compiler: compiler.results(limit=100),
+        lambda compiler: compiler.groups(array_query),
+        lambda compiler: compiler.matrix(array_query),
+        lambda compiler: compiler.matrix(compact_array_query),
+        lambda compiler: compiler.facet(array_facet),
     )
     dialect = mssql.dialect(paramstyle="qmark", deprecate_large_types=True)
     for make_statement in statements:
@@ -832,12 +902,24 @@ def test_mssql_absence_filters_stay_below_2100_positional_parameters(absence_kin
         compare_by=AttackAnalyticsDimension(name="converter_type", converter_direction="response"),
     )
     facet = AttackAnalyticsFacetQuery(filters=filters, dimension=AttackAnalyticsDimension(name="operation"))
+    harm = AttackAnalyticsDimension(name="targeted_harm_category")
+    array_query = AttackAnalyticsQuery(
+        filters=filters, group_by=harm, compare_by=AttackAnalyticsDimension(name="operation")
+    )
+    compact_array_query = AttackAnalyticsQuery(
+        filters=filters, group_by=harm, compare_by=AttackAnalyticsDimension(name="converter_type")
+    )
+    array_facet = AttackAnalyticsFacetQuery(filters=filters, dimension=harm)
     statements = (
         lambda compiler: compiler.totals(),
         lambda compiler: compiler.groups(query),
         lambda compiler: compiler.matrix(query),
         lambda compiler: compiler.facet(facet),
         lambda compiler: compiler.results(limit=100),
+        lambda compiler: compiler.groups(array_query),
+        lambda compiler: compiler.matrix(array_query),
+        lambda compiler: compiler.matrix(compact_array_query),
+        lambda compiler: compiler.facet(array_facet),
     )
     dialect = mssql.dialect(paramstyle="qmark", deprecate_large_types=True)
     for make_statement in statements:
