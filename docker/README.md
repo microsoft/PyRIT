@@ -235,10 +235,12 @@ You can further customize the container by:
 ## Security Note
 
 Docker Compose and the run script publish JupyterLab and GUI ports on
-`127.0.0.1` only. These are local-use defaults: JupyterLab generates an access
-token shown in the container logs, while the GUI API allows unauthenticated
-access when Entra authentication is not configured. Do not expose either service remotely
-without authentication, HTTPS, and appropriate network access restrictions.
+`127.0.0.1` only by default. JupyterLab generates an access token shown in the
+container logs. Non-admin GUI APIs allow unauthenticated access when the required
+Entra settings are all unset or empty at backend startup; partial configuration
+is rejected. Administrator routes remain restricted by default.
+Do not expose either service remotely without authentication, HTTPS, and
+appropriate network access restrictions.
 See the [GUI Compose security guidance](./QUICKSTART.md#docker-compose).
 
 ## Documentation & Support

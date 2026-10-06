@@ -90,13 +90,16 @@ docker compose --profile jupyter up --build
 docker compose --profile gui up --build
 ```
 
-Both profiles publish ports on `127.0.0.1` only. Open the GUI at
+Both profiles publish ports on `127.0.0.1` only by default. Open the GUI at
 `http://127.0.0.1:8000` or Jupyter at `http://127.0.0.1:8888` on the Docker host.
+Jupyter requires the access token shown in the container logs.
 The backend still listens on `0.0.0.0` **inside the container** so Docker can
 forward requests; the host-side port mapping is what restricts publication.
 
-**Security:** The GUI API does not require authentication when
-`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS` are all unset.
+**Security:** Non-admin GUI APIs allow unauthenticated access when
+`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS` are all unset
+or empty at backend startup. Partial Entra configuration is rejected rather than
+treated as no-auth. Administrator routes remain restricted by default.
 Target API keys do not authenticate incoming GUI requests. Do not change the
 GUI mapping to `8000:8000` or expose it through a proxy without first configuring
 Entra authentication, HTTPS, and appropriate network access restrictions.
@@ -132,17 +135,29 @@ IPv6 publication.
 
 For local no-auth acceptance, ensure the Entra settings above and
 `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN` are unset in the effective container
-environment, including mounted environment files. Verify:
+environment, including mounted environment files. Wait for the GUI to report
+that the runtime is ready before checking business APIs.
+
+Use the bundled GUI or a matching-build API client for these checks. Direct
+HTTP requests to `/api/targets` and `/api/config` must include the caller's
+`PyRIT-Compatibility-ID` header as described in the
+[backend compatibility protocol](../pyrit/backend/README.md#strict-lockstep-compatibility).
+Missing or malformed compatibility headers return 400; a build mismatch returns
+409. Neither response verifies authentication or network isolation.
+
+Verify:
 
 - On the Docker host, the GUI loads at `http://127.0.0.1:8000`,
   `/api/auth/config` reports `"enabled": false`, and `/api/targets` returns 200
   without credentials.
 - `/api/config` still returns 403 without credentials.
-- From another machine, a TCP connection to the Docker host's LAN address on
-  port 8000 fails. An HTTP 401 or 403 is not a successful network-isolation test.
+- From another machine with a known network path to the Docker host, a TCP
+  connection to its LAN address on port 8000 fails. Any HTTP response, including
+  401 or 403, means the service is reachable and fails this network-isolation check.
 
-The Docker CI workflow checks resolved Compose bindings without starting
-containers. That check does not replace this live local/remote verification.
+The Docker CI workflow's **Validate Compose Bindings** job checks resolved
+Compose bindings without starting containers; other jobs build and run images.
+The binding check does not replace this live local/remote verification.
 
 ## Troubleshooting
 
