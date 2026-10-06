@@ -66,6 +66,8 @@ interface ValuePreviewProps {
 interface ConverterPanelProps {
   onClose: () => void
   controller: ChatConverterController
+  selectedMessageCount?: number
+  onApply?: () => void
 }
 
 interface SelectedConverter extends ConverterInstance {
@@ -158,6 +160,8 @@ function ValuePreview({
 export default function ConverterPanel({
   onClose,
   controller,
+  selectedMessageCount,
+  onApply,
 }: ConverterPanelProps) {
   const { generation, ready } = useRuntime()
   const styles = useConverterPanelStyles()
@@ -167,6 +171,7 @@ export default function ConverterPanel({
     inputs, workingInputs, pipelines, stageResults, results, errors, isConverting,
     addConverter, setPipeline, retainConverters,
   } = controller
+  const isBatch = selectedMessageCount !== undefined && selectedMessageCount > 1
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -373,7 +378,9 @@ export default function ConverterPanel({
           <div className={styles.headerTitle}>
             <Text weight="semibold" size={300}>Converters</Text>
             <Text size={200} className={styles.hintText}>
-              Build and convert registered converter pipelines.
+              {selectedMessageCount === undefined
+                ? 'Build and convert registered converter pipelines.'
+                : 'Select messages in chat.'}
             </Text>
           </div>
           <Button
@@ -413,7 +420,7 @@ export default function ConverterPanel({
               onCreateNew={() => setCreateDialogOpen(true)}
             />
           )}
-          {activeInputs.map((input: ConverterInputPiece) => <ValuePreview
+          {!isBatch && activeInputs.map((input: ConverterInputPiece) => <ValuePreview
             key={input.id}
             dataType={input.dataType}
             emptyText={
@@ -456,7 +463,8 @@ export default function ConverterPanel({
                   } chain and any configured inputs without results.`}
                   data-testid="converter-preview-btn"
                 >
-                  {isConverting ? 'Converting...' : 'Convert'}
+                  {isConverting ? 'Converting...' : selectedMessageCount === undefined
+                    ? 'Convert' : `Convert ${selectedMessageCount} message${selectedMessageCount === 1 ? '' : 's'}`}
                 </Button>
               )}
               {inputs.filter((input: ConverterInputPiece) => errors[input.id]).map((input: ConverterInputPiece) => (
@@ -532,7 +540,7 @@ export default function ConverterPanel({
                     <Text size={200} className={styles.hintText}>
                       {converter.description || 'No description is available.'}
                     </Text>
-                    {activeInputs.map((input: ConverterInputPiece) => {
+                    {!isBatch && activeInputs.map((input: ConverterInputPiece) => {
                       const stage = stageResults[input.id]?.find(
                         (result: ConverterStageResult) => result.stageId === converter.stageId,
                       )
@@ -576,14 +584,39 @@ export default function ConverterPanel({
                   </div>
                 )
               })}
+              {isBatch && Object.keys(results).length > 0 && (
+                <section className={styles.resultsSection} aria-label="Converted messages">
+                  <Text weight="semibold">Converted messages</Text>
+                  {inputs.filter((input: ConverterInputPiece) => results[input.id]).map((input: ConverterInputPiece) => (
+                    <section key={input.id} className={styles.resultPair} aria-label={input.name}>
+                      <Text size={200} className={styles.hintText}>{input.name}</Text>
+                      <ValuePreview
+                        label="Original message"
+                        dataType={input.dataType}
+                        value={input.value}
+                        emptyText="The original message is empty."
+                        testId="converter-original-message"
+                      />
+                      <ValuePreview
+                        label="Converted message"
+                        dataType={results[input.id].converted_value_data_type}
+                        value={results[input.id].converted_value}
+                        emptyText="This conversion returned an empty value."
+                        testId="converter-final-result"
+                      />
+                    </section>
+                  ))}
+                </section>
+              )}
               <Button
                 appearance="primary"
-                onClick={controller.apply}
+                onClick={onApply ?? controller.apply}
                 disabled={!ready || isConverting || Object.keys(results).length === 0}
                 className={styles.addConvertedButton}
                 data-testid="use-converted-btn"
               >
-                Add converted value
+                {onApply && Object.keys(errors).length > 0
+                  ? 'Apply successful results' : isBatch ? 'Add converted values' : 'Add converted value'}
               </Button>
             </div>
           )}
