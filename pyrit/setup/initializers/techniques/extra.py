@@ -98,6 +98,8 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             adversarial_prompt_template=SeedPrompt.from_yaml_file(
                 EXECUTOR_RED_TEAM_PATH / "goat_follow_up_prompt.yaml"
             ),
+            # GOAT's attacker never sees judge output (paper section 3.3); every turn is still scored.
+            use_score_as_feedback=False,
         ),
         AttackTechniqueFactory(
             name="split_payload",

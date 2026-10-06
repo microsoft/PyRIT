@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
@@ -1323,9 +1323,10 @@ def _adv_target(*, model_name: str = "gpt-adv", extra_params: dict | None = None
 class _IdentityTestStrategy(AttackStrategy):
     """Minimal concrete strategy that exposes a settable adversarial config for identity tests."""
 
-    def __init__(self, *, objective_target, adversarial_config=None):
+    def __init__(self, *, objective_target, adversarial_config=None, scoring_config=None):
         super().__init__(context_type=AttackContext, objective_target=objective_target)
         self._test_adversarial_config = adversarial_config
+        self._test_scoring_config = scoring_config
 
     def _validate_context(self, *, context):
         pass
@@ -1348,6 +1349,9 @@ class _IdentityTestStrategy(AttackStrategy):
 
     def get_attack_adversarial_config(self):
         return self._test_adversarial_config
+
+    def get_attack_scoring_config(self):
+        return self._test_scoring_config
 
 
 def _eval_hash(attack_identifier: ComponentIdentifier) -> str:
@@ -1508,3 +1512,47 @@ class TestCreateIdentifierAdversarial:
             adversarial_config=AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=None),
         )
         assert plain.get_identifier().hash != adversarial.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateIdentifierScoreFeedback:
+    """Tests for ``use_score_as_feedback`` in the attack identifier (component + eval hash)."""
+
+    def test_disabled_feedback_stored_in_params(self, mock_objective_target):
+        strategy = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        assert strategy.get_identifier().params["use_score_as_feedback"] is False
+
+    @pytest.mark.parametrize(
+        "scoring_config", [None, AttackScoringConfig(), AttackScoringConfig(use_score_as_feedback=True)]
+    )
+    def test_default_feedback_omitted_from_params(self, mock_objective_target, scoring_config):
+        """Enabled feedback is the default, so it is omitted to keep existing hashes stable."""
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, scoring_config=scoring_config)
+        assert "use_score_as_feedback" not in strategy.get_identifier().params
+
+    def test_enabled_feedback_hash_matches_attack_without_scoring_config(self, mock_objective_target):
+        """Attacks created before this field existed must keep their component and eval hashes."""
+        without_config = _IdentityTestStrategy(objective_target=mock_objective_target)
+        with_default_config = _IdentityTestStrategy(
+            objective_target=mock_objective_target, scoring_config=AttackScoringConfig()
+        )
+        assert without_config.get_identifier().hash == with_default_config.get_identifier().hash
+        assert _eval_hash(without_config.get_identifier()) == _eval_hash(with_default_config.get_identifier())
+
+    def test_different_feedback_changes_full_and_eval_hash(self, mock_objective_target):
+        """Regression test: scenario resume matches completed objectives by eval hash, so attacks
+        that differ only in whether the adversarial chat sees the scorer rationale must not collide."""
+        with_feedback = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            scoring_config=AttackScoringConfig(use_score_as_feedback=True),
+        )
+        without_feedback = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        id1, id2 = with_feedback.get_identifier(), without_feedback.get_identifier()
+        assert id1.hash != id2.hash
+        assert _eval_hash(id1) != _eval_hash(id2)

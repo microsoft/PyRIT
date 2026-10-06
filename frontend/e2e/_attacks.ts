@@ -1,6 +1,6 @@
 import type { APIRequestContext, Route } from "@playwright/test";
 
-import type { AddMessageResponse, BackendMessage, MessageSendRequest, MessageSendStatus, TargetResponseStatus } from "@/types";
+import type { AddMessageResponse, AttackSummary, BackendMessage, MessageSendRequest, MessageSendStatus, TargetResponseStatus } from "@/types";
 import { compatibilityHeaders } from "./_compatibility";
 
 export function makeAddMessageResponse(
@@ -8,6 +8,7 @@ export function makeAddMessageResponse(
   conversationId: string,
   messages: BackendMessage[],
   targetResponseStatus: TargetResponseStatus | null = null,
+  attack: Partial<AttackSummary> = {},
 ): AddMessageResponse {
   return {
     attack: {
@@ -22,6 +23,7 @@ export function makeAddMessageResponse(
       labels: {},
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
+      ...attack,
     },
     messages: {
       conversation_id: conversationId,
