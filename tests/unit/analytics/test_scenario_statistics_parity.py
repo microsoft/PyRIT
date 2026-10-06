@@ -49,6 +49,8 @@ class _Attempt:
     seed_group_id: str | None = None
     # Prompt context carried only by the atomic identifier's seeds, like legacy rows without seed attribution.
     seed_context: str | None = None
+    # Attribute the attempt to the logical seed group made of the objective and this prompt context.
+    attributed_seed_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,15 @@ _HISTORIES = {
             _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_context="context two"),
         ],
     ),
+    "identifier_and_attributed_rows_of_one_seed_group": _History(
+        # One logical seed group recorded three ways: an older row with only the identifier's seeds, a row with
+        # only the attributed seed group ID, and a row with both. All three are attempts of the same unit.
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.ERROR, seed_context="context"),
+            _Attempt("attack", "A", AttackOutcome.ERROR, attributed_seed_context="context"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_context="context", attributed_seed_context="context"),
+        ],
+    ),
     "display_groups": _History(
         plan=_plan(
             _group(name="base64", eval_hash="e1", seed_ids=["a", "b"], display_group="encoding"),
@@ -187,9 +198,14 @@ _EXPECTED_OVERALL = {
     "technique_configurations_sharing_a_name": 50,
     "legacy_attempt_with_ambiguous_name": 0,
     "legacy_seed_groups_sharing_an_objective": 50,
+    "identifier_and_attributed_rows_of_one_seed_group": 100,
     "display_groups": 50,
     "empty_history": None,
 }
+
+
+def _seed_group(objective: str, context: str) -> AttackSeedGroup:
+    return AttackSeedGroup(seeds=[SeedObjective(value=objective), SeedPrompt(value=context)])
 
 
 async def _persist(memory: MemoryInterface, history: _History) -> str:
@@ -213,13 +229,14 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
             attribution_data["parent_eval_hash"] = attempt.eval_hash
         if attempt.seed_group_id is not None:
             attribution_data["seed_group_id"] = attempt.seed_group_id
+        if attempt.attributed_seed_context is not None:
+            seed_group = _seed_group(attempt.objective, attempt.attributed_seed_context)
+            attribution_data["seed_group_id"] = seed_group.logical_id
         atomic_attack_identifier = None
         if attempt.seed_context is not None:
             atomic_attack_identifier = AtomicAttackIdentifier.build(
                 attack_identifier=ComponentIdentifier(class_name="MockAttack", class_module="tests"),
-                seed_group=AttackSeedGroup(
-                    seeds=[SeedObjective(value=attempt.objective), SeedPrompt(value=attempt.seed_context)]
-                ),
+                seed_group=_seed_group(attempt.objective, attempt.seed_context),
             )
         attack_results.append(
             AttackResult(

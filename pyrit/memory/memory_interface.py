@@ -5884,22 +5884,15 @@ class MemoryInterface(abc.ABC):
         atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key = (
             self._get_scenario_attempt_unit_expressions()
         )
-        # Same fallback order as pyrit.analytics.scenario_statistics.resolve_execution_unit, minus the plan
-        # match: identifier seeds keep legacy seed groups sharing an objective apart, then the objective hash.
-        fallback_seed_id = func.coalesce(
-            attributed_seed_group_id,
-            literal("seeds:", Unicode).concat(type_coerce(identifier_seed_key, Unicode)),
-            AttackResultEntry.objective_sha256,
-            "",
-        )
-        attempts = (
+        identifier_seed_key = literal("seeds:", Unicode).concat(type_coerce(identifier_seed_key, Unicode))
+        raw_attempts = (
             select(
                 AttackResultEntry.id.label("attempt_id"),
                 AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
                 attributed_seed_group_id.label("attributed_seed_group_id"),
-                fallback_seed_id.label("seed_group_id"),
+                identifier_seed_key.label("identifier_seed_key"),
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
@@ -5912,6 +5905,54 @@ class MemoryInterface(abc.ABC):
                 ).label("total_retries"),
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
+            .subquery("history_raw_attempts")
+        )
+        # The attributed seed group ID and the identifier's seeds name the same logical seed group (the SDK
+        # resolves both to AtomicAttackIdentifier.logical_seed_group_id), but SQL can't hash the seeds. Rows
+        # carrying both bridge the two spellings, so attributed-only rows of that seed group share their key.
+        bridged = (
+            select(
+                raw_attempts.c.scenario_result_id,
+                raw_attempts.c.attributed_seed_group_id,
+                func.min(raw_attempts.c.identifier_seed_key).label("identifier_seed_key"),
+            )
+            .where(
+                raw_attempts.c.attributed_seed_group_id.is_not(None),
+                raw_attempts.c.identifier_seed_key.is_not(None),
+            )
+            .group_by(raw_attempts.c.scenario_result_id, raw_attempts.c.attributed_seed_group_id)
+            .subquery("history_bridged_seed_keys")
+        )
+        # Same fallback order as pyrit.analytics.scenario_statistics.resolve_execution_unit, minus the plan
+        # match: the logical seed group (from the identifier's seeds or the attribution), then the objective hash.
+        attempts = (
+            select(
+                raw_attempts.c.attempt_id,
+                raw_attempts.c.scenario_result_id,
+                raw_attempts.c.atomic_attack_name,
+                raw_attempts.c.technique_eval_hash,
+                raw_attempts.c.attributed_seed_group_id,
+                func.coalesce(
+                    raw_attempts.c.identifier_seed_key,
+                    bridged.c.identifier_seed_key,
+                    raw_attempts.c.attributed_seed_group_id,
+                    raw_attempts.c.objective_sha256,
+                    "",
+                ).label("seed_group_id"),
+                raw_attempts.c.objective_sha256,
+                raw_attempts.c.outcome,
+                raw_attempts.c.timestamp,
+                raw_attempts.c.total_retries,
+            )
+            .select_from(
+                raw_attempts.outerjoin(
+                    bridged,
+                    and_(
+                        bridged.c.scenario_result_id == raw_attempts.c.scenario_result_id,
+                        bridged.c.attributed_seed_group_id == raw_attempts.c.attributed_seed_group_id,
+                    ),
+                )
+            )
             .subquery("history_attempts")
         )
         units = self._build_scenario_history_unit_statement(attempts=attempts, plan_entry_ids=plan_entry_ids).subquery(
