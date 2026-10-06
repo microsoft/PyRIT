@@ -123,6 +123,7 @@ class FileDocumentStorage:
     be passed back to the single-document operations. Names come from the file system
     rather than from a caller, so the source can hold files this class cannot address or
     cannot read; those are skipped with a warning rather than failing the whole listing.
+    A subclass that must report a document it could not read can get the read errors too.
 
     Documents are read and written as raw bytes. Decoding belongs to the subclasses,
     which know how to report a document they cannot interpret and can skip just that one.
@@ -215,25 +216,43 @@ class FileDocumentStorage:
         Returns:
             dict[str, bytes]: Document content keyed by name.
         """
+        documents, read_errors = self._list_documents_and_read_errors()
+        for name, error in read_errors.items():
+            logger.warning(f"Skipping unreadable document '{name}{self._extension}' in {self.display_source}: {error}")
+        return documents
+
+    def _list_documents_and_read_errors(self) -> tuple[dict[str, bytes], dict[str, Exception]]:
+        """
+        Read every addressable document, keeping the error of each one that could not be read.
+
+        Returns:
+            tuple[dict[str, bytes], dict[str, Exception]]: Document content keyed by name, and
+            the read error of each document that could not be read, keyed by name.
+        """
         return self._list_blob_documents() if self._is_blob else self._list_local_documents()
 
-    def _list_local_documents(self) -> dict[str, bytes]:
+    def _list_local_documents(self) -> tuple[dict[str, bytes], dict[str, Exception]]:
         """
         Read addressable documents from the configured local directory.
 
+        A directory that cannot be listed raises, as a failed Blob listing does, rather than
+        reading as a store with no documents.
+
         Returns:
-            dict[str, bytes]: Document content keyed by file stem.
+            tuple[dict[str, bytes], dict[str, Exception]]: Document content and read errors keyed by file stem.
         """
         directory = self._local_directory(create=True)
         documents: dict[str, bytes] = {}
-        for path in sorted(directory.glob(f"*{self._extension}")):
-            if not self._is_addressable_name(path.stem):
+        read_errors: dict[str, Exception] = {}
+        # Path.glob would return nothing for a directory it cannot list; iterdir raises instead.
+        for path in sorted(directory.iterdir()):
+            if path.suffix != self._extension or not self._is_addressable_name(path.stem):
                 continue
             try:
                 documents[path.stem] = path.read_bytes()
             except OSError as error:
-                logger.warning(f"Skipping unreadable document '{path.name}' in {self.display_source}: {error}")
-        return documents
+                read_errors[path.stem] = error
+        return documents, read_errors
 
     def _is_addressable_name(self, name: str) -> bool:
         """
@@ -599,16 +618,17 @@ class FileDocumentStorage:
             directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def _list_blob_documents(self) -> dict[str, bytes]:
+    def _list_blob_documents(self) -> tuple[dict[str, bytes], dict[str, Exception]]:
         """
         Read addressable documents from the configured Azure Blob container.
 
         Returns:
-            dict[str, bytes]: Document content keyed by blob stem.
+            tuple[dict[str, bytes], dict[str, Exception]]: Document content and read errors keyed by blob stem.
         """
         from azure.core.exceptions import AzureError
 
         documents: dict[str, bytes] = {}
+        read_errors: dict[str, Exception] = {}
         with self._open_container_client() as client:
             prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
             blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
@@ -622,8 +642,8 @@ class FileDocumentStorage:
                 try:
                     documents[name] = client.download_blob(blob_name).readall()
                 except AzureError as error:
-                    logger.warning(f"Skipping unreadable document '{blob_name}' in {self.display_source}: {error}")
-        return documents
+                    read_errors[name] = error
+        return documents, read_errors
 
     def _parse_blob_source(self) -> tuple[str, str]:
         """

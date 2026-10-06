@@ -112,6 +112,9 @@ class ConfigurationLoader(YamlLoadable):
             bootstrap document should fail initialization.
         custom_initializers_source: Local directory or Azure Blob container URI,
             optionally followed by a blob prefix, used to persist custom initializer Python scripts.
+        instance_recipes_source: Local directory or Azure Blob container URI, optionally
+            followed by a blob prefix, used to save targets, converters, and scorers created
+            through the backend API so they are rebuilt after a restart.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -163,6 +166,7 @@ class ConfigurationLoader(YamlLoadable):
     enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
     custom_initializers_source: str | None = None
+    instance_recipes_source: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
@@ -189,6 +193,7 @@ class ConfigurationLoader(YamlLoadable):
         self._normalize_initializers()
         self._validate_env_akv_ref()
         self._validate_custom_initializers_source()
+        self._validate_instance_recipes_source()
         self._normalize_server()
 
     def _validate_allow_custom_initializers(self) -> None:
@@ -212,6 +217,18 @@ class ConfigurationLoader(YamlLoadable):
             not isinstance(self.custom_initializers_source, str) or not self.custom_initializers_source.strip()
         ):
             raise ValueError("custom_initializers_source must be a non-empty local directory or container URI.")
+
+    def _validate_instance_recipes_source(self) -> None:
+        """
+        Validate the optional saved instance recipe source.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        if self.instance_recipes_source is not None and (
+            not isinstance(self.instance_recipes_source, str) or not self.instance_recipes_source.strip()
+        ):
+            raise ValueError("instance_recipes_source must be a non-empty local directory or container URI.")
 
     def _validate_env_akv_ref(self) -> None:
         """

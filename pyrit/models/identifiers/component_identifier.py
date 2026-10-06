@@ -415,12 +415,28 @@ class ComponentIdentifier(BaseModel):
     @classmethod
     def get_sensitive_parameter_names(cls) -> frozenset[str]:
         """
-        Get constructor parameter names whose values must be obscured in user interfaces.
+        Get constructor parameter names whose values are credentials or can carry them.
+
+        Request headers and raw HTTP request templates are included because they commonly
+        hold an ``Authorization`` or ``Cookie`` value. A saved instance recipe never holds
+        these values; they must be supplied as environment-variable references instead.
 
         Returns:
             frozenset[str]: Sensitive constructor parameter names.
         """
-        return frozenset({"api_key", "auth_token", "github_token", "hf_access_token", "sas_token"})
+        return frozenset(
+            {
+                "api_key",
+                "auth_token",
+                "azure_speech_key",
+                "cookie",
+                "github_token",
+                "headers",
+                "hf_access_token",
+                "http_request",
+                "sas_token",
+            }
+        )
 
     @classmethod
     def get_multiline_parameter_names(cls) -> frozenset[str]:

@@ -250,7 +250,19 @@ class TestComponentType:
         assert ComponentIdentifier.get_reference_component_types() == {}
 
     def test_sensitive_parameter_names_apply_to_all_component_types(self):
-        expected = frozenset({"api_key", "auth_token", "github_token", "hf_access_token", "sas_token"})
+        expected = frozenset(
+            {
+                "api_key",
+                "auth_token",
+                "azure_speech_key",
+                "cookie",
+                "github_token",
+                "headers",
+                "hf_access_token",
+                "http_request",
+                "sas_token",
+            }
+        )
         assert ComponentIdentifier.get_sensitive_parameter_names() == expected
         assert TargetIdentifier.get_sensitive_parameter_names() == expected
         assert ScorerIdentifier.get_sensitive_parameter_names() == expected

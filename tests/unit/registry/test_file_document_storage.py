@@ -4,6 +4,7 @@
 """Tests for the conditional writes and deletes of the shared document storage."""
 
 import hashlib
+import logging
 import os
 import threading
 from collections.abc import Iterator
@@ -13,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from azure.core import MatchConditions
-from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
+from azure.core.exceptions import HttpResponseError, ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
 
 from pyrit.registry.file_document_storage import (
     DocumentConflictError,
@@ -33,6 +34,9 @@ class _JsonDocuments(FileDocumentStorage):
 
     def list_documents(self) -> dict[str, bytes]:
         return self._list_documents()
+
+    def list_documents_and_read_errors(self) -> tuple[dict[str, bytes], dict[str, Exception]]:
+        return self._list_documents_and_read_errors()
 
     def write(self, *, name: str, content: bytes, expected_version: str | None) -> str:
         return self._save_document_conditional(name=name, content=content, expected_version=expected_version)
@@ -175,6 +179,47 @@ def test_lock_files_are_never_listed_as_documents(local: _JsonDocuments, tmp_pat
 
     assert (tmp_path / ".first.json.lock").is_file()
     assert local.list_documents() == {"first": b"saved"}
+
+
+def test_listing_keeps_the_read_error_of_a_document_it_cannot_read(
+    local: _JsonDocuments, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "readable.json").write_bytes(b"saved")
+    (tmp_path / "locked.json").write_bytes(b"saved")
+    read_bytes = Path.read_bytes
+
+    def _read_bytes(path: Path) -> bytes:
+        if path.name == "locked.json":
+            raise PermissionError("access denied")
+        return read_bytes(path)
+
+    with (
+        patch.object(Path, "read_bytes", _read_bytes),
+        caplog.at_level(logging.WARNING, logger="pyrit.registry.file_document_storage"),
+    ):
+        documents, read_errors = local.list_documents_and_read_errors()
+        listed = local.list_documents()
+
+    assert documents == {"readable": b"saved"}
+    assert list(read_errors) == ["locked"]
+    assert isinstance(read_errors["locked"], PermissionError)
+    assert listed == {"readable": b"saved"}
+    assert "Skipping unreadable document 'locked.json'" in caplog.text
+
+
+def test_listing_a_directory_that_cannot_be_listed_raises_instead_of_reading_as_empty(
+    local: _JsonDocuments, tmp_path: Path
+) -> None:
+    local.write(name="first", content=b"saved", expected_version=None)
+    iterdir = Path.iterdir
+
+    def _iterdir(path: Path) -> Iterator[Path]:
+        if path == tmp_path:
+            raise PermissionError("cannot list")
+        return iterdir(path)
+
+    with patch.object(Path, "iterdir", _iterdir), pytest.raises(PermissionError, match="cannot list"):
+        local.list_documents_and_read_errors()
 
 
 @pytest.mark.parametrize("operation", ["write", "delete"])
@@ -351,3 +396,26 @@ def test_blob_delete_of_a_blob_removed_by_another_writer_is_a_conflict(blob_clie
         storage.delete(name="first", expected_version=_version(b"saved"))
 
     assert raised.value.actual_version is None
+
+
+def test_blob_listing_keeps_the_read_error_of_a_blob_it_cannot_read(blob_client: MagicMock) -> None:
+    readable, locked = MagicMock(), MagicMock()
+    readable.name, locked.name = "prefix/readable.json", "prefix/locked.json"
+    blob_client.list_blobs.return_value = [readable, locked]
+
+    def _download(blob_name: str) -> MagicMock:
+        if blob_name == "prefix/locked.json":
+            raise HttpResponseError("access denied")
+        downloader = MagicMock()
+        downloader.readall.return_value = b"saved"
+        return downloader
+
+    blob_client.download_blob.side_effect = _download
+    storage = _JsonDocuments(source=_BLOB_SOURCE)
+
+    documents, read_errors = storage.list_documents_and_read_errors()
+
+    blob_client.list_blobs.assert_called_once_with(name_starts_with="prefix/")
+    assert documents == {"readable": b"saved"}
+    assert list(read_errors) == ["locked"]
+    assert isinstance(read_errors["locked"], HttpResponseError)
