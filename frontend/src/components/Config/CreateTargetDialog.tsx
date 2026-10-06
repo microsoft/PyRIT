@@ -876,7 +876,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   )}
 
                   {requiredMetadataParameters.map((parameter) => {
-                    const identityConflict = isIdentity && parameter.identity_conflicting
+                    const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
                     return (
                       <ParameterField
                         key={parameter.name}
@@ -955,7 +955,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </summary>
                       <div className={styles.advancedSettingsFields}>
                         {optionalMetadataParameters.map((parameter) => {
-                          const identityConflict = isIdentity && parameter.identity_conflicting
+                          const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
                           return (
                             <ParameterField
                               key={parameter.name}
