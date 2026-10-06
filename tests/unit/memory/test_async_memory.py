@@ -1,0 +1,715 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+import ast
+import asyncio
+import inspect
+import threading
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from azure.core.credentials import AccessToken
+from sqlalchemy import text
+from sqlalchemy.dialects.mssql.aioodbc import MSDialectAsync_aioodbc
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.orm import Session
+
+from pyrit.auth.azure_auth import AsyncAzureAuth
+from pyrit.common.async_compatibility import run_legacy_sync_async
+from pyrit.memory import AzureSQLMemory, MemoryInterface, SQLiteMemory
+from pyrit.models import Conversation, Message, MessagePiece, SeedPrompt
+
+
+@pytest.fixture
+def mock_aioodbc_connect() -> Iterator[AsyncMock]:
+    connect = AsyncMock()
+    driver = MagicMock(spec=["connect", "Connection"], connect=connect)
+    # Block native ODBC imports so these unit tests also cover hosts without the driver.
+    with patch.dict("sys.modules", {"aioodbc": driver, "pyodbc": None}):
+        yield connect
+
+
+def test_public_memory_io_has_explicit_async_counterparts() -> None:
+    configuration_methods = {"enable_embedding", "disable_embedding", "cleanup"}
+    for name, method in inspect.getmembers(MemoryInterface, inspect.isfunction):
+        if name.startswith("_") or name in configuration_methods or inspect.iscoroutinefunction(method):
+            continue
+        assert inspect.iscoroutinefunction(getattr(MemoryInterface, name + "_async", None)), name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        name
+        for name, method in inspect.getmembers(MemoryInterface, inspect.isfunction)
+        if not name.startswith("_")
+        and not inspect.iscoroutinefunction(method)
+        and inspect.iscoroutinefunction(getattr(MemoryInterface, name + "_async", None))
+    ],
+)
+def test_public_sync_memory_method_is_deprecated(name: str, sqlite_instance: SQLiteMemory) -> None:
+    method = getattr(sqlite_instance, name)
+    required = {
+        parameter.name: None
+        for parameter in inspect.signature(method).parameters.values()
+        if parameter.default is inspect.Parameter.empty
+        and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    with patch("pyrit.memory.memory_interface.print_deprecation_message", side_effect=DeprecationWarning) as warning:
+        with pytest.raises(DeprecationWarning):
+            method(**required)
+    assert warning.call_args.kwargs["new_item"] == f"MemoryInterface.{name}_async"
+
+
+def _sync_memory_references(*, tree: ast.Module, sync_names: set[str]) -> list[str]:
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    compatibility_functions: set[ast.FunctionDef] = set()
+    for node in ast.walk(tree):
+        container = parents.get(node)
+        if (
+            isinstance(node, ast.FunctionDef)
+            and isinstance(container, (ast.ClassDef, ast.Module))
+            and any(
+                isinstance(method, ast.AsyncFunctionDef) and method.name == node.name + "_async"
+                for method in container.body
+            )
+        ):
+            compatibility_functions.add(node)
+
+    def reference_name(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return node.id if isinstance(node, ast.Name) else None
+
+    # Follow local compatibility helpers too, so a sync printer cannot hide a memory read.
+    blocked_names = sync_names.copy()
+    while True:
+        helpers = {
+            function.name
+            for function in compatibility_functions
+            if any(reference_name(node) in blocked_names for node in ast.walk(function))
+        }
+        if helpers <= blocked_names:
+            break
+        blocked_names.update(helpers)
+
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Attribute, ast.Name)) or reference_name(node) not in blocked_names:
+            continue
+        owner = parents.get(node)
+        while owner is not None and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (
+                isinstance(owner, ast.Call)
+                and isinstance(owner.func, ast.Name)
+                and owner.func.id == "legacy_sync_override"
+            ):
+                break
+            owner = parents.get(owner)
+        else:
+            if owner not in compatibility_functions:
+                violations.append(f"{node.lineno}: {ast.unparse(node)}")
+    return violations
+
+
+@pytest.mark.parametrize(
+    "caller,expected",
+    [
+        ("async def use_async():\n    memory.get_message_pieces()", True),
+        ("async def use_async():\n    read()", True),
+        ("def __str__():\n    printer.read()", True),
+        ("async def use_async():\n    await read_async()", False),
+        ("@legacy_sync_override(lambda: read)\nasync def use_async():\n    pass", False),
+    ],
+)
+def test_sync_memory_guard_follows_compatibility_helpers(*, caller: str, expected: bool) -> None:
+    source = (
+        "def read():"
+        "\n    return memory.get_message_pieces()"
+        "\nasync def read_async():"
+        "\n    return await memory.get_message_pieces_async()"
+        f"\n{caller}\n"
+    )
+    assert bool(_sync_memory_references(tree=ast.parse(source), sync_names={"get_message_pieces"})) is expected
+
+
+def test_library_does_not_reference_sync_memory_outside_compatibility() -> None:
+    root = Path(__file__).resolve().parents[3] / "pyrit"
+    memory_tree = ast.parse((root / "memory" / "memory_interface.py").read_text(encoding="utf-8"))
+    memory_class = next(
+        node for node in memory_tree.body if isinstance(node, ast.ClassDef) and node.name == "MemoryInterface"
+    )
+    async_names = {node.name for node in memory_class.body if isinstance(node, ast.AsyncFunctionDef)}
+    sync_names = {
+        node.name
+        for node in memory_class.body
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_") and node.name + "_async" in async_names
+    }
+    violations = []
+    for path in root.rglob("*.py"):
+        if "memory" in path.relative_to(root).parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        violations.extend(
+            f"{path.relative_to(root)}:{reference}"
+            for reference in _sync_memory_references(tree=tree, sync_names=sync_names)
+        )
+    assert not violations, "\n".join(violations)
+
+
+async def test_async_memory_uses_async_driver(sqlite_instance: SQLiteMemory) -> None:
+    with patch.object(sqlite_instance, "SessionFactory", side_effect=AssertionError("Sync session used")):
+        await sqlite_instance.add_conversation_to_memory_async(conversation=Conversation(conversation_id="async"))
+        await sqlite_instance.add_message_to_memory_async(
+            request=Message(message_pieces=[MessagePiece(role="user", original_value="hello", conversation_id="async")])
+        )
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id="async")
+    assert messages[0].message_pieces[0].original_value == "hello"
+
+
+async def test_failed_first_initialization_can_retry() -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    memory.__init__(db_path=":memory:", _defer_initialization=True)
+    try:
+        with (
+            patch.object(memory, "_run_schema_migration", side_effect=RuntimeError("schema check failed")),
+            pytest.raises(RuntimeError, match="schema check failed"),
+        ):
+            await memory.initialize_async()
+        assert not memory._initialized
+        await memory.initialize_async()
+        piece = MessagePiece(role="user", original_value="after retry", conversation_id="retry")
+        await memory.add_message_to_memory_async(request=piece.to_message())
+        assert [row.id for row in await memory.get_message_pieces_async()] == [piece.id]
+    finally:
+        await memory.dispose_engine_async()
+
+
+async def test_concurrent_initialization_is_rejected_without_disposing_first_attempt() -> None:
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    memory.__init__(db_path=":memory:", _defer_initialization=True)
+    started, release = threading.Event(), threading.Event()
+
+    def initialize_schema() -> None:
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("Initialization was not released")
+
+    try:
+        with (
+            patch.object(memory, "_initialize_schema", side_effect=initialize_schema),
+            patch.object(memory, "dispose_engine_async", new_callable=AsyncMock) as dispose,
+        ):
+            task = asyncio.create_task(memory.initialize_async())
+            try:
+                assert await asyncio.to_thread(started.wait, 5)
+                with pytest.raises(RuntimeError, match="already in progress"):
+                    await memory.initialize_async()
+                dispose.assert_not_awaited()
+            finally:
+                release.set()
+                await task
+    finally:
+        await memory.dispose_engine_async()
+
+
+async def test_async_memory_shares_legacy_database(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_conversation_to_memory_async(conversation=Conversation(conversation_id="shared"))
+    with pytest.warns(DeprecationWarning, match="add_message_to_memory"):
+        sqlite_instance.add_message_to_memory(
+            request=Message(
+                message_pieces=[MessagePiece(role="user", original_value="legacy", conversation_id="shared")]
+            )
+        )
+    messages = await sqlite_instance.get_conversation_messages_async(conversation_id="shared")
+    assert messages[0].message_pieces[0].original_value == "legacy"
+    with pytest.warns(DeprecationWarning, match="get_conversation_messages"):
+        assert sqlite_instance.get_conversation_messages(conversation_id="shared") == messages
+
+
+async def test_async_seed_operations(sqlite_instance: SQLiteMemory) -> None:
+    seed = SeedPrompt(value="hello", dataset_name="async", added_by="unit-test")
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[seed])
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="async")) == 1
+    replacement = SeedPrompt(value="replacement", dataset_name="async", added_by="unit-test")
+    assert await sqlite_instance.replace_seeds_for_dataset_async(dataset_name="async", seeds=[replacement]) == 1
+    assert (await sqlite_instance.get_seeds_async(dataset_name="async"))[0].value == "replacement"
+
+
+async def test_async_database_wait_does_not_block_loop(sqlite_instance: SQLiteMemory) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def wait_in_database() -> int:
+        started.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("Database wait was not released")
+        return 1
+
+    async with await sqlite_instance.get_session_async() as session:
+        connection = await session.connection()
+        await connection.run_sync(
+            lambda sync_connection: sync_connection.connection.run_async(
+                lambda driver: driver.create_function("wait_in_database", 0, wait_in_database)
+            )
+        )
+        task = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            assert not task.done()
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        assert (await task).scalar_one() == 1
+
+
+async def test_azure_auth_wait_is_async_and_credential_is_closed() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    token = AccessToken("unit-test", 100)
+
+    async def get_token_async(scope: str) -> AccessToken:
+        assert scope == "scope"
+        started.set()
+        await release.wait()
+        return token
+
+    credential = MagicMock(get_token=AsyncMock(side_effect=get_token_async), close=AsyncMock())
+    with patch("pyrit.auth.azure_auth.AsyncDefaultAzureCredential", return_value=credential):
+        auth = AsyncAzureAuth("scope")
+        task = asyncio.create_task(auth.get_access_token_async())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            release.set()
+            assert await task is token
+            await auth.close_async()
+    credential.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("failing_resource", ["engine", "credential"])
+async def test_azure_disposal_failure_discards_engine_and_credential(failing_resource: str) -> None:
+    loop = asyncio.get_running_loop()
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    engine = MagicMock(dispose=AsyncMock())
+    auth = MagicMock(spec=AsyncAzureAuth)
+    memory._async_engines = {loop: engine}
+    memory._async_auth = {loop: auth}
+    close = engine.dispose if failing_resource == "engine" else auth.close_async
+    close.side_effect = [RuntimeError("close failed"), None]
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await memory.dispose_loop_resources_async()
+    assert memory._async_engines == {}
+    assert memory._async_auth == {}
+    auth.close_async.assert_awaited_once()
+    await memory.dispose_loop_resources_async()
+    assert memory._async_engines == {}
+    assert memory._async_auth == {}
+    replacement = MagicMock()
+    with patch.object(memory, "_create_async_engine", return_value=replacement):
+        assert memory._get_async_engine() is replacement
+
+
+@pytest.mark.parametrize(
+    "trusted_connection", ["Trusted_Connection=Yes", "trusted_connection = yes", " TRUSTED_CONNECTION=YES "]
+)
+async def test_azure_async_token_connection_removes_trusted_connection(
+    trusted_connection: str, mock_aioodbc_connect: AsyncMock
+) -> None:
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    memory._connection_string = "mssql+pyodbc://localhost/test?driver=ODBC+Driver+18+for+SQL+Server"
+    memory._verbose = False
+    memory._async_auth = {}
+    engine = MagicMock()
+    engine.dialect.create_connect_args.return_value = (
+        [],
+        {"dsn": f"Driver=unit-test;{trusted_connection};Database=test"},
+    )
+    auth = MagicMock(spec=AsyncAzureAuth)
+    auth.get_access_token_async.return_value = AccessToken("unit-test", 100)
+    with (
+        patch("pyrit.memory.azure_sql_memory.create_async_engine", return_value=engine) as create,
+        patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth", return_value=auth),
+    ):
+        assert memory._create_async_engine() is engine
+        await create.call_args.kwargs["async_creator"]()
+    mock_aioodbc_connect.assert_awaited_once()
+    assert mock_aioodbc_connect.call_args.kwargs["dsn"] == "Driver=unit-test;Database=test"
+    assert memory.SQL_COPT_SS_ACCESS_TOKEN in mock_aioodbc_connect.call_args.kwargs["attrs_before"]
+
+
+async def test_azure_closed_loop_drops_both_owned_resources() -> None:
+    loop = asyncio.new_event_loop()
+    loop.close()
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    engine = MagicMock()
+    auth = MagicMock(spec=AsyncAzureAuth)
+    memory._async_engines = {loop: engine}
+    memory._async_auth = {loop: auth}
+    with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="owning event loops"):
+        memory.dispose_engine()
+    assert memory._async_engines == {loop: engine}
+    assert memory._async_auth == {loop: auth}
+    auth.close_async.assert_not_awaited()
+    await memory.dispose_loop_resources_async()
+    assert memory._async_engines == {}
+    assert memory._async_auth == {}
+    engine.sync_engine.dispose.assert_called_once_with(close=False)
+    auth.close_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("cancellations", [1, 2])
+async def test_cancelled_legacy_call_finishes_before_returning(cancellations: int) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def legacy_operation() -> None:
+        started.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("Legacy operation was not released")
+        finished.set()
+
+    task = asyncio.create_task(run_legacy_sync_async(legacy_operation))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        for _ in range(cancellations):
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert finished.is_set()
+
+
+async def test_cancelled_legacy_failure_preserves_cancellation() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def fail() -> None:
+        started.set()
+        assert release.wait(timeout=10)
+        raise ValueError("worker failed")
+
+    task = asyncio.create_task(run_legacy_sync_async(fail))
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0)
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError) as error:
+        await task
+    assert isinstance(error.value.__cause__, ValueError)
+
+
+async def test_disposal_discards_closed_loop_and_releases_sync_engine(sqlite_instance: SQLiteMemory) -> None:
+    loop = asyncio.new_event_loop()
+    engine = MagicMock()
+    sqlite_instance._async_engines[loop] = engine
+    loop.close()
+    with patch.object(sqlite_instance, "_dispose_sync_engine") as dispose:
+        await sqlite_instance.dispose_engine_async()
+    assert not sqlite_instance._async_engines
+    engine.sync_engine.dispose.assert_called_once_with(close=False)
+    dispose.assert_called_once()
+
+
+async def test_disposal_failure_still_releases_sync_engine(sqlite_instance: SQLiteMemory) -> None:
+    with (
+        patch.object(sqlite_instance, "dispose_loop_resources_async", side_effect=RuntimeError("close failed")),
+        patch.object(sqlite_instance, "_dispose_sync_engine") as dispose,
+        pytest.raises(RuntimeError, match="close failed"),
+    ):
+        await sqlite_instance.dispose_engine_async()
+    dispose.assert_called_once()
+
+
+async def test_sync_disposal_rejects_active_async_resources(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.get_message_pieces_async()
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(RuntimeError, match="owning event loops"),
+        patch.object(sqlite_instance, "_dispose_sync_engine") as dispose,
+    ):
+        sqlite_instance.dispose_engine()
+    dispose.assert_not_called()
+
+
+async def test_sync_read_rejects_same_loop_async_overlap(sqlite_instance: SQLiteMemory) -> None:
+    started, release = threading.Event(), threading.Event()
+
+    def delayed_read() -> int:
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("Database read was not released")
+        return 1
+
+    async with await sqlite_instance.get_session_async() as session:
+        connection = await session.connection()
+        await connection.run_sync(
+            lambda sync_connection: sync_connection.connection.run_async(
+                lambda driver: driver.create_function("delayed_read", 0, delayed_read)
+            )
+        )
+        read = asyncio.create_task(session.execute(text("SELECT delayed_read()")))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="cannot overlap"):
+                sqlite_instance.get_message_pieces()
+            await asyncio.sleep(0)
+            assert not read.done()
+        finally:
+            release.set()
+            await read
+    assert await sqlite_instance.get_message_pieces_async() == []
+    with pytest.warns(DeprecationWarning):
+        assert sqlite_instance.get_message_pieces() == []
+
+
+async def test_async_session_rejects_same_thread_sync_overlap(sqlite_instance: SQLiteMemory) -> None:
+    with sqlite_instance._get_sync_session():
+        with pytest.raises(RuntimeError, match="Close the synchronous memory session"):
+            await sqlite_instance.get_message_pieces_async()
+    assert await sqlite_instance.get_message_pieces_async() == []
+
+
+@pytest.mark.parametrize("reader", ["async", "sync"])
+async def test_in_memory_transactions_are_serialized_across_loops(sqlite_instance: SQLiteMemory, reader: str) -> None:
+    started = threading.Event()
+
+    async def read_and_write_async() -> int:
+        started.set()
+        try:
+            async with await sqlite_instance.get_session_async() as session:
+                count = await session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
+                await session.execute(text("INSERT INTO LockProbe VALUES (2)"))
+                await session.commit()
+                return count
+        finally:
+            await sqlite_instance.dispose_loop_resources_async()
+
+    def read_and_write() -> int:
+        if reader == "async":
+            return asyncio.run(read_and_write_async())
+        started.set()
+        with sqlite_instance._get_sync_session() as session:
+            count = session.scalar(text("SELECT COUNT(*) FROM LockProbe"))
+            session.execute(text("INSERT INTO LockProbe VALUES (2)"))
+            session.commit()
+            return count
+
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(text("CREATE TABLE LockProbe (value INTEGER)"))
+        await session.commit()
+        await session.execute(text("INSERT INTO LockProbe VALUES (1)"))
+        task = asyncio.create_task(asyncio.to_thread(read_and_write))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            await asyncio.sleep(0.05)
+            assert not task.done()
+        finally:
+            await session.commit()
+    assert await asyncio.wait_for(task, timeout=5) == 1
+    async with await sqlite_instance.get_session_async() as session:
+        assert await session.scalar(text("SELECT COUNT(*) FROM LockProbe")) == 2
+
+
+async def test_async_sessions_are_task_local(sqlite_instance: SQLiteMemory) -> None:
+    sessions = []
+
+    def read() -> int:
+        session = sqlite_instance._get_session()
+        sessions.append(session)
+        result = session.execute(text("SELECT 1")).scalar_one()
+        assert isinstance(result, int)
+        return result
+
+    results = await asyncio.gather(*(sqlite_instance._run_database_operation_async(read) for _ in range(5)))
+    assert results == [1] * 5
+    assert len({id(session) for session in sessions}) == 5
+    assert sqlite_instance._operation_session.get() is None
+
+
+async def test_cancelled_transaction_rolls_back_and_pool_remains_usable(sqlite_instance: SQLiteMemory) -> None:
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(text("CREATE TABLE CancellationProbe (value INTEGER)"))
+        await session.commit()
+    inserted = asyncio.Event()
+
+    async def write_async() -> None:
+        async with await sqlite_instance.get_session_async() as session:
+            await session.execute(text("INSERT INTO CancellationProbe VALUES (1)"))
+            inserted.set()
+            await asyncio.Event().wait()
+            await session.commit()
+
+    task = asyncio.create_task(write_async())
+    await asyncio.wait_for(inserted.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    async with await sqlite_instance.get_session_async() as session:
+        assert await session.scalar(text("SELECT COUNT(*) FROM CancellationProbe")) == 0
+        await session.execute(text("INSERT INTO CancellationProbe VALUES (2)"))
+        await session.commit()
+
+
+async def test_temporary_loops_release_their_own_resources(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_conversation_to_memory_async(conversation=Conversation(conversation_id="loop-test"))
+    owner = asyncio.get_running_loop()
+    owner_engine = sqlite_instance._async_engines[owner]
+
+    async def read_on_temporary_loop_async() -> None:
+        try:
+            assert await sqlite_instance.get_conversation_metadata_async(conversation_id="loop-test") is not None
+            assert sqlite_instance._async_engines[asyncio.get_running_loop()] is not owner_engine
+        finally:
+            await sqlite_instance.dispose_loop_resources_async()
+
+    for _ in range(2):
+        await asyncio.to_thread(lambda: asyncio.run(read_on_temporary_loop_async()))
+        assert list(sqlite_instance._async_engines) == [owner]
+
+
+async def test_legacy_subclass_override_runs_off_loop() -> None:
+    called_from = []
+
+    class LegacyMemory(SQLiteMemory):
+        def get_unique_attack_class_names(self) -> list[str]:
+            called_from.append(threading.get_ident())
+            return ["custom"]
+
+    memory = LegacyMemory.__new__(LegacyMemory)
+    with pytest.warns(DeprecationWarning, match="override"):
+        assert await memory.get_unique_attack_class_names_async() == ["custom"]
+    assert len(called_from) == 1
+    assert called_from[0] != threading.get_ident()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_inherited_read_dispatches_nested_legacy_override(sqlite_instance: SQLiteMemory, use_async: bool) -> None:
+    threads = []
+    piece = MessagePiece(role="user", original_value="from override", conversation_id="custom", sequence=0)
+
+    class LegacyMemory(SQLiteMemory):
+        def get_message_pieces(self, **kwargs: object) -> Sequence[MessagePiece]:
+            threads.append(threading.get_ident())
+            assert kwargs["conversation_id"] == "custom"
+            return [piece]
+
+    memory = LegacyMemory.__new__(LegacyMemory)
+    memory.__dict__.update(sqlite_instance.__dict__)
+    with pytest.warns(DeprecationWarning):
+        messages = (
+            await memory.get_conversation_messages_async(conversation_id="custom")
+            if use_async
+            else memory.get_conversation_messages(conversation_id="custom")
+        )
+    assert [message.get_piece().id for message in messages] == [piece.id]
+    assert len(threads) == 1
+    assert (threads[0] != threading.get_ident()) == use_async
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_inherited_write_dispatches_nested_legacy_override_with_super(
+    sqlite_instance: SQLiteMemory, use_async: bool
+) -> None:
+    threads = []
+
+    class LegacyMemory(SQLiteMemory):
+        def add_message_pieces_to_memory(self, *, message_pieces: Sequence[MessagePiece]) -> None:
+            threads.append(threading.get_ident())
+            super().add_message_pieces_to_memory(message_pieces=message_pieces)
+
+    memory = LegacyMemory.__new__(LegacyMemory)
+    memory.__dict__.update(sqlite_instance.__dict__)
+    piece = MessagePiece(role="user", original_value="persisted through override", conversation_id="legacy-write")
+    with pytest.warns(DeprecationWarning):
+        if use_async:
+            await memory.add_message_to_memory_async(request=piece.to_message())
+        else:
+            memory.add_message_to_memory(request=piece.to_message())
+    assert len(threads) == 1
+    assert (threads[0] != threading.get_ident()) == use_async
+    assert [row.id for row in await sqlite_instance.get_message_pieces_async()] == [piece.id]
+
+
+async def test_legacy_session_override_is_not_bypassed(sqlite_instance: SQLiteMemory) -> None:
+    threads = []
+
+    class LegacyMemory(SQLiteMemory):
+        def get_session(self) -> Session:
+            threads.append(threading.get_ident())
+            return self._get_sync_session()
+
+    memory = LegacyMemory.__new__(LegacyMemory)
+    memory.__dict__.update(sqlite_instance.__dict__)
+    with pytest.warns(DeprecationWarning, match="synchronous backend"):
+        assert await memory.get_conversation_messages_async(conversation_id="empty") == []
+    assert threads and all(thread != threading.get_ident() for thread in threads)
+    with pytest.raises(NotImplementedError, match="get_session_async"):
+        await memory.get_session_async()
+
+
+async def test_async_override_can_call_super_without_using_legacy_override(sqlite_instance: SQLiteMemory) -> None:
+    class MigratedMemory(SQLiteMemory):
+        def get_unique_attack_class_names(self) -> list[str]:
+            raise AssertionError("Legacy override must not be called")
+
+        async def get_unique_attack_class_names_async(self) -> list[str]:
+            return await super().get_unique_attack_class_names_async()
+
+    memory = MigratedMemory.__new__(MigratedMemory)
+    memory.__dict__.update(sqlite_instance.__dict__)
+    assert await memory.get_unique_attack_class_names_async() == []
+
+
+async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_aioodbc_connect: AsyncMock) -> None:
+    memory = AzureSQLMemory.__new__(AzureSQLMemory)
+    memory._connection_string = (
+        "mssql+pyodbc://@example.invalid/test?"
+        "driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
+    )
+    memory._verbose = False
+    memory._async_auth = {}
+    memory._async_engines = {}
+    engine = MagicMock(spec=AsyncEngine)
+    engine.dialect = MSDialectAsync_aioodbc()
+    credential = MagicMock(spec=AsyncAzureAuth)
+    credential.get_access_token_async = AsyncMock(side_effect=[AccessToken("first", 10), AccessToken("second", 20)])
+    credential.close_async = AsyncMock()
+    with (
+        patch("pyrit.memory.azure_sql_memory.AsyncAzureAuth", return_value=credential),
+        patch("pyrit.memory.azure_sql_memory.create_async_engine", return_value=engine) as factory,
+    ):
+        assert memory._get_async_engine() is engine
+        try:
+            creator = factory.call_args.kwargs["async_creator"]
+            await creator()
+            await creator()
+            assert mock_aioodbc_connect.await_count == 2
+            options = mock_aioodbc_connect.await_args_list[0].kwargs
+            assert "Encrypt=yes" in options["dsn"]
+            assert "TrustServerCertificate=no" in options["dsn"]
+            assert "Trusted_Connection" not in options["dsn"]
+            assert options["attrs_before"][1256][4:] == "first".encode("utf-16-le")
+            assert mock_aioodbc_connect.await_args_list[1].kwargs["attrs_before"][1256][4:] == "second".encode(
+                "utf-16-le"
+            )
+            assert factory.call_args.args[0].drivername == "mssql+aioodbc"
+            assert factory.call_args.kwargs["pool_pre_ping"] is True
+            assert factory.call_args.kwargs["pool_recycle"] == 1800
+        finally:
+            await memory.dispose_loop_resources_async()
+    credential.close_async.assert_awaited_once()
+    engine.dispose.assert_awaited_once()
+    assert memory._async_auth == {}
+    assert memory._async_engines == {}

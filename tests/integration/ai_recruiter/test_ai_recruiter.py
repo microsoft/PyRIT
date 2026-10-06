@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
 import pathlib
 import shutil
 import subprocess
@@ -20,15 +19,11 @@ from pyrit.models import Message
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import HTTPXAPITarget, OpenAIChatTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
-from pyrit.setup import SQLITE, initialize_pyrit_async
 
 AI_RECRUITER_REPO = "https://github.com/KutalVolkan/ai_recruiter.git"
 AI_RECRUITER_COMMIT = "2e4a5b6"
 FASTAPI_URL = "http://localhost:8000"
 MAX_WAIT_SECONDS = 300
-
-# Initialize PyRIT
-asyncio.run(initialize_pyrit_async(memory_db_type=SQLITE))
 
 
 async def evaluate_candidate_selection(final_result: str, expected_candidate: str) -> bool:

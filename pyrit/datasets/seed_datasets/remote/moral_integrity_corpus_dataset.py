@@ -54,7 +54,7 @@ class _MICDataset(_RemoteDatasetLoader):
         return "moral_integrity_corpus"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the MIC dataset and return as SeedDataset.
 

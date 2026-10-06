@@ -7,7 +7,7 @@ import textwrap
 from colorama import Fore, Style
 
 from pyrit.common.text_helper import escape_control_characters
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.conversation.base import ConversationPrinterBase
 from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
@@ -71,6 +71,7 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages and return as a string.
@@ -79,6 +80,8 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation text.
@@ -86,6 +89,13 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
         if not messages:
             return self._format_colored(f"{self._indent} No messages to display.", Fore.YELLOW)
 
+        objective_scores = (
+            await self._select_objective_scores_async(
+                messages=messages, objective_scorer_identifier=objective_scorer_identifier
+            )
+            if include_scores
+            else None
+        )
         lines: list[str] = []
         image_pieces: list[MessagePiece] = []
         turn_number = 0
@@ -111,7 +121,9 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
             else:
                 lines.append("\n")
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
-                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
+                role_label = message.api_role.upper()
+                if message.is_simulated:
+                    role_label += " (SIMULATED)"
                 lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
 
@@ -166,7 +178,7 @@ class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
                 image_pieces.append(piece)
 
                 if include_scores:
-                    scores = await self._source.get_scores_async(prompt_ids=[str(piece.id)])
+                    scores = await self._get_piece_scores_async(piece=piece, objective_scores=objective_scores)
                     if scores:
                         lines.append("\n")
                         lines.append(self._format_colored(f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA))
@@ -315,6 +327,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         *,
         include_scores: bool = False,
         include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages and return as a string.
@@ -323,12 +336,17 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
             include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation text.
         """
         return await super().render_async(
-            messages, include_scores=include_scores, include_reasoning_summaries=include_reasoning_summaries
+            messages,
+            include_scores=include_scores,
+            include_reasoning_summaries=include_reasoning_summaries,
+            objective_scorer_identifier=objective_scorer_identifier,
         )
 
     async def _display_image_async(self, piece: MessagePiece) -> None:

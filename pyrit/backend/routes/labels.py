@@ -11,8 +11,8 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
 
+from pyrit.backend.models.common import MAX_ITEMS, LabelFilterStr
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.memory import CentralMemory
 
@@ -40,13 +40,17 @@ async def get_label_options(  # pyrit-async-suffix-exempt
     ),
     operator: list[Annotated[str, Field(max_length=128)]] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="Narrow attack labels by operator.",
     ),
     operation: list[Annotated[str, Field(max_length=128)]] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="Narrow attack labels by operation.",
     ),
-    label: list[str] | None = Query(None, description="Narrow attack labels by key:value filters."),
+    label: list[LabelFilterStr] | None = Query(
+        None, max_length=MAX_ITEMS, description="Narrow attack labels by key:value filters."
+    ),
 ) -> LabelOptionsResponse:
     """
     Get unique label keys and values for filtering.
@@ -67,18 +71,13 @@ async def get_label_options(  # pyrit-async-suffix-exempt
 
     if source == "attacks":
         label_filters = parse_label_query_params(label)
-        labels = await run_in_threadpool(
-            memory.get_unique_attack_labels,
-            operator=operator,
-            operation=operation,
-            labels=label_filters,
+        labels = await memory.get_unique_attack_labels_async(
+            operator=operator, operation=operation, labels=label_filters
         )
         attribution = (
-            {}
-            if operator or operation or label_filters
-            else await run_in_threadpool(memory.get_unique_attack_attribution)
+            {} if operator or operation or label_filters else await memory.get_unique_attack_attribution_async()
         )
         return LabelOptionsResponse(source=source, labels=labels, **attribution)
 
-    labels = await run_in_threadpool(memory.get_unique_scenario_labels)
+    labels = await memory.get_unique_scenario_labels_async()
     return LabelOptionsResponse(source=source, labels=labels)

@@ -24,6 +24,15 @@ if TYPE_CHECKING:
 
     from pyrit.models import ComponentIdentifier, JsonSchemaDefinition
 
+
+class CategoryConflictPolicy(Enum):
+    """Policy for categories supplied in both the configuration and the scoring response."""
+
+    REJECT_CONFLICT = "reject_conflict"
+    PREFER_RESPONSE = "prefer_response"
+    PREFER_CONFIGURED = "prefer_configured"
+
+
 _UNSTABLE_REPLAY_VALUE = object()
 
 
@@ -106,11 +115,17 @@ def _build_unvalidated_score(
     scored_prompt_id: str | uuid.UUID,
     category: Sequence[str] | str | None,
     objective: str | None,
+    category_conflict_policy: CategoryConflictPolicy = CategoryConflictPolicy.REJECT_CONFLICT,
 ) -> UnvalidatedScore:
     category_response = parsed_response.get(category_output_key)
 
     if category_response is not None and category is not None:
-        raise ValueError("Category is present in the response and an argument")
+        if category_conflict_policy is CategoryConflictPolicy.PREFER_CONFIGURED:
+            category_response = None
+        elif category_conflict_policy is CategoryConflictPolicy.PREFER_RESPONSE:
+            category = None
+        else:
+            raise ValueError("Category is present in the response and an argument")
 
     # Validate and normalize category to a list of strings
     cat_val = category_response if category_response is not None else category
@@ -188,6 +203,20 @@ class ResponseHandler(abc.ABC):
             return None
         return self._replay_identifier()
 
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Return older replay contracts that would parse ``response_text`` exactly like this handler.
+
+        Lets observations acquired before a parser option existed keep replaying when that option
+        makes no difference for them.
+
+        Returns:
+            list[dict[str, Any]]: Older replay identifiers, none by default.
+        """
+        return []
+
     def _replay_identifier(self) -> dict[str, Any] | None:
         """
         Return stable parser configuration for observation replay.
@@ -222,7 +251,8 @@ class ResponseHandler(abc.ABC):
                 request, stored on the resulting score.
             scored_prompt_id (str | uuid.UUID): The ID of the message piece being scored.
             category (Sequence[str] | str | None): The category of the score. May instead be parsed
-                from the response; supplying both is an error. Defaults to None.
+                from the response; the concrete handler defines precedence when both are supplied.
+                Defaults to None.
             objective (str | None): The objective associated with the score, used for
                 contextualizing the result. Defaults to None.
 
@@ -254,6 +284,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
         category_output_key: str = "category",
         response_schema: JsonSchemaDefinition | None = None,
         numeric_value: bool = False,
+        category_conflict_policy: CategoryConflictPolicy = CategoryConflictPolicy.REJECT_CONFLICT,
     ) -> None:
         """
         Initialize the handler with the JSON keys to read from the response.
@@ -270,7 +301,16 @@ class JsonSchemaResponseHandler(ResponseHandler):
             numeric_value (bool): When True, ``parse`` requires the parsed score value to be
                 parsable as a finite float and raises ``InvalidJsonException`` otherwise. Defaults
                 to False.
+            category_conflict_policy (CategoryConflictPolicy): Policy when both the ``category``
+                argument and the response supply a category. ``REJECT_CONFLICT`` raises an error,
+                ``PREFER_RESPONSE`` uses the response category, and ``PREFER_CONFIGURED`` uses the
+                argument. When only one source supplies a category, that category is used regardless
+                of the policy. Defaults to ``CategoryConflictPolicy.REJECT_CONFLICT``.
+
+        Raises:
+            ValueError: If ``category_conflict_policy`` is not supported.
         """
+        self._category_conflict_policy = CategoryConflictPolicy(category_conflict_policy)
         self._score_value_output_key = score_value_output_key
         self._rationale_output_key = rationale_output_key
         self._description_output_key = description_output_key
@@ -296,7 +336,43 @@ class JsonSchemaResponseHandler(ResponseHandler):
             "category_output_key": self._category_output_key,
             "response_schema": self._response_schema,
             "numeric_value": self._numeric_value,
+            # Omit the historical default so its replay contracts stay unchanged.
+            **(
+                {"category_conflict_policy": self._category_conflict_policy.value}
+                if self._category_conflict_policy is not CategoryConflictPolicy.REJECT_CONFLICT
+                else {}
+            ),
         }
+
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Return older category contracts that parse this response the same way.
+
+        Returns:
+            list[dict[str, Any]]: The equivalent boolean-policy identifier and, when there is no
+                category conflict, the historical conflict-rejection identifier.
+        """
+        current = self._get_replay_identifier()
+        if current is None or self._category_conflict_policy is CategoryConflictPolicy.REJECT_CONFLICT:
+            return []
+        historical = dict(current)
+        historical.pop("category_conflict_policy", None)
+        preference_key = (
+            "prefer_configured_category"
+            if self._category_conflict_policy is CategoryConflictPolicy.PREFER_CONFIGURED
+            else "prefer_response_category"
+        )
+        legacy = [{**historical, preference_key: True}]
+        if category is not None:
+            try:
+                parsed = json.loads(remove_markdown_json(response_text))
+            except json.JSONDecodeError:
+                return legacy
+            if not isinstance(parsed, dict) or parsed.get(self._category_output_key) is not None:
+                return legacy
+        return [*legacy, historical]
 
     def parse(
         self,
@@ -316,7 +392,8 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 request, stored on the resulting score.
             scored_prompt_id (str | uuid.UUID): The ID of the message piece being scored.
             category (Sequence[str] | str | None): The category of the score. May instead be parsed
-                from the response; supplying both is an error. Defaults to None.
+                from the response; precedence is controlled by ``category_conflict_policy``.
+                Defaults to None.
             objective (str | None): The objective associated with the score, used for
                 contextualizing the result. Defaults to None.
 
@@ -325,11 +402,12 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 normalized and validated by the caller.
 
         Raises:
-            ValueError: If a category is present in both the response and the argument, or the
-                parsed category is not a string or a list of strings.
+            ValueError: If a category is present in both the response and the argument (and
+                the policy is ``REJECT_CONFLICT``), or the selected configured category is not a
+                string or a sequence of strings.
             InvalidJsonException: If the response is invalid JSON, is not a top-level JSON object,
-                is missing a required key, or (when this handler is numeric) the score value is not
-                parsable as a finite float.
+                is missing a required key, the selected response category is invalid, or (when this
+                handler is numeric) the score value is not parsable as a finite float.
         """
         response_json = remove_markdown_json(response_text)
         try:
@@ -349,6 +427,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
                 scored_prompt_id=scored_prompt_id,
                 category=category,
                 objective=objective,
+                category_conflict_policy=self._category_conflict_policy,
             )
 
         except json.JSONDecodeError:
@@ -402,6 +481,27 @@ class TrueFalseResponseHandler(ResponseHandler):
             "wrapped": wrapped,
         }
 
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Keep this wrapper's current contract and swap in each of the inner handler's legacy contracts.
+
+        Returns:
+            list[dict[str, Any]]: The wrapped legacy identifiers.
+        """
+        # The outer contract covers this wrapper's own opt-out as well as the inner handler's, and reusing it
+        # keeps the wrapper's declared version and configuration.
+        current = self._get_replay_identifier()
+        if current is None:
+            return []
+        return [
+            {**current, "wrapped": wrapped}
+            for wrapped in self._response_handler._legacy_replay_identifiers(
+                response_text=response_text, category=category
+            )
+        ]
+
     def parse(
         self,
         *,
@@ -438,6 +538,102 @@ class TrueFalseResponseHandler(ResponseHandler):
             )
 
         score.raw_score_value = normalized_value
+        return score
+
+
+class NumericRangeResponseHandler(ResponseHandler):
+    """Response-handler decorator that enforces a numeric score within ``[minimum_value, maximum_value]``."""
+
+    def __init__(self, *, response_handler: ResponseHandler, minimum_value: float, maximum_value: float) -> None:
+        """
+        Initialize the decorator.
+
+        Args:
+            response_handler (ResponseHandler): Handler that parses the target's wire format.
+            minimum_value (float): The lowest accepted score value (inclusive).
+            maximum_value (float): The highest accepted score value (inclusive).
+        """
+        self._response_handler = response_handler
+        self._minimum_value = minimum_value
+        self._maximum_value = maximum_value
+
+    @property
+    def json_response_config(self) -> JsonResponseConfig:
+        """The wrapped handler's JSON-response request."""
+        return self._response_handler.json_response_config
+
+    def _replay_identifier(self) -> dict[str, Any] | None:
+        """Return the wrapped parser identity with the accepted numeric range."""
+        wrapped = self._response_handler._get_replay_identifier()
+        if wrapped is None:
+            return None
+        return {
+            "handler": f"{type(self).__module__}.{type(self).__qualname__}",
+            "version": 1,
+            "wrapped": wrapped,
+            "minimum_value": self._minimum_value,
+            "maximum_value": self._maximum_value,
+        }
+
+    def _legacy_replay_identifiers(
+        self, *, response_text: str, category: Sequence[str] | str | None
+    ) -> list[dict[str, Any]]:
+        """
+        Keep this wrapper's current contract and swap in each of the inner handler's legacy contracts.
+
+        Returns:
+            list[dict[str, Any]]: The wrapped legacy identifiers.
+        """
+        # The outer contract covers this wrapper's own opt-out as well as the inner handler's, and reusing it
+        # keeps the wrapper's declared version and configuration.
+        current = self._get_replay_identifier()
+        if current is None:
+            return []
+        return [
+            {**current, "wrapped": wrapped}
+            for wrapped in self._response_handler._legacy_replay_identifiers(
+                response_text=response_text, category=category
+            )
+        ]
+
+    def parse(
+        self,
+        *,
+        response_text: str,
+        scorer_identifier: ComponentIdentifier,
+        scored_prompt_id: str | uuid.UUID,
+        category: Sequence[str] | str | None = None,
+        objective: str | None = None,
+    ) -> UnvalidatedScore:
+        """
+        Parse a response and require a finite numeric score within the configured range.
+
+        Returns:
+            UnvalidatedScore: The parsed score.
+
+        Raises:
+            InvalidJsonException: If the parsed value is not numeric, not finite, or out of range.
+        """
+        score = self._response_handler.parse(
+            response_text=response_text,
+            scorer_identifier=scorer_identifier,
+            scored_prompt_id=scored_prompt_id,
+            category=category,
+            objective=objective,
+        )
+        try:
+            numeric_value = float(score.raw_score_value)
+        except ValueError:
+            raise InvalidJsonException(
+                message=f"score_value should be numeric, not {score.raw_score_value!r}."
+            ) from None
+        if not math.isfinite(numeric_value) or not self._minimum_value <= numeric_value <= self._maximum_value:
+            raise InvalidJsonException(
+                message=(
+                    f"score_value must be between {self._minimum_value} and {self._maximum_value}, "
+                    f"not {score.raw_score_value!r}."
+                )
+            )
         return score
 
 

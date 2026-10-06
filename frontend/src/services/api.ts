@@ -1,7 +1,8 @@
-import axios from 'axios'
+import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
 import { toApiError } from './errors'
+import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
@@ -26,6 +27,8 @@ import type {
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
+  MessageSendRequest,
+  MessageSendStatus,
   AttackConversationsResponse,
   CreateConversationRequest,
   CreateConversationResponse,
@@ -49,6 +52,7 @@ import type {
   BackendScore,
   ManualScoreRequest,
   UpdateAttackRequest,
+  SaveConversationRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -67,7 +71,7 @@ const apiClient = axios.create({
 
 let _msalInstance: PublicClientApplication | null = null
 
-export function setMsalInstance(instance: PublicClientApplication): void {
+export function setMsalInstance(instance: PublicClientApplication | null): void {
   _msalInstance = instance
 }
 
@@ -94,12 +98,27 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
   }
 }
 
+function isCompatibilityNeutral(config: InternalAxiosRequestConfig): boolean {
+  const origin = window.location.origin
+  const basePath = new URL(API_BASE_URL, origin).pathname.replace(/\/$/, '')
+  let path = new URL(apiClient.getUri(config), origin).pathname
+  if (basePath && path.startsWith(`${basePath}/`)) path = path.slice(basePath.length)
+  return ['/health', '/auth/config', '/version', '/media'].includes(path)
+}
+
 apiClient.interceptors.request.use(async (config) => {
+  const businessRequest = !isCompatibilityNeutral(config)
+  if (businessRequest) compatibility.assertReady()
   config.headers.set('X-Request-ID', generateClientId())
 
   const token = await getAccessToken()
   if (token) {
     config.headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  if (businessRequest) {
+    compatibility.assertReady()
+    config.headers.set(COMPATIBILITY_HEADER, compatibility.bundledId)
   }
 
   return config
@@ -112,8 +131,19 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    const problem = error?.response?.data
+    if (
+      (error?.response?.status === 400 && problem?.type === 'urn:pyrit:compatibility:invalid') ||
+      (error?.response?.status === 409 && problem?.type === 'urn:pyrit:compatibility:mismatch')
+    ) {
+      compatibility.block('The backend rejected this frontend build identity.', problem.expected, problem.actual)
+      return Promise.reject(error)
+    }
     const originalRequest = error?.config
-    if (error?.response?.status === 401 && originalRequest && !originalRequest._retried) {
+    if (
+      error?.response?.status === 401 && originalRequest && !originalRequest._retried
+      && !originalRequest.url?.endsWith('/message-sends')
+    ) {
       originalRequest._retried = true
       const freshToken = await getAccessToken(true)
       if (freshToken) {
@@ -283,6 +313,10 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
+    const response = await apiClient.post('/attacks/save-conversation', request)
+    return response.data
+  },
   createAttack: async (request: CreateAttackRequest): Promise<CreateAttackResponse> => {
     const response = await apiClient.post('/attacks', request)
     return response.data
@@ -317,6 +351,23 @@ export const attacksApi = {
     const response = await apiClient.post(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
       request
+    )
+    return response.data
+  },
+
+  submitMessageSend: async (attackResultId: string, request: MessageSendRequest): Promise<MessageSendStatus> => {
+    const response = await apiClient.post(
+      `/attacks/${encodeURIComponent(attackResultId)}/message-sends`, request,
+    )
+    return response.data
+  },
+
+  getMessageSend: async (
+    attackResultId: string, sendId: string, signal?: AbortSignal,
+  ): Promise<MessageSendStatus> => {
+    const response = await apiClient.get(
+      `/attacks/${encodeURIComponent(attackResultId)}/message-sends/${encodeURIComponent(sendId)}`,
+      { params: { wait_ms: 1000 }, signal },
     )
     return response.data
   },

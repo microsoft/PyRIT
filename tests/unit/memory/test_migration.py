@@ -18,7 +18,11 @@ from sqlalchemy import create_engine, event, inspect, text
 from pyrit.memory.alembic.versions import ab8f2c1a9d07_pre_alembic_release_schema
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import _CustomUUID
 from pyrit.memory.migration import (
+    _INITIAL_REVISION,
     ALEMBIC_OUTPUT_PREFIX,
+    PYRIT_MEMORY_ALEMBIC_VERSION_TABLE,
+    _is_fresh_database,
+    _make_config,
     _PrefixedTextStream,
     check_schema_migrations,
     generate_schema_migration,
@@ -278,6 +282,47 @@ def test_preparation_conversation_migration_upgrades_and_downgrades() -> None:
                 assert "preparation_conversation_ids" not in {
                     column["name"] for column in inspect(connection).get_columns("AttackResultEntries")
                 }
+        finally:
+            engine.dispose()
+
+
+def test_conversation_attack_result_link_migration_upgrades_and_downgrades() -> None:
+    """The conversation's attack result link is added as a nullable indexed column and dropped again."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "conversation-attack-link.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "6767741d8c6f")
+                connection.execute(text('INSERT INTO "Conversations" (conversation_id) VALUES (:id)'), {"id": "legacy"})
+
+                command.upgrade(config, "6ea3eb4b61c3")
+                columns = {column["name"]: column for column in inspect(connection).get_columns("Conversations")}
+                assert columns["attack_result_id"]["nullable"] is True
+                indexes = {index["name"]: index for index in inspect(connection).get_indexes("Conversations")}
+                assert indexes["ix_Conversations_attack_result_id"]["column_names"] == ["attack_result_id"]
+                legacy_link = connection.execute(
+                    text('SELECT attack_result_id FROM "Conversations" WHERE conversation_id = :id'), {"id": "legacy"}
+                ).scalar_one()
+                assert legacy_link is None
+                attack_result_id = str(uuid.uuid4())
+                connection.execute(
+                    text('INSERT INTO "Conversations" (conversation_id, attack_result_id) VALUES (:id, :link)'),
+                    {"id": "linked", "link": attack_result_id},
+                )
+
+                command.downgrade(config, "6767741d8c6f")
+                assert "attack_result_id" not in {
+                    column["name"] for column in inspect(connection).get_columns("Conversations")
+                }
+                assert "ix_Conversations_attack_result_id" not in {
+                    index["name"] for index in inspect(connection).get_indexes("Conversations")
+                }
+                remaining = connection.execute(
+                    text('SELECT conversation_id FROM "Conversations" ORDER BY conversation_id')
+                ).scalars()
+                assert list(remaining) == ["legacy", "linked"]
         finally:
             engine.dispose()
 
@@ -750,6 +795,76 @@ def test_check_schema_migrations_not_silent_prints_output(capsys):
             engine.dispose()
 
 
+def test_is_fresh_database_true_for_empty_database():
+    """_is_fresh_database reports an untouched database as fresh."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'fresh.db')}")
+        try:
+            with engine.begin() as connection:
+                assert _is_fresh_database(table_names=set(inspect(connection).get_table_names())) is True
+        finally:
+            engine.dispose()
+
+
+def test_is_fresh_database_false_after_migration():
+    """_is_fresh_database reports a migrated database as not fresh."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'migrated.db')}")
+        try:
+            run_schema_migrations(engine=engine, silent=True)
+
+            with engine.begin() as connection:
+                assert _is_fresh_database(table_names=set(inspect(connection).get_table_names())) is False
+        finally:
+            engine.dispose()
+
+
+def test_is_fresh_database_false_for_unversioned_legacy_schema():
+    """An unversioned legacy schema holds real data, so it must not be treated as fresh."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'legacy.db')}")
+        try:
+            with engine.begin() as connection:
+                command.upgrade(_make_config(connection=connection), _INITIAL_REVISION)
+            with engine.begin() as connection:
+                connection.execute(text(f"DROP TABLE {PYRIT_MEMORY_ALEMBIC_VERSION_TABLE}"))
+
+            with engine.begin() as connection:
+                assert _is_fresh_database(table_names=set(inspect(connection).get_table_names())) is False
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_fresh_database_suppresses_output(capsys):
+    """Building a schema from nothing reports no progress worth showing the caller."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'fresh-run.db')}")
+        try:
+            capsys.readouterr()  # discard any output from setup
+
+            run_schema_migrations(engine=engine)
+
+            assert capsys.readouterr().out == ""
+        finally:
+            engine.dispose()
+
+
+def test_run_schema_migrations_existing_database_reports_progress(capsys):
+    """Upgrading a database that already holds data keeps migration progress visible."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        engine = create_engine(f"sqlite:///{os.path.join(temp_dir, 'existing-run.db')}")
+        try:
+            with engine.begin() as connection:
+                command.upgrade(_make_config(connection=connection), _INITIAL_REVISION)
+            capsys.readouterr()  # discard any output from setup
+
+            run_schema_migrations(engine=engine)
+
+            assert ALEMBIC_OUTPUT_PREFIX in capsys.readouterr().out
+        finally:
+            engine.dispose()
+
+
 def test_memory_interface_check_schema_migration_calls_check():
     """_check_schema_migration on MemoryInterface calls check_schema_migrations without running upgrade."""
     from unittest.mock import MagicMock, patch
@@ -760,7 +875,7 @@ def test_memory_interface_check_schema_migration_calls_check():
     obj.engine = MagicMock()
 
     with patch("pyrit.memory.migration.check_schema_migrations") as mock_check:
-        MemoryInterface._check_schema_migration(obj, silent=True)
+        MemoryInterface._check_schema_migration(obj)
         mock_check.assert_called_once_with(engine=obj.engine, silent=True)
 
 
@@ -784,7 +899,7 @@ def test_memory_interface_check_schema_migration_raises_on_mismatch():
         ),
     ):
         with pytest.raises(AutogenerateDiffsDetected):
-            MemoryInterface._check_schema_migration(obj, silent=True)
+            MemoryInterface._check_schema_migration(obj)
 
 
 def test_memory_interface_check_schema_migration_raises_without_engine():
@@ -797,7 +912,7 @@ def test_memory_interface_check_schema_migration_raises_without_engine():
     obj.engine = None
 
     with pytest.raises(RuntimeError, match="Engine must be initialized"):
-        MemoryInterface._check_schema_migration(obj, silent=False)
+        MemoryInterface._check_schema_migration(obj)
 
 
 def test_memory_migrations_head_command(capsys):

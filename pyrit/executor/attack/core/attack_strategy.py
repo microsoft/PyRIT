@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
+from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -202,6 +203,9 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
 
+    # ID of the AttackResult this execution produces. Allocated when execution starts.
+    _attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
+
     _expectation: ScoringExpectation = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -226,6 +230,16 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     def expectation(self) -> ScoringExpectation:
         """The effective scoring question for this execution."""
         return self._expectation
+
+    @property
+    def attack_result_id(self) -> str | None:
+        """
+        The ID of the result this execution produces, or None before execution starts.
+
+        Conversations created while the attack runs are linked to it through
+        ``Conversation.attack_result_id``.
+        """
+        return self._attack_result_id
 
     @property
     def objective(self) -> str:
@@ -386,6 +400,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         end_time = time.perf_counter()
         execution_time_ms = int((end_time - event_data.context.start_time) * 1000)
         event_data.result.execution_time_ms = execution_time_ms
+        if event_data.context.attack_result_id is not None:
+            event_data.result.attack_result_id = event_data.context.attack_result_id
 
         # Attach collected retry events to the result
         collector = get_retry_collector()
@@ -404,14 +420,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         self._log_attack_outcome(event_data.result)
 
-    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
+    async def _persist_result_async(self, *, result: AttackStrategyResultT) -> None:
         """
         Persist a completed attack result.
 
         Args:
             result (AttackStrategyResultT): The completed result to persist.
         """
-        self._memory.add_attack_results_to_memory(attack_results=[result])
+        (await self._memory.add_attack_results_to_memory_async(attack_results=[result]))
 
     @staticmethod
     def _apply_attribution(
@@ -524,6 +540,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         error_result = AttackResult(
             conversation_id=conversation_id,
             objective=context.objective,
+            attack_result_id=context.attack_result_id or str(uuid.uuid4()),
             outcome=AttackOutcome.ERROR,
             outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
             labels=context.memory_labels,
@@ -545,7 +562,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
         try:
-            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+            (await self._memory.add_attack_results_to_memory_async(attack_results=[error_result]))
         except Exception as persistence_error:
             context._error_result_persistence_error = persistence_error
 
@@ -840,6 +857,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         self._validate_scoring_expectation(context=context)
         context._error_result_persistence_error = None
+        context._attack_result_id = str(uuid.uuid4())
         lifecycle = _ObjectiveTargetConversationLifecycle(
             objective_target=self._objective_target,
             logger=self._logger,
@@ -848,7 +866,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         try:
             async with lifecycle:
                 try:
-                    result = await super().execute_with_context_async(context=context)
+                    with attack_result_id_scope(attack_result_id=context._attack_result_id):
+                        result = await super().execute_with_context_async(context=context)
                 except Exception as attack_error:
                     persistence_error = context._error_result_persistence_error
                     if persistence_error is not None:
@@ -861,7 +880,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             context._objective_target_conversation_lifecycle = None
 
         if context._persist_attack_result:
-            self._default_event_handler._persist_result(result=result)
+            (await self._default_event_handler._persist_result_async(result=result))
         return result
 
     def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:

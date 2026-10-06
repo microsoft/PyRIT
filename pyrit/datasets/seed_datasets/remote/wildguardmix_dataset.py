@@ -208,7 +208,7 @@ class _WildGuardMixDataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "wildguardmix"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch WildGuardMix and return as a SeedDataset.
 

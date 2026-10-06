@@ -13,6 +13,7 @@ from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
     AskToDecodeConverter,
+    CharNoiseConverter,
     CharSwapConverter,
     ColloquialWordswapConverter,
     Converter,
@@ -56,6 +57,7 @@ def _stochastic_converter_cases() -> list[tuple[Callable[[], Converter], str]]:
             "deterministic character swapping output",
         ),
         (lambda: InsertPunctuationConverter(word_swap_ratio=0.5), "deterministic punctuation output"),
+        (lambda: CharNoiseConverter(noise_probability=0.5), "deterministic character noise output"),
         (AnsiAttackConverter, "deterministic ANSI output"),
         (TemplateSegmentConverter, "deterministic template segment output"),
         (

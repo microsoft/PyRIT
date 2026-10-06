@@ -103,7 +103,7 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
             logger=logger,
         )
 
-    def _rotate_conversation_for_single_turn_target(
+    async def _rotate_conversation_for_single_turn_target_async(
         self,
         *,
         context: MultiTurnAttackContext[Any],
@@ -132,20 +132,23 @@ class MultiTurnAttackStrategy(AttackStrategy[MultiTurnAttackStrategyContextT, At
         )
 
         memory = CentralMemory.get_memory_instance()
-        messages = memory.get_conversation_messages(conversation_id=old_conversation_id)
+        messages = await memory.get_conversation_messages_async(conversation_id=old_conversation_id)
         system_messages = [message for message in messages if message.api_role == "system"]
 
         if system_messages:
-            new_conversation_id, pieces = memory.duplicate_messages(messages=system_messages)
-            memory.add_conversation_to_memory(
-                conversation=Conversation(
-                    conversation_id=new_conversation_id,
-                    target_identifier=self._objective_target.get_identifier(),
+            new_conversation_id, pieces = await memory.duplicate_messages_async(messages=system_messages)
+            (
+                await memory.add_conversation_to_memory_async(
+                    conversation=Conversation(
+                        conversation_id=new_conversation_id,
+                        target_identifier=self._objective_target.get_identifier(),
+                        attack_result_id=context.attack_result_id,
+                    )
                 )
             )
-            memory.add_message_pieces_to_memory(message_pieces=pieces)
+            (await memory.add_message_pieces_to_memory_async(message_pieces=pieces))
             context.session.conversation_id = new_conversation_id
-            persisted_messages = list(memory.get_conversation_messages(conversation_id=new_conversation_id))
+            persisted_messages = list(await memory.get_conversation_messages_async(conversation_id=new_conversation_id))
             context.prepended_history_send_context = ConversationManager.create_prepended_history_send_context(
                 target=self._objective_target,
                 conversation_id=new_conversation_id,

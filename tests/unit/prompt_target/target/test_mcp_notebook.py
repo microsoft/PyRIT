@@ -4,13 +4,14 @@
 import ast
 import asyncio
 import json
-from contextlib import chdir
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, chdir
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import mcp.client.stdio as stdio_module
 import pytest
-from anyio.abc import Process
+from mcp import ClientSession
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from pyrit.common.path import DOCS_CODE_PATH, HOME_PATH
 from pyrit.prompt_target import MCPStdioServerConfig, MCPToolProvider
@@ -45,20 +46,40 @@ def test_notebook_mcp_setup_is_cwd_independent(*, working_directory: str, tmp_pa
         assert isinstance(provider.server_config, MCPStdioServerConfig)
         server = Path(provider.server_config.args[0])
         assert server.is_absolute() and server.is_file()
+        assert server == DOCS_CODE_PATH / "targets" / "supporting_assets" / "notes_mcp_server.py"
         assert provider.server_config.args[1:] == ["--transport", "stdio"]
 
 
 @pytest.mark.parametrize("fail_after_call", [False, True])
-async def test_notebook_mcp_server_is_closed_after_execution_async(fail_after_call: bool) -> None:
+async def test_notebook_mcp_session_is_closed_after_execution_async(fail_after_call: bool) -> None:
     provider = await asyncio.to_thread(_notebook_provider)
-    processes: list[Process] = []
-    create_process = stdio_module._create_platform_compatible_process
+    session = MagicMock(spec=ClientSession)
+    session.list_tools = AsyncMock(
+        return_value=ListToolsResult(
+            tools=[
+                Tool(
+                    name="get_note",
+                    description="Read a note",
+                    input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
+                )
+            ]
+        )
+    )
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[TextContent(type="text", text='{"text":"Welcome to the example notebook."}')],
+            structured_content={"text": "Welcome to the example notebook."},
+        )
+    )
+    lifecycle: list[str] = []
 
-    async def capture_process_async(**kwargs: object) -> Process:
-        process = await create_process(**kwargs)
-        assert isinstance(process, Process)
-        processes.append(process)
-        return process
+    @asynccontextmanager
+    async def create_session_async() -> AsyncIterator[ClientSession]:
+        lifecycle.append("enter")
+        try:
+            yield session
+        finally:
+            lifecycle.append("exit")
 
     failure = RuntimeError("notebook consumer failed")
 
@@ -69,18 +90,17 @@ async def test_notebook_mcp_server_is_closed_after_execution_async(fail_after_ca
             result = await note.execute_async(arguments={"id": "welcome"})
             assert isinstance(result, dict)
             assert result["structured_content"] == {"text": "Welcome to the example notebook."}
-            assert processes and all(process.returncode is None for process in processes)
+            assert lifecycle == ["enter"]
             if fail_after_call:
                 raise failure
 
-    with patch.object(
-        stdio_module, "_create_platform_compatible_process", AsyncMock(side_effect=capture_process_async)
-    ):
+    with patch.object(provider, "_create_session_async", create_session_async):
         if fail_after_call:
-            with pytest.raises(ExceptionGroup) as error:
-                await asyncio.wait_for(execute_async(), timeout=30)
-            assert error.value.subgroup(lambda item: item is failure) is not None
+            with pytest.raises(RuntimeError, match="notebook consumer failed") as error:
+                await execute_async()
+            assert error.value is failure
         else:
-            await asyncio.wait_for(execute_async(), timeout=30)
-    assert len(processes) == 1
-    assert all(process.returncode is not None for process in processes)
+            await execute_async()
+    assert lifecycle == ["enter", "exit"]
+    session.list_tools.assert_awaited_once()
+    session.call_tool.assert_awaited_once_with(name="get_note", arguments={"id": "welcome"})

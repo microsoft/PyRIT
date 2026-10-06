@@ -34,6 +34,7 @@ class RuntimeAdmissionMiddleware:
             in (
                 "/api/health",
                 "/api/runtime",
+                "/api/version",
                 "/api/auth/config",
                 "/api/auth/access",
             )

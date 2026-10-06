@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./_fixtures";
+import { compatibilityHeaders, getCompatibilityId, mockVersion } from "./_compatibility";
 
 // API tests go through the Vite dev server proxy (/api -> configured backend)
 // rather than hitting the backend directly, so they work as soon as
@@ -37,6 +38,7 @@ test.describe("API Health Check", () => {
     expect(response.ok()).toBe(true);
     const data = await response.json();
     expect(data).toBeDefined();
+    expect(data.compatibility_id).toBe(getCompatibilityId());
   });
 });
 
@@ -59,7 +61,7 @@ test.describe("Targets API", () => {
   });
 
   test("should list targets @seeded", async ({ request }) => {
-    const response = await request.get("/api/targets?limit=50");
+    const response = await request.get("/api/targets?limit=50", { headers: compatibilityHeaders() });
 
     expect(response.ok()).toBe(true);
     const data = await response.json();
@@ -80,6 +82,7 @@ test.describe("Targets API", () => {
     };
 
     const createResp = await request.post("/api/targets", {
+      headers: compatibilityHeaders(),
       data: createPayload,
       timeout: 60_000,
     });
@@ -90,7 +93,7 @@ test.describe("Targets API", () => {
     expect(created.identifier.class_name).toBe("OpenAIChatTarget");
 
     // Retrieve via list and check it's there
-    const listResp = await request.get("/api/targets?limit=200");
+    const listResp = await request.get("/api/targets?limit=200", { headers: compatibilityHeaders() });
     expect(listResp.ok()).toBe(true);
     const list = await listResp.json();
     const found = list.items.find(
@@ -119,7 +122,7 @@ test.describe("Attacks API", () => {
   });
 
   test("should list attacks @seeded", async ({ request }) => {
-    const response = await request.get("/api/attacks");
+    const response = await request.get("/api/attacks", { headers: compatibilityHeaders() });
     expect(response.ok()).toBe(true);
   });
 });
@@ -129,7 +132,10 @@ test.describe("Error Handling", () => {
     // Intercept and delay API calls
     await page.route("**/api/**", async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      await route.continue();
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/version") return route.fulfill({ json: mockVersion() });
+      if (path === "/api/auth/config" || path === "/api/health") return route.fallback();
+      await route.fulfill({ json: { items: [] } });
     });
 
     await page.goto("/");

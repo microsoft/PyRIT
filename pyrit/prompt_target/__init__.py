@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.prompt_target.a2a_target import A2ATarget
     from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
     from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
     from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     )
     from pyrit.prompt_target.common.utils import limit_requests_per_minute
     from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
+    from pyrit.prompt_target.github_copilot_target import GitHubCopilotTarget
     from pyrit.prompt_target.hack_a_prompt_target import HackAPromptChallenge, HackAPromptTarget
     from pyrit.prompt_target.http_target.http_target import HTTPTarget
     from pyrit.prompt_target.http_target.http_target_callback_functions import (
@@ -73,6 +75,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.websocket_target import WebsocketTarget
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "A2ATarget": "pyrit.prompt_target.a2a_target",
     "TargetTraceConfig": "pyrit.prompt_target.common.target_trace_config",
     "AzureBlobStorageTarget": "pyrit.prompt_target.azure_blob_storage_target",
     "AzureMLChatTarget": "pyrit.prompt_target.azure_ml_chat_target",
@@ -84,6 +87,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "FunctionTool": "pyrit.prompt_target.common.tool_provider",
     "GandalfLevel": "pyrit.prompt_target.gandalf_target",
     "GandalfTarget": "pyrit.prompt_target.gandalf_target",
+    "GitHubCopilotTarget": "pyrit.prompt_target.github_copilot_target",
     "get_http_target_json_response_callback_function": "pyrit.prompt_target.http_target.http_target_callback_functions",
     "get_http_target_regex_matching_callback_function": (
         "pyrit.prompt_target.http_target.http_target_callback_functions"

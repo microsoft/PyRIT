@@ -3,10 +3,10 @@
 
 """Tests for the scenario progress read model."""
 
+import asyncio
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -39,9 +39,9 @@ def _make_delta(*, run_id: str, index: int = 0) -> ScenarioAttackResultDelta:
     )
 
 
-def _get_snapshot(*, read_model: ScenarioProgressReadModel, run_id: str) -> ScenarioProgressSnapshot:
+async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: str) -> ScenarioProgressSnapshot:
     """Read one incomplete synthetic run through the public typed boundary."""
-    return read_model.get_snapshot(
+    return await read_model.get_snapshot_async(
         scenario_result_id=run_id,
         plan=None,
         plan_complete=False,
@@ -51,7 +51,7 @@ def _get_snapshot(*, read_model: ScenarioProgressReadModel, run_id: str) -> Scen
     )
 
 
-def test_get_snapshot_evicts_least_recently_used_run() -> None:
+async def test_get_snapshot_evicts_least_recently_used_run() -> None:
     memory = MagicMock(spec=MemoryInterface)
     deltas = {run_id: _make_delta(run_id=run_id) for run_id in ("run-a", "run-b", "run-c")}
 
@@ -64,27 +64,27 @@ def test_get_snapshot_evicts_least_recently_used_run() -> None:
         assert limit == ScenarioProgressReadModel._STORAGE_PAGE_SIZE
         return ([deltas[scenario_result_id]], False) if cursor is None else ([], False)
 
-    memory.get_scenario_attack_result_deltas.side_effect = get_deltas
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(side_effect=get_deltas)
     read_model = ScenarioProgressReadModel(memory=memory)
 
     with patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 2):
-        first = _get_snapshot(read_model=read_model, run_id="run-a")
-        _get_snapshot(read_model=read_model, run_id="run-b")
-        second = _get_snapshot(read_model=read_model, run_id="run-a")
-        _get_snapshot(read_model=read_model, run_id="run-c")
-        _get_snapshot(read_model=read_model, run_id="run-b")
+        first = await _get_snapshot_async(read_model=read_model, run_id="run-a")
+        (await _get_snapshot_async(read_model=read_model, run_id="run-b"))
+        second = await _get_snapshot_async(read_model=read_model, run_id="run-a")
+        (await _get_snapshot_async(read_model=read_model, run_id="run-c"))
+        (await _get_snapshot_async(read_model=read_model, run_id="run-b"))
 
     assert isinstance(first, ScenarioProgressSnapshot)
     assert isinstance(first.deltas, tuple)
     assert first.results == second.results
     run_a_cursors = [
         call.kwargs["cursor"]
-        for call in memory.get_scenario_attack_result_deltas.call_args_list
+        for call in memory.get_scenario_attack_result_deltas_async.call_args_list
         if call.kwargs["scenario_result_id"] == "run-a"
     ]
     run_b_cursors = [
         call.kwargs["cursor"]
-        for call in memory.get_scenario_attack_result_deltas.call_args_list
+        for call in memory.get_scenario_attack_result_deltas_async.call_args_list
         if call.kwargs["scenario_result_id"] == "run-b"
     ]
     assert run_a_cursors[0] is None
@@ -92,10 +92,144 @@ def test_get_snapshot_evicts_least_recently_used_run() -> None:
     assert run_b_cursors == [None, None]
 
 
-def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
+async def test_cancelled_refresh_releases_lock_and_updates_partially_loaded_summary() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    first = _make_delta(run_id="run", index=0)
+    second = _make_delta(run_id="run", index=1)
+    memory.get_scenario_attack_result_deltas_async.return_value = ([first], False)
+    read_model = ScenarioProgressReadModel(memory=memory)
+    initial = await _get_snapshot_async(read_model=read_model, run_id="run")
+    assert initial.summary.overall.completed == 1
+    blocked = asyncio.Event()
+
+    async def get_deltas_async(
+        *, scenario_result_id: str, cursor: AttackResultKeysetCursor | None, limit: int
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        if cursor is not None and cursor.attack_result_id == first.attack_result_id:
+            return [second], True
+        blocked.set()
+        await asyncio.Event().wait()
+        return [], False
+
+    memory.get_scenario_attack_result_deltas_async.side_effect = get_deltas_async
+    task = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="run"))
+    await asyncio.wait_for(blocked.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not read_model._cache_lock.locked()
+
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
+    refreshed = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="run"), timeout=5)
+    assert len(refreshed.results) == 2
+    assert refreshed.summary.overall.completed == 2
+    assert refreshed.summary.overall.succeeded == 2
+    assert memory.get_scenario_attack_result_deltas_async.call_args.kwargs["cursor"] == AttackResultKeysetCursor(
+        timestamp=second.timestamp, attack_result_id=second.attack_result_id
+    )
+    assert initial.deltas == (first,)
+    assert initial.summary.overall.completed == 1
+
+
+async def test_async_snapshots_share_cache_and_cursor() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    deltas = [_make_delta(run_id="shared", index=index) for index in range(3)]
+    memory.get_scenario_attack_result_deltas_async.side_effect = [
+        ([deltas[0]], False),
+        ([deltas[1]], False),
+        ([deltas[2]], False),
+    ]
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    first = await _get_snapshot_async(read_model=read_model, run_id="shared")
+    second = await _get_snapshot_async(read_model=read_model, run_id="shared")
+    third = await _get_snapshot_async(read_model=read_model, run_id="shared")
+
+    assert [snapshot.summary.overall.completed for snapshot in (first, second, third)] == [1, 2, 3]
+    assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas_async.call_args_list] == [
+        None,
+        AttackResultKeysetCursor(timestamp=deltas[0].timestamp, attack_result_id=deltas[0].attack_result_id),
+        AttackResultKeysetCursor(timestamp=deltas[1].timestamp, attack_result_id=deltas[1].attack_result_id),
+    ]
+    memory.get_scenario_attack_result_deltas.assert_not_called()
+    assert first.deltas == (deltas[0],)
+    assert second.deltas == tuple(deltas[:2])
+    assert third.deltas == tuple(deltas)
+
+
+async def test_cancelled_waiter_preserves_global_refresh_lock() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def get_deltas_async(
+        *, scenario_result_id: str, cursor: AttackResultKeysetCursor | None, limit: int
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        if scenario_result_id == "owner":
+            entered.set()
+            await release.wait()
+        return [_make_delta(run_id=scenario_result_id)], False
+
+    memory.get_scenario_attack_result_deltas_async.side_effect = get_deltas_async
+    read_model = ScenarioProgressReadModel(memory=memory)
+    owner = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="owner"))
+    waiter_started = asyncio.Event()
+
+    async def wait_for_snapshot_async() -> ScenarioProgressSnapshot:
+        waiter_started.set()
+        return await _get_snapshot_async(read_model=read_model, run_id="cancelled")
+
+    waiter = None
+    successor = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        waiter = asyncio.create_task(wait_for_snapshot_async())
+        await asyncio.wait_for(waiter_started.wait(), timeout=5)
+        assert not waiter.done()
+        memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert read_model._cache_lock.locked()
+
+        successor = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="successor"))
+        await asyncio.sleep(0)
+        assert not successor.done()
+        memory.get_scenario_attack_result_deltas_async.assert_awaited_once()
+        release.set()
+        snapshots = await asyncio.wait_for(asyncio.gather(owner, successor), timeout=5)
+        assert [snapshot.results[0].conversation_id for snapshot in snapshots] == [
+            "conversation-owner-0",
+            "conversation-successor-0",
+        ]
+        assert not read_model._cache_lock.locked()
+    finally:
+        release.set()
+        tasks = [task for task in (owner, waiter, successor) if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_storage_error_releases_refresh_lock() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async.side_effect = RuntimeError("storage failed")
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    with pytest.raises(RuntimeError, match="storage failed"):
+        await _get_snapshot_async(read_model=read_model, run_id="run")
+    assert not read_model._cache_lock.locked()
+
+    memory.get_scenario_attack_result_deltas_async.side_effect = None
+    memory.get_scenario_attack_result_deltas_async.return_value = ([_make_delta(run_id="run")], False)
+    snapshot = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="run"), timeout=5)
+    assert snapshot.summary.overall.completed == 1
+
+
+async def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
     memory = MagicMock(spec=MemoryInterface)
     delta = _make_delta(run_id="run-plan")
-    memory.get_scenario_attack_result_deltas.return_value = ([delta], False)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([delta], False))
     read_model = ScenarioProgressReadModel(memory=memory)
 
     def make_plan(group_id: str) -> ScenarioRunPlan:
@@ -118,7 +252,7 @@ def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
             ],
         )
 
-    first = read_model.get_snapshot(
+    first = await read_model.get_snapshot_async(
         scenario_result_id="run-plan",
         plan=make_plan("group-a"),
         plan_complete=True,
@@ -126,7 +260,7 @@ def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
         terminal=False,
         objective_scorer_identifier=None,
     )
-    second = read_model.get_snapshot(
+    second = await read_model.get_snapshot_async(
         scenario_result_id="run-plan",
         plan=make_plan("group-b"),
         plan_complete=True,
@@ -137,7 +271,7 @@ def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
 
     assert first.results[0].atomic_group_id == "group-a"
     assert second.results[0].atomic_group_id == "group-b"
-    assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas.call_args_list] == [
+    assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas_async.call_args_list] == [
         None,
         None,
     ]
@@ -151,7 +285,7 @@ def test_get_snapshot_invalidates_cache_when_plan_changes() -> None:
         pytest.param((), False, False, "PENDING", None, id="plan-completeness-change"),
     ],
 )
-def test_get_snapshot_updates_summary_without_new_rows(
+async def test_get_snapshot_updates_summary_without_new_rows(
     *,
     active_group_ids: tuple[str, ...],
     terminal: bool,
@@ -180,11 +314,13 @@ def test_get_snapshot_updates_summary_without_new_rows(
             for index, delta in enumerate(deltas)
         ],
     )
-    memory.get_scenario_attack_result_deltas.side_effect = [([deltas[0]], False), ([], False), ([], False)]
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(
+        side_effect=[([deltas[0]], False), ([], False), ([], False)]
+    )
     read_model = ScenarioProgressReadModel(memory=memory)
 
     with patch.object(read_model, "_map_progress_delta", wraps=read_model._map_progress_delta) as map_delta:
-        first = read_model.get_snapshot(
+        first = await read_model.get_snapshot_async(
             scenario_result_id="run-state",
             plan=plan,
             plan_complete=True,
@@ -192,7 +328,7 @@ def test_get_snapshot_updates_summary_without_new_rows(
             terminal=False,
             objective_scorer_identifier=None,
         )
-        second = read_model.get_snapshot(
+        second = await read_model.get_snapshot_async(
             scenario_result_id="run-state",
             plan=plan,
             plan_complete=plan_complete,
@@ -200,7 +336,7 @@ def test_get_snapshot_updates_summary_without_new_rows(
             terminal=terminal,
             objective_scorer_identifier=None,
         )
-        restored = read_model.get_snapshot(
+        restored = await read_model.get_snapshot_async(
             scenario_result_id="run-state",
             plan=plan,
             plan_complete=True,
@@ -222,14 +358,14 @@ def test_get_snapshot_updates_summary_without_new_rows(
         timestamp=deltas[0].timestamp,
         attack_result_id=deltas[0].attack_result_id,
     )
-    assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas.call_args_list] == [
+    assert [call.kwargs["cursor"] for call in memory.get_scenario_attack_result_deltas_async.call_args_list] == [
         None,
         cursor,
         cursor,
     ]
 
 
-def test_get_snapshot_keeps_concurrent_runs_isolated() -> None:
+async def test_get_snapshot_keeps_concurrent_runs_isolated() -> None:
     memory = MagicMock(spec=MemoryInterface)
 
     def get_deltas(
@@ -241,15 +377,14 @@ def test_get_snapshot_keeps_concurrent_runs_isolated() -> None:
         assert limit == ScenarioProgressReadModel._STORAGE_PAGE_SIZE
         return ([_make_delta(run_id=scenario_result_id)], False) if cursor is None else ([], False)
 
-    memory.get_scenario_attack_result_deltas.side_effect = get_deltas
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(side_effect=get_deltas)
     read_model = ScenarioProgressReadModel(memory=memory)
     run_ids = [f"run-{index}" for index in range(8)]
 
-    def read_run(run_id: str) -> ScenarioProgressSnapshot:
-        return _get_snapshot(read_model=read_model, run_id=run_id)
+    async def read_run_async(run_id: str) -> ScenarioProgressSnapshot:
+        return await _get_snapshot_async(read_model=read_model, run_id=run_id)
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        snapshots = list(executor.map(read_run, run_ids))
+    snapshots = await asyncio.gather(*(read_run_async(run_id) for run_id in run_ids))
 
     assert [snapshot.results[0].conversation_id for snapshot in snapshots] == [
         f"conversation-{run_id}-0" for run_id in run_ids

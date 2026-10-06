@@ -21,7 +21,7 @@ async def test_manual_scorer_persists_value_and_rationale(
         original_value="response",
         conversation_id=str(uuid.uuid4()),
     ).to_message()
-    sqlite_instance.add_message_to_memory(request=message)
+    (await sqlite_instance.add_message_to_memory_async(request=message))
     message_id = message.get_piece().id
 
     scores = await ManualScorer(
@@ -38,7 +38,7 @@ async def test_manual_scorer_persists_value_and_rationale(
     assert scores[0].score_rationale == "Human verdict"
     assert scores[0].score_metadata == {"user_identifier": "user@example.com"}
     assert scores[0].message_piece_id == message_id
-    assert sqlite_instance.get_prompt_scores(prompt_ids=[message_id])[0].id == scores[0].id
+    assert (await sqlite_instance.get_prompt_scores_async(prompt_ids=[message_id]))[0].id == scores[0].id
 
 
 async def test_manual_scorer_rejects_non_message_scorable() -> None:

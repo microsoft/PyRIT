@@ -72,9 +72,9 @@ def _expectation() -> ScoringExpectation:
     return ScoringExpectation(objective="context", conditions=(_FirstCondition(), _SecondCondition()))
 
 
-def _stored_response(memory: MemoryInterface) -> Message:
+async def _stored_response_async(memory: MemoryInterface) -> Message:
     response = MessagePiece(role="assistant", original_value="response", conversation_id=str(uuid.uuid4())).to_message()
-    memory.add_message_to_memory(request=response)
+    (await memory.add_message_to_memory_async(request=response))
     return response
 
 
@@ -148,7 +148,7 @@ async def test_objective_and_auxiliary_receive_their_own_inputs_async(sqlite_ins
     expectation = _expectation()
 
     results = await score_attack_response_async(
-        response=_stored_response(sqlite_instance),
+        response=(await _stored_response_async(sqlite_instance)),
         objective_scorer=objective,
         auxiliary_scorers=[auxiliary],
         expectation=expectation,
@@ -169,7 +169,7 @@ async def test_selected_auxiliary_failure_is_not_suppressed_async(sqlite_instanc
         pytest.raises(Exception, match="diagnostic failed"),
     ):
         await score_attack_response_async(
-            response=_stored_response(sqlite_instance),
+            response=(await _stored_response_async(sqlite_instance)),
             objective_scorer=_FirstScorer(),
             auxiliary_scorers=[auxiliary],
             expectation=ScoringExpectation(conditions=(_FirstCondition(),)),

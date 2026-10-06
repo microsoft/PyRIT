@@ -7,6 +7,10 @@ registry exposes as its ``.instances`` property, plus the ``InstanceRegistry`` a
 ``SupportsInstances`` protocols.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
+from unittest.mock import patch
+
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
@@ -114,6 +118,82 @@ class TestRegistration:
 
         registry.register(_item("value2"), name="name2")
         assert len(registry.list_metadata()) == 2
+
+
+def test_concurrent_registration_preserves_one_winner(registry: DefaultInstanceRegistry[_TestItem]) -> None:
+    ready = Barrier(2, timeout=5)
+    normalize_tags = registry._normalize_tags
+
+    def prepare_registration(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
+        ready.wait()
+        return normalize_tags(tags)
+
+    with (
+        patch.object(registry, "_normalize_tags", side_effect=prepare_registration),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        items = [_item("first"), _item("second")]
+        futures = [executor.submit(registry.register, item, name="same") for item in items]
+        successes = []
+        failures = []
+        for item, future in zip(items, futures, strict=True):
+            try:
+                future.result(timeout=5)
+            except ValueError as exc:
+                failures.append(exc)
+            else:
+                successes.append(item)
+
+    assert len(successes) == len(failures) == 1
+    assert "already exists" in str(failures[0])
+    assert registry.get("same") is successes[0]
+
+
+def test_concurrent_unregister_removes_instance_once(registry: DefaultInstanceRegistry[_TestItem]) -> None:
+    item = _item("first")
+    registry.register(item, name="same")
+    ready = Barrier(2, timeout=5)
+
+    def remove() -> _TestItem | None:
+        ready.wait()
+        return registry.unregister("same")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(remove) for _ in range(2)]
+        results = [future.result(timeout=5) for future in futures]
+
+    assert sum(result is item for result in results) == 1
+    assert sum(result is None for result in results) == 1
+    assert registry.get_all_instances() == []
+
+
+def test_metadata_retries_after_concurrent_registration(registry: DefaultInstanceRegistry[_TestItem]) -> None:
+    registry.register(_item("first"), name="first")
+    started = Event()
+    release = Event()
+    build_metadata = registry._build_metadata
+
+    def blocked_metadata(item: _TestItem) -> ComponentIdentifier:
+        if not started.is_set():
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("Metadata build was not released")
+        return build_metadata(item)
+
+    with (
+        patch.object(registry, "_build_metadata", side_effect=blocked_metadata),
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        future = executor.submit(registry.list_metadata)
+        try:
+            assert started.wait(timeout=5)
+            registry.register(_item("second"), name="second")
+        finally:
+            release.set()
+        metadata = future.result(timeout=5)
+
+    assert len(metadata) == 2
+    assert registry.list_metadata() is metadata
 
 
 class TestInstanceTypeEnforcement:

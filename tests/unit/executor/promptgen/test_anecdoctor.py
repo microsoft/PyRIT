@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.executor.core.config import StrategyConverterConfig
 from pyrit.executor.promptgen.anecdoctor import (
@@ -29,7 +30,7 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
 def mock_objective_target() -> PromptTarget:
     """Create a mock objective target for testing."""
     mock_target = MagicMock(spec=PromptTarget)
-    mock_target.set_system_prompt = MagicMock()
+    mock_target.set_system_prompt_async = AsyncMock()
     mock_target.get_identifier.return_value = _mock_target_id("mock_objective_target")
     return mock_target
 
@@ -38,7 +39,7 @@ def mock_objective_target() -> PromptTarget:
 def mock_processing_model() -> PromptTarget:
     """Create a mock processing model for testing."""
     mock_model = MagicMock(spec=PromptTarget)
-    mock_model.set_system_prompt = MagicMock()
+    mock_model.set_system_prompt_async = AsyncMock()
     mock_model.get_identifier.return_value = _mock_target_id("MockProcessingModel")
     return mock_model
 
@@ -46,7 +47,7 @@ def mock_processing_model() -> PromptTarget:
 @pytest.fixture
 def mock_prompt_normalizer() -> PromptNormalizer:
     """Create a mock prompt normalizer for testing."""
-    mock_normalizer = MagicMock(spec=PromptNormalizer)
+    mock_normalizer = get_mock_prompt_normalizer()
     mock_normalizer.send_prompt_async = AsyncMock()
     return mock_normalizer
 
@@ -237,7 +238,7 @@ class TestAnecdoctorGeneratorSetup:
         """Test setup formats system prompt with language and content type."""
         generator = AnecdoctorGenerator(objective_target=mock_objective_target)
 
-        with patch.object(generator._objective_target, "set_system_prompt") as mock_set:
+        with patch.object(generator._objective_target, "set_system_prompt_async") as mock_set:
             await generator._setup_async(context=sample_context)
 
             mock_set.assert_called_once()

@@ -8,9 +8,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
-from mcp import StdioServerParameters
+from mcp import ClientSession, StdioServerParameters
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from pydantic import ValidationError
 
@@ -244,42 +244,48 @@ async def test_create_session_async_uses_mcp_http_timeouts() -> None:
             headers={"Authorization": "Bearer token"},
         ),
     )
-    streams = (MagicMock(), MagicMock(), MagicMock())
-    expected_http_client = MagicMock()
-    http_client_context = MagicMock()
-    http_client_context.__aenter__ = AsyncMock(return_value=expected_http_client)
-    http_client_context.__aexit__ = AsyncMock(return_value=None)
-    async_client = MagicMock(return_value=http_client_context)
+    streams = (MagicMock(), MagicMock())
+    http_client_used: httpx2.AsyncClient | None = None
 
     @asynccontextmanager
-    async def fake_streamable_http_client_async(url: str, *, http_client: MagicMock):
+    async def fake_streamable_http_client_async(
+        url: str, *, http_client: httpx2.AsyncClient
+    ) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+        nonlocal http_client_used
         assert url == "http://127.0.0.1:8000/mcp/notes"
-        assert http_client is expected_http_client
+        assert isinstance(http_client, httpx2.AsyncClient)
+        assert isinstance(provider.server_config, MCPStreamableHTTPServerConfig)
+        assert http_client.headers["Authorization"] == provider.server_config.headers["Authorization"]
+        assert http_client.timeout == httpx2.Timeout(30.0, read=300.0)
+        assert not http_client.is_closed
+        http_client_used = http_client
         yield streams
 
-    session = MagicMock()
+    session = MagicMock(spec=ClientSession)
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=None)
     session.initialize = AsyncMock()
+    client_session = MagicMock(return_value=session)
 
     with (
-        patch("pyrit.prompt_target.common.mcp_tool_provider.httpx.AsyncClient", async_client),
         patch(
             "pyrit.prompt_target.common.mcp_tool_provider.streamable_http_client",
             fake_streamable_http_client_async,
         ),
-        patch("pyrit.prompt_target.common.mcp_tool_provider.ClientSession", MagicMock(return_value=session)),
+        patch("pyrit.prompt_target.common.mcp_tool_provider.ClientSession", client_session),
     ):
-        async with provider._create_session_async():
-            pass
+        async with provider._create_session_async() as created_session:
+            assert created_session is session
 
-    timeout = async_client.call_args.kwargs["timeout"]
-    assert timeout == httpx.Timeout(30.0, read=300.0)
+    assert http_client_used is not None
+    assert http_client_used.is_closed
+    client_session.assert_called_once_with(*streams)
+    session.initialize.assert_awaited_once()
 
 
 async def test_get_tools_async_discovers_all_pages() -> None:
     provider = _http_provider()
-    session = MagicMock()
+    session = MagicMock(spec=ClientSession)
     session.list_tools = AsyncMock(
         side_effect=[
             ListToolsResult(
@@ -287,21 +293,21 @@ async def test_get_tools_async_discovers_all_pages() -> None:
                     Tool(
                         name="get_note",
                         description="Read a note",
-                        inputSchema={
+                        input_schema={
                             "type": "object",
                             "properties": {"id": {"type": "string"}},
                             "required": ["id"],
                         },
                     )
                 ],
-                nextCursor="page-2",
+                next_cursor="page-2",
             ),
             ListToolsResult(
                 tools=[
                     Tool(
                         name="list_notes",
                         description="List notes",
-                        inputSchema={"type": "object", "properties": {}},
+                        input_schema={"type": "object", "properties": {}},
                     )
                 ]
             ),
@@ -326,6 +332,8 @@ async def test_get_tools_async_discovers_all_pages() -> None:
     }
     assert [tool.name for tool in cached_tools] == ["get_note", "list_notes"]
     assert session.list_tools.call_count == 2
+    assert session.list_tools.call_args_list[0].kwargs["params"].cursor is None
+    assert session.list_tools.call_args_list[1].kwargs["params"].cursor == "page-2"
 
 
 async def test_call_tool_async_returns_mcp_result() -> None:
@@ -334,14 +342,14 @@ async def test_call_tool_async_returns_mcp_result() -> None:
         Tool(
             name="get_note",
             description="Read a note",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         )
     ]
     session = MagicMock()
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[TextContent(type="text", text='{"text":"Welcome"}')],
-            structuredContent={"text": "Welcome"},
+            structured_content={"text": "Welcome"},
         )
     )
 
@@ -362,6 +370,28 @@ async def test_call_tool_async_returns_mcp_result() -> None:
     session.call_tool.assert_awaited_once_with(name="get_note", arguments={"id": "welcome"})
 
 
+@pytest.mark.parametrize("is_error", [False, True])
+@pytest.mark.parametrize("structured_content", [None, {}, {"text": "Welcome"}])
+def test_serialize_call_result_preserves_wire_fields(
+    *, is_error: bool, structured_content: dict[str, object] | None
+) -> None:
+    result = CallToolResult.model_validate(
+        {
+            "content": [{"type": "text", "text": "Welcome"}],
+            "isError": is_error,
+            "structuredContent": structured_content,
+        }
+    )
+    expected: dict[str, object] = {
+        "content": [{"type": "text", "text": "Welcome"}],
+        "is_error": is_error,
+    }
+    if structured_content is not None:
+        expected["structured_content"] = structured_content
+
+    assert MCPToolProvider._serialize_call_result(result=result) == expected
+
+
 async def test_provider_reuses_session_within_execution_scope() -> None:
     provider = _http_provider()
     session = MagicMock()
@@ -371,7 +401,7 @@ async def test_provider_reuses_session_within_execution_scope() -> None:
                 Tool(
                     name="get_note",
                     description="Read a note",
-                    inputSchema={"type": "object", "properties": {}},
+                    input_schema={"type": "object", "properties": {}},
                 )
             ]
         )
@@ -413,6 +443,7 @@ async def test_openai_response_target_scopes_provider_session_to_send() -> None:
     provider.execution_scope_async = execution_scope
     target = object.__new__(OpenAIResponseTarget)
     target._tool_providers = [provider]
+    target._suppress_tools = False
     target._run_tool_call_loop_async = AsyncMock(return_value=[])  # type: ignore[method-assign]
     send_implementation = inspect.unwrap(OpenAIResponseTarget._send_prompt_to_target_async)
 
@@ -438,6 +469,8 @@ async def test_openai_response_target_retries_request_inside_provider_scope() ->
     provider.execution_scope_async = execution_scope
     target = object.__new__(OpenAIResponseTarget)
     target._tool_providers = [provider]
+    target._suppress_tools = False
+    target._execute_tools = True
     target._get_json_response_config = MagicMock(return_value=JsonResponseConfig(enabled=False))  # type: ignore[method-assign]
     target._construct_request_body_async = AsyncMock(return_value={})  # type: ignore[method-assign]
     response = Message(
@@ -490,7 +523,7 @@ async def test_openai_response_target_uses_mcp_tools(patch_central_database) -> 
         Tool(
             name="get_note",
             description="Read a note",
-            inputSchema={"type": "object", "properties": {"id": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"id": {"type": "string"}}},
         )
     ]
     provider.call_tool_async = AsyncMock(return_value={"structured_content": {"text": "Welcome"}})  # type: ignore[method-assign]
@@ -522,7 +555,8 @@ async def test_openai_response_target_uses_mcp_tools(patch_central_database) -> 
     assert first_body["tools"] == second_body["tools"]
     assert first_body["tools"][0]["name"] == "get_note"
     provider.call_tool_async.assert_awaited_once_with(name="get_note", arguments={"id": "welcome"})
-    assert output == {"structured_content": {"text": "Welcome"}}
+    assert output.output == {"structured_content": {"text": "Welcome"}}
+    assert output.invoked is True
 
 
 async def test_openai_response_target_rejects_provider_name_conflict(patch_central_database) -> None:

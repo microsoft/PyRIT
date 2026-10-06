@@ -17,6 +17,7 @@ Applied headers:
 import logging
 from typing import ClassVar
 
+from starlette._utils import get_route_path
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
@@ -70,8 +71,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         Returns:
             Response with security headers applied.
         """
+        path = get_route_path(request.scope)
         response = await call_next(request)
-        path = request.url.path
 
         # --- Headers applied to ALL responses ---
         response.headers["X-Content-Type-Options"] = "nosniff"
