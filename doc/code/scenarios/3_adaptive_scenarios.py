@@ -245,8 +245,12 @@ for technique, n in total_picks.most_common():
 #   does not prove a request reached the target: an attack that ends in a preparation failure is still
 #   `target_facing`.
 # - `child_attack_result_ids` lists an orchestration parent's children in the order they ran.
-# - `attempt_index` is a child's 1-based position under its parent. For Adaptive it matches the
-#   `_adaptive_attempt` memory label.
+# - `attempt_index` is a child's 1-based position under its immediate parent. For a technique that
+#   Adaptive runs directly, it matches the `_adaptive_attempt` memory label. When that technique is
+#   itself a compound attack such as a nested `SequentialAttack`, its children are numbered under the
+#   nested parent instead, so their `attempt_index` is not the Adaptive attempt number. Their
+#   `_adaptive_attempt` label still names the outer attempt, but the progress response does not
+#   include it.
 # - Each `summary.atomic_groups` entry has a `kind`: `attack`, `baseline`, `adaptive`, or `unknown` for
 #   plans saved before kinds were recorded.
 #

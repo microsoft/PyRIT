@@ -48,7 +48,11 @@ from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
-from pyrit.scenario.scenarios.adaptive.dispatcher import ADAPTIVE_ATTEMPT_LABEL
+from pyrit.scenario.scenarios.adaptive.dispatcher import (
+    ADAPTIVE_ATTEMPT_LABEL,
+    AdaptiveTechniqueDispatcher,
+    TechniqueBundle,
+)
 from pyrit.score import Scorer, SubStringScorer
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
@@ -581,7 +585,8 @@ class TestScenarioResultRoles:
         assert {r.atomic_group_id for r in (parent, *children)} == {parent.atomic_group_id}
         assert {r.seed_group_id for r in (parent, *children)} == {parent.seed_group_id}
 
-        # Adaptive's attempt label is kept on each stored child result and agrees with its index.
+        # Adaptive's attempt label is kept on each stored child result. These children sit directly
+        # under the Adaptive parent, so the label agrees with their parent-relative index.
         stored_children = await sqlite_instance.get_attack_results_async(
             attack_result_ids=[child.attack_result_id for child in children]
         )
@@ -618,6 +623,62 @@ class TestScenarioResultRoles:
         # An error result gets a generated conversation ID, so an empty ID would misclassify it.
         assert parent.conversation_id != ""
         assert child.attempt_index == 1
+
+    async def test_nested_compound_attempt_index_is_relative_to_its_own_parent_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        class _OrderedSelector:
+            async def select_async(self, *, technique_identifiers, objective, num_top_techniques, scenario_result_id):
+                return ["single", "nested"][:num_top_techniques]
+
+        target = MockPromptTarget()
+        nested_technique = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=_prompt_sending(target=target), seed_group=_SEED_GROUP) for _ in range(2)
+            ],
+        )
+        dispatcher = AdaptiveTechniqueDispatcher(
+            objective_target=target,
+            techniques={
+                "single": TechniqueBundle(attack=_prompt_sending(target=target), name="single"),
+                "nested": TechniqueBundle(attack=nested_technique, name="nested"),
+            },
+            selector=_OrderedSelector(),
+            max_attempts_per_objective=2,
+        )
+        adaptive_group = AtomicAttack(
+            atomic_attack_name="adaptive_objective",
+            attack_technique=AttackTechnique(attack=await dispatcher.build_attack_async(seed_group=_SEED_GROUP)),
+            seed_groups=[_SEED_GROUP],
+            group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
+        )
+
+        snapshot, _, _ = await _run_and_read_progress_async(
+            memory=sqlite_instance, build_atomic_attacks=lambda _: [adaptive_group], target=target
+        )
+
+        by_id = {result.attack_result_id: result for result in snapshot.results}
+        [outer] = [
+            r for r in snapshot.results if r.result_role is AttackResultRole.ORCHESTRATION and r.attempt_index is None
+        ]
+        single_id, nested_id = outer.child_attack_result_ids
+        single, nested = by_id[single_id], by_id[nested_id]
+        nested_children = [by_id[child_id] for child_id in nested.child_attack_result_ids]
+
+        assert single.result_role is AttackResultRole.TARGET_FACING
+        assert nested.result_role is AttackResultRole.ORCHESTRATION
+        assert [child.result_role for child in nested_children] == [AttackResultRole.TARGET_FACING] * 2
+        assert (single.attempt_index, nested.attempt_index) == (1, 2)
+        # Nested children count from 1 under their own parent, not under the Adaptive parent.
+        assert [child.attempt_index for child in nested_children] == [1, 2]
+
+        # Adaptive's label still names the outer attempt, so it differs from the nested children's index.
+        stored = await sqlite_instance.get_attack_results_async(
+            attack_result_ids=[single_id, *nested.child_attack_result_ids]
+        )
+        labels = {result.attack_result_id: result.labels[ADAPTIVE_ATTEMPT_LABEL] for result in stored}
+        assert labels == {single_id: "1", **dict.fromkeys(nested.child_attack_result_ids, "2")}
 
     async def test_roles_do_not_change_progress_counts_async(self, sqlite_instance: MemoryInterface) -> None:
         snapshot, plan, run_id = await _run_and_read_progress_async(
