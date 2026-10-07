@@ -456,7 +456,7 @@ test.describe("Create Target Dialog", () => {
     await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
   });
 
-  test("should require an endpoint when identity authentication is selected", async ({ page }) => {
+  test("should require an endpoint and validate the identity host", async ({ page }) => {
     await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
       await route.fulfill({
         status: 200,
@@ -469,7 +469,7 @@ test.describe("Create Target Dialog", () => {
                 {
                   name: "endpoint",
                   type_name: "str",
-                  required: false,
+                  required: true,
                   default: null,
                 },
               ],
@@ -499,11 +499,14 @@ test.describe("Create Target Dialog", () => {
       "OpenAIChatTarget"
     );
 
-    // API-key mode can use the target's configured environment defaults.
+    // Every rendered endpoint field is required.
+    await expect(createBtn).toBeDisabled();
+    await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
+      "https://api.openai.com"
+    );
     await expect(createBtn).toBeEnabled();
 
-    // Identity authentication needs an explicit endpoint so the target can
-    // validate the Azure host and request the correct credential.
+    // Identity authentication additionally requires a recognized Azure host.
     await dialog.getByRole("radio", { name: /Identity-based/ }).click();
     await expect(createBtn).toBeDisabled();
 
