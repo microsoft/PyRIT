@@ -700,6 +700,12 @@ class AddMessageRequest(MessageRequest):
         max_length=MAX_ITEMS,
         description="Ordered registry-backed converter pipelines to apply to the response.",
     )
+    start_token: str = Field(
+        default="⟪", min_length=1, description="Opening marker for request and response converter pipelines"
+    )
+    end_token: str = Field(
+        default="⟫", min_length=1, description="Closing marker for request and response converter pipelines"
+    )
     target_conversation_id: IdentifierStr = Field(
         ...,
         description="The conversation_id to store and send messages under. "

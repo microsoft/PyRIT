@@ -6,13 +6,18 @@ import logging
 import threading
 import uuid
 import weakref
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import closing
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
+from sqlite3 import Connection as SQLiteConnection
+from sqlite3 import Cursor as SQLiteCursor
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal
 
-from sqlalchemy import and_, case, create_engine, exists, func, or_, select, text
+from sqlalchemy import and_, case, create_engine, event, exists, func, or_, select, text
+from sqlalchemy.engine import AdaptedConnection, ExceptionContext
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -20,9 +25,11 @@ from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.sql.expression import TextClause
+from sqlalchemy.util.concurrency import greenlet_spawn
 
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.common.singleton import Singleton
+from pyrit.memory.analytics_sql import UnicodeLower
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -38,20 +45,137 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
 logger = logging.getLogger(__name__)
+_sqlite_session_cleanup: ContextVar[bool] = ContextVar("sqlite_session_cleanup", default=False)
 
 
-class _SerializedAsyncSession(AsyncSession):
-    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None]) -> None:
+class _CursorClosingSQLiteConnection(SQLiteConnection):
+    """A native SQLite connection that finalizes live cursors before disconnecting."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._cursors: weakref.WeakSet[SQLiteCursor] = weakref.WeakSet()
+
+    def cursor(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().cursor(*args, **kwargs))
+
+    def execute(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().execute(*args, **kwargs))
+
+    def executemany(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().executemany(*args, **kwargs))
+
+    def executescript(self, *args: Any, **kwargs: Any) -> SQLiteCursor:
+        return self._track_cursor(super().executescript(*args, **kwargs))
+
+    def close(self) -> None:
+        for cursor in tuple(self._cursors):
+            cursor.close()
+        self._cursors.clear()
+        super().close()
+
+    def _track_cursor(self, cursor: SQLiteCursor) -> SQLiteCursor:
+        self._cursors.add(cursor)
+        return cursor
+
+
+async def _finish_sqlite_cleanup_async(cleanup: Awaitable[None]) -> asyncio.CancelledError | None:
+    """
+    Drain SQLite cleanup and retain cancellation received while waiting.
+
+    Returns:
+        asyncio.CancelledError | None: The first cancellation received during cleanup.
+    """
+    task = asyncio.ensure_future(cleanup)
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+        except Exception:
+            break
+    try:
+        task.result()
+    except Exception as error:
+        if cancellation is not None:
+            raise cancellation from error
+        raise
+    return cancellation
+
+
+def _cleanup_interrupted_sqlite_connection(context: ExceptionContext) -> None:
+    execution_context, connection = context.execution_context, context.connection
+    cancelled = isinstance(context.original_exception, asyncio.CancelledError)
+    if connection is None or not (cancelled or _sqlite_session_cleanup.get()):
+        return
+    # The public interface has empty slots, but implementations expose these writable flags.
+    context.is_disconnect = True  # type: ignore[ty:missing-slot]
+    context.invalidate_pool_on_disconnect = False  # type: ignore[ty:missing-slot]
+    dbapi_connection = connection.connection.dbapi_connection
+    if not isinstance(dbapi_connection, AdaptedConnection):
+        raise TypeError("Async SQLite memory requires an adapted driver connection.")
+    cursor = execution_context.cursor if execution_context is not None else None
+
+    def close_and_invalidate() -> None:
+        # SQLAlchemy skips cursor cleanup on cancellation. SQLite keeps an active
+        # statement's transaction lock even after its connection is closed.
+        if cursor is not None:
+            cursor.close()
+        connection.invalidate(context.original_exception)
+
+    try:
+        dbapi_connection.run_async(lambda _: _finish_sqlite_cleanup_async(greenlet_spawn(close_and_invalidate)))
+    except (asyncio.CancelledError, Exception) as error:
+        if cancelled:
+            cause = (
+                error.__cause__ if isinstance(error, asyncio.CancelledError) and error.__cause__ is not None else error
+            )
+            raise context.original_exception from cause
+        raise
+
+
+class _SQLiteAsyncSession(AsyncSession):
+    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None] | None = None) -> None:
         super().__init__(bind=engine, sync_session_class=MemorySession)
         self._release: Callable[[], None] | None = release
 
     async def close(self) -> None:  # pyrit-async-suffix-exempt
         try:
-            await super().close()
+            cancellation = await _finish_sqlite_cleanup_async(self._close_session_async())
         finally:
             if self._release is not None:
                 release, self._release = self._release, None
                 release()
+        if cancellation is not None:
+            raise cancellation
+
+    async def __aexit__(
+        self,
+        type_: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        try:
+            await self.close()
+        except asyncio.CancelledError as error:
+            if isinstance(value, asyncio.CancelledError):
+                cause = error.__cause__ if error.__cause__ is not None else value.__cause__
+                raise value from cause
+            raise
+        except Exception as error:
+            if isinstance(value, asyncio.CancelledError):
+                raise value from error
+            raise
+
+    async def _close_session_async(self) -> None:
+        # A failed rollback must discard its connection before the ORM drops
+        # the transaction reference and before exclusive access is released.
+        token = _sqlite_session_cleanup.set(True)
+        try:
+            await super().close()
+        finally:
+            _sqlite_session_cleanup.reset(token)
 
 
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
@@ -60,6 +184,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     This class provides functionality to insert, query, and manage conversation data
     using SQLite. It supports both file-based and in-memory databases.
+
+    Cancellation finalizes active cursors and closes interrupted connections before
+    returning to the caller. Session cleanup also finishes under repeated cancellation.
+    Failed disconnects and session rollbacks preserve the original cancellation
+    and expose cleanup failures as its cause.
 
     Note: this is replacing the old DuckDB implementation.
     """
@@ -124,17 +253,42 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     def _create_async_engine(self) -> AsyncEngine:
         database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"connect_args": {"factory": _CursorClosingSQLiteConnection}}
         if self.db_path == ":memory:":
             kwargs["poolclass"] = StaticPool
-        return create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+        engine = create_async_engine(f"sqlite+aiosqlite:///{database}", echo=self._verbose, **kwargs)
+        self._register_analytics_lower(engine=engine.sync_engine)
+        event.listen(engine.sync_engine, "handle_error", _cleanup_interrupted_sqlite_connection)
+        return engine
+
+    @staticmethod
+    def _unicode_lower(value: str | int | float | bytes | None) -> str | None:
+        """
+        Lowercase SQLite text with Unicode rules, retaining NULL semantics.
+
+        Returns:
+            str | None: The folded value, or SQL NULL.
+        """
+        return str(value).lower() if value is not None else None
+
+    @staticmethod
+    def _register_analytics_lower(*, engine: Engine) -> None:
+        """Install the analytics-only Unicode function on every pooled SQLite connection."""
+
+        @event.listens_for(engine, "connect")
+        def register(dbapi_connection: Any, connection_record: Any) -> None:
+            dbapi_connection.create_function(
+                UnicodeLower.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_lower, deterministic=True
+            )
 
     async def get_session_async(self) -> AsyncSession:
         """
-        Create a session with exclusive access to the shared in-memory database.
+        Create a session with cancellation-safe SQLite cleanup.
+
+        In-memory sessions also have exclusive access to the shared database.
 
         Returns:
-            AsyncSession: A session that releases exclusive access when closed.
+            AsyncSession: A session that finishes cleanup before releasing exclusive access.
 
         Raises:
             NotImplementedError: If a custom sync session hook has not been migrated.
@@ -146,11 +300,11 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             raise RuntimeError("Close the synchronous memory session before opening an async session on this thread.")
         connection_lock = self._transaction_lock
         if connection_lock is None:
-            return await super().get_session_async()
+            return _SQLiteAsyncSession(engine=self._get_async_engine())
         while not connection_lock.acquire(blocking=False):
             await asyncio.sleep(0.01)
         try:
-            return _SerializedAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
+            return _SQLiteAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
         except BaseException:
             connection_lock.release()
             raise
@@ -204,6 +358,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
             database = self._memory_uri if self.db_path == ":memory:" else str(self.db_path)
             engine = create_engine(f"sqlite:///{database}", echo=has_echo, **extra_kwargs)
+            self._register_analytics_lower(engine=engine)
             logger.info(f"Engine created successfully for database: {self.db_path}")
             return engine
         except SQLAlchemyError as e:

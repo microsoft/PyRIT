@@ -74,7 +74,13 @@ RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Invalid PYRIT_SOURCE"; exit 1; \
     fi && \
     cd /tmp && \
-    /opt/venv/bin/python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())" && \
+    if ! /opt/venv/bin/python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())"; then \
+        if [ "$PYRIT_SOURCE" = "pypi" ]; then \
+            echo "ERROR: Selected PyPI release $PYRIT_VERSION lacks valid compatibility metadata." >&2; \
+            echo "Wheels published before compatibility stamping are unsupported. A coordinated release with matching Python and frontend stamps is required." >&2; \
+        fi; \
+        exit 1; \
+    fi && \
     echo "Creating build info..." && \
     /opt/venv/bin/python -c "import json; import pyrit; \
 info = { \

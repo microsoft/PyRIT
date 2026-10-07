@@ -216,7 +216,7 @@ class ConverterService:
 
         For non-text data types (image_path, audio_path, etc.), persists base64 data
         to a temporary file so converters can operate on file paths. Marked text
-        regions are converted by the next converter, which consumes their delimiters.
+        regions use the request's delimiter settings for every stage.
 
         Returns:
             ConverterPreviewResponse with step-by-step conversion results.
@@ -240,7 +240,11 @@ class ConverterService:
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters_async(
-            converters=converters, initial_value=original_value, initial_type=data_type
+            converters=converters,
+            initial_value=original_value,
+            initial_type=data_type,
+            start_token=request.start_token,
+            end_token=request.end_token,
         )
 
         return ConverterPreviewResponse(
@@ -423,6 +427,8 @@ class ConverterService:
         converters: list[tuple[str, str, Any]],
         initial_value: str,
         initial_type: PromptDataType,
+        start_token: str = "⟪",
+        end_token: str = "⟫",
     ) -> tuple[list[PreviewStep], str, PromptDataType]:
         """
         Collect preview steps using the normalizer's conversion-only path.
@@ -440,7 +446,7 @@ class ConverterService:
             not_in_memory=True,
         )
         message = piece.to_message()
-        normalizer = PromptNormalizer()
+        normalizer = PromptNormalizer(start_token=start_token, end_token=end_token)
         steps: list[PreviewStep] = []
 
         for conv_id, conv_type, conv_obj in converters:

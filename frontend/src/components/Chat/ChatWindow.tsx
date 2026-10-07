@@ -77,6 +77,7 @@ import type {
   MessageAttachment,
   MessageSendRequest,
   MessageSendStatus,
+  NewAttackContext,
   TargetInstance,
   TargetInfo,
 } from '../../types'
@@ -251,6 +252,8 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
+  /** False while the current generation's server defaults are still loading; launching is gated. */
+  defaultsReady?: boolean
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -294,6 +297,7 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
+  defaultsReady = false,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -314,7 +318,9 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingObjective, setPendingObjective] = useState('')
   const currentObjective = attackResultId ? objective : pendingObjective
-  const editor = useConversationDraft()
+  const runtime = useRuntime()
+  const newAttackContext: NewAttackContext = { generation: runtime.generation, ready: runtime.ready && defaultsReady, labels }
+  const editor = useConversationDraft(newAttackContext)
   const { draft: editDraft, discard: discardEditor, changeObjective: setEditorObjective } = editor
   const editorTarget = editDraft?.target ?? null
   const editorObjective = editDraft?.objective ?? ''
@@ -322,7 +328,7 @@ export default function ChatWindow({
   const editorRef = useRef<ConversationEditorHandle>(null)
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const copyingRef = useRef(false)
-  const copySave = useConversationSave()
+  const copySave = useConversationSave(newAttackContext)
   const [editorNotice, setEditorNotice] = useState<string | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
   // Track sending state per conversation so parallel conversations can send independently
@@ -341,7 +347,10 @@ export default function ChatWindow({
   const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
-  const runtime = useRuntime()
+  const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady })
+  useLayoutEffect(() => {
+    launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady }
+  }, [runtime.generation, runtime.ready, defaultsReady])
   // Conversation-wide preference for rendering message text as Markdown.
   const { preferences, updatePreferences } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
@@ -825,6 +834,7 @@ export default function ChatWindow({
   ): Promise<ChatSendOutcome> => {
     if (
       !runtime.ready
+      || (!attackResultId && !defaultsReady)
       || !activeTarget
       || editDraft !== null
       || isLoadingAttack
@@ -943,6 +953,11 @@ export default function ChatWindow({
       let currentConversationId = conversationId
       let currentActiveConversationId = activeConversationId
       if (!currentAttackResultId) {
+        const currentLaunchState = launchStateRef.current
+        if (currentLaunchState.generation !== operation.converterGeneration
+          || !currentLaunchState.ready || !currentLaunchState.defaultsReady) {
+          throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
+        }
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
           name: pendingObjective || undefined,
@@ -1332,12 +1347,19 @@ export default function ChatWindow({
   const copyConversation = async (messageIndex: number, destination: 'same_attack' | 'new_attack'): Promise<void> => {
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
+    if (destination === 'new_attack' && (!runtime.ready || !defaultsReady)) return
     const sourceId = viewedConversationId
     copyingRef.current = true
     setIsLoadingEdit(true)
     setEditorError(null)
     try {
       const source = await attacksApi.getMessages(attackResultId, sourceId)
+      if (destination === 'new_attack' && (
+        launchStateRef.current.generation !== runtime.generation
+        || !launchStateRef.current.ready || !launchStateRef.current.defaultsReady
+      )) {
+        throw new Error('Runtime or default labels changed while loading this conversation. Retry after default labels finish loading.')
+      }
       const copiedMessages = toConversationDraft(source.messages.slice(0, messageIndex + 1))
       const target = destination === 'new_attack' && activeTarget
         && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))
@@ -1371,6 +1393,9 @@ export default function ChatWindow({
     : targetResolutionStatus === 'unbound' && editorTarget
       ? 'Choose New attack to select a target while editing an unbound attack.'
     : isTargetResolutionLocked ? 'The source target cannot be safely resolved. Choose New attack.'
+    : undefined
+  const newAttackDisabledReason = !runtime.ready || !defaultsReady
+    ? 'Default labels are not ready. Retry after default labels finish loading.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
 
@@ -1515,7 +1540,7 @@ export default function ChatWindow({
                 onNewAttack()
               }
             }}
-            disabled={isSavingEditor || (editDraft === null && !attackResultId)}
+            disabled={isSavingEditor || (editDraft !== null && Boolean(newAttackDisabledReason)) || (editDraft === null && !attackResultId)}
             data-testid="new-attack-btn"
             aria-label={editDraft !== null ? 'Save to new attack' : 'New Attack'}
             className={styles.newAttackButton}
@@ -1597,13 +1622,14 @@ export default function ChatWindow({
           ref={editorRef}
           controller={editor}
           sameAttackDisabledReason={sameAttackDisabledReason}
+          newAttackDisabledReason={newAttackDisabledReason}
           onSaved={handleEditorSaved}
         />}
         {editDraft === null && <MessageList
           messages={messages}
           onCopyToInput={handleCopyToInput}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}
-          onCopyToNewAttack={(index: number) => { void copyConversation(index, 'new_attack') }}
+          onCopyToNewAttack={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack') }}
           copyConversationDisabled={isSending || isLoadingEdit}
           newConversationDisabledReason={isMutationLocked ? "This attack is read-only. Copy to a new attack instead." : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
@@ -1635,7 +1661,7 @@ export default function ChatWindow({
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
-          sendDisabled={editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking}
+          sendDisabled={(!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking}
           conversionRevisionKey={conversionRevisionKey}
           showSystemPrompt={!attackResultId}
           supportsSystemPrompt={supportsSystemPrompt}

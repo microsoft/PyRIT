@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import codecs
 import os
 import tempfile
 import wave
@@ -18,7 +19,11 @@ from pyrit.converter import (
     Base64Converter,
     Converter,
     ConverterResult,
+    ROT13Converter,
+    SelectiveTextConverter,
     StringJoinConverter,
+    SuffixAppendConverter,
+    TokenSelectionStrategy,
 )
 from pyrit.exceptions import (
     ComponentRole,
@@ -110,12 +115,71 @@ class ContextFailingConverter(Converter):
         raise ValueError("conversion failed")
 
 
+@pytest.mark.parametrize(("start_token", "end_token"), [("", "⟫"), ("⟪", ""), ("", "")])
+def test_prompt_normalizer_rejects_empty_markers_before_memory_lookup(*, start_token: str, end_token: str) -> None:
+    with patch.object(CentralMemory, "get_memory_instance") as memory:
+        with pytest.raises(ValueError, match="tokens must be non-empty"):
+            PromptNormalizer(start_token=start_token, end_token=end_token)
+    memory.assert_not_called()
+
+
 def assert_message_piece_hashes_set(request: Message):
     assert request
     assert request.message_pieces
     for piece in request.message_pieces:
         assert piece.original_value_sha256
         assert piece.converted_value_sha256
+
+
+@pytest.mark.parametrize("split_configurations", [False, True])
+async def test_convert_values_nested_markers_async(
+    *, mock_memory_instance: MagicMock, split_configurations: bool
+) -> None:
+    converters = [Base64Converter(), ROT13Converter(), SuffixAppendConverter(suffix="tail")]
+    configurations = (
+        [ConverterConfiguration(converters=[converter]) for converter in converters]
+        if split_configurations
+        else [ConverterConfiguration(converters=converters)]
+    )
+    original = "keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫"
+    message = Message.from_prompt(prompt=original, role="user")
+    await PromptNormalizer().convert_values_async(converter_configurations=configurations, message=message)
+
+    assert message.message_pieces[0].original_value == original
+    assert message.message_pieces[0].converted_value == (
+        f"keep {codecs.encode('dGVzdA==', 'rot_13')} and {codecs.encode('dGVzdDI=', 'rot_13')} tail"
+    )
+    assert message.message_pieces[0].converted_value_data_type == "text"
+    assert mock_memory_instance.mock_calls == []
+
+
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+@pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
+async def test_convert_values_token_selection_matches_direct_async(
+    *, mock_memory_instance: MagicMock, preserve_tokens: bool, start_token: str, end_token: str
+) -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+        start_token=start_token,
+        end_token=end_token,
+    )
+    prompt = f"keep {start_token}{start_token}test{end_token}{end_token} / {start_token}test2{end_token}"
+    direct = await converter.convert_async(prompt=prompt)
+    message = Message.from_prompt(prompt=prompt, role="user")
+    normalizer = PromptNormalizer(start_token=start_token, end_token=end_token)
+    await normalizer.convert_values_async(
+        converter_configurations=[ConverterConfiguration(converters=[converter])], message=message
+    )
+    expected = (
+        f"keep {start_token}{start_token}dGVzdA=={end_token}{end_token} / {start_token}dGVzdDI={end_token}"
+        if preserve_tokens
+        else f"keep {start_token}dGVzdA=={end_token} / dGVzdDI="
+    )
+    assert direct.output_text == message.message_pieces[0].converted_value == expected
+    assert message.message_pieces[0].original_value == prompt
+    assert mock_memory_instance.mock_calls == []
 
 
 async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_group):
