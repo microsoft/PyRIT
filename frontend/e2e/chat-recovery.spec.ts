@@ -276,6 +276,64 @@ test.describe("Chat processing recovery @seeded", () => {
     expect(localTarget.requestBodies).toHaveLength(1);
   });
 
+  test("keeps recovery on the submitted prompt without adding a user message", async ({ page, request, localTarget }) => {
+    localTarget.setProcessingFailure(true);
+    const failed = await sendFromComposer(page, "Explain the target error");
+    expect(failed.messages.target_response_status?.response_error).toBe("processing");
+    expect(failed.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const bubbles = page.getByTestId(/^message-bubble-/);
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first()).toContainText("Explain the target error");
+    await expect(bubbles.first().getByRole("button", { name: "Copy conversation", exact: true })).toBeVisible();
+    await expect(bubbles.last()).toContainText("JSONDecodeError");
+    await expect(bubbles.last().getByRole("button", { name: "Copy conversation", exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first()).toContainText("Explain the target error");
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1280, height: 2800 });
+    await test.info().attach("detailed-target-error", {
+      body: await bubbles.last().screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    if (originalViewport) {
+      await page.setViewportSize(originalViewport);
+    }
+    const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
+    await disabledPrompt.click({ position: { x: 10, y: 10 } });
+    await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+    await test.info().attach("disabled-prompt-reasons", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    await page.keyboard.press("Escape");
+    await bubbles.first().getByRole("button", { name: "Copy conversation", exact: true }).click();
+    await test.info().attach("original-prompt-copy", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    const attackId = failed.attack.attack_result_id;
+    const [cloneResponse] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/attacks/${attackId}/conversations`),
+      page.getByRole("menuitem", { name: "New conversation", exact: true }).click(),
+    ]);
+    expect(cloneResponse.status()).toBe(201);
+    expect(cloneResponse.request().postDataJSON()).toEqual({});
+    const cloned: CreateConversationResponse = await cloneResponse.json();
+    await expect(page.getByTestId("chat-input")).toHaveValue("Explain the target error");
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+    await expect(bubbles).toHaveCount(0);
+    const historyResponse = await request.get(
+      `/api/attacks/${attackId}/messages?conversation_id=${cloned.conversation_id}`,
+      { headers: compatibilityHeaders() },
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: ConversationMessagesResponse = await historyResponse.json();
+    expect(history.messages).toHaveLength(0);
+    expect(localTarget.requestBodies).toHaveLength(1);
+  });
+
   for (const keepSafePrefix of [false, true]) {
     test(`recovers the latest failed draft without earlier errors, safe prefix ${keepSafePrefix}`, async ({
       page, request, localTarget,
@@ -307,25 +365,12 @@ test.describe("Chat processing recovery @seeded", () => {
       expect(errorPiece?.converted_value).toBeTruthy();
       await expect(page.getByTestId("message-list")).toContainText(errorPiece?.converted_value ?? "");
       await expect(page.getByRole("button", { name: "Edit in clean conversation", exact: true })).toHaveCount(0);
-      const originalViewport = page.viewportSize();
-      await page.setViewportSize({ width: 1280, height: 2800 });
-      await test.info().attach("detailed-target-error", {
-        body: await page.getByTestId(/^message-bubble-/).last().screenshot({ animations: "disabled" }),
-        contentType: "image/png",
-      });
-      if (originalViewport) {
-        await page.setViewportSize(originalViewport);
-      }
       const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
       await disabledPrompt.hover({ position: { x: 5, y: 5 } });
       await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
       await page.keyboard.press("Escape");
       await disabledPrompt.click({ position: { x: 10, y: 10 } });
       await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
-      await test.info().attach("disabled-prompt-reasons", {
-        body: await page.screenshot({ animations: "disabled" }),
-        contentType: "image/png",
-      });
       await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
       const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
