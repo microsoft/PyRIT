@@ -88,20 +88,17 @@ import { useChatWindowStyles } from './ChatWindow.styles'
 
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
-const CLEAN_CONVERSATION_MESSAGE =
-  'Continue in a clean conversation so the stored error is not sent back to the target.'
 
 interface RecoverableSendDraft {
   conversationId: string
   failedRequestTurnNumber: number
   failedResponseTurnNumber: number
   historyCutoffIndex: number
-  errorMessageIndex: number
+  failedRequestMessageIndex: number
   originalValue: string
   attachments: MessageAttachment[]
   conversions: Record<string, PieceConversion>
   source: 'live' | 'persisted'
-  missingConverterSelections: boolean
   converterGeneration?: string
 }
 
@@ -140,24 +137,6 @@ function isSendFinished(progress: MessageSendStatus): boolean {
 function userPieceIds(response: ConversationMessagesResponse): Set<string> {
   return new Set(response.messages.filter((message) => message.role === 'user')
     .flatMap((message) => message.message_pieces.map((piece) => piece.id)))
-}
-
-function getRecoveryDescription(draft: RecoverableSendDraft): string {
-  const historyNotice = draft.historyCutoffIndex < draft.failedRequestTurnNumber - 1
-    ? ' History from the first failed prompt onward will be left out.'
-    : ''
-  const recoveryMessage = `${CLEAN_CONVERSATION_MESSAGE}${historyNotice}`
-  if (draft.source === 'live') {
-    return `${recoveryMessage} Your prompt, attachments, and converter choices are preserved for editing.`
-  }
-
-  const restored = 'Your prompt and attachments were restored from conversation history.'
-
-  if (draft.missingConverterSelections) {
-    return `${recoveryMessage} ${restored} Converter choices could not be restored, so review them before sending.`
-  }
-
-  return `${recoveryMessage} ${restored} Review them before sending.`
 }
 
 function getRecoveryHistoryCutoff(messages: BackendMessage[], failedRequestTurnNumber: number): number {
@@ -210,14 +189,11 @@ function getPersistedProcessingRecovery(
     failedRequestTurnNumber: responseStatus.request_turn_number,
     failedResponseTurnNumber: responseStatus.response_turn_number,
     historyCutoffIndex: getRecoveryHistoryCutoff(response.messages, responseStatus.request_turn_number),
-    errorMessageIndex,
+    failedRequestMessageIndex: response.messages.indexOf(failedRequest),
     originalValue: originalDraft.content,
     attachments: (originalDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
     conversions: {},
     source: 'persisted',
-    missingConverterSelections: failedRequest.message_pieces.some(
-      (piece) => Boolean(piece.converter_identifiers?.length),
-    ),
   }
 }
 
@@ -375,7 +351,7 @@ export default function ChatWindow({
     : undefined
   const recoverableSend = useMemo<RecoverableSendDraft | undefined>(() => (
     savedRecovery?.converterGeneration !== undefined && savedRecovery.converterGeneration !== runtime.generation
-      ? { ...savedRecovery, conversions: {}, source: 'persisted', missingConverterSelections: true }
+      ? { ...savedRecovery, conversions: {}, source: 'persisted' }
       : savedRecovery
   ), [savedRecovery, runtime.generation])
   const [sendIssues, setSendIssues] = useState<Record<string, SendIssue>>({})
@@ -552,7 +528,7 @@ export default function ChatWindow({
               ...currentRecoveries,
               [convId]: {
                 ...currentRecovery,
-                errorMessageIndex: persistedRecovery.errorMessageIndex,
+                failedRequestMessageIndex: persistedRecovery.failedRequestMessageIndex,
                 historyCutoffIndex: persistedRecovery.historyCutoffIndex,
               },
             }
@@ -723,7 +699,6 @@ export default function ChatWindow({
       conversions: operation.conversions,
       converterGeneration: operation.converterGeneration,
       source: 'live',
-      missingConverterSelections: false,
     } : recovery
     if (isLatestRead) {
       loadedUserPieceIdsRef.current.set(effectiveConvId, userPieceIds(response.messages))
@@ -1348,6 +1323,11 @@ export default function ChatWindow({
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
     if (destination === 'new_attack' && (!runtime.ready || !defaultsReady)) return
+    if (destination === 'same_attack' && recoverableSend
+      && messageIndex === recoverableSend.failedRequestMessageIndex) {
+      await handleRecoverProcessingError()
+      return
+    }
     const sourceId = viewedConversationId
     copyingRef.current = true
     setIsLoadingEdit(true)
@@ -1360,7 +1340,15 @@ export default function ChatWindow({
       )) {
         throw new Error('Runtime or default labels changed while loading this conversation. Retry after default labels finish loading.')
       }
-      const copiedMessages = toConversationDraft(source.messages.slice(0, messageIndex + 1))
+      const isFailedPrompt = recoverableSend && messageIndex === recoverableSend.failedRequestMessageIndex
+      const sourceMessages = isFailedPrompt
+        ? [
+            ...source.messages.filter((message: BackendMessage) => message.turn_number <= recoverableSend.historyCutoffIndex),
+            ...source.messages.filter((message: BackendMessage) => message.role === 'user'
+              && message.turn_number === recoverableSend.failedRequestTurnNumber),
+          ]
+        : source.messages.slice(0, messageIndex + 1)
+      const copiedMessages = toConversationDraft(sourceMessages)
       const target = destination === 'new_attack' && activeTarget
         && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))
         ? null : activeTarget
@@ -1400,13 +1388,15 @@ export default function ChatWindow({
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
-  const recoverableProcessingErrorIndex = recoverableSend?.conversationId === viewedConversationId
-    && recoverableSend.errorMessageIndex >= 0
-    ? recoverableSend.errorMessageIndex
-    : undefined
-  const processingRecoveryDescription = recoverableSend
-    ? getRecoveryDescription(recoverableSend)
-    : undefined
+  const hasProcessingError = Boolean(recoverableSend)
+  const inputDisabledReasons = [
+    ...(!runtime.ready ? ['The runtime is not ready. Wait for initialization to finish.'] : []),
+    ...(isSending ? ['A message is being sent. Wait for the response.'] : []),
+    ...(isLoadingAttack ? ['The attack is loading. Wait for it to finish.'] : []),
+    ...(hasProcessingError
+      ? ['This conversation contains a target error. Use Copy conversation on the failed prompt to copy it to a new conversation or attack.']
+      : []),
+  ]
 
   const handleUseAsTemplate = (): void => { void beginEdit(defaultBranchTarget ?? activeTarget) }
 
@@ -1630,22 +1620,10 @@ export default function ChatWindow({
           onCopyToInput={handleCopyToInput}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}
           onCopyToNewAttack={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack') }}
-          copyConversationDisabled={isSending || isLoadingEdit}
+          copyConversationDisabled={isSending || isLoadingEdit || isRecoveringProcessingError || Boolean(sendIssue?.blocking)}
           newConversationDisabledReason={isMutationLocked ? "This attack is read-only. Copy to a new attack instead." : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           globalMarkdown={globalMarkdown}
-          processingErrorRecovery={recoverableProcessingErrorIndex === undefined
-            || processingRecoveryDescription === undefined
-            ? undefined
-            : {
-                messageIndex: recoverableProcessingErrorIndex,
-                actionLabel: activeTarget?.capabilities?.supports_multi_turn === false
-                  ? 'Edit in new conversation'
-                  : 'Edit in clean conversation',
-                description: processingRecoveryDescription,
-                disabled: isRecoveringProcessingError || isMutationLocked || isSending || Boolean(sendIssue?.blocking),
-                onRecover: handleRecoverProcessingError,
-              }}
         />}
         {sendIssue && (
           <MessageBar intent="error">
@@ -1663,6 +1641,7 @@ export default function ChatWindow({
           onSend={handleSend}
           sendDisabled={(!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking}
           conversionRevisionKey={conversionRevisionKey}
+          disabledReasons={inputDisabledReasons}
           showSystemPrompt={!attackResultId}
           supportsSystemPrompt={supportsSystemPrompt}
           systemPrompt={systemPrompt}
@@ -1675,7 +1654,7 @@ export default function ChatWindow({
             || isLoadingAttack
             || singleTurnLimitReached
             || isMutationLocked
-            || recoverableProcessingErrorIndex !== undefined
+            || hasProcessingError
           }
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}

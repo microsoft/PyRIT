@@ -110,6 +110,13 @@ chat, not the current draft.
 
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
 
+If the prompt box is disabled, hover over it or click it to see a list of reasons.
+Keyboard users can focus the box and press Enter to open the same list.
+Target processing errors show the complete stored error details. To continue after
+an error, use **Copy conversation** on the failed prompt and select **New conversation**
+or **New attack**. The new conversation restores the failed draft and leaves out
+error history so it is not sent back to the target.
+
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
 #### Editing Converter Pipelines

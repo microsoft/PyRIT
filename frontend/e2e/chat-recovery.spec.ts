@@ -302,9 +302,34 @@ test.describe("Chat processing recovery @seeded", () => {
       const laterResponse: AddMessageResponse = await later.json();
       expect(laterResponse.messages.target_response_status?.response_error).toBe("processing");
       await page.reload();
-      const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
+      const errorPiece = laterResponse.messages.messages.flatMap((message) => message.message_pieces)
+        .find((piece) => piece.response_error === "processing");
+      expect(errorPiece?.converted_value).toBeTruthy();
+      await expect(page.getByTestId("message-list")).toContainText(errorPiece?.converted_value ?? "");
+      await expect(page.getByRole("button", { name: "Edit in clean conversation", exact: true })).toHaveCount(0);
+      const originalViewport = page.viewportSize();
+      await page.setViewportSize({ width: 1280, height: 2800 });
+      await test.info().attach("detailed-target-error", {
+        body: await page.getByTestId(/^message-bubble-/).last().screenshot({ animations: "disabled" }),
+        contentType: "image/png",
+      });
+      if (originalViewport) {
+        await page.setViewportSize(originalViewport);
+      }
+      const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
+      await disabledPrompt.hover({ position: { x: 5, y: 5 } });
+      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await disabledPrompt.click({ position: { x: 10, y: 10 } });
+      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await test.info().attach("disabled-prompt-reasons", {
+        body: await page.screenshot({ animations: "disabled" }),
+        contentType: "image/png",
+      });
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+      const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
       await expect(recover).toBeEnabled();
-      await expect(page.getByText(/history from the first failed prompt onward will be left out/i)).toBeVisible();
       await test.info().attach("processing-recovery", {
         body: await page.screenshot(),
         contentType: "image/png",
@@ -452,7 +477,8 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId("remove-attachment-0").click();
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
     await selectConversation(page, first.attack.conversation_id);
-    const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
+    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+    const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
     await expect(recover).toBeEnabled();
     await page.evaluate(() => { document.documentElement.dataset.deferRecoveryReads = "true"; });
     try {

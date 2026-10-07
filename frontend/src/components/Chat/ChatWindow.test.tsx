@@ -96,6 +96,14 @@ const actualMessageMapper = jest.requireActual<typeof import("../../utils/messag
 );
 const MARKDOWN_PREFERENCE_STORAGE_KEY = "pyrit.chatMarkdownMode";
 
+async function findRecoveryAction(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  const buttons = await screen.findAllByRole("button", { name: "Copy conversation" });
+  const lastButton = buttons.at(-1);
+  if (!lastButton) throw new Error("The failed prompt has no copy menu.");
+  await user.click(lastButton);
+  return screen.findByRole("menuitem", { name: "New conversation" });
+}
+
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => (
@@ -556,9 +564,8 @@ describe("ChatWindow Integration", () => {
       });
       render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
       await sendDraft(user);
-      await user.click(await screen.findByRole("button", { name: /edit in clean conversation/i }));
+      await user.click(await findRecoveryAction(user));
       expect(screen.getByRole("textbox")).toHaveValue("Request from another client");
-      expect(screen.getByText(/restored from conversation history/)).toBeInTheDocument();
     });
 
     it("finishes immediately without advancing a polling timer", async () => {
@@ -657,7 +664,7 @@ describe("ChatWindow Integration", () => {
         expect(await screen.findByText(`Controlled ${stage} failure`, { exact: false })).toBeInTheDocument();
         expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
         if (stage === "preparation") {
-          expect(screen.getByRole("button", { name: /edit in clean conversation/i })).toBeInTheDocument();
+          expect(await findRecoveryAction(user)).toBeInTheDocument();
         } else {
           expect(screen.queryByRole("button", { name: /edit in clean conversation/i })).not.toBeInTheDocument();
         }
@@ -711,8 +718,8 @@ describe("ChatWindow Integration", () => {
         ...makeErrorResponse("processing", "Stored processing error").messages, conversation_id: props.conversationId,
       });
       await user.click(screen.getByRole("button", { name: `Select conversation ${props.conversationId}` }));
-      const recovery = await screen.findByRole("button", { name: /edit in clean conversation/i });
-      expect(recovery).toBeDisabled();
+      const recovery = await findRecoveryAction(user);
+      expect(recovery).toHaveAttribute("aria-disabled", "true");
       await user.click(recovery);
       expect(mockedAttacksApi.createConversation).not.toHaveBeenCalled();
     });
@@ -987,6 +994,40 @@ describe("ChatWindow Integration", () => {
       ));
     }
     expect(mockedAttacksApi.addMessage).not.toHaveBeenCalled();
+  });
+
+  it("should copy a failed prompt to a new attack without stored errors or dependent history", async () => {
+    const user = userEvent.setup();
+    const safeHistory = makeErrorResponse("none", "", 0).messages.messages;
+    safeHistory[0].message_pieces[0].original_value = "Safe context";
+    safeHistory[1].message_pieces[0].original_value = "Safe response";
+    const earlierFailure = makeErrorResponse("processing", "Earlier target error", 2);
+    const latestFailure = makeErrorResponse("processing", "Latest target error", 4);
+    latestFailure.messages.messages[0].message_pieces[0].original_value = "Latest failed draft";
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "failed-source",
+      messages: [...safeHistory, ...earlierFailure.messages.messages, ...latestFailure.messages.messages],
+      target_response_status: latestFailure.messages.target_response_status,
+    });
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "copied", conversation_id: "copied-conversation", objective: "", attack_type: "ManualAttack",
+        converters: [], message_count: 3, related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+      },
+      messages: { conversation_id: "copied-conversation", messages: [], target_response_status: null },
+    });
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="existing"
+      conversationId="failed-source" activeConversationId="failed-source" /></TestWrapper>);
+    await findRecoveryAction(user);
+    await user.click(screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
+    const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
+    expect(request.destination).toBe("new_attack");
+    expect(request.messages.map((message) => message.pieces[0].original_value)).toEqual([
+      "Safe context", "Safe response", "Latest failed draft",
+    ]);
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
   it.each<{ name: string; target: TargetInstance | null }>([
@@ -2715,7 +2756,7 @@ describe("ChatWindow Integration", () => {
         await user.type(screen.getByRole("textbox"), "Latest failed draft");
         await user.click(screen.getByRole("button", { name: /send message/i }));
       }
-      const recover = await screen.findByRole("button", { name: /edit in clean conversation/i });
+      const recover = await findRecoveryAction(user);
       await user.click(recover);
       await waitFor(() => {
         expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
@@ -2726,7 +2767,7 @@ describe("ChatWindow Integration", () => {
         );
       });
       expect(onSelectConversation).toHaveBeenCalledWith("conv-error-free");
-      expect(screen.getByText(/history from the first failed prompt onward will be left out/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Continue in a clean conversation/i)).not.toBeInTheDocument();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-error-free",
@@ -2925,7 +2966,7 @@ describe("ChatWindow Integration", () => {
         />
       </TestWrapper>
     );
-    await user.click(await screen.findByRole("button", { name: /edit in clean conversation/i }));
+    await user.click(await findRecoveryAction(user));
     expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
       "ar-blocked-prefix",
       { source_conversation_id: "conv-blocked-prefix", cutoff_index: 1 },
@@ -3023,7 +3064,7 @@ describe("ChatWindow Integration", () => {
     await user.click(await screen.findByRole("button", { name: /add converted value/i }));
     await user.click(screen.getByTestId("close-converter-panel-btn"));
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+    expect(await findRecoveryAction(user)).toBeEnabled();
     expect(mockSendResult).toHaveBeenLastCalledWith(
       props.attackResultId,
       expect.objectContaining({
@@ -3038,7 +3079,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
     });
     rendered.rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
-    const recover = await screen.findByRole("button", { name: /edit in clean conversation/i });
+    const recover = await findRecoveryAction(user);
     deferFileReads = true;
     await user.click(recover);
     await waitFor(() => {
@@ -3111,10 +3152,7 @@ describe("ChatWindow Integration", () => {
     await user.type(input, "retry this prompt");
     await user.click(screen.getByRole("button", { name: /send/i }));
 
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in clean conversation/i }
-    );
+    const recoveryButton = await findRecoveryAction(user);
     expect(input).toHaveValue("retry this prompt");
     expect(input).toBeDisabled();
     expect(screen.queryByTestId("message-actions-1")).not.toBeInTheDocument();
@@ -3241,7 +3279,7 @@ describe("ChatWindow Integration", () => {
     });
 
     expect(
-      await screen.findByRole("button", { name: /edit in clean conversation/i })
+      await findRecoveryAction(user)
     ).toBeInTheDocument();
     expect(screen.getByText(/The target could not process this message\./)).toBeInTheDocument();
     expect(input).toHaveValue("keep this draft");
@@ -3316,7 +3354,7 @@ describe("ChatWindow Integration", () => {
     });
 
     expect(
-      await screen.findByRole("button", { name: /edit in clean conversation/i })
+      await findRecoveryAction(user)
     ).toBeInTheDocument();
     expect(screen.getByText(/The target could not process this message\./)).toBeInTheDocument();
     expect(input).toHaveValue("keep failed draft");
@@ -3470,7 +3508,7 @@ describe("ChatWindow Integration", () => {
       const input = screen.getByRole("textbox");
       await user.type(input, "live draft");
       await user.click(screen.getByRole("button", { name: /send/i }));
-      expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+      expect(await findRecoveryAction(user)).toBeEnabled();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-status-refresh",
@@ -3540,7 +3578,7 @@ describe("ChatWindow Integration", () => {
 
       await user.type(screen.getByRole("textbox"), "failed request");
       await user.click(screen.getByRole("button", { name: /send/i }));
-      expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+      expect(await findRecoveryAction(user)).toBeEnabled();
 
       mockedAttacksApi.getMessages.mockResolvedValue({
         conversation_id: "conv-newer-failure",
@@ -3555,13 +3593,7 @@ describe("ChatWindow Integration", () => {
       await user.click(
         await screen.findByRole("button", { name: "Select conversation conv-newer-failure" })
       );
-
-      expect(await screen.findByText(/restored from conversation history/i)).toBeInTheDocument();
-      const recoveryButton = screen.getByRole("button", { name: /edit in clean conversation/i });
-      expect(recoveryButton).toHaveAttribute(
-        "data-testid",
-        `recover-processing-error-btn-${requestTurn === 2 ? 2 : 3}`
-      );
+      const recoveryButton = await findRecoveryAction(user);
       await user.click(recoveryButton);
       await waitFor(() => {
         expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(
@@ -3657,7 +3689,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: /^convert$/i }));
     await user.click(await screen.findByRole("button", { name: /add converted value/i }));
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    expect(await screen.findByRole("button", { name: /edit in clean conversation/i })).toBeEnabled();
+    expect(await findRecoveryAction(user)).toBeEnabled();
 
     if (reinitialized) {
       runtime.mockReturnValue({ ready: true, state: "ready", generation: "replacement" });
@@ -3674,10 +3706,7 @@ describe("ChatWindow Integration", () => {
     await user.click(
       await screen.findByRole("button", { name: "Select conversation conv-matching-failure" })
     );
-    const recoveryButton = await screen.findByTestId("recover-processing-error-btn-3");
-    expect(screen.getByText(reinitialized
-      ? /converter choices could not be restored/i
-      : /converter choices are preserved/i)).toBeInTheDocument();
+    const recoveryButton = await findRecoveryAction(user);
     await user.click(recoveryButton);
     await waitFor(() => {
       expect(onSelectConversation).toHaveBeenCalledWith("conv-matching-recovery");
@@ -3831,11 +3860,7 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in clean conversation/i }
-    );
-    expect(screen.getByText(/converter choices could not be restored/i)).toBeInTheDocument();
+    const recoveryButton = await findRecoveryAction(user);
     expect(screen.getByRole("textbox")).toBeDisabled();
 
     await user.click(recoveryButton);
@@ -4192,14 +4217,11 @@ describe("ChatWindow Integration", () => {
     const input = screen.getByRole("textbox");
     await user.type(input, "failed draft");
     await user.click(screen.getByRole("button", { name: /send/i }));
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in clean conversation/i }
-    );
+    const recoveryButton = await findRecoveryAction(user);
 
     await user.click(recoveryButton);
     await waitFor(() => {
-      expect(recoveryButton).toBeDisabled();
+      expect(recoveryButton).toHaveAttribute("aria-disabled", "true");
       expect(mockedAttacksApi.createConversation).toHaveBeenCalledTimes(1);
     });
     await user.click(recoveryButton);
@@ -4322,10 +4344,7 @@ describe("ChatWindow Integration", () => {
     await user.type(input, "generate this image");
     await user.click(screen.getByRole("button", { name: /send/i }));
 
-    const recoveryButton = await screen.findByRole(
-      "button",
-      { name: /edit in new conversation/i }
-    );
+    const recoveryButton = await findRecoveryAction(user);
     expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
 
     await user.click(recoveryButton);
