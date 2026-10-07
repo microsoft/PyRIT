@@ -928,6 +928,18 @@ class TestGetAtomicAttacksCrossProduct:
         result = await _build_atomic_attacks(bench)
         assert len(result) == 2
 
+    async def test_technique_converters_are_passed_to_the_builder(self):
+        bench = self._make_bench_with_targets(target_names=["adv_a"])
+        converters = {"red_teaming": [MagicMock()]}
+        bench._technique_converters = converters
+
+        with patch(
+            "pyrit.scenario.scenarios.benchmark.adversarial.MatrixAtomicAttackBuilder.build", return_value=[]
+        ) as build:
+            await _build_atomic_attacks(bench)
+
+        assert build.call_args.kwargs["technique_converters"] is converters
+
     async def test_atomic_attack_name_format_is_technique__target_dataset(self):
         """Name format: ``{technique}__{target}_{dataset}`` (preserves VERSION=2 cache key shape)."""
         bench = self._make_bench_with_targets(target_names=["adv_a"])
