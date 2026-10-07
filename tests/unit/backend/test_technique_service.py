@@ -99,6 +99,21 @@ def test_rest_create_detail_types_and_errors(
     assert "unknown" not in registry.instances.get_names()
 
 
+@pytest.mark.parametrize("name", ["first_letter", "image", "prompt_sending"])
+def test_rest_accepts_scenario_local_names(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], name: str
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    created = client.post(
+        "/api/techniques",
+        json={"name": name, "type": "PromptSendingAttack", "description": "Runtime configuration"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["description"] == "Runtime configuration"
+    assert registry.instances.get(name) is not None
+    assert name in {technique.value for technique in airt.RapidResponseTechnique.get_all_techniques()}
+
+
 async def test_warm_catalog_estimates_and_summaries_refresh_without_changing_snapshot_async(
     registry: AttackTechniqueRegistry,
 ) -> None:

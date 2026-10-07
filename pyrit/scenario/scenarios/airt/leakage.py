@@ -55,17 +55,18 @@ def _build_leakage_technique() -> type[ScenarioTechnique]:
     Build the Leakage technique class dynamically from core + leakage-specific factories.
 
     Combines core factories (from the registry) with leakage-unique factories
-    (``first_letter``, ``image``) to provide the full set of attack techniques.
+    (``first_letter``, ``image``). Scenario-local factories override registered
+    factories of the same name, as they do during execution.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
-    core_factories = list(registry.get_factories_or_raise().values())
-    all_factories = core_factories + _leakage_factories()
+    factories = registry.get_factories_or_raise()
+    factories.update({factory.name: factory for factory in _leakage_factories()})
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
         class_name="LeakageTechnique",
-        factories=all_factories,
+        factories=list(factories.values()),
         default_names={"role_play_movie_script", "many_shot", "first_letter", "image"},
     )
 
@@ -80,17 +81,6 @@ class Leakage(Scenario):
     """
 
     VERSION: int = 2
-
-    @classmethod
-    def reserved_technique_selectors(cls) -> tuple[set[str], set[str]]:
-        """
-        Return selectors owned by the additional leakage factories.
-
-        Returns:
-            tuple[set[str], set[str]]: Local names and aggregate tags.
-        """
-        factories = _leakage_factories()
-        return {factory.name for factory in factories}, {tag for factory in factories for tag in factory.technique_tags}
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:

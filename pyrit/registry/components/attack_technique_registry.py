@@ -109,21 +109,10 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Raises:
             ValueError: If the name or a tag conflicts with an existing selector.
         """
-        from pyrit.registry.components.scenario_registry import ScenarioRegistry
-
-        local_names: set[str] = set()
-        local_tags: set[str] = set()
-        scenarios = ScenarioRegistry.get_registry_singleton()
-        for name in scenarios.get_class_names():
-            names, tags = scenarios.get_class(name).reserved_technique_selectors()
-            local_names.update(names)
-            local_tags.update(tags)
         with self._lock:
             entries = self.get_all_instances()
             names = {entry.name.casefold(): entry.name for entry in entries}
             tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
-            names.update({name.casefold(): name for name in local_names})
-            tags.update({tag.casefold(): tag for tag in local_tags})
             folded_name = factory.name.casefold()
             if folded_name in names:
                 raise ValueError(f"Technique '{factory.name}' already exists (names are case-insensitive)")

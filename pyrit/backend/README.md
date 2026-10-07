@@ -59,6 +59,7 @@ Additions are runtime-only and available in compatible scenarios. Restart or
 reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not
 change. List and detail responses include Python-created factories without
 disclosing target credentials.
+Scenario-local factories take precedence over registered factories of the same name.
 
 ### Manual Messages
 

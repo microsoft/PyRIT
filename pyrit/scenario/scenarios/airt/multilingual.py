@@ -112,13 +112,18 @@ def _build_multilingual_technique() -> type[ScenarioTechnique]:
     """
     Build the Multilingual technique class from text-compatible registered factories.
 
+    Scenario-local factories override registered factories before compatibility
+    filtering, as they do during execution.
+
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
+    pool = registry.get_factories_or_raise()
+    pool.update(_extra_default_factories())
     factories = [
         factory
-        for factory in list(registry.get_factories_or_raise().values()) + list(_extra_default_factories().values())
+        for factory in pool.values()
         if factory.can_append_request_converter(converter_type=TranslationConverter)
     ]
     return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
@@ -137,17 +142,6 @@ class Multilingual(Scenario):
 
     VERSION: int = 1
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
-
-    @classmethod
-    def reserved_technique_selectors(cls) -> tuple[set[str], set[str]]:
-        """
-        Return selectors owned by the local prompt-sending factory.
-
-        Returns:
-            tuple[set[str], set[str]]: Local names and aggregate tags.
-        """
-        factories = list(_extra_default_factories().values())
-        return {factory.name for factory in factories}, {tag for factory in factories for tag in factory.technique_tags}
 
     # Default language list
     _DEFAULT_LANGUAGES_SEED_PROMPT_PATH = DATASETS_PATH / "lexicons" / "languages_most_spoken.yaml"

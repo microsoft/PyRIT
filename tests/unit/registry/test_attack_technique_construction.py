@@ -169,10 +169,6 @@ def test_invalid_inputs_leave_registry_unchanged(registry: AttackTechniqueRegist
         {"technique_tags": ["existing"]},
         {"technique_tags": ["GROUP"]},
         {"name": "same", "technique_tags": ["Same"]},
-        {"name": "first_letter"},
-        {"name": "image"},
-        {"name": "prompt_sending"},
-        {"technique_tags": ["FIRST_LETTER"]},
     ],
 )
 def test_selector_collisions_do_not_change_pool(registry: AttackTechniqueRegistry, kwargs: dict[str, Any]) -> None:
@@ -185,6 +181,14 @@ def test_selector_collisions_do_not_change_pool(registry: AttackTechniqueRegistr
         registry.instances.register_runtime(factory)
     assert registry.instances.get_names() == ["existing"]
     assert registry.catalog_revision == before
+
+
+def test_runtime_tag_can_match_a_scenario_local_name(registry: AttackTechniqueRegistry) -> None:
+    factory = registry.create_factory(
+        name="local_tag", attack_type="PromptSendingAttack", technique_tags=["FIRST_LETTER"]
+    )
+    registry.instances.register_runtime(factory)
+    assert registry.instances.get("local_tag") is factory
 
 
 def test_missing_required_inputs_fail_before_registration(registry: AttackTechniqueRegistry) -> None:

@@ -16,7 +16,8 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.core import BaselineAttackPolicy
-from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique
+from pyrit.scenario.core._technique_resolution import resolve_technique_factories_for_techniques
+from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique, _leakage_factories
 from pyrit.score import TrueFalseCompositeScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -106,6 +107,29 @@ def reset_technique_registry():
 @pytest.mark.usefixtures(*FIXTURES)
 class TestLeakageInitialization:
     """Tests for Leakage initialization."""
+
+    @pytest.mark.parametrize("name", ["first_letter", "image"])
+    def test_local_factory_wins_in_catalog_and_execution(self, name: str) -> None:
+        before = _build_leakage_technique()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registered = registry.create_factory(
+            name=name,
+            attack_type="PromptSendingAttack",
+            description="Runtime override",
+            technique_tags=["runtime_only"],
+        )
+        registry.instances.register_runtime(registered)
+
+        current = _build_leakage_technique()
+        selected = current(name)
+        local = {factory.name: factory for factory in _leakage_factories()}
+        assert current is not before
+        assert selected.description == local[name].description
+        assert selected.tags == before(name).tags
+        assert "runtime_only" not in current.get_aggregate_tags()
+        resolved = resolve_technique_factories_for_techniques(scenario_techniques=[selected], extra_factories=local)
+        assert resolved[name] is local[name]
+        assert registry.instances.get(name) is registered
 
     def test_init_with_custom_scorer(self, mock_objective_scorer):
         """Test initialization with custom scorer."""

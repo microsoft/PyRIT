@@ -165,16 +165,6 @@ class Scenario(ABC):
         """
         return ()
 
-    @classmethod
-    def reserved_technique_selectors(cls) -> tuple[set[str], set[str]]:
-        """
-        Declare local selectors combined with the registered factory pool.
-
-        Returns:
-            tuple[set[str], set[str]]: Local technique names and aggregate tags.
-        """
-        return set(), set()
-
     def __init__(
         self,
         *,
