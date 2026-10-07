@@ -45,7 +45,7 @@ from collections.abc import Collection, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
 
-from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
 from pyrit.common.brick_contract import init_parameters_are_forwarded
@@ -71,6 +71,7 @@ _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})
 #: because no single static type captures all of these; the name documents intent.
 TypeAnnotation: TypeAlias = Any
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Derive: component class -> list[Parameter]
@@ -480,9 +481,7 @@ def _resolve_registry_reference(
         ValueError: If a name is not registered, or the value's shape (list vs.
             scalar) does not match the reference's arity.
     """
-    if value is None and type(None) in get_args(annotation):
-        return None
-    if get_origin(_unwrap_optional(annotation)) is list:
+    if get_origin(annotation) is list:
         if not isinstance(value, list):
             raise ValueError(
                 f"{owner}.{name}: expected a list of registry names or instances for this "
@@ -536,7 +535,6 @@ def resolve_constructor_args(
     cls: type,
     raw_args: dict[str, Any],
     identifier_type: type[ComponentIdentifier] | None = None,
-    json_input: bool = False,
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -552,9 +550,6 @@ def resolve_constructor_args(
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
             whose ``Param.*`` markers declare which parameters are registry
             references. When None, no parameter is treated as a reference.
-        json_input (bool): Restrict inputs to typed scalars, scalar lists,
-            registered references, and explicitly declared structured variants.
-            Live Python callers retain the default passthrough behavior.
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
@@ -575,12 +570,6 @@ def resolve_constructor_args(
 
         value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
-            if json_input:
-                annotation = _unwrap_optional(param.reference.annotation)
-                wire_type: TypeAnnotation = list[str] if get_origin(annotation) is list else str
-                if type(None) in get_args(param.reference.annotation):
-                    wire_type = wire_type | None
-                TypeAdapter(wire_type).validate_python(value, strict=True)
             getter = _registry_getter_for_component_type(param.reference.component_type)
             if getter is None:
                 raise ValueError(
@@ -594,24 +583,8 @@ def resolve_constructor_args(
                 name=name,
                 annotation=param.reference.annotation,
             )
-            if json_input:
-                TypeAdapter(
-                    param.reference.annotation, config=ConfigDict(arbitrary_types_allowed=True)
-                ).validate_python(resolved[name], strict=True)
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
-        elif json_input:
-            if value is None and type(None) in get_args(param.param_type):
-                resolved[name] = None
-                continue
-            scalar = param
-            if param.is_list:
-                scalar = param.model_copy(update={"param_type": get_args(value_type)[0]})
-            if not scalar.is_string_coercible:
-                raise ValueError(f"Parameter '{name}' requires a Python value; it is not supported through REST")
-            resolved[name] = _coerce_structured_input(
-                parameter=param, value=param.coerce_value(value) if param.choices else value
-            )
         elif (isinstance(value, str) and param.is_string_coercible) or (
             isinstance(value_type, type) and issubclass(value_type, Enum)
         ):

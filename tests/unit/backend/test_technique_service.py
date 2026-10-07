@@ -247,6 +247,28 @@ async def test_lifecycle_clears_technique_binding_async(registry: AttackTechniqu
 
 
 @pytest.mark.parametrize(
+    "params",
+    [
+        {"max_attempts_on_failure": False},
+        {"max_attempts_on_failure": "2"},
+        {"max_attempts_on_failure": None},
+        {"attack_converter_config": {"type": "AttackConverterConfig"}},
+        {"prepended_conversation_config": {}},
+    ],
+)
+async def test_rest_parameter_checks_do_not_change_registry_async(
+    registry: AttackTechniqueRegistry, params: dict[str, Any]
+) -> None:
+    before = registry.catalog_revision
+    with pytest.raises(ValueError):
+        await TechniqueService().create_async(
+            CreateTechniqueRequest(name="invalid", type="PromptSendingAttack", params=params)
+        )
+    assert registry.catalog_revision == before
+    assert registry.instances.get("invalid") is None
+
+
+@pytest.mark.parametrize(
     "extra",
     [
         {"name": "all"},

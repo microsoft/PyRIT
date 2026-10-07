@@ -47,28 +47,18 @@ Use a class name from `AttackRegistry` as `type`, with `name` and constructor
 target name, and inline `adversarial_system_prompt`, `adversarial_seed_prompt`,
 and `adversarial_prompt_template` strings. References use existing registries.
 Seeds, conversation settings, and advanced attack configurations remain
-Python-only. See [Runtime techniques](../../doc/code/registry/0_registry.md#runtime-techniques).
+Python-only.
 
-Unknown classes, references, fields, missing inputs, invalid parameter values,
-and selector collisions return 400 without changing the registry. Invalid
-request-model shapes return the shared 422 field-error response. Names that
-conflict by letter case, with a tag, or with a scenario-local selector are rejected.
-`all` and `default` are reserved selectors; `types` is also a reserved name.
-Omission, explicit null, false, zero, and an
-empty list remain distinct when the declared type supports them.
+Creation does not run an attack. The scenario supplies the objective target and
+scoring configuration; an omitted adversarial target uses the execution default.
+Invalid settings or selector collisions return 400 without registering a factory;
+invalid request shapes return 422. `all` and `default` are reserved selectors;
+`types` is also a reserved name.
 
-These endpoints use the existing authentication, compatibility, and runtime
-admission middleware. Metadata discovery runs off the event loop. No attack
-is constructed and no prompt is sent. Factories defer the objective target,
-scoring overrides, and default adversarial target until execution. Display
-settings are not a reconstructable recipe and do not disclose target credentials.
-Existing programmatic factories remain listable.
-
-Runtime definitions do not change initializer configuration. They are lost on
-restart or reinitialization, like runtime converter and target instances.
-Compatible scenario metadata and estimate caches see registry additions.
-Existing scenario snapshots and active tasks stay unchanged. Fixed catalogs
-and scenario-specific filters do not receive unsupported entries.
+Additions are runtime-only and available in compatible scenarios. Restart or
+reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not
+change. List and detail responses include Python-created factories without
+disclosing target credentials.
 
 ### Manual Messages
 

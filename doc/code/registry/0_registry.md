@@ -137,68 +137,10 @@ objects, such as `AttackAdversarialConfig`, `AttackConverterConfig`, and
 `AttackScoringConfig`, for nested components. Advanced Python values, such as a
 prompt normalizer or a parameter class, pass through unchanged. The shared
 resolver also constructs explicitly declared structured configuration variants.
-Use the Techniques API for basic reusable attack configurations.
 
 An attack class implements the conversation algorithm. An attack technique
 factory selects and configures that class, converters, scorers, and seeds.
 `AttackTechniqueRegistry` continues to store those factories separately.
-
-## Runtime Techniques
-
-`POST /api/techniques` follows the registry request pattern: `name`, attack
-`type`, and constructor `params`, with optional description and tags.
-`AttackTechniqueRegistry.create_factory()` looks up the class in `AttackRegistry`
-and uses the shared constructor resolver. It captures the settings in an
-`AttackTechniqueFactory`; it does not construct an attack or send prompts.
-The API checks selector collisions before one atomic registration.
-
-After initialization, send this JSON to `POST /api/techniques`:
-
-```json
-{
-    "name": "encoded_example",
-    "type": "PromptSendingAttack",
-    "description": "Encode the request with an existing converter.",
-    "tags": ["custom"],
-    "params": {"max_attempts_on_failure": 0},
-    "request_converters": ["registered_base64", "registered_base64"],
-    "response_converters": []
-}
-```
-
-Converters must already exist in `ConverterRegistry`. Their order and duplicate
-entries are retained. For adversarial attacks, use an optional registered
-`adversarial_chat` target name and inline strings for `adversarial_system_prompt`,
-`adversarial_seed_prompt`, and `adversarial_prompt_template`. If the target is
-omitted, it is resolved at execution. The scenario supplies the objective target
-and scoring configuration.
-
-`params` supports typed scalar settings, scalar lists, registry references, and
-the existing `StructuredParameterValue` variants declared by a class.
-Seeds, simulated conversations, nested attack configurations, custom scorer
-policies, and other live Python values remain Python-only. Use an initializer
-or construct `AttackTechniqueFactory` directly for those settings. Existing
-advanced factories are still listed and usable. Clients cannot select modules,
-execute code, or deserialize arbitrary objects.
-
-Names and tags start with a letter and use letters, digits, and underscores.
-`all` and `default` are reserved selectors; `types` is also a reserved name.
-Names and tags cannot conflict with existing selectors or differ only by letter
-case. No `core`, `light`, or `default` tag is added automatically.
-Invalid fields, types, required inputs, and references leave the registry unchanged.
-
-`GET /api/techniques/types` exposes attack constructor `Parameter` metadata.
-List and detail responses use `AttackTechniqueFactory.get_configuration()` for
-safe display without target credentials. Identity hashes and display projections
-are not lossless construction recipes.
-
-New techniques are **runtime only**. They are lost on restart or setup reset.
-The instance registry exposes a mutation revision. Compatible scenario enums,
-metadata, estimates, and summary caches use this revision and registry identity,
-including direct `.instances.register()` calls and registry replacement.
-Old scenario instances retain their technique snapshot. Active tasks are not
-cancelled on catalog changes. Scenario filters and fixed local catalogs remain
-in control of which techniques they support.
 
 ## See Also
 

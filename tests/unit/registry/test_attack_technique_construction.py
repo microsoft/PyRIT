@@ -130,6 +130,13 @@ def test_advanced_programmatic_factories_remain_supported(registry: AttackTechni
     assert factory.seed_technique is seeds
 
 
+def test_factory_keeps_existing_constructor_coercion(registry: AttackTechniqueRegistry) -> None:
+    factory = registry.create_factory(
+        name="coerced", attack_type="PromptSendingAttack", params={"max_attempts_on_failure": "2"}
+    )
+    assert factory.get_configuration()["attack_args"]["max_attempts_on_failure"] == 2
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -138,12 +145,7 @@ def test_advanced_programmatic_factories_remain_supported(registry: AttackTechni
         {"params": {"objective_target": "local"}},
         {"params": {"attack_scoring_config": {}}},
         {"params": {"attack_adversarial_config": {}}},
-        {"params": {"max_attempts_on_failure": False}},
-        {"params": {"max_attempts_on_failure": "2"}},
-        {"params": {"max_attempts_on_failure": None}},
-        {"params": {"attack_converter_config": {"type": "AttackConverterConfig"}}},
         {"params": {"attack_converter_config": None}, "request_converters": []},
-        {"params": {"prepended_conversation_config": {}}},
         {"request_converters": ["b64", "missing"]},
         {"response_converters": ["missing"]},
         {"adversarial_chat": "missing", "attack_type": "RedTeamingAttack"},

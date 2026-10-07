@@ -227,7 +227,6 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             cls=attack_class,
             raw_args=params,
             identifier_type=AttackIdentifier,
-            json_input=True,
         )
         if request_converters is not None or response_converters is not None:
             converter_args = {}

@@ -195,40 +195,6 @@ class TestResolveConstructorArgs:
         resolved = _resolve(_EnumOnly, {"speed": "fast"})
         assert resolved == {"speed": _Speed.FAST}
 
-    def test_json_mode_preserves_falsy_scalars(self) -> None:
-        assert resolve_constructor_args(cls=_SimpleOnly, raw_args={"count": 0, "flag": False}, json_input=True) == {
-            "count": 0,
-            "flag": False,
-        }
-        assert resolve_constructor_args(cls=_EnumOnly, raw_args={"speed": "fast"}, json_input=True) == {
-            "speed": _Speed.FAST,
-        }
-
-    @pytest.mark.parametrize("value", ["3", False, None])
-    def test_json_mode_rejects_incorrect_scalar_types(self, value: object) -> None:
-        with pytest.raises(ValueError, match="count"):
-            resolve_constructor_args(cls=_SimpleOnly, raw_args={"count": value}, json_input=True)
-
-    def test_json_mode_resolves_ordered_duplicate_references(self, target_registry: TargetRegistry) -> None:
-        resolved = resolve_constructor_args(
-            cls=_NeedsTargets,
-            raw_args={"targets": ["my_target", "my_target"]},
-            identifier_type=TargetIdentifier,
-            json_input=True,
-        )
-        target = target_registry.instances.get("my_target")
-        assert resolved["targets"] == [target, target]
-
-    @pytest.mark.parametrize("value", [False, {"name": "my_target"}])
-    def test_json_mode_rejects_non_name_references(self, target_registry: TargetRegistry, value: object) -> None:
-        with pytest.raises(ValueError):
-            resolve_constructor_args(
-                cls=_NeedsTarget,
-                raw_args={"converter_target": value},
-                identifier_type=ConverterIdentifier,
-                json_input=True,
-            )
-
     def test_forwarded_parent_params_are_coerced(self) -> None:
         resolved = _resolve(_ForwardingChild, {"label": "configured", "count": "3", "speed": "slow"})
         assert resolved == {"label": "configured", "count": 3, "speed": _Speed.SLOW}

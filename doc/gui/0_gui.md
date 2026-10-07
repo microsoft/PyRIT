@@ -419,42 +419,15 @@ Until you expand or collapse the section, its default follows the current group 
 Open **Registry > Techniques**, or go to `/registry/techniques`. Targets and
 Converters keep their existing registry URLs.
 
-The table shows every registered technique factory, including advanced factories
-from Python initializers. Search by name, description, attack type, or tag. Use
-the attack-type and tag filters to reduce the list. **Details** shows safe
-settings. Target credentials are not shown. These settings are a display
-projection, not a recipe that can reconstruct a factory from its identity hash.
+Search or filter registered techniques, then select **Details** to inspect one.
+Select **New technique** to configure an existing attack with basic settings,
+ordered converters, and optional adversarial prompts. The objective target is
+selected when you run a scenario. Seeds and conversation settings need a Python
+initializer. Creation does not run an attack.
 
-Select **New technique** to configure an existing attack class. Set a unique
-name, a description, and optional comma-separated tags. Names and tags start
-with a letter and use letters, digits, and underscores. `all` and `default`
-are reserved selectors. `types` is also a reserved technique name. Names cannot differ only by letter case or conflict with an
-aggregate tag or a scenario-local technique name. No `core`, `light`, or
-`default` tag is added.
-
-The basic form supports scalar settings and supported structured variants.
-Request and response converters run in the displayed order. You can add the
-same registered converter more than once, move an entry, or remove an entry.
-For an adversarial attack, select a registered adversarial target and set inline
-system, seed, and per-turn prompts. If the adversarial target is not set, PyRIT
-resolves the default at execution. Select the objective target when you run a
-scenario, not when you create a technique.
-
-The form does not edit complex seeds or simulated conversations. It marks
-unsupported inputs and blocks creation when a required input cannot be set.
-The [REST API](../code/registry/0_registry.md#runtime-techniques) supports the
-same basic inputs. Use a Python initializer for seeds, conversations, and
-advanced configurations.
-
-Creation does not construct an attack or send prompts. A new technique becomes
-selectable in a compatible scenario without a restart, including after scenario
-metadata or estimates have been cached. Scenario filters and fixed technique
-catalogs still apply. Existing scenario snapshots and active runs do not change.
-
-**Runtime only:** New techniques are lost when PyRIT restarts or is
-reinitialized. There is no persistence, edit, or delete operation in this pane.
-The pane lists only the active registered pool. It does not load more techniques
-or change the configured initializers.
+New techniques are available in compatible scenarios and are lost on restart or
+reinitialization. The pane does not edit or delete techniques.
+See the [backend README](../../pyrit/backend/README.md#techniques) for the API.
 
 ### Target Configuration
 
