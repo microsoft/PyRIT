@@ -166,6 +166,27 @@ _HISTORIES = {
             _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_context="context", attributed_seed_context="context"),
         ],
     ),
+    "explicit_attribution_wins_over_identifier_seeds": _History(
+        # Same stored identifier, different explicitly attributed seed groups (like benchmark cache copies): two units.
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.FAILURE, seed_context="old", attributed_seed_context="first"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_context="old", attributed_seed_context="second"),
+        ],
+    ),
+    "one_attributed_seed_group_with_two_identifiers": _History(
+        # The explicit attribution decides the unit even when the stored identifiers differ: one recovered unit.
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.FAILURE, seed_context="one", attributed_seed_context="context"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_context="two", attributed_seed_context="context"),
+        ],
+    ),
+    "identifier_only_then_attributed_only": _History(
+        # No row carries both forms, yet both name the same logical seed group: one recovered unit.
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.ERROR, seed_context="context"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, attributed_seed_context="context"),
+        ],
+    ),
     "display_groups": _History(
         plan=_plan(
             _group(name="base64", eval_hash="e1", seed_ids=["a", "b"], display_group="encoding"),
@@ -199,6 +220,9 @@ _EXPECTED_OVERALL = {
     "legacy_attempt_with_ambiguous_name": 0,
     "legacy_seed_groups_sharing_an_objective": 50,
     "identifier_and_attributed_rows_of_one_seed_group": 100,
+    "explicit_attribution_wins_over_identifier_seeds": 50,
+    "one_attributed_seed_group_with_two_identifiers": 100,
+    "identifier_only_then_attributed_only": 100,
     "display_groups": 50,
     "empty_history": None,
 }
@@ -348,3 +372,13 @@ async def test_ambiguous_objective_within_group_agrees_between_list_and_detail(s
     assert detail is not None
     assert list_item.objective_achieved_rate == detail.objective_achieved_rate
     assert list_item.completed_attacks == detail.completed_attacks
+
+
+async def test_history_aggregate_flags_runs_with_identifier_only_attempts(sqlite_instance) -> None:
+    flagged = await _persist(sqlite_instance, _HISTORIES["identifier_only_then_attributed_only"])
+    attributed = await _persist(sqlite_instance, _HISTORIES["one_attributed_seed_group_with_two_identifiers"])
+
+    aggregates = await sqlite_instance.get_scenario_history_aggregates_async(scenario_result_ids=[flagged, attributed])
+
+    assert aggregates[flagged].needs_sdk_statistics
+    assert not aggregates[attributed].needs_sdk_statistics

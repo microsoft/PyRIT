@@ -18,13 +18,14 @@ import uuid
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
+from pyrit.analytics.scenario_statistics import compute_scenario_statistics
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.services.pagination import (
@@ -759,6 +760,7 @@ class ScenarioRunService:
                 **aggregates,
                 **(await self._memory.get_scenario_history_aggregates_async(scenario_result_ids=unusable_plan_ids)),
             }
+        aggregates = await self._recount_with_sdk_statistics_async(aggregates=aggregates, plans=plans)
         items = [
             self._build_history_summary(
                 record=record,
@@ -1578,6 +1580,40 @@ class ScenarioRunService:
                 record.scenario_result_id,
             )
             return None
+
+    async def _recount_with_sdk_statistics_async(
+        self,
+        *,
+        aggregates: dict[str, ScenarioHistoryAggregate],
+        plans: Mapping[str, list[ScenarioRunPlanAtomicGroup] | None],
+    ) -> dict[str, ScenarioHistoryAggregate]:
+        """
+        Recount runs the SQL aggregate can't resolve with the shared statistics.
+
+        Attempts identified only by their atomic identifier's seeds need the logical seed group derived
+        from those seeds, which only ``pyrit.analytics.scenario_statistics`` can do. Those runs are loaded
+        and counted the same way as run detail, so the history list never disagrees with it.
+
+        Returns:
+            dict[str, ScenarioHistoryAggregate]: The aggregates, with flagged runs recounted.
+        """
+        run_ids = [run_id for run_id, aggregate in aggregates.items() if aggregate.needs_sdk_statistics]
+        if not run_ids:
+            return aggregates
+        recounted = dict(aggregates)
+        for scenario_result in await self._memory.get_scenario_results_async(scenario_result_ids=run_ids):
+            run_id = str(scenario_result.id)
+            # A plan this service rejected counts as a legacy run, as in the SQL path.
+            overall = compute_scenario_statistics(scenario_result, use_saved_plan=plans.get(run_id) is not None).overall
+            recounted[run_id] = replace(
+                aggregates[run_id],
+                unit_count=overall.completed,
+                completed_units=overall.completed,
+                successful_units=overall.succeeded,
+                error_attempts=overall.errors,
+                total_retries=overall.retries,
+            )
+        return recounted
 
     def _build_history_summary(
         self,
