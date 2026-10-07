@@ -68,6 +68,15 @@ class OpenAITarget(PromptTarget):
     api_key_environment_variable: str
 
     _async_client: AsyncOpenAI | None = None
+    _reconstruction_parameters: dict[str, object] = {}
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Opt in OpenAI implementations to server-only reconstruction."""
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__:
+            from pyrit.common.constructor_capture import capture_constructor_parameters
+
+            type.__setattr__(cls, "__init__", capture_constructor_parameters(cls.__init__))
 
     @property
     def _client(self) -> AsyncOpenAI:
@@ -160,6 +169,46 @@ class OpenAITarget(PromptTarget):
         )
 
         self._initialize_openai_client()
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only inputs, including resolved authentication.
+
+        Returns:
+            dict[str, object]: Resolved constructor inputs.
+
+        Raises:
+            ValueError: If the source has an unsupported resource or temperature setting.
+        """
+        if "http_client" in self._httpx_client_kwargs:
+            raise ValueError("Reconstruction with an externally owned HTTP client is not supported")
+        if "temperature" in (getattr(self, "_extra_body_parameters", None) or {}):
+            raise ValueError(
+                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
+            )
+        identifier = self.get_identifier()
+        return {
+            **self._reconstruction_parameters,
+            **identifier.params,
+            **identifier.promoted_scalar_values(),
+            "model_name": self._model_name,
+            "endpoint": self._endpoint,
+            "api_key": self._api_key,
+            "headers": json.dumps(self._headers),
+            "max_requests_per_minute": self._max_requests_per_minute,
+            "httpx_client_kwargs": dict(self._httpx_client_kwargs),
+            "underlying_model": self._underlying_model,
+            "custom_configuration": self.configuration,
+        }
+
+    async def cleanup_target_async(self) -> None:
+        """Close this target's SDK client."""
+        if self._async_client is not None:
+            await self._async_client.close()
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """Share request pacing, not clients or behavioral configuration."""
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     @staticmethod
     def _parse_request_headers(value: object) -> dict[str, str]:

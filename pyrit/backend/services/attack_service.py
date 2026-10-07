@@ -54,6 +54,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.message_send_service import (
     MessageSendService,
@@ -87,6 +88,7 @@ from pyrit.models import (
     MessagePiece,
     TargetIdentifier,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target import PromptTarget
 
@@ -399,7 +401,9 @@ class AttackService:
         Raises:
             ValueError: If the target is not found.
         """
-        target_identifier = await self._get_save_target_async(request.target_registry_name)
+        target_identifier = await self._get_save_target_async(
+            registry_name=request.target_registry_name, binding=request.target_binding
+        )
         copied: Sequence[MessagePiece] = []
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             conversation, copied = await self._prepare_conversation_up_to_async(
@@ -495,6 +499,7 @@ class AttackService:
                 "created_at": now.isoformat(),
                 "target_unbound": conversation.target_identifier is None,
                 **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
+                **(request.target_binding.to_metadata() if request.target_binding else {}),
             },
         )
 
@@ -569,6 +574,7 @@ class AttackService:
         new_attack: AttackResult | None = None
         expected_fields: dict[str, Any] = {}
         update_fields: dict[str, Any] = {}
+        binding = request.target_binding
         if same_attack:
             attack_result_id = str(request.attack_result_id)
             results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
@@ -579,8 +585,14 @@ class AttackService:
                 raise PermissionError("Cannot save to an attack owned by another operator")
             identifier = attack.get_attack_strategy_identifier()
             target_identifier = identifier.get_child("objective_target") if identifier else None
+            saved_binding = TargetBinding.from_metadata(attack.metadata)
+            if request.target_binding is not None and request.target_binding != saved_binding:
+                raise ValueError("Same attack must keep its temperature. Choose New attack to change it.")
+            binding = saved_binding
             if request.target_registry_name:
-                selected_target = await self._get_save_target_async(request.target_registry_name)
+                selected_target = await self._get_save_target_async(
+                    registry_name=request.target_registry_name, binding=binding
+                )
                 if (
                     target_identifier is None
                     or selected_target is None
@@ -597,7 +609,9 @@ class AttackService:
                 update_fields = self._objective_update_fields(old=attack.objective, new=request.objective)
         else:
             attack_result_id = str(uuid.uuid5(request.save_id, "attack"))
-            target_identifier = await self._get_save_target_async(request.target_registry_name)
+            target_identifier = await self._get_save_target_async(
+                registry_name=request.target_registry_name, binding=request.target_binding
+            )
             new_attack = self._new_manual_attack(
                 request=request,
                 attack_result_id=attack_result_id,
@@ -607,6 +621,7 @@ class AttackService:
         target = await self._validate_editor_target_async(
             target_identifier=target_identifier,
             registry_name=request.target_registry_name,
+            binding=binding,
         )
         persisted_paths: list[str] = []
         inserted = False
@@ -642,6 +657,8 @@ class AttackService:
                 inserted = await save_task
                 raise
         finally:
+            if binding and target:
+                await release_component_async(target)
             if not inserted:
                 await self._cleanup_saved_media_async(persisted_paths)
         return await self._saved_conversation_response_async(
@@ -700,13 +717,21 @@ class AttackService:
         )
         return {piece.id: piece for piece in pieces}
 
-    async def _get_save_target_async(self, registry_name: str | None) -> TargetIdentifier | None:
+    async def _get_save_target_async(
+        self, *, registry_name: str | None, binding: TargetBinding | None = None
+    ) -> TargetIdentifier | None:
         """
         Resolve an optional target without calling it.
 
         Returns:
             The target identity, or None for an unbound draft.
         """
+        if binding is not None:
+            target = await get_target_service().resolve_binding_async(binding)
+            try:
+                return TargetIdentifier.from_component_identifier(target.get_identifier())
+            finally:
+                await release_component_async(target)
         if registry_name is None:
             return None
         service = get_target_service()
@@ -795,6 +820,7 @@ class AttackService:
         *,
         target_identifier: ComponentIdentifier | None,
         registry_name: str | None,
+        binding: TargetBinding | None = None,
     ) -> PromptTarget | None:
         """
         Resolve a registered target that supports editable, multi-turn history.
@@ -808,6 +834,16 @@ class AttackService:
         if target_identifier is None:
             return None
         service = get_target_service()
+        if binding is not None:
+            target_object = await service.resolve_binding_async(binding)
+            if (
+                target_object.get_identifier().hash != target_identifier.hash
+                or not target_object.capabilities.supports_editable_history
+                or not target_object.capabilities.supports_multi_turn
+            ):
+                await release_component_async(target_object)
+                raise ValueError("The saved target does not support this conversation")
+            return target_object
         target = await service.get_target_async(target_registry_name=registry_name) if registry_name else None
         if not registry_name:
             cursor = None
@@ -1087,9 +1123,13 @@ class AttackService:
         if results and results[0].metadata.get("target_unbound") is True:
             if request.target_conversation_id not in results[0].get_active_conversation_ids():
                 raise ValueError(f"Conversation '{request.target_conversation_id}' is not part of this attack")
-            await self._bind_manual_target_async(attack=results[0], registry_name=request.target_registry_name)
+            await self._bind_manual_target_async(
+                attack=results[0], registry_name=request.target_registry_name, binding=request.target_binding
+            )
 
-    async def _bind_manual_target_async(self, *, attack: AttackResult, registry_name: str | None) -> AttackResult:
+    async def _bind_manual_target_async(
+        self, *, attack: AttackResult, registry_name: str | None, binding: TargetBinding | None = None
+    ) -> AttackResult:
         """
         Bind an explicitly unbound manual attack before its first send.
 
@@ -1098,7 +1138,7 @@ class AttackService:
         """
         if not registry_name:
             raise ValueError("Select a target before sending")
-        target = await self._get_save_target_async(registry_name)
+        target = await self._get_save_target_async(registry_name=registry_name, binding=binding)
         conversations = {
             conversation_id: await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
             for conversation_id in attack.get_active_conversation_ids()
@@ -1106,10 +1146,15 @@ class AttackService:
         target_object = await self._validate_editor_target_async(
             target_identifier=target,
             registry_name=registry_name,
+            binding=binding,
         )
-        if target_object:
-            for conversation in conversations.values():
-                target_object.validate_history(conversation)
+        try:
+            if target_object:
+                for conversation in conversations.values():
+                    target_object.validate_history(conversation)
+        finally:
+            if binding and target_object:
+                await release_component_async(target_object)
         atomic = AtomicAttackIdentifier.build(
             attack_identifier=AttackIdentifier(
                 class_name="ManualAttack",
@@ -1117,7 +1162,11 @@ class AttackService:
                 objective_target=target,
             )
         )
-        metadata = {"target_unbound": False, "target_registry_name": registry_name}
+        metadata = {
+            "target_unbound": False,
+            "target_registry_name": registry_name,
+            **(binding.to_metadata() if binding else {}),
+        }
         await self._memory.update_attack_result_conditionally_async(
             attack_result_id=attack.attack_result_id,
             expected_fields={

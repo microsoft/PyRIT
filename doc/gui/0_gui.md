@@ -112,10 +112,36 @@ Type a message and press Enter (or click Send) to send it to the chat target. Th
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
+#### Temperature
+
+Select a target, then set **Temperature** before the first send. Leave it empty
+to keep the source setting. The supported range is 0 to 2. This creates a private
+target configuration for the attack; it does not add or change a registered target.
+Temperature is read-only after the attack is bound. In the conversation editor,
+a temperature change requires **New attack**, not **Same attack**.
+
+Saved attacks retain the source name, source identity, temperature, and effective
+identity, but not credentials. After a restart, the backend tries to reconstruct
+the target from a matching registered source. If reconstruction fails, sending
+is blocked rather than using the source's default temperature. OpenAI-family
+targets with a temperature parameter support this control. Externally owned HTTP
+clients and temperature set through `extra_body_parameters` are not supported.
+
 #### Editing Converter Pipelines
 
 Open **Converters** and use the picker above the working input to add registered
 converters in the order you want them to run.
+For a stage that supports reconstruction, open **... > Settings** to change its
+constructor settings. Changes create a private converter for that stage. Other
+stages and the registered source keep their settings. **Reset to registered
+converter** removes the stage's overrides. Changing settings invalidates that
+stage and its downstream results.
+
+Closing the converter pane discards temporary settings, but keeps content that
+you already applied and the identifiers of the converters that produced it.
+Temporary converters are built for each preview operation, not retained in a
+second registry. A runtime change clears temporary settings and preview results.
+
 The top text box is an editable working copy: changing it does not change the original
 chat message. The top **Convert** button runs the active tab's configured pipeline
 and any configured inputs that do not have results yet. After every configured input
@@ -203,6 +229,15 @@ message piece. The backend resolves the IDs through the registry. An empty list
 represents a manual conversion. `request_converter_configurations` controls
 conversion of pieces without a preconverted value; it does not describe which
 converters already ran.
+
+For temporary stages, preview requests provide `converter_specs`, aligned with
+`converter_ids`; use `null` for a registered stage. Preview responses include the
+actual temporary identifier and a signed `provenance` token. Pass these tokens
+as `applied_converter_provenance`, aligned with `applied_converter_ids`, when
+sending or saving the converted content. Tokens remain valid after the pane
+closes, without retaining converter objects. A restart invalidates tokens for
+unsaved content; convert it again. Stored messages retain their converter
+identifiers and do not depend on those tokens.
 
 #### Attachments
 

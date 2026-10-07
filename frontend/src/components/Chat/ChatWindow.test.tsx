@@ -24,7 +24,7 @@ import {
   TargetInstance,
   TargetResponseStatus,
 } from "../../types";
-import { attacksApi, convertersApi, scoresApi } from "../../services/api";
+import { attacksApi, convertersApi, scoresApi, targetsApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
 const buildCapabilities = (
@@ -71,6 +71,7 @@ jest.mock("../../services/api", () => ({
     deleteConverter: jest.fn(),
     previewConversion: jest.fn(),
   },
+  targetsApi: { buildTarget: jest.fn() },
   labelsApi: {
     getLabels: jest.fn().mockImplementation(() => new Promise(() => {})),
   },
@@ -1504,6 +1505,49 @@ describe("ChatWindow Integration", () => {
   // -----------------------------------------------------------------------
   // First message → create attack + send
   // -----------------------------------------------------------------------
+
+  it("builds a private temperature setting before creating the attack", async () => {
+    const user = userEvent.setup();
+    const source = { ...mockTarget, supports_temperature_override: true };
+    const onConversationCreated = jest.fn();
+    jest.mocked(targetsApi.buildTarget).mockResolvedValue({
+      identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
+      capabilities: source.capabilities,
+    });
+    mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Hello" }]);
+    mockSendResult.mockResolvedValue({
+      ...makeTextResponse("Reply"),
+      attack: { attack_result_id: "default-created-attack", conversation_id: "default-created-conversation" },
+    } as never);
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+      onConversationCreated={onConversationCreated} /></TestWrapper>);
+    await user.type(screen.getByLabelText("Temperature"), "0.8");
+    await user.type(screen.getByRole("textbox"), "Hello");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+    await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
+    const binding = {
+      version: 1, source_name: source.target_registry_name, source_hash: source.identifier.hash,
+      temperature: 0.8, effective_hash: "private-hash",
+    };
+    expect(targetsApi.buildTarget).toHaveBeenCalledWith("OpenAIChatTarget", {
+      source_name: source.target_registry_name, source_hash: source.identifier.hash,
+      params: { temperature: 0.8 },
+    });
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toEqual(binding);
+    expect(onConversationCreated.mock.calls[0][3].binding).toEqual(binding);
+    expect(source.identifier.hash).not.toBe("private-hash");
+  });
+
+  it("shows saved temperature as read-only", () => {
+    const target = {
+      ...mockTarget, supports_temperature_override: true,
+      identifier: { ...mockTarget.identifier, temperature: 0.8 },
+    };
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    expect(screen.getByLabelText("Temperature")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+  });
 
   it("should create attack and send text message on first message", async () => {
     const user = userEvent.setup();

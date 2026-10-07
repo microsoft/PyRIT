@@ -3,6 +3,8 @@ import type { ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
+  Field,
+  Input,
   Breadcrumb,
   BreadcrumbDivider,
   BreadcrumbItem,
@@ -43,6 +45,7 @@ import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { buildTemperatureTarget } from '@/services/targetRegistry'
 import {
   basenameFromValue,
   applyConvertedValues,
@@ -317,6 +320,12 @@ export default function ChatWindow({
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingObjective, setPendingObjective] = useState('')
+  const [temperature, setTemperature] = useState('')
+  const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
+  if (temperatureAttackId !== attackResultId) {
+    setTemperatureAttackId(attackResultId)
+    setTemperature('')
+  }
   const currentObjective = attackResultId ? objective : pendingObjective
   const runtime = useRuntime()
   const newAttackContext: NewAttackContext = { generation: runtime.generation, ready: runtime.ready && defaultsReady, labels }
@@ -958,8 +967,14 @@ export default function ChatWindow({
           || !currentLaunchState.ready || !currentLaunchState.defaultsReady) {
           throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
         }
+        let selectedTarget = activeTarget
+        if (temperature.trim()) {
+          selectedTarget = await buildTemperatureTarget(activeTarget, Number(temperature))
+          if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
+        }
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
+          ...(selectedTarget.binding ? { target_binding: selectedTarget.binding } : {}),
           name: pendingObjective || undefined,
           // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
           // The create-attack API normalizes these aliases through _AttackAttributionInput.
@@ -986,7 +1001,11 @@ export default function ChatWindow({
         operation.conversationId = currentConversationId
         pendingSendsRef.current.set(currentConversationId, operation)
         if (navigationRevisionRef.current === submittedNavigationRevision) {
-          onConversationCreated(currentAttackResultId, currentConversationId, pendingObjective || undefined)
+          if (selectedTarget.binding) {
+            onConversationCreated(currentAttackResultId, currentConversationId, pendingObjective || undefined, selectedTarget)
+          } else {
+            onConversationCreated(currentAttackResultId, currentConversationId, pendingObjective || undefined)
+          }
           viewedAttackRef.current = currentAttackResultId
           viewedConvRef.current = currentConversationId
         }
@@ -1014,6 +1033,11 @@ export default function ChatWindow({
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
         submission_id: operation.submissionId,
+      }
+      if (targetResolutionStatus === 'unbound' && temperature.trim()) {
+        const selectedTarget = await buildTemperatureTarget(activeTarget, Number(temperature))
+        if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
+        addMessageRequest.target_binding = selectedTarget.binding
       }
       submissionAttempted = true
       operation.progress = await attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
@@ -1329,7 +1353,7 @@ export default function ChatWindow({
     }
   }
 
-  const handleEditorSaved = (response: AddMessageResponse): void => {
+  const handleEditorSaved = (response: AddMessageResponse, savedTarget?: TargetInstance | null): void => {
     editor.discard()
     setEditorNotice('Conversation saved.')
     setMessages(backendMessagesToFrontend(response.messages.messages))
@@ -1337,7 +1361,7 @@ export default function ChatWindow({
     if (response.attack.attack_result_id === attackResultId) {
       onSelectConversation(response.messages.conversation_id)
     } else {
-      onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, editorTarget)
+      onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, savedTarget ?? editorTarget)
     }
 
     onAttackChange?.(response.attack)
@@ -1387,6 +1411,7 @@ export default function ChatWindow({
   }
 
   const sameAttackDisabledReason = !attackResultId ? 'No saved attack exists yet.'
+    : editDraft?.temperature.trim() ? 'Choose New attack to change the temperature.'
     : attackOperator && attackOperator !== currentOperator ? 'This attack belongs to another operator.'
     : attackTarget && (!editorTarget || !targetInfoMatchesTarget(attackTarget, editorTarget))
       ? 'The selected target differs from this attack. Choose New attack.'
@@ -1398,6 +1423,8 @@ export default function ChatWindow({
     ? 'Default labels are not ready. Retry after default labels finish loading.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
+  const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
+  const temperatureReadOnly = editDraft === null && Boolean(attackResultId) && targetResolutionStatus !== 'unbound'
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
   const recoverableProcessingErrorIndex = recoverableSend?.conversationId === viewedConversationId
@@ -1454,7 +1481,11 @@ export default function ChatWindow({
             loading={targetsLoading}
             error={targetsError}
             disabled={isSending || isSavingEditor}
-            onSelect={editDraft !== null ? editor.changeTarget : onSelectTarget}
+            onSelect={(target) => {
+              setTemperature('')
+              if (editDraft !== null) editor.changeTarget(target)
+              else onSelectTarget(target)
+            }}
             disabledReason={editDraft !== null
               ? (target: TargetInstance) => editorTargetDisabledReason(target, editorDataTypes) : undefined}
           />
@@ -1466,6 +1497,26 @@ export default function ChatWindow({
           </Text>
         )}
       </div>
+      {temperatureTarget && (
+        <Field label="Temperature"
+          hint={temperatureReadOnly ? 'Read-only for this attack.'
+            : temperatureTarget.supports_temperature_override
+              ? editDraft !== null ? 'Changes apply only to a new attack.' : 'Empty keeps the source setting.'
+              : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
+          <Input type="number" min={0} max={2} step={0.1}
+            aria-label="Temperature"
+            value={temperatureReadOnly
+              ? String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? '')
+              : editDraft !== null ? editDraft.temperature : temperature}
+            placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
+            readOnly={temperatureReadOnly}
+            disabled={isSending || isSavingEditor || !temperatureTarget.supports_temperature_override}
+            onChange={(_, data) => {
+              if (editDraft !== null) editor.changeTemperature(data.value)
+              else setTemperature(data.value)
+            }} />
+        </Field>
+      )}
       <div className={styles.editActions}>
         <Button appearance="subtle" className={styles.ribbonAction} icon={<EditRegular />}
           disabled={editDraft !== null || isSending || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad}

@@ -68,6 +68,7 @@ export function applyConvertedValues(
       converted_value: conversion.convertedValue,
       converted_value_data_type: conversion.convertedDataType,
       applied_converter_ids: conversion.converterInstanceIds,
+      ...(conversion.converterProvenance ? { applied_converter_provenance: conversion.converterProvenance } : {}),
     } : piece
   })
 }

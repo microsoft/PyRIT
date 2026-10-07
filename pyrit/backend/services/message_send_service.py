@@ -25,6 +25,7 @@ from pyrit.backend.models.message_sends import (
     MessageSendState,
     MessageSendStatus,
 )
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.converter_service import get_converter_service
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
@@ -46,6 +47,7 @@ from pyrit.models import (
     ConverterIdentifier,
     Message,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
@@ -63,6 +65,8 @@ class _ValidatedMessage:
     request_configurations: list[ConverterConfiguration]
     response_configurations: list[ConverterConfiguration]
     applied_identifiers: dict[int, list[ConverterIdentifier]]
+    owns_target: bool = False
+    target_binding: TargetBinding | None = None
 
 
 @dataclass(kw_only=True)
@@ -107,16 +111,32 @@ def resolve_applied_converter_identifiers(
     Returns:
         Registry-validated converter identifiers by message piece index, preserving order and duplicates.
     """
-    return {
-        index: [
-            ConverterIdentifier.from_component_identifier(converter.get_identifier())
-            for converter in get_converter_service().get_converter_objects_for_ids(
-                converter_ids=piece.applied_converter_ids
+    result: dict[int, list[ConverterIdentifier]] = {}
+    service = get_converter_service()
+    for index, piece in enumerate(pieces):
+        if not piece.applied_converter_ids:
+            continue
+        tokens = piece.applied_converter_provenance or [None] * len(piece.applied_converter_ids)
+        if all(token is None for token in tokens):
+            result[index] = [
+                ConverterIdentifier.from_component_identifier(converter.get_identifier())
+                for converter in service.get_converter_objects_for_ids(converter_ids=piece.applied_converter_ids)
+            ]
+            continue
+        registered = iter(
+            service.get_converter_objects_for_ids(
+                converter_ids=[
+                    name for name, token in zip(piece.applied_converter_ids, tokens, strict=True) if token is None
+                ]
             )
+        )
+        result[index] = [
+            service.read_provenance(token)
+            if token is not None
+            else ConverterIdentifier.from_component_identifier(next(registered).get_identifier())
+            for token in tokens
         ]
-        for index, piece in enumerate(pieces)
-        if piece.applied_converter_ids
-    }
+    return result
 
 
 class MessageSendService:
@@ -267,13 +287,17 @@ class MessageSendService:
             raise ValueError(f"Attack '{attack_result_id}' not found")
 
         ar = results[0]
+        binding = TargetBinding.from_metadata(ar.metadata)
+        if request.target_binding is not None and request.target_binding != binding:
+            raise ValueError("This attack's temperature is read-only. Create a new attack to change it.")
         target_registry_name = request.target_registry_name
         target = (
             get_target_service().get_target_object(target_registry_name=target_registry_name)
-            if request.send and target_registry_name
+            if binding is None and request.send and target_registry_name
             else None
         )
-        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+        if binding is None:
+            self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -288,14 +312,23 @@ class MessageSendService:
         response_converter_configs = self._resolve_converter_configs(
             configurations=request.response_converter_configurations
         )
-        if request.send and target is None:
+        applied_identifiers = resolve_applied_converter_identifiers(request.pieces)
+        if binding is not None and request.send:
+            target = await get_target_service().resolve_binding_async(binding)
+            try:
+                self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+            finally:
+                await release_component_async(target)
+            target = None
+        if request.send and target is None and binding is None:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
 
         return _ValidatedMessage(
             target=target,
             request_configurations=request_converter_configs,
             response_configurations=response_converter_configs,
-            applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
+            applied_identifiers=applied_identifiers,
+            target_binding=binding if request.send else None,
         )
 
     async def _execute_validated_message_async(
@@ -306,29 +339,37 @@ class MessageSendService:
         validated: _ValidatedMessage,
         progress: MessageSendStatus | None = None,
     ) -> None:
-        async with self._scheduler.operation_async():
-            if progress is not None:
-                progress.state = MessageSendState.PREPARING
-            with attack_result_id_scope(attack_result_id=attack_result_id):
-                await self._complete_memory_write_async(
-                    partial(
-                        self._memory.add_conversation_to_memory_async,
-                        conversation=Conversation(
-                            conversation_id=request.target_conversation_id,
-                            target_identifier=validated.target.get_identifier() if validated.target else None,
-                            attack_result_id=attack_result_id,
-                        ),
+        try:
+            async with self._scheduler.operation_async():
+                if validated.target_binding is not None:
+                    validated.target = await get_target_service().resolve_binding_async(validated.target_binding)
+                    validated.owns_target = True
+                if progress is not None:
+                    progress.state = MessageSendState.PREPARING
+                with attack_result_id_scope(attack_result_id=attack_result_id):
+                    await self._complete_memory_write_async(
+                        partial(
+                            self._memory.add_conversation_to_memory_async,
+                            conversation=Conversation(
+                                conversation_id=request.target_conversation_id,
+                                target_identifier=validated.target.get_identifier() if validated.target else None,
+                                attack_result_id=attack_result_id,
+                            ),
+                        )
                     )
-                )
-                await self._execute_message_async(
-                    attack_result_id=attack_result_id,
-                    request=request,
-                    target=validated.target,
-                    request_converter_configurations=validated.request_configurations,
-                    response_converter_configurations=validated.response_configurations,
-                    applied_converter_identifiers=validated.applied_identifiers,
-                    progress=progress,
-                )
+                    await self._execute_message_async(
+                        attack_result_id=attack_result_id,
+                        request=request,
+                        target=validated.target,
+                        request_converter_configurations=validated.request_configurations,
+                        response_converter_configurations=validated.response_configurations,
+                        applied_converter_identifiers=validated.applied_identifiers,
+                        progress=progress,
+                    )
+        finally:
+            if validated.owns_target and validated.target:
+                await release_component_async(validated.target)
+                validated.owns_target = False
 
     async def _run_send_async(
         self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage

@@ -45,6 +45,7 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
         expected_objective: updatesObjective ? input.initialObjective : undefined,
         objective: destination === 'new_attack' || updatesObjective ? objective : undefined,
         target_registry_name: input.target?.target_registry_name,
+        ...(input.target?.binding ? { target_binding: input.target.binding } : {}),
         operator: labels?.operator,
         operation: labels?.operation,
         labels,

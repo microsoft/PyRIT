@@ -3,6 +3,11 @@ import type { DragEvent, KeyboardEvent, ReactNode } from 'react'
 
 import {
   Button,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
   MessageBar,
   MessageBarBody,
   Spinner,
@@ -15,6 +20,7 @@ import {
   OpenRegular,
   PlayRegular,
   ReOrderDotsVerticalRegular,
+  MoreHorizontalRegular,
 } from '@fluentui/react-icons'
 
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
@@ -23,6 +29,7 @@ import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type {
   ChatConverterController, ConverterInputPiece, ConverterInstance, ConverterPipelineStage, ConverterStageResult,
+  SourceInstanceSpec, ConverterIdentifier,
 } from '@/types'
 
 import {
@@ -175,6 +182,18 @@ export default function ConverterPanel({
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [settings, setSettings] = useState<{
+    stageId: string
+    pieceType: string
+    editing: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+  } | null>(null)
+  const [settingsGeneration, setSettingsGeneration] = useState(generation)
+  if (settingsGeneration !== generation) {
+    setSettingsGeneration(generation)
+    setSettings(null)
+  }
+  const discardTemporarySettings = controller.discardTemporarySettings
+  useEffect(() => () => discardTemporarySettings?.(), [discardTemporarySettings])
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const isResizing = useRef(false)
   const draggedConverterIndex = useRef<number | null>(null)
@@ -252,7 +271,7 @@ export default function ConverterPanel({
   const selectedConverters = useMemo(
     () => selectedStages.flatMap((stage: ConverterPipelineStage): SelectedConverter[] => {
       const converter = converters.find((candidate: ConverterInstance) => candidate.converter_id === stage.converterId)
-      return converter ? [{ ...converter, stageId: stage.id }] : []
+      return converter ? [{ ...converter, identifier: stage.identifier ?? converter.identifier, stageId: stage.id }] : []
     }),
     [converters, selectedStages],
   )
@@ -522,6 +541,28 @@ export default function ConverterPanel({
                         {converter.converter_id}
                       </Text>
                       {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
+                      {selectedStages[index]?.temporary && <Text size={200}>Temporary</Text>}
+                      <Menu>
+                        <MenuTrigger disableButtonEnhancement>
+                          <Button appearance="subtle" size="small" icon={<MoreHorizontalRegular />}
+                            aria-label={`Settings for converter ${converter.converter_id}${duplicateStageContext}`}
+                            disabled={isConverting} data-no-drag />
+                        </MenuTrigger>
+                        <MenuPopover><MenuList>
+                          <MenuItem disabled={!converter.reconstructable}
+                            title={converter.reconstructable ? undefined
+                              : converter.reconstruction_error ?? 'This converter does not support separate settings.'}
+                            onClick={() => setSettings({
+                              stageId: converter.stageId, pieceType: effectiveActiveTab,
+                              editing: { converter, spec: selectedStages[index]?.temporary },
+                            })}>Settings</MenuItem>
+                          {selectedStages[index]?.temporary && <MenuItem
+                            onClick={() => setPipeline(effectiveActiveTab, (stages) => stages.map((stage) =>
+                              stage.id === converter.stageId
+                                ? { id: stage.id, converterId: stage.converterId } : stage,
+                            ))}>Reset to registered converter</MenuItem>}
+                        </MenuList></MenuPopover>
+                      </Menu>
                       <Button
                         appearance="subtle"
                         size="small"
@@ -635,6 +676,18 @@ export default function ConverterPanel({
           void loadConverters(converterId, effectiveActiveTab)
         }}
       />
+      {settings && <CreateConverterDialog
+        open
+        editing={settings.editing}
+        onClose={() => setSettings(null)}
+        onCreated={() => { throw new Error('Settings must not register a converter.') }}
+        onTemporary={(spec: SourceInstanceSpec, identifier: ConverterIdentifier) => {
+          setPipeline(settings.pieceType, (stages: ConverterPipelineStage[]) => stages.map((stage) =>
+            stage.id === settings.stageId ? { ...stage, temporary: spec, identifier } : stage,
+          ))
+          setSettings(null)
+        }}
+      />}
     </div>
   )
 }

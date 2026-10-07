@@ -10,7 +10,7 @@ import { useBeforeUnload, useBlocker } from 'react-router'
 import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
-  AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment, SaveConversationRequest,
+  AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
@@ -157,7 +157,7 @@ interface ConversationEditorProps {
   ref?: Ref<ConversationEditorHandle>
   sameAttackDisabledReason?: string
   newAttackDisabledReason?: string
-  onSaved: (response: AddMessageResponse) => void
+  onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
 }
 
 export interface ConversationEditorHandle {

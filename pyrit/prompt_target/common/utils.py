@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def _get_rate_limit_lock(target: Any) -> asyncio.Lock:
     """Return the target's pacing lock, rebuilding it when the event loop changes."""
     loop = asyncio.get_running_loop()
-    target_vars = vars(target)
+    target_vars = vars(getattr(target, "_rate_limit_source", target))
     lock = target_vars.get("_rate_limit_lock")
     if lock is None or target_vars.get("_rate_limit_lock_loop") is not loop:
         lock = asyncio.Lock()

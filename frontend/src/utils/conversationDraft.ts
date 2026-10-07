@@ -169,6 +169,7 @@ export async function serializeDraft(messages: ConversationDraftMessage[]): Prom
       converted_value: piece.converted_value,
       converted_value_data_type: piece.converted_value_data_type,
       applied_converter_ids: piece.converted_value === undefined ? undefined : piece.applied_converter_ids,
+      applied_converter_provenance: piece.converted_value === undefined ? undefined : piece.applied_converter_provenance,
       source_piece_id: piece.source_piece_id,
       mime_type: piece.mime_type,
       prompt_metadata: piece.prompt_metadata,

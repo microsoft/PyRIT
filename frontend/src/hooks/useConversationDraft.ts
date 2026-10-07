@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { toApiError } from '@/services/errors'
+import { buildTemperatureTarget } from '@/services/targetRegistry'
 import type {
   AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, ConversationSaveInput,
   MessageAttachment, NewAttackContext, PieceConversion, SaveConversationRequest, TargetInstance,
@@ -23,18 +24,21 @@ interface DraftState extends ConversationSaveInput {
   id: string
   baselineMessages: ConversationDraftMessage[]
   baselineTarget: string | undefined
+  temperature: string
 }
 
 export function useConversationDraft(newAttackContext?: NewAttackContext) {
   const [draft, setDraft] = useState<DraftState | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [preparing, setPreparing] = useState(false)
+  const savePending = useRef(false)
   const activeId = useRef<string | null>(null)
   const saved = useRef(false)
   const urls = useRef(new Set<string>())
   const workflow = useConversationSave(newAttackContext)
   const dirty = draft !== null && (
     draft.messages !== draft.baselineMessages || draft.objective !== draft.initialObjective
-    || targetKey(draft.target) !== draft.baselineTarget
+    || targetKey(draft.target) !== draft.baselineTarget || draft.temperature.trim() !== ''
   )
   const validationError = draft ? validateDraft(draft.messages) : null
   const targetError = draft?.target
@@ -52,7 +56,7 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
     activeId.current = id
     saved.current = false
     setError(null)
-    setDraft({ ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target) })
+    setDraft({ ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target), temperature: '' })
   }, [releaseUrls])
   const discard = useCallback((): void => {
     activeId.current = null
@@ -127,24 +131,37 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
           ...piece, converted_value: result.convertedValue,
           converted_value_data_type: result.convertedDataType,
           applied_converter_ids: result.converterInstanceIds,
+          applied_converter_provenance: result.converterProvenance,
         } : piece
       }),
     })))
   }
   const save = async (
-    destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse) => void,
+    destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void,
   ): Promise<void> => {
-    if (!draft || workflow.saving) return
+    if (!draft || workflow.saving || savePending.current) return
+    savePending.current = true
+    setPreparing(true)
     const id = draft.id
     setError(null)
     try {
       if (validationError || targetError) throw new Error(validationError ?? targetError)
-      const response = await workflow.save(draft, destination)
+      let target = draft.target
+      if (draft.temperature.trim()) {
+        if (destination !== 'new_attack') throw new Error('Choose New attack to change the temperature.')
+        if (!target) throw new Error('Select a target before setting temperature.')
+        target = await buildTemperatureTarget(target, Number(draft.temperature))
+      }
+      const response = await workflow.save({ ...draft, target }, destination)
       if (activeId.current !== id) return
       saved.current = true
-      onSaved(response)
+      if (draft.temperature.trim()) onSaved(response, target)
+      else onSaved(response)
     } catch (cause) {
       if (activeId.current === id) setError(toApiError(cause).detail)
+    } finally {
+      savePending.current = false
+      setPreparing(false)
     }
   }
 
@@ -153,12 +170,15 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
   }, [])
 
   return {
-    draft, dirty, error, validationError, targetError, saving: workflow.saving,
+    draft, dirty, error, validationError, targetError, saving: preparing || workflow.saving,
     begin, discard, save, changeMessages, changePiece, changeAttachments, addPiece, applyConversions,
-    shouldBlock: (): boolean => !saved.current && (dirty || workflow.saving),
+    shouldBlock: (): boolean => !saved.current && (dirty || preparing || workflow.saving),
     changeObjective,
+    changeTemperature: (temperature: string): void => {
+      setDraft((current: DraftState | null) => current ? { ...current, temperature } : current)
+    },
     changeTarget: (target: TargetInstance | null): void => {
-      setDraft((current: DraftState | null) => current ? { ...current, target } : current)
+      setDraft((current: DraftState | null) => current ? { ...current, target, temperature: '' } : current)
     },
     insert: (index: number): void => {
       const message = newDraftMessage()

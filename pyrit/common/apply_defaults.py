@@ -302,8 +302,28 @@ def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
                             f"Either pass a valid value or register a default using set_default_value()."
                         )
 
-        # Call the original method with updated arguments
-        return method(*bound_args.args, **bound_args.kwargs)
+        resolved: dict[str, object] | None = None
+        if getattr(method, "__name__", None) == "__init__" and getattr(
+            type(self).__init__, "__pyrit_capture_constructor__", False
+        ):
+            from pyrit.common.constructor_capture import copy_constructor_inputs
+
+            resolved = {}
+            for name, value in bound_args.arguments.items():
+                if name == "self":
+                    continue
+                if sig.parameters[name].kind is inspect.Parameter.VAR_KEYWORD:
+                    resolved.update({key: copy_constructor_inputs(item) for key, item in value.items()})
+                elif sig.parameters[name].kind is not inspect.Parameter.VAR_POSITIONAL:
+                    resolved[name] = copy_constructor_inputs(value)
+
+        result = method(*bound_args.args, **bound_args.kwargs)
+        if resolved is not None:
+            retained = vars(self).setdefault("_resolved_constructor_parameters", {})
+            for name, value in resolved.items():
+                if value is not None or name not in retained:
+                    retained[name] = value
+        return result
 
     return wrapper
 
