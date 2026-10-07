@@ -442,8 +442,9 @@ scenario, not when you create a technique.
 
 The form does not edit complex seeds or simulated conversations. It marks
 unsupported inputs and blocks creation when a required input cannot be set.
-Use the [typed REST contract](../code/registry/0_registry.md#technique-definitions)
-or a Python initializer for advanced settings and Python-only values.
+The [REST API](../code/registry/0_registry.md#runtime-techniques) supports the
+same basic inputs. Use a Python initializer for seeds, conversations, and
+advanced configurations.
 
 Creation does not construct an attack or send prompts. A new technique becomes
 selectable in a compatible scenario without a restart, including after scenario

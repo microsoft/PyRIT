@@ -28,7 +28,6 @@ function technique(name: string, attackType = 'PromptSendingAttack', tags = ['ba
 }
 
 const metadata: TechniqueTypeResponse = {
-  definition_schema: {}, factory_parameters: [], seed_parameters: {},
   items: [
     { attack_type: 'PromptSendingAttack', description: 'Sends a prompt', supports_converters: true, supports_adversarial: false,
       parameters: [{ name: 'max_attempts_on_failure', type_name: 'int', required: false },
@@ -144,14 +143,10 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
     const request = techniques.createTechnique.mock.calls[0][0]
-    expect(request).toMatchObject({ name: 'created', tags: ['mine', 'basic'], attack_args: {
+    expect(request).toMatchObject({ name: 'created', tags: ['mine', 'basic'], type: 'PromptSendingAttack', params: {
       max_attempts_on_failure: 0, settings: { type: 'basic', parameters: { enabled: false, converter: 'rot13' } },
-      attack_converter_config: { type: 'AttackConverterConfig', parameters: {
-        request_converters: ['b64', 'rot13', 'b64'].map((converter) => ({ type: 'ConverterConfiguration', parameters: { converters: [converter] } })),
-        response_converters: [{ type: 'ConverterConfiguration', parameters: { converters: ['rot13'] } }],
-      } },
-    } })
-    expect(request.attack_args).not.toHaveProperty('objective_target')
+    }, request_converters: ['b64', 'rot13', 'b64'], response_converters: ['rot13'] })
+    expect(request.params).not.toHaveProperty('objective_target')
     await waitFor(() => expect(screen.getByRole('button', { name: 'New technique' })).toHaveFocus())
     expect(techniques.listTechniques).toHaveBeenCalledTimes(2)
   })
@@ -168,12 +163,13 @@ describe('TechniqueRegistry', () => {
     await user.type(screen.getByRole('textbox', { name: 'Adversarial per-turn prompt' }), 'turn')
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalled())
-    expect(techniques.createTechnique.mock.calls[0][0].factory_options).toEqual({
+    expect(techniques.createTechnique.mock.calls[0][0]).toMatchObject({
       adversarial_chat: 'local', adversarial_system_prompt: 'system', adversarial_seed_prompt: 'seed', adversarial_prompt_template: 'turn',
     })
   })
 
   it('blocks unsupported required inputs and invalid selectors', async () => {
+    techniques.createTechnique.mockRejectedValueOnce(new Error('Do not use all, default, or types.'))
     render(tree())
     const user = await openCreate()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'ComplexAttack')
@@ -183,7 +179,7 @@ describe('TechniqueRegistry', () => {
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'all')
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await screen.findByText(/Do not use all, default, or types\./)
-    expect(techniques.createTechnique).not.toHaveBeenCalled()
+    expect(techniques.createTechnique).toHaveBeenCalledTimes(1)
   })
 
   it('reports metadata failure and permits retry', async () => {

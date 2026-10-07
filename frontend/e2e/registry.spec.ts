@@ -22,6 +22,11 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   const before = await warm.json();
   const name = `browser_${Date.now()}`;
   expect(before.all_techniques).not.toContain(name);
+  const converterName = `${name}_b64`;
+  const converter = await request.post("/api/converters", {
+    headers, data: { name: converterName, type: "Base64Converter", params: {} },
+  });
+  expect(converter.ok(), await converter.text()).toBe(true);
   let replacementGeneration: string | undefined;
   await page.route("**/api/runtime", async (route) => {
     const response = await route.fetch();
@@ -43,9 +48,21 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("textbox", { name: "Description" }).fill("Local browser technique");
   await page.getByRole("textbox", { name: "Tags" }).fill("browser_test");
   await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  await page.getByLabel("max_attempts_on_failure").fill("0");
+  await page.getByRole("combobox", { name: "Request converters", exact: true }).selectOption(converterName);
+  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
+  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
   const create = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Add technique" }).click();
-  expect((await create).status()).toBe(201);
+  const created = await create;
+  expect(created.status()).toBe(201);
+  const body = created.request().postDataJSON();
+  expect(body).toMatchObject({
+    name, type: "PromptSendingAttack", params: { max_attempts_on_failure: 0 },
+    request_converters: [converterName, converterName], response_converters: [],
+  });
+  expect(body).not.toHaveProperty("factory_options");
+  expect(body).not.toHaveProperty("seed_technique");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
   await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();

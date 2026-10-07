@@ -37,17 +37,17 @@ The API will be available at `http://localhost:8000`
 | Endpoint | Result |
 | --- | --- |
 | `GET /api/techniques` | All active registered technique factories |
-| `GET /api/techniques/types` | Attack-class parameters, definition schema, factory inputs, and typed seed inputs |
+| `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
-| `POST /api/techniques` | Validate and register a runtime definition; 201 on success |
+| `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
 
-Use a named class from `AttackRegistry` as `attack_type`. A definition has
-`name`, optional `description` and `tags`, `attack_args`, `factory_options`,
-and optional `seed_technique`. Nested configuration values use
-`{"type": "<declared variant>", "parameters": {...}}`. Nested target, converter,
-and scorer references use registered names. See
-[Technique definitions](../../doc/code/registry/0_registry.md#technique-definitions)
-for an example and extension rules.
+Use a class name from `AttackRegistry` as `type`, with `name` and constructor
+`params`. Optional fields are `description`, `tags`, ordered
+`request_converters` and `response_converters` names, an `adversarial_chat`
+target name, and inline `adversarial_system_prompt`, `adversarial_seed_prompt`,
+and `adversarial_prompt_template` strings. References use existing registries.
+Seeds, conversation settings, and advanced attack configurations remain
+Python-only. See [Runtime techniques](../../doc/code/registry/0_registry.md#runtime-techniques).
 
 Unknown classes, references, fields, missing inputs, invalid parameter values,
 and selector collisions return 400 without changing the registry. Invalid

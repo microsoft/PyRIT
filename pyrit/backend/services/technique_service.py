@@ -8,19 +8,17 @@ from functools import lru_cache
 
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models.techniques import (
+    CreateTechniqueRequest,
     TechniqueInstance,
     TechniqueListResponse,
     TechniqueTypeEntry,
     TechniqueTypeResponse,
 )
-from pyrit.models import SeedPrompt, SeedSimulatedConversation
-from pyrit.models.technique_definition import TechniqueDefinition, TechniqueFactoryOptions
 from pyrit.registry.components import AttackRegistry, AttackTechniqueRegistry
-from pyrit.registry.resolution import json_input_parameters
 
 
 class TechniqueService:
-    """List the active factory pool and register validated runtime definitions."""
+    """List the active factory pool and register basic runtime configurations."""
 
     def __init__(self) -> None:
         """Bind to the runtime registry; service lifecycle clears this binding on reset."""
@@ -55,19 +53,22 @@ class TechniqueService:
             return None
         return await asyncio.to_thread(technique_to_instance, name=name, factory=factory)
 
-    async def create_async(self, definition: TechniqueDefinition) -> TechniqueInstance:
+    async def create_async(self, request: CreateTechniqueRequest) -> TechniqueInstance:
         """
         Validate, project, and register without sending prompts or creating attacks.
 
         Returns:
             TechniqueInstance: Safe settings for the admitted factory.
         """
-        return await asyncio.to_thread(self._create, definition)
+        return await asyncio.to_thread(self._create, request)
 
-    def _create(self, definition: TechniqueDefinition) -> TechniqueInstance:
-        factory = self._registry.build_from_definition(definition)
-        result = technique_to_instance(name=definition.name, factory=factory)
-        self._registry.instances.register_definition(factory)
+    def _create(self, request: CreateTechniqueRequest) -> TechniqueInstance:
+        args = request.model_dump(exclude_unset=True, exclude={"name", "type", "tags"})
+        factory = self._registry.create_factory(
+            name=request.name, attack_type=request.type, technique_tags=request.tags, **args
+        )
+        result = technique_to_instance(name=request.name, factory=factory)
+        self._registry.instances.register_runtime(factory)
         return result
 
     async def types_async(self) -> TechniqueTypeResponse:
@@ -90,25 +91,21 @@ class TechniqueService:
                     attack_type=entry.registry_name,
                     description=entry.class_description,
                     parameters=[
-                        parameter.model_copy(update={"default": None})
-                        if parameter.name == "attack_scoring_config"
-                        else parameter
+                        parameter
                         for parameter in entry.parameters
-                        if parameter.name not in {"objective_target", "attack_adversarial_config"}
+                        if parameter.name
+                        not in {
+                            "objective_target",
+                            "attack_adversarial_config",
+                            "attack_converter_config",
+                            "attack_scoring_config",
+                        }
                     ],
                     supports_adversarial="attack_adversarial_config" in names,
                     supports_converters="attack_converter_config" in names,
                 )
             )
-        return TechniqueTypeResponse(
-            items=items,
-            definition_schema=TechniqueDefinition.model_json_schema(),
-            factory_parameters=json_input_parameters(TechniqueFactoryOptions),
-            seed_parameters={
-                "SeedPrompt": json_input_parameters(SeedPrompt),
-                "SeedSimulatedConversation": json_input_parameters(SeedSimulatedConversation),
-            },
-        )
+        return TechniqueTypeResponse(items=items)
 
 
 @lru_cache(maxsize=1)

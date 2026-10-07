@@ -137,114 +137,62 @@ objects, such as `AttackAdversarialConfig`, `AttackConverterConfig`, and
 `AttackScoringConfig`, for nested components. Advanced Python values, such as a
 prompt normalizer or a parameter class, pass through unchanged. The shared
 resolver also constructs explicitly declared structured configuration variants.
-Use technique definitions for JSON-native, reusable attack configurations.
+Use the Techniques API for basic reusable attack configurations.
 
 An attack class implements the conversation algorithm. An attack technique
 factory selects and configures that class, converters, scorers, and seeds.
 `AttackTechniqueRegistry` continues to store those factories separately.
 
-## Technique Definitions
+## Runtime Techniques
 
-`TechniqueDefinition` is a JSON-native construction contract under
-`pyrit.models.technique_definition`. It holds names, tags, attack arguments,
-factory options, and typed technique seeds. Models do not import attacks,
-resolve components, or select modules.
+`POST /api/techniques` follows the registry request pattern: `name`, attack
+`type`, and constructor `params`, with optional description and tags.
+`AttackTechniqueRegistry.create_factory()` looks up the class in `AttackRegistry`
+and uses the shared constructor resolver. It captures the settings in an
+`AttackTechniqueFactory`; it does not construct an attack or send prompts.
+The API checks selector collisions before one atomic registration.
 
-`AttackTechniqueRegistry.build_from_definition()` resolves the registered attack
-class and its declared inputs without registering or constructing an attack.
-`register_definition()` also checks selector collisions and registers the factory
-atomically. A failed definition leaves no partial entry. Existing Python factory
-registration and live configuration values remain supported.
-The selectors `all` and `default` are reserved. `types` is also a reserved name.
-Names and tags cannot conflict with existing selectors or differ only by letter case.
+After initialization, send this JSON to `POST /api/techniques`:
 
-After initialization, register this definition through Python or send its JSON
-representation to `POST /api/techniques`:
-
-```python
-from pyrit.models.technique_definition import TechniqueDefinition
-from pyrit.registry import AttackTechniqueRegistry
-
-definition = TechniqueDefinition.model_validate({
+```json
+{
     "name": "encoded_example",
+    "type": "PromptSendingAttack",
     "description": "Encode the request with an existing converter.",
     "tags": ["custom"],
-    "attack_type": "PromptSendingAttack",
-    "attack_args": {
-        "attack_converter_config": {
-            "type": "AttackConverterConfig",
-            "parameters": {
-                "request_converters": [{
-                    "type": "ConverterConfiguration",
-                    "parameters": {
-                        "converters": ["registered_base64", "registered_base64"],
-                        "indexes_to_apply": [],
-                    },
-                }],
-                "response_converters": [],
-            },
-        },
-        "prepended_conversation_config": {
-            "type": "PrependedConversationConfig",
-            "parameters": {"apply_converters_to_roles": ["user"]},
-        },
-    },
-    "factory_options": {"use_score_as_feedback": False},
-    "seed_technique": {
-        "insertion_index": 0,
-        "prompt_placement": "prepend",
-        "seeds": [{
-            "type": "SeedPrompt",
-            "parameters": {
-                "value": "A static prefix",
-                "role": "system",
-                "is_general_technique": True,
-            },
-        }],
-    },
-})
-factory = AttackTechniqueRegistry.get_registry_singleton().register_definition(definition)
+    "params": {"max_attempts_on_failure": 0},
+    "request_converters": ["registered_base64", "registered_base64"],
+    "response_converters": []
+}
 ```
 
-The converter name must already be registered. Converter order and duplicate
-entries are retained. An explicit empty `indexes_to_apply` list applies the
-converter to no pieces; it is not the same as omitting the field.
+Converters must already exist in `ConverterRegistry`. Their order and duplicate
+entries are retained. For adversarial attacks, use an optional registered
+`adversarial_chat` target name and inline strings for `adversarial_system_prompt`,
+`adversarial_seed_prompt`, and `adversarial_prompt_template`. If the target is
+omitted, it is resolved at execution. The scenario supplies the objective target
+and scoring configuration.
 
-Supported structured inputs include `AttackConverterConfig`,
-`ConverterConfiguration`, `AttackScoringConfig`, `TAPAttackScoringConfig`,
-and `PrependedConversationConfig`. Scoring configurations accept registered
-scorer names, including ordered auxiliary-scorer lists. The factory keeps the
-existing execution scorer-override policy (`warn`, `raise`, or `skip`).
+`params` supports typed scalar settings, scalar lists, registry references, and
+the existing `StructuredParameterValue` variants declared by a class.
+Seeds, simulated conversations, nested attack configurations, custom scorer
+policies, and other live Python values remain Python-only. Use an initializer
+or construct `AttackTechniqueFactory` directly for those settings. Existing
+advanced factories are still listed and usable. Clients cannot select modules,
+execute code, or deserialize arbitrary objects.
 
-Seed groups accept declared `SeedPrompt` and `SeedSimulatedConversation`
-variants. A simulated-conversation seed uses typed `SeedPrompt` values for
-`adversarial_chat_system_prompt`, `simulated_target_system_prompt`, and optional
-`next_message_system_prompt`. It also accepts `num_turns` and `sequence`.
-Seed validators check general-technique flags, roles, sequence overlap, and
-conversation constraints. Legacy server file-path inputs are not accepted by
-this contract. Seed construction does not generate a conversation.
+Names and tags start with a letter and use letters, digits, and underscores.
+`all` and `default` are reserved selectors; `types` is also a reserved name.
+Names and tags cannot conflict with existing selectors or differ only by letter
+case. No `core`, `light`, or `default` tag is added automatically.
+Invalid fields, types, required inputs, and references leave the registry unchanged.
 
-For adversarial attacks, `factory_options` accepts an optional registered
-`adversarial_chat` name and inline strings or typed `SeedPrompt` values for
-system, seed, and per-turn prompts. The objective target belongs to execution
-and cannot be supplied in `attack_args`. A default adversarial target is resolved
-only when needed at execution.
+`GET /api/techniques/types` exposes attack constructor `Parameter` metadata.
+List and detail responses use `AttackTechniqueFactory.get_configuration()` for
+safe display without target credentials. Identity hashes and display projections
+are not lossless construction recipes.
 
-Custom registered attack classes use the same contract. A custom configuration
-can inherit `StructuredParameterValue` and declare its allowed variants, or
-trusted Python code can call `register_structured_input()` in
-`pyrit.registry.resolution` to declare variants and nested component references.
-Only server-declared types can be constructed. Clients cannot select modules,
-execute code, or deserialize arbitrary objects. Callables and other Python-only
-values need a Python initializer or programmatic factory.
-
-`GET /api/techniques/types` exposes the shared `Parameter` metadata and the
-definition schema. The GUI is a basic subset of this contract; it is not the
-backend's construction boundary. `GET /api/techniques` and detail responses
-use `AttackTechniqueFactory.get_configuration()` for safe display. Identity
-hashes and display projections are not lossless construction recipes.
-
-New definitions are **runtime only**. They are lost on restart or setup reset.
+New techniques are **runtime only**. They are lost on restart or setup reset.
 The instance registry exposes a mutation revision. Compatible scenario enums,
 metadata, estimates, and summary caches use this revision and registry identity,
 including direct `.instances.register()` calls and registry replacement.

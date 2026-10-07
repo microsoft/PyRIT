@@ -384,23 +384,20 @@ export interface TechniqueTypeEntry {
 
 export interface TechniqueTypeResponse {
   items: TechniqueTypeEntry[]
-  definition_schema: Record<string, unknown>
-  factory_parameters: Parameter[]
-  seed_parameters: Record<string, Parameter[]>
 }
 
 export interface CreateTechniqueRequest {
   name: string
   description?: string
   tags: string[]
-  attack_type: string
-  attack_args: Record<string, unknown>
-  factory_options: {
-    adversarial_chat?: string
-    adversarial_system_prompt?: string
-    adversarial_seed_prompt?: string
-    adversarial_prompt_template?: string
-  }
+  type: string
+  params: Record<string, unknown>
+  request_converters?: string[]
+  response_converters?: string[]
+  adversarial_chat?: string
+  adversarial_system_prompt?: string
+  adversarial_seed_prompt?: string
+  adversarial_prompt_template?: string
 }
 
 export interface RegistryReferenceOption {

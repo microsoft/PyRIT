@@ -1,14 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Technique catalog responses and the shared construction contract."""
+"""Technique catalog responses and runtime construction requests."""
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pyrit.models import Parameter
-from pyrit.models.technique_definition import TechniqueDefinition
+from pyrit.models.request_limits import MAX_ITEMS
+
+TechniqueSelector = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
 
 
 class TechniqueInstance(BaseModel):
@@ -40,12 +42,40 @@ class TechniqueTypeEntry(BaseModel):
 
 
 class TechniqueTypeResponse(BaseModel):
-    """Metadata for forms and clients that use the full definition contract."""
+    """Attack constructor metadata for the basic creation form."""
 
     items: list[TechniqueTypeEntry]
-    definition_schema: dict[str, Any]
-    factory_parameters: list[Parameter]
-    seed_parameters: dict[str, list[Parameter]]
 
 
-CreateTechniqueRequest = TechniqueDefinition
+class CreateTechniqueRequest(BaseModel):
+    """Construct a deferred factory using existing registry references."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+
+    name: TechniqueSelector
+    type: str = Field(min_length=1, max_length=256)
+    params: dict[str, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
+    description: str | None = None
+    tags: list[TechniqueSelector] = Field(default_factory=list, max_length=MAX_ITEMS)
+    request_converters: list[str] | None = Field(default=None, max_length=MAX_ITEMS)
+    response_converters: list[str] | None = Field(default=None, max_length=MAX_ITEMS)
+    adversarial_chat: str | None = None
+    adversarial_system_prompt: str | None = None
+    adversarial_seed_prompt: str | None = None
+    adversarial_prompt_template: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        if value.casefold() in {"all", "default", "types"}:
+            raise ValueError("all, default, and types are reserved technique names")
+        return value
+
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, value: list[str]) -> list[str]:
+        if len({tag.casefold() for tag in value}) != len(value):
+            raise ValueError("Tags must be unique, including letter case")
+        if {"all", "default"} & {tag.casefold() for tag in value}:
+            raise ValueError("all and default are reserved selectors")
+        return value

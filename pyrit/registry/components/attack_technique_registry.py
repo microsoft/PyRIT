@@ -7,9 +7,9 @@ Attack technique registry for PyRIT.
 A registry for ``AttackTechniqueFactory`` instances that scenarios and
 initializers register and later retrieve. Like ``ConverterRegistry`` it is a
 ``Registry`` whose pre-configured instances live under the ``instances``
-property; unlike converters, its buildable class catalog is intentionally empty
-for now — the factory still owns its own construction, and the catalog is lit up
-later when the factory is decoupled into a buildable component.
+property. It uses ``AttackRegistry`` for attack classes rather than maintaining
+another class catalog. ``create_factory`` resolves basic inputs; the factory
+constructs the attack only when the scenario supplies execution inputs.
 
 Scenarios and initializers register self-describing factories (via
 ``register_from_factories``), retrieve them with ``get_factories`` /
@@ -22,15 +22,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pyrit.models import AttackIdentifier, AttackTechniqueSeedGroup, ComponentType, Parameter, Seed, SeedPrompt
+from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
-    from pyrit.models.technique_definition import TechniqueDefinition
     from pyrit.scenario.core.attack_technique_factory import (
         AttackTechniqueFactory,
         ScorerOverridePolicy,
@@ -97,20 +96,13 @@ def _validate_generated_member_collisions(
 
 @dataclass(frozen=True)
 class AttackTechniqueMetadata(RegistryMetadata):
-    """
-    Metadata describing a registered attack-technique class.
-
-    Placeholder for the buildable catalog, which is intentionally empty until the
-    factory is decoupled into a buildable component. It carries only the common
-    ``RegistryMetadata`` fields today; technique-specific fields are added when
-    the catalog is lit up.
-    """
+    """Shared metadata type for the inherited, empty technique class catalog."""
 
 
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
-    """Factory storage with an atomic definition-admission path."""
+    """Factory storage with an atomic runtime-admission path."""
 
-    def register_definition(self, factory: AttackTechniqueFactory) -> None:
+    def register_runtime(self, factory: AttackTechniqueFactory) -> None:
         """
         Check selector collisions while holding the same lock as registration.
 
@@ -157,9 +149,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
     It is a ``Registry``: pre-configured factories live under the ``instances``
     property (``register``, ``get``, ``get_all_instances``, ``get_by_tag``, …),
-    a ``DefaultInstanceRegistry``. The buildable class catalog is intentionally
-    empty for now — the factory still owns construction — so ``_discover``
-    registers no classes.
+    a ``DefaultInstanceRegistry``. Attack classes come from ``AttackRegistry``;
+    this registry has no separate class catalog.
     """
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
@@ -178,9 +169,22 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         self.instances = TechniqueInstanceRegistry(instance_type=_attack_technique_factory_type)
         self._scorer_override_policy = ScorerOverridePolicy.WARN
 
-    def build_from_definition(self, definition: TechniqueDefinition) -> AttackTechniqueFactory:
+    def create_factory(
+        self,
+        *,
+        name: str,
+        attack_type: str,
+        params: dict[str, Any] | None = None,
+        request_converters: list[str] | None = None,
+        response_converters: list[str] | None = None,
+        **factory_kwargs: Any,
+    ) -> AttackTechniqueFactory:
         """
-        Build a validated factory without registering it or creating an attack.
+        Resolve basic registry inputs into a factory without creating an attack.
+
+        Attack types come from ``AttackRegistry``; converters and the adversarial
+        target reference existing instances. Seeds, scoring configurations, and
+        conversation configurations remain available through Python factories.
 
         Returns:
             AttackTechniqueFactory: The configured deferred factory.
@@ -188,94 +192,81 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Raises:
             ValueError: If the attack or its inputs are not supported.
         """
+        from pyrit.executor.attack import AttackConverterConfig
+        from pyrit.prompt_normalizer import ConverterConfiguration
         from pyrit.registry.components.attack_registry import AttackRegistry
-        from pyrit.registry.resolution import resolve_json_constructor_args, resolve_json_parameter
-        from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+        from pyrit.registry.resolution import resolve_constructor_args, resolve_reference_value
+        from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
         registry = AttackRegistry.get_registry_singleton()
         try:
-            attack_class = registry.get_class(definition.attack_type)
+            attack_class = registry.get_class(attack_type)
         except KeyError as exc:
-            raise ValueError(f"Attack type '{definition.attack_type}' is not registered") from exc
-        attack_args = resolve_json_constructor_args(
+            raise ValueError(f"Attack type '{attack_type}' is not registered") from exc
+        params = params if params is not None else {}
+        deferred = {"objective_target", "attack_adversarial_config", "attack_scoring_config"}
+        if params.keys() & deferred:
+            raise ValueError(f"These parameters are supplied at execution: {sorted(params.keys() & deferred)}")
+        parameters = registry.get_class_metadata(attack_class).parameters
+        names = {parameter.name for parameter in parameters}
+        supplied = set(params)
+        if request_converters is not None or response_converters is not None:
+            if "attack_converter_config" in params:
+                raise ValueError("Do not combine attack_converter_config with converter name lists")
+            if "attack_converter_config" not in names:
+                raise ValueError(f"Attack '{attack_type}' does not accept converters")
+            supplied.add("attack_converter_config")
+        missing = [
+            parameter.name
+            for parameter in parameters
+            if parameter.required and parameter.name not in supplied and parameter.name not in deferred
+        ]
+        if missing:
+            raise ValueError(f"Missing required parameters for '{attack_type}': {missing}")
+        attack_args = resolve_constructor_args(
             cls=attack_class,
-            raw_args=definition.attack_args,
+            raw_args=params,
             identifier_type=AttackIdentifier,
-            deferred=frozenset({"objective_target", "attack_adversarial_config", "attack_scoring_config"}),
-            forbidden=frozenset({"objective_target", "attack_adversarial_config"}),
+            json_input=True,
         )
-        options = definition.factory_options.model_dump(exclude_unset=True)
-        accepts_adversarial = any(
-            parameter.name == "attack_adversarial_config"
-            for parameter in registry.get_class_metadata(attack_class).parameters
-        )
-        wired_prompts = {
-            name
-            for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template")
-            if options.get(name) is not None
-        }
-        simulated = definition.seed_technique is not None and any(
-            seed.type == "SeedSimulatedConversation" for seed in definition.seed_technique.seeds
-        )
-        if not accepts_adversarial and (
-            wired_prompts
-            or (options.get("adversarial_chat") is not None and not simulated)
-            or (options.get("uses_adversarial") is True and not simulated)
+        if request_converters is not None or response_converters is not None:
+            converter_args = {}
+            for key, values in {
+                "request_converters": request_converters,
+                "response_converters": response_converters,
+            }.items():
+                converter_args[key] = ConverterConfiguration.from_converters(
+                    converters=[
+                        resolve_reference_value(
+                            component_type=ComponentType.CONVERTER, value=value, owner="Technique", name=key
+                        )
+                        for value in values or []
+                    ]
+                )
+            attack_args["attack_converter_config"] = AttackConverterConfig(**converter_args)
+        if "attack_adversarial_config" not in names and any(
+            factory_kwargs.get(key) is not None
+            for key in (
+                "adversarial_chat",
+                "adversarial_system_prompt",
+                "adversarial_seed_prompt",
+                "adversarial_prompt_template",
+            )
         ):
-            raise ValueError(f"Attack '{definition.attack_type}' does not accept adversarial factory settings")
-        if "scorer_override_policy" in options:
-            options["scorer_override_policy"] = ScorerOverridePolicy(options["scorer_override_policy"])
-        if options.get("adversarial_chat") is not None:
-            from pyrit.registry.resolution import resolve_reference_value
-
-            options["adversarial_chat"] = resolve_reference_value(
+            raise ValueError(f"Attack '{attack_type}' does not accept adversarial factory settings")
+        if factory_kwargs.get("adversarial_chat") is not None:
+            factory_kwargs["adversarial_chat"] = resolve_reference_value(
                 component_type=ComponentType.TARGET,
-                value=options["adversarial_chat"],
+                value=factory_kwargs["adversarial_chat"],
                 owner="Technique",
                 name="adversarial_chat",
             )
-        for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
-            if name in options:
-                options[name] = resolve_json_parameter(
-                    parameter=Parameter(
-                        name=name, description="", param_type=str | SeedPrompt | None, variants={"SeedPrompt": []}
-                    ),
-                    value=options[name],
-                )
-        seed_group = None
-        if definition.seed_technique is not None:
-            seeds = [
-                resolve_json_parameter(
-                    parameter=Parameter(name="seed", description="", param_type=Seed, variants={}),
-                    value=seed.model_dump(),
-                )
-                for seed in definition.seed_technique.seeds
-            ]
-            seed_group = AttackTechniqueSeedGroup(
-                seeds=seeds,
-                insertion_index=definition.seed_technique.insertion_index,
-                prompt_placement=definition.seed_technique.prompt_placement,
-            )
         return AttackTechniqueFactory(
-            name=definition.name,
-            description=definition.description,
-            technique_tags=definition.tags,
+            name=name,
             attack_class=attack_class,
             attack_kwargs=attack_args,
-            seed_technique=seed_group,
-            **options,
+            **factory_kwargs,
         )
-
-    def register_definition(self, definition: TechniqueDefinition) -> AttackTechniqueFactory:
-        """
-        Validate all settings and selector collisions before one atomic registration.
-
-        Returns:
-            AttackTechniqueFactory: The registered factory.
-        """
-        factory = self.build_from_definition(definition)
-        self.instances.register_definition(factory)
-        return factory
 
     @property
     def catalog_revision(self) -> tuple[object, int]:
@@ -283,7 +274,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return self.instances, self.instances.revision
 
     def _discover(self) -> None:
-        """Register no classes: the factory owns construction; the catalog is lit up later."""
+        """Register no classes: attack class discovery belongs to ``AttackRegistry``."""
 
     def _metadata_class(self) -> type[AttackTechniqueMetadata]:
         """Return ``AttackTechniqueMetadata``; unused while the buildable catalog is empty."""

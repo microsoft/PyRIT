@@ -12,13 +12,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ScenarioRunSizeEstimate, ScenarioRunSizeEstimateRequest, SeedObjective
-from pyrit.models.technique_definition import TechniqueDefinition
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import AttackTechniqueFactory
@@ -60,10 +60,15 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
     AttackRegistry.get_registry_singleton().register_class(PromptSendingAttack, name="alias")
     metadata = await service.types_async()
     assert "alias" in {entry.attack_type for entry in metadata.items}
-    assert metadata.definition_schema["additionalProperties"] is False
-    assert {"SeedPrompt", "SeedSimulatedConversation"} == set(metadata.seed_parameters)
+    assert set(metadata.model_dump()) == {"items"}
+    assert all(
+        parameter.name
+        not in {"objective_target", "attack_adversarial_config", "attack_scoring_config", "attack_converter_config"}
+        for entry in metadata.items
+        for parameter in entry.parameters
+    )
     assert metadata.model_dump_json()
-    created = await service.create_async(TechniqueDefinition(name="from_alias", attack_type="alias"))
+    created = await service.create_async(CreateTechniqueRequest(name="from_alias", type="alias"))
     assert created.attack_type == "PromptSendingAttack"
 
 
@@ -78,8 +83,8 @@ def test_rest_create_detail_types_and_errors(
             "name": "rest_example",
             "description": "A basic technique",
             "tags": ["custom"],
-            "attack_type": "PromptSendingAttack",
-            "attack_args": {"max_attempts_on_failure": 0},
+            "type": "PromptSendingAttack",
+            "params": {"max_attempts_on_failure": 0},
         },
     )
     assert created.status_code == 201, created.text
@@ -87,14 +92,10 @@ def test_rest_create_detail_types_and_errors(
     assert client.get("/api/techniques/rest_example").json() == created.json()
     assert client.get("/api/techniques/missing").status_code == 404
     assert (
-        client.post("/api/techniques", json={"name": "rest_example", "attack_type": "PromptSendingAttack"}).status_code
-        == 400
+        client.post("/api/techniques", json={"name": "rest_example", "type": "PromptSendingAttack"}).status_code == 400
     )
-    assert client.post("/api/techniques", json={"name": "unknown", "attack_type": "missing"}).status_code == 400
-    assert (
-        client.post("/api/techniques", json={"name": "bad-name", "attack_type": "PromptSendingAttack"}).status_code
-        == 422
-    )
+    assert client.post("/api/techniques", json={"name": "unknown", "type": "missing"}).status_code == 400
+    assert client.post("/api/techniques", json={"name": "bad-name", "type": "PromptSendingAttack"}).status_code == 422
     assert "unknown" not in registry.instances.get_names()
 
 
@@ -124,8 +125,8 @@ async def test_warm_catalog_estimates_and_summaries_refresh_without_changing_sna
             before_configured = await service.estimate_scenario_run_size_async(
                 scenario_name="airt.rapid_response", request=request
             )
-            registry.register_definition(
-                TechniqueDefinition(name="runtime_new", attack_type="PromptSendingAttack", tags=["user_group"])
+            await TechniqueService().create_async(
+                CreateTechniqueRequest(name="runtime_new", type="PromptSendingAttack", tags=["user_group"])
             )
             after_metadata = scenario_registry.get_registered_class_metadata("airt.rapid_response")
             assert after_metadata is not None
@@ -196,8 +197,10 @@ def test_filtered_and_fixed_catalogs_keep_existing_pool_rules(registry: AttackTe
 
     fixed = _build_jailbreak_technique()
     filtered = _build_benchmark_technique()
-    registry.register_definition(TechniqueDefinition(name="plain_user", attack_type="PromptSendingAttack"))
-    registry.register_definition(TechniqueDefinition(name="adversarial_user", attack_type="RedTeamingAttack"))
+    registry.instances.register_runtime(registry.create_factory(name="plain_user", attack_type="PromptSendingAttack"))
+    registry.instances.register_runtime(
+        registry.create_factory(name="adversarial_user", attack_type="RedTeamingAttack")
+    )
     current = _build_benchmark_technique()
     names = {item.value for item in current.get_all_techniques()}
     assert current is not filtered
@@ -241,3 +244,32 @@ async def test_lifecycle_clears_technique_binding_async(registry: AttackTechniqu
     await close_services_async()
     AttackTechniqueRegistry.reset_registry_singleton()
     assert get_technique_service() is not service
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"name": "all"},
+        {"name": "types"},
+        {"name": "DEFAULT"},
+        {"name": "bad-name"},
+        {"tags": ["all"]},
+        {"tags": ["alpha", "Alpha"]},
+        {"tags": ["bad-tag"]},
+        {"seed_technique": {"seeds": []}},
+        {"factory_options": {}},
+        {"attack_args": {}},
+        {"adversarial_system_prompt": {"type": "SeedPrompt", "parameters": {"value": "x"}}},
+        {"params": {"number": float("inf")}},
+        {"request_converters": [False]},
+    ],
+)
+def test_request_rejects_invalid_selectors_and_removed_inputs(
+    registry: AttackTechniqueRegistry, extra: dict[str, Any]
+) -> None:
+    from pydantic import ValidationError
+
+    before = registry.catalog_revision
+    with pytest.raises(ValidationError):
+        CreateTechniqueRequest.model_validate({"name": "new", "type": "PromptSendingAttack", **extra})
+    assert registry.catalog_revision == before

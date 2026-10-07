@@ -15,8 +15,6 @@ import type { CreateTechniqueRequest, PaginationInfo, Parameter, ParameterRefere
 import { useCreateTechniqueDialogStyles } from './CreateTechniqueDialog.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
-const NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
-const RESERVED_SELECTORS = new Set(['all', 'default'])
 
 function canConfigure(parameter: Parameter): boolean {
   if (parameter.reference_type) return parameter.reference_type !== 'scenario'
@@ -59,7 +57,7 @@ interface CreateTechniqueDialogProps {
   onCreated: () => void
 }
 
-/** A basic form; the REST definition contract also supports advanced seeds and configurations. */
+/** Configure existing attacks with registry references. Advanced factories use Python. */
 export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTechniqueDialogProps) {
   const styles = useCreateTechniqueDialogStyles()
   const [types, setTypes] = useState<TechniqueTypeEntry[]>([])
@@ -130,38 +128,25 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
   const submit = async (): Promise<void> => {
     const fail = (message: string): void => { setError(message); setSubmitError(true) }
     const parsedTags = tags.split(',').map((tag) => tag.trim()).filter(Boolean)
-    if (!NAME_PATTERN.test(name) || RESERVED_SELECTORS.has(name.toLowerCase()) || name.toLowerCase() === 'types') {
-      fail('Use a unique name that starts with a letter. Use letters, digits, and underscores. Do not use all, default, or types.')
-      return
-    }
-    if (parsedTags.some((tag) => !NAME_PATTERN.test(tag) || RESERVED_SELECTORS.has(tag.toLowerCase()))
-      || new Set(parsedTags.map((tag) => tag.toLowerCase())).size !== parsedTags.length) {
-      fail('Use unique tags with letters, digits, and underscores. Do not use all or default.')
-      return
-    }
     if (!selected || unsupportedRequired.length) {
-      fail('This attack needs inputs that cannot be set in this form. Use the REST API or a Python initializer.')
+      fail('This attack needs inputs that cannot be set in this form. Use a Python initializer.')
       return
     }
     const result = buildParametersFromForm(parameters, values)
     if (!result.ok) { fail(result.error); return }
     const request: CreateTechniqueRequest = {
-      name, description, tags: parsedTags, attack_type: selectedType,
-      attack_args: result.parameters ?? {}, factory_options: {},
+      name, description, tags: parsedTags, type: selectedType,
+      params: result.parameters ?? {},
     }
     if (selected.supports_converters && (requestConverters.length || responseConverters.length)) {
-      request.attack_args.attack_converter_config = {
-        type: 'AttackConverterConfig', parameters: {
-          request_converters: requestConverters.map((converter) => ({ type: 'ConverterConfiguration', parameters: { converters: [converter] } })),
-          response_converters: responseConverters.map((converter) => ({ type: 'ConverterConfiguration', parameters: { converters: [converter] } })),
-        },
-      }
+      request.request_converters = requestConverters
+      request.response_converters = responseConverters
     }
     if (selected.supports_adversarial) {
-      if (adversarialTarget) request.factory_options.adversarial_chat = adversarialTarget
-      if (systemPrompt) request.factory_options.adversarial_system_prompt = systemPrompt
-      if (seedPrompt) request.factory_options.adversarial_seed_prompt = seedPrompt
-      if (turnPrompt) request.factory_options.adversarial_prompt_template = turnPrompt
+      if (adversarialTarget) request.adversarial_chat = adversarialTarget
+      if (systemPrompt) request.adversarial_system_prompt = systemPrompt
+      if (seedPrompt) request.adversarial_seed_prompt = seedPrompt
+      if (turnPrompt) request.adversarial_prompt_template = turnPrompt
     }
     setSubmitting(true)
     setError(null)
@@ -189,7 +174,9 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
               {!loading && types.length > 0 && (
                 <>
-                  <Field label="Registry name" required><Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} /></Field>
+                  <Field label="Registry name" required hint="Start with a letter. Use letters, digits, and underscores.">
+                    <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
+                  </Field>
                   <Field label="Description"><Textarea value={description} disabled={submitting} onChange={(_, data) => setDescription(data.value)} /></Field>
                   <Field label="Tags" hint="Comma-separated tags. No default, core, or light tag is added automatically.">
                     <Input value={tags} disabled={submitting} onChange={(_, data) => setTags(data.value)} />
@@ -204,9 +191,9 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
                     </Select>
                   </Field>
                   {selected && <Text>{selected.description}</Text>}
-                  {selected && <Text>This form shows supported basic inputs. Advanced fields, complex seed groups, and simulated conversations need the REST API or Python. Configuration variants with unsupported required inputs are not available here.</Text>}
+                  {selected && <Text>This form shows supported basic inputs. Seeds, conversations, and advanced configurations need a Python initializer.</Text>}
                   {attackParameters.filter((parameter) => !canConfigure(parameter)).map((parameter) => (
-                    <Text key={parameter.name}>{parameter.name}: {parameter.required ? 'Required input' : 'Optional input'} cannot be set here. Use the REST API or Python.</Text>
+                    <Text key={parameter.name}>{parameter.name}: {parameter.required ? 'Required input' : 'Optional input'} cannot be set here. Use Python.</Text>
                   ))}
                   {parameters.map((parameter) => (
                     <ParameterField key={parameter.name} parameter={parameter} value={values[parameter.name] ?? ''}
@@ -237,7 +224,7 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
           </DialogContent>
           <DialogActions>
             <Button className={styles.action} onClick={onClose}>Cancel</Button>
-            <Button className={styles.action} appearance="primary" disabled={loading || submitting || !selected || unsupportedRequired.length > 0}
+            <Button className={styles.action} appearance="primary" disabled={loading || submitting || !name.trim() || !selected || unsupportedRequired.length > 0}
               onClick={() => { void submit() }}>{submitting ? 'Adding...' : 'Add technique'}</Button>
           </DialogActions>
         </DialogBody>

@@ -28,13 +28,6 @@ class AttackRegistry(Registry["AttackStrategy", RegistryMetadata]):
     This registry stores classes, not live attacks or attack technique factories.
     """
 
-    def __init__(self, *, lazy_discovery: bool = True) -> None:
-        """Enable declared configuration inputs before class discovery."""
-        from pyrit.registry.technique_inputs import declare_technique_inputs
-
-        declare_technique_inputs()
-        super().__init__(lazy_discovery=lazy_discovery)
-
     def _base_type(self) -> type[AttackStrategy]:
         """Return the attack base class, imported lazily."""
         from pyrit.executor.attack import AttackStrategy

@@ -31,7 +31,7 @@ async def list_techniques_async() -> TechniqueListResponse:
 @router.get("/types", response_model=TechniqueTypeResponse)
 async def technique_types_async() -> TechniqueTypeResponse:
     """
-    Get attack metadata and the declarative definition contract.
+    Get attack constructor metadata for basic technique creation.
 
     Returns:
         TechniqueTypeResponse: Declared construction inputs.
