@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from pyrit.models import Score, UndeterminedScoreError
 from pyrit.score.score_aggregator_result import ScoreAggregatorResult
 from pyrit.score.score_utils import (
+    ORIGINAL_FLOAT_VALUE_KEY,
     combine_metadata_and_categories,
     format_score_for_rationale,
 )
@@ -144,6 +145,10 @@ def _create_aggregator(
             undetermined_msg=undetermined_msg,
         )
         metadata, category = combine_metadata_and_categories(scores_list)
+        if len(scores_list) > 1:
+            # A child's original float doesn't describe the combined verdict, and normalize_score_to_float
+            # would prefer it over the verdict.
+            metadata.pop(ORIGINAL_FLOAT_VALUE_KEY, None)
 
         return ScoreAggregatorResult(
             value=result,

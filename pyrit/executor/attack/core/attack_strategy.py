@@ -722,6 +722,12 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                 scoring_config.objective_scorer.get_identifier()
             )
 
+        # Disabled feedback changes what the adversarial chat sees, so it must change the eval hash.
+        # Enabled feedback is the default and is omitted to keep existing hashes stable.
+        use_score_as_feedback: bool | None = None
+        if scoring_config is not None and not scoring_config.use_score_as_feedback:
+            use_score_as_feedback = False
+
         # Add adversarial chat target and its effective prompts if present. The adversarial
         # target becomes a child (filtered to model params by the eval rule), while the
         # effective system/seed prompts land on the attack-strategy node so they are included
@@ -771,6 +777,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             adversarial_system_prompt=adversarial_system_prompt,
             adversarial_seed_prompt=adversarial_seed_prompt,
             adversarial_prompt_template=adversarial_prompt_template,
+            use_score_as_feedback=use_score_as_feedback,
         )
 
     @staticmethod

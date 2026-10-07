@@ -1012,4 +1012,38 @@ describe('ConverterPanel', () => {
     expect(screen.getByRole('textbox', { name: 'Stage 1 output - Text' })).toHaveValue('first')
     expect(screen.getByRole('textbox', { name: 'Stage 2 output - Text' })).toHaveValue('last')
   })
+
+  it('keeps nested multiple-region markers when continuing from an edited stage', async () => {
+    const original = 'keep \u27ea\u27ea\u27eaone\u27eb\u27eb\u27eb and \u27ea\u27ea\u27eatwo\u27eb\u27eb\u27eb'
+    const first = 'keep \u27ea\u27eab25l\u27eb\u27eb and \u27ea\u27eadHdv\u27eb\u27eb'
+    const final = 'keep \u27eaYjI1bA==\u27eb and \u27eaZEhkdg==\u27eb'
+    mockedConvertersApi.previewConversion
+      .mockResolvedValueOnce(makePreviewResponse(['base64-default', 'base64-default'], [first, final], original))
+      .mockResolvedValueOnce(makePreviewResponse(['base64-default'], [`${final} edited`], `${first} edited`))
+    const user = userEvent.setup()
+    renderPanel({ previewText: original })
+    await screen.findByTestId('converter-panel-list')
+    await selectConverter('base64-default')
+    await selectConverter('base64-default')
+    await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
+
+    expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith({
+      original_value: original, original_value_data_type: 'text',
+      converter_ids: ['base64-default', 'base64-default'],
+    })
+    const intermediate = screen.getByRole('textbox', { name: 'Stage 1 output - Text' })
+    expect(intermediate).toHaveValue(first)
+    await user.type(intermediate, ' edited')
+    expect(screen.queryByRole('textbox', { name: 'Stage 2 output - Text' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Convert Text from stage 2 to end' }))
+
+    expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith({
+      original_value: `${first} edited`, original_value_data_type: 'text',
+      converter_ids: ['base64-default'],
+    })
+    expect(screen.getByRole('textbox', { name: 'Stage 2 output - Text' })).toHaveValue(`${final} edited`)
+    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').text.convertedValue)
+      .toBe(`${final} edited`)
+  })
 })

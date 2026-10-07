@@ -8,6 +8,27 @@ import { useConverterPanelStyles } from './ConverterPanel.styles'
 const START_MARKER = '\u27ea'
 const END_MARKER = '\u27eb'
 
+interface MarkerRegion {
+  readonly start: number
+  readonly end: number
+  readonly depth: number
+}
+
+function parseMarkedRegions(value: string): MarkerRegion[] | null {
+  const starts: number[] = []
+  const regions: MarkerRegion[] = []
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === START_MARKER) {
+      starts.push(index)
+    } else if (value[index] === END_MARKER) {
+      const start = starts.pop()
+      if (start === undefined) return null
+      regions.push({ start, end: index + END_MARKER.length, depth: starts.length })
+    }
+  }
+  return starts.length ? null : regions
+}
+
 function sourceOffset(value: string, textareaOffset: number): number {
   let offset = 0
   for (let index = 0; index < textareaOffset && offset < value.length; index++) {
@@ -18,28 +39,29 @@ function sourceOffset(value: string, textareaOffset: number): number {
 }
 
 function highlightMarkedRegions(value: string): ReactNode[] {
+  const regions = parseMarkedRegions(value)
+  if (!regions) return [value]
   const parts: ReactNode[] = []
   let cursor = 0
-  while (cursor < value.length) {
-    const start = value.indexOf(START_MARKER, cursor)
-    if (start < 0) {
-      parts.push(value.slice(cursor))
-      break
-    }
-    const end = value.indexOf(END_MARKER, start + START_MARKER.length)
-    if (end < 0) {
-      parts.push(value.slice(cursor))
-      break
-    }
+  for (const { start, end, depth } of regions) {
+    if (depth !== 0) continue
     parts.push(value.slice(cursor, start))
     parts.push(
       <mark key={`${start}-${end}`} data-testid="conversion-marked-region">
-        {value.slice(start, end + END_MARKER.length)}
+        {value.slice(start, end)}
       </mark>,
     )
-    cursor = end + END_MARKER.length
+    cursor = end
   }
+  parts.push(value.slice(cursor))
   return parts
+}
+
+function selectionCrossesRegion(start: number, end: number, region: MarkerRegion): boolean {
+  const outside = end <= region.start || start >= region.end
+  const inside = start >= region.start + START_MARKER.length && end <= region.end - END_MARKER.length
+  const enclosing = start <= region.start && end >= region.end
+  return !outside && !inside && !enclosing
 }
 
 interface ConversionTextEditorProps {
@@ -78,11 +100,13 @@ export default function ConversionTextEditor({
     const selected = value.slice(start, end)
     const before = value.slice(0, start)
     if (!selected || selection.value !== value) return
-    if (
-      selected.includes(START_MARKER) || selected.includes(END_MARKER)
-      || before.lastIndexOf(START_MARKER) > before.lastIndexOf(END_MARKER)
-    ) {
-      setError('Select text outside an existing marked region.')
+    const regions = parseMarkedRegions(value)
+    if (!regions) {
+      setError('Match all start and end markers before adding a marked region.')
+      return
+    }
+    if (regions.some((region) => selectionCrossesRegion(start, end, region))) {
+      setError('Select text inside a marked region or include the complete region.')
       return
     }
     setError(null)
@@ -132,7 +156,7 @@ export default function ConversionTextEditor({
           className={styles.selectionButton}
           disabled={selection.start === selection.end || selection.value !== value}
           aria-label={`Convert selection only in ${label}`}
-          title="Convert only the marked text in the next stage. Later stages use the whole result."
+          title="Each stage converts innermost marked regions and removes one layer. With no markers, it converts the whole result."
           onClick={markSelection}
         >
           Convert selection only

@@ -375,21 +375,21 @@ class TestGetScenarioRunRoute:
 
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.snapshot_active_run.return_value = MagicMock(error=None)
-            mock_service.get_run_from_storage_async = AsyncMock(return_value=mock_response)
+            mock_service.get_run_async = AsyncMock(return_value=mock_response)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/test-run-id")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["status"] == "IN_PROGRESS"
+        mock_service.get_run_async.assert_awaited_once_with(scenario_result_id="test-run-id")
+        mock_service.snapshot_active_run.assert_not_called()
 
     def test_get_run_not_found_returns_404(self, client: TestClient) -> None:
         """Test that getting a non-existent run returns 404."""
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.snapshot_active_run.return_value = MagicMock(error=None)
-            mock_service.get_run_from_storage_async = AsyncMock(return_value=None)
+            mock_service.get_run_async = AsyncMock(return_value=None)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/nonexistent")
@@ -433,8 +433,7 @@ class TestGetScenarioRunRoute:
     def test_progress_invalid_cursor_returns_400(self, client: TestClient) -> None:
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.snapshot_active_run.return_value = MagicMock(active_group_ids=())
-            mock_service.get_run_progress_from_storage_async = AsyncMock(
+            mock_service.get_run_progress_async = AsyncMock(
                 side_effect=ValueError("Malformed scenario progress cursor.")
             )
             mock_get.return_value = mock_service
@@ -470,36 +469,29 @@ class TestGetScenarioRunRoute:
             ),
             plan_complete=True,
         )
-        snapshot_thread: list[int] = []
-        storage_thread: list[int] = []
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.snapshot_active_run.side_effect = lambda **_: (
-                snapshot_thread.append(get_ident())
-                or MagicMock(
-                    active_group_ids=("active-group",),
-                    queue_position=None,
-                    active_scenario_result_id="test-run-id",
-                )
-            )
-            mock_service.get_run_progress_from_storage_async = AsyncMock(
-                side_effect=lambda **_: storage_thread.append(get_ident()) or progress
-            )
+            mock_service.get_run_progress_async = AsyncMock(return_value=progress)
             mock_get.return_value = mock_service
 
             response = client.get("/api/scenarios/runs/test-run-id/progress?limit=25")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["plan"]["scenario_registry_name"] == "test.scenario"
-        mock_service.get_run_progress_from_storage_async.assert_called_once_with(
+        mock_service.get_run_progress_async.assert_awaited_once_with(
             scenario_result_id="test-run-id",
             since=None,
             limit=25,
-            active_group_ids=("active-group",),
-            queue_position=None,
-            active_scenario_result_id="test-run-id",
         )
-        assert snapshot_thread[0] == storage_thread[0]
+        mock_service.snapshot_active_run.assert_not_called()
+
+    def test_progress_not_found_returns_404(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
+            mock_get.return_value.get_run_progress_async = AsyncMock(return_value=None)
+
+            response = client.get("/api/scenarios/runs/nonexistent/progress")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_progress_supports_direct_keyword_call(self) -> None:
         progress = ScenarioRunProgress(
@@ -529,12 +521,7 @@ class TestGetScenarioRunRoute:
         )
         with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as mock_get:
             mock_service = MagicMock()
-            mock_service.snapshot_active_run.return_value = MagicMock(
-                active_group_ids=(),
-                queue_position=None,
-                active_scenario_result_id="test-run-id",
-            )
-            mock_service.get_run_progress_from_storage_async = AsyncMock(return_value=progress)
+            mock_service.get_run_progress_async = AsyncMock(return_value=progress)
             mock_get.return_value = mock_service
 
             result = await get_scenario_run_progress(
@@ -544,13 +531,10 @@ class TestGetScenarioRunRoute:
             )
 
         assert result == progress
-        mock_service.get_run_progress_from_storage_async.assert_called_once_with(
+        mock_service.get_run_progress_async.assert_awaited_once_with(
             scenario_result_id="test-run-id",
             since=None,
             limit=25,
-            active_group_ids=(),
-            queue_position=None,
-            active_scenario_result_id="test-run-id",
         )
 
 

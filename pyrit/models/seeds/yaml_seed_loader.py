@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import yaml
 
 from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_dataset import SeedDataset
 from pyrit.models.seeds.seed_origin import SeedOrigin
@@ -80,7 +81,7 @@ def _read_yaml(file: str | Path) -> dict[str, Any]:
     """
     file = verify_and_resolve_path(file)
     try:
-        data = yaml.safe_load(file.read_text("utf-8"))
+        data = safe_load_yaml(file.read_text("utf-8"))
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
 

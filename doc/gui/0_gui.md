@@ -102,7 +102,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target; their badge does not change the target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -131,13 +131,64 @@ you can edit it directly before applying it.
 
 To convert only part of a text value, select it and click **Convert selection only**.
 This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
-regions and removes their markers, preserving everything outside them. Marked regions
-have a colored highlight while their markers stay visible. Later stages convert the
-whole result unless you select another region. Multiple and multiline
-regions are supported; unmatched and nested regions are rejected. Empty regions
-pass an empty string to the converter. Partial
+regions and removes their markers, preserving everything outside them. Multiple,
+multiline, empty, and nested regions are supported. Each stage transforms **all
+innermost regions** and removes only their marker pairs. Outer markers remain for
+later stages. Marked regions have a colored highlight while every marker stays visible.
+You can select text inside a marked region or select one or more complete regions
+to add an outer pair. A selection that crosses only one boundary of an existing pair
+is rejected. Unmatched markers must be corrected before adding a region or converting.
+Empty regions pass an empty string to the converter. Partial
 conversion requires text input and text output. Without markers, converters retain
 their normal whole-value behavior, including media conversions.
+
+For a **Translate to French -> Base64 -> ROT13** pipeline, wrap each region three times:
+
+```text
+Decode this recursively: ⟪⟪⟪Hello⟫⟫⟫ and ⟪⟪⟪Goodbye⟫⟫⟫
+```
+
+If translation returns `Bonjour` and `Au revoir`, the regions change as follows:
+
+| Stage | First region | Second region |
+|---|---|---|
+| Translate to French | `⟪⟪Bonjour⟫⟫` | `⟪⟪Au revoir⟫⟫` |
+| Base64 | `⟪Qm9uam91cg==⟫` | `⟪QXUgcmV2b2ly⟫` |
+| ROT13 | `Dz9hnz91pt==` | `DKHtpzI2o2yl` |
+
+`Decode this recursively:` and ` and ` stay unchanged through these three stages.
+Regions can have different depths. A region with no markers left stays unchanged
+while other marked regions are selected. When no markers remain anywhere, any later
+converter transforms the whole value. If the pipeline ends with outer markers still
+present, those markers remain in the final value.
+
+For a `SelectiveTextConverter` with `TokenSelectionStrategy`, setting
+`preserve_tokens=True` keeps each converted region's marker pair for the next stage.
+That stage does not consume a marker layer. The default, `preserve_tokens=False`,
+consumes the innermost pairs as described above.
+Python callers can request the same behavior on ordinary converters with
+`convert_tokens_async(..., keep_tokens=True)`. Without markers, this wraps the
+whole text result; it does not wrap non-text outputs.
+Native token-selection wrappers nested with the same markers share one selection:
+if either preserves tokens, they retain one pair instead of adding duplicate pairs.
+Explicit nested marker pairs in the input remain intact.
+
+API clients can set non-empty `start_token` and `end_token` strings on converter
+preview and message requests, including queued sends. The same settings control
+request and response converter pipelines. For example, use
+`start_token="<|pyrit_start_8f3a|>"` and `end_token="<|pyrit_end_8f3a|>"`
+to select ASCII-marked regions:
+
+```text
+<|pyrit_start_8f3a|>hello<|pyrit_end_8f3a|>
+```
+
+Use the same settings on token-based `SelectiveTextConverter` instances in the
+pipeline. Other marker characters stay literal. Omitting these fields retains the
+Unicode defaults; the GUI selection button still inserts those defaults.
+Choose markers that are unlikely to appear in prompts or replies. If response
+converters are configured, an unmatched marker in a reply raises before that reply
+is stored. Longer markers reduce accidental matches but do not eliminate them.
 
 Click **Add converted value** to apply the final result, then **Send**. The exact
 applied value is sent and stored alongside the unchanged original; the backend does
@@ -168,16 +219,86 @@ CoPyRIT renders different response types inline:
 
 <img width="1662" alt="Text-to-image response" src="images/chat_image.png" />
 
-#### Branching Conversations
+#### Editing Conversations
 
-Each assistant message has four action buttons:
+Select **Edit Conversation**, beside the target dropdown in the chat ribbon, to make a local draft.
+Anyone who can view a conversation can edit a draft. The original messages stay
+unchanged. Insert or delete messages at any position, change their roles, and use
+the prompt area for text and attachments. The role selector is inside each prompt.
+Use the small **Insert message** control between messages and the **X** at the
+upper-right corner to delete a message. The attachment menu also provides text
+pieces and tool calls or responses. New messages offer `system`, `developer`, `user`, and
+`simulated_assistant` roles. Model replies become `simulated_assistant` context.
+Tool results become `simulated_tool` context. Saved and copied history is marked
+as simulated input, not evidence of a new model response or tool execution.
 
-1. **Copy to input:** Copies the message content and attachments into the current input box.
-2. **Copy to new conversation:** Creates a new conversation within the same attack and copies the message to its input.
-3. **Branch conversation:** Clones the conversation up to the selected message into a new conversation within the same attack.
-4. **Branch into new attack:** Opens a destination-target picker, then creates a new attack with the conversation cloned up to the selected message. This does not change the source chat or your defaults.
+Add a tool call to a `simulated_assistant` message from its content menu. Enter
+the call ID, name, and JSON arguments. **Add tool response** inserts a separate
+`simulated_tool` message after it and copies the call ID. A response needs a preceding,
+unanswered call. Tool content is stored, not executed.
 
-<img width="1663" alt="Branching into a new conversation" src="images/chat_branch.png" />
+During editing, targets without editable history are disabled. The target must
+also accept every effective history data type, including audio, video, and tool
+pieces. A converted piece is checked using its converted data type. The
+requirements update when pieces are added or removed. An incompatible current
+target shows a warning; select a compatible target or clear the selection to
+save a new attack without a target. These checks also apply on the server and
+when the first send binds an unbound attack.
+The selected target also checks its required tool fields before saving or binding.
+A rejected check does not save media or change the attack's target. A targetless
+draft can retain unsupported media and provider-specific content until a
+compatible target is selected. History validation checks native input support;
+it does not run message normalizers or change the saved content.
+
+Click the objective to edit it, or select **Add objective** on an empty chat.
+Changes made during conversation editing stay local until you save.
+Unsaved-change protection includes target-only changes. Canceling a draft leaves
+the normal prompt box and its conversions unchanged.
+The draft can have an objective and no messages or target. Sending is disabled
+while you edit. **Save conversation** opens a destination dialog:
+
+- **Same attack** adds a related conversation without replacing the main one.
+  This option is disabled for another operator's attack or a target conflict.
+- **New attack** creates a separate manual attack. A target is optional. For an
+  unbound attack, select a target from the chat dropdown before the first send.
+  That first send binds the attack and its conversations to the selected target.
+
+While editing, **Save to new attack** in the ribbon opens the same dialog with
+**New attack** selected. It works for unsaved drafts and converted conversations.
+The save confirmation disappears when you send the next prompt.
+
+The objective is shared by all conversations in an attack. Changing it outside
+conversation editing, or saving a changed objective to **Same attack**, resets the
+outcome to Undetermined and clears the current score links. Old scores stay in
+history. Saving to **New attack** does not change the source objective or scores.
+Unchanged message copies share their source scores. Changed content or roles get
+separate score identities, so scoring an edit does not change the source scores.
+You can also clear an existing objective. A message-only save to **Same attack**
+keeps the current shared objective, even if another edit changed it while your
+draft was open. Explicit objective changes still check for conflicting edits.
+
+**Convert Conversation** opens the converter panel and selects all messages.
+The converter icon in a prompt selects only that message. Use the checkboxes in chat to use batch
+mode, which pairs each **Original message** with its **Converted message**.
+A strong divider separates the converter pipeline from the results; lighter
+dividers separate message pairs. **Select all** and **Clear** control the
+selection. **Add converted values** applies batch results to the draft. Structured
+tool content is not passed to text converters.
+Single-message conversion keeps editable stage outputs. After a middle-stage
+edit, rerun only the remaining stages. Converter IDs record the stages used,
+including stages whose output was manually edited; they do not prove that the
+final value is unchanged. Applying or saving results does not run converters again.
+
+User and assistant messages have one **Copy conversation** menu. **This conversation**
+copies the selected message into the prompt box without saving or sending.
+**New conversation** and **New attack** copy the conversation through the selected
+message and open the saved destination directly, without the editor or save dialog.
+**New attack** keeps the source target when it supports the copied history. Otherwise,
+the copy has no target; select a compatible target before sending. The default target
+does not change this choice. Saving and copying support histories longer than 200 messages.
+Retrying the same failed save or copy reuses its save ID to avoid duplicate results.
+A new copy after a confirmed success gets a new ID.
+Downloads, original/converted views, and score details remain available.
 
 #### Conversations Panel
 
@@ -219,7 +340,7 @@ CoPyRIT enforces several safety guards:
 
 - **No target selected:** The composer is disabled without a warning banner. Click **Select a target** in the chat ribbon. If the registry is empty, add a target first.
 - **Single-turn targets:** Some targets (e.g., image generators) don't track conversation history. CoPyRIT shows a warning indicator and blocks additional messages after the first turn, offering a "New Conversation" button instead.
-- **Operator locking:** If you open a historical attack created by a different operator, the conversation is read-only. "Continue with your target" opens the same destination-target picker as "Branch into new attack", then copies the conversation into a new attack with your labels.
+- **Operator locking:** You cannot send or save to another operator's attack. You can select **Edit**, choose a target in the chat toolbar, and save a **New attack** with your labels. **Same attack** stays disabled and explains the restriction.
 - **Target identity:** A saved chat uses its original target, not your default. Sending is blocked while that target is being resolved, or if it is missing, changed, or ambiguous. Retry after restoring the target, or branch into a new attack and select a destination target.
 
 Human score changes do not require a registered objective target. The original operator can update or remove a human score even when the target is unavailable. The existing operator lock still applies.
@@ -389,6 +510,13 @@ prevents newly admitted work from overlapping replacement.
 
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
+
+Backend shutdown closes runtime and management admission, then waits for accepted requests and any live apply
+to finish before stopping the scheduler and closing shared resources. This includes requests retained after a
+client disconnect and their offloaded writes. Cancelling the shutdown caller does not interrupt that cleanup;
+a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
+Shutdown can therefore wait for an outstanding operation. Runtime readiness reports `ready: false` and
+`state: stopping` as soon as shutdown closes admission, including while an accepted live apply finishes.
 
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the

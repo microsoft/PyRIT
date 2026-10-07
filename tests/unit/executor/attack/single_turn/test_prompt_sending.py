@@ -3,6 +3,7 @@
 
 import asyncio
 import base64
+import codecs
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +16,13 @@ from unit.mocks import (
 )
 
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
-from pyrit.converter import Base64Converter, StringJoinConverter
+from pyrit.converter import (
+    Base64Converter,
+    ROT13Converter,
+    SelectiveTextConverter,
+    StringJoinConverter,
+    TokenSelectionStrategy,
+)
 from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackExecutor,
@@ -55,6 +62,62 @@ from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.extra import get_technique_factories
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+async def test_attack_marker_pipelines_cover_history_request_response_async(
+    *, start_token: str, end_token: str, preserve_tokens: bool
+) -> None:
+    target = MockPromptTarget()
+    selected = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+        start_token=start_token,
+        end_token=end_token,
+    )
+    config = AttackConverterConfig(
+        request_converters=ConverterConfiguration.from_converters(converters=[selected, ROT13Converter()]),
+        response_converters=ConverterConfiguration.from_converters(converters=[Base64Converter(), ROT13Converter()]),
+    )
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=config,
+        prompt_normalizer=PromptNormalizer(start_token=start_token, end_token=end_token),
+    )
+    payload = f"{start_token}{start_token}test{end_token}{end_token}"
+    history = Message.from_prompt(prompt=f"History: {payload}", role="user")
+    assistant = Message.from_prompt(prompt=f"Assistant: {payload}", role="assistant")
+    captured: list[list[Message]] = []
+
+    async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        captured.append(normalized_conversation)
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=f"Reply: {payload}",
+                conversation_id=normalized_conversation[-1].get_piece().conversation_id,
+            ).to_message()
+        ]
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async):
+        result = await attack.execute_async(
+            objective=f"Request: {payload}",
+            prepended_conversation=[history, assistant],
+        )
+    encoded = codecs.encode("dGVzdA==", "rot_13")
+    selected_output = f"{start_token}{encoded}{end_token}" if preserve_tokens else encoded
+    assert [message.get_value() for message in captured[0]] == [
+        f"History: {selected_output}",
+        f"Assistant: {payload}",
+        f"Request: {selected_output}",
+    ]
+    assert result.last_response is not None
+    assert result.last_response.converted_value == f"Reply: {encoded}"
+    assert history.get_value() == f"History: {payload}"
+    assert assistant.get_value() == f"Assistant: {payload}"
 
 
 @pytest.mark.usefixtures("patch_central_database")
