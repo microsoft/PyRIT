@@ -534,6 +534,59 @@ class FileDocumentStorage:
         else:
             (self._local_directory() / f"{name}{self._extension}").unlink(missing_ok=True)
 
+    def _delete_document_conditional(self, *, name: str, expected_version: str) -> None:
+        """
+        Delete one document only while storage still holds *expected_version*.
+
+        Like a conditional write, the comparison and the removal cannot be separated by another
+        writer: a Blob deletion sends the ETag of the bytes just compared, and a local one holds
+        the document's lock across the read, compare, and unlink.
+
+        Args:
+            name (str): The document name to delete.
+            expected_version (str): The version read before deciding to delete.
+
+        Raises:
+            DocumentConflictError: If the document is absent or holds another version.
+            ValueError: If *name* is not a legal registry name.
+            TimeoutError: If a local delete could not acquire the document lock.
+        """
+        validate_registry_name(name)
+        if self._is_blob:
+            self._delete_blob_conditional(name=name, expected_version=expected_version)
+            return
+        path = self._local_directory(create=True) / f"{name}{self._extension}"
+        with self._local_document_lock(path):
+            stored = path.read_bytes() if path.is_file() else None
+            actual_version = None if stored is None else self._compute_version(stored)
+            if actual_version != expected_version:
+                raise self._conflict_error(name=name, expected_version=expected_version, actual_version=actual_version)
+            path.unlink()
+
+    def _delete_blob_conditional(self, *, name: str, expected_version: str) -> None:
+        """
+        Delete a blob behind a precondition the service evaluates, not an unconditional delete.
+
+        Raises:
+            DocumentConflictError: If the blob is absent or no longer holds *expected_version*.
+        """
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+
+        blob_name = self._get_blob_name(name)
+        with self._open_container_client() as client:
+            etag = self._read_unmodified_blob_etag(
+                client=client, blob_name=blob_name, name=name, expected_version=expected_version
+            )
+            try:
+                client.delete_blob(blob_name, etag=etag, match_condition=MatchConditions.IfNotModified)
+            except (ResourceModifiedError, ResourceNotFoundError):
+                raise self._conflict_error(
+                    name=name,
+                    expected_version=expected_version,
+                    actual_version=self._read_blob_version(client=client, blob_name=blob_name),
+                ) from None
+
     def _local_directory(self, *, create: bool = False) -> Path:
         """
         Resolve the configured local directory.
