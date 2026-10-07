@@ -37,6 +37,7 @@ from pyrit.models import (
 from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry, TargetRegistry
+from pyrit.registry.technique_catalog import technique_catalog_revision
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -655,10 +656,10 @@ class TestScenarioServiceListScenarios:
         async def cancelled_estimate_async(
             *,
             scenario_name: str,
-            cache_key: tuple[str, int],
+            cache_key: tuple[str, int, tuple[object, int]],
         ) -> ScenarioRunSizeEstimate:
             assert scenario_name == metadata.registry_name
-            assert cache_key == (metadata.registry_name, metadata.scenario_version)
+            assert cache_key == (metadata.registry_name, metadata.scenario_version, technique_catalog_revision())
             started.set()
             await blocked.wait()
             raise AssertionError("The estimate task should have been cancelled.")
@@ -668,7 +669,9 @@ class TestScenarioServiceListScenarios:
         waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
         await asyncio.wait_for(started.wait(), timeout=1)
 
-        service._estimate_tasks[(metadata.registry_name, metadata.scenario_version)].cancel()
+        service._estimate_tasks[
+            (metadata.registry_name, metadata.scenario_version, technique_catalog_revision())
+        ].cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
         await asyncio.sleep(0)
@@ -1357,7 +1360,7 @@ class TestScenarioServiceListScenarios:
             await service._get_default_run_size_estimate_async(metadata=_make_scenario_metadata(scenario_version=2))
 
         assert service._registry.create_instance.call_count == 2
-        assert list(service._estimate_cache) == [("test.scenario", 2)]
+        assert list(service._estimate_cache) == [("test.scenario", 2, technique_catalog_revision())]
 
     async def test_list_scenarios_preserves_disabled_baseline_policy(self) -> None:
         metadata = _make_scenario_metadata(

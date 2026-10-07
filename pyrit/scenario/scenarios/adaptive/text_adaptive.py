@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.models.parameter import Parameter
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.technique_catalog import technique_catalog_revision
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
@@ -82,6 +83,7 @@ class TextAdaptive(AdaptiveScenario):
     """
 
     _cached_technique_class: ClassVar[type[ScenarioTechnique] | None] = None
+    _cached_technique_revision: ClassVar[tuple[object, int] | None] = None
 
     VERSION: ClassVar[int] = 1
 
@@ -93,8 +95,10 @@ class TextAdaptive(AdaptiveScenario):
     @classmethod
     def get_technique_class(cls) -> type[ScenarioTechnique]:
         """Return the technique enum for this scenario, building it once on first access."""
-        if cls._cached_technique_class is None:
+        revision = technique_catalog_revision()
+        if cls._cached_technique_class is None or cls._cached_technique_revision != revision:
             cls._cached_technique_class = _build_text_adaptive_technique()
+            cls._cached_technique_revision = revision
         return cls._cached_technique_class
 
     @classmethod

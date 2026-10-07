@@ -32,6 +32,44 @@ The API will be available at `http://localhost:8000`
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Techniques
+
+| Endpoint | Result |
+| --- | --- |
+| `GET /api/techniques` | All active registered technique factories |
+| `GET /api/techniques/types` | Attack-class parameters, definition schema, factory inputs, and typed seed inputs |
+| `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
+| `POST /api/techniques` | Validate and register a runtime definition; 201 on success |
+
+Use a named class from `AttackRegistry` as `attack_type`. A definition has
+`name`, optional `description` and `tags`, `attack_args`, `factory_options`,
+and optional `seed_technique`. Nested configuration values use
+`{"type": "<declared variant>", "parameters": {...}}`. Nested target, converter,
+and scorer references use registered names. See
+[Technique definitions](../../doc/code/registry/0_registry.md#technique-definitions)
+for an example and extension rules.
+
+Unknown classes, references, fields, missing inputs, invalid parameter values,
+and selector collisions return 400 without changing the registry. Invalid
+request-model shapes return the shared 422 field-error response. Names that
+conflict by letter case, with a tag, or with a scenario-local selector are rejected.
+`all` and `default` are reserved selectors; `types` is also a reserved name.
+Omission, explicit null, false, zero, and an
+empty list remain distinct when the declared type supports them.
+
+These endpoints use the existing authentication, compatibility, and runtime
+admission middleware. Metadata discovery runs off the event loop. No attack
+is constructed and no prompt is sent. Factories defer the objective target,
+scoring overrides, and default adversarial target until execution. Display
+settings are not a reconstructable recipe and do not disclose target credentials.
+Existing programmatic factories remain listable.
+
+Runtime definitions do not change initializer configuration. They are lost on
+restart or reinitialization, like runtime converter and target instances.
+Compatible scenario metadata and estimate caches see registry additions.
+Existing scenario snapshots and active tasks stay unchanged. Fixed catalogs
+and scenario-specific filters do not receive unsupported entries.
+
 ### Manual Messages
 
 `POST /api/attacks/{id}/messages` remains synchronous: it waits for the send and returns

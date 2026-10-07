@@ -20,8 +20,12 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
+from dataclasses import fields, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
@@ -55,6 +59,36 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_configuration_value(value: Any) -> Any:
+    """
+    Project settings without exposing target credentials or deserializing live objects.
+
+    Returns:
+        Any: Safe JSON-compatible display data.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Identifiable):
+        identifier = value.get_identifier()
+        return {"class_name": identifier.class_name, "hash": identifier.hash}
+    if isinstance(value, BaseModel):
+        return {name: _safe_configuration_value(getattr(value, name)) for name in type(value).model_fields}
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            "type": type(value).__name__,
+            "parameters": {
+                field.name: _safe_configuration_value(getattr(value, field.name)) for field in fields(value)
+            },
+        }
+    if isinstance(value, dict):
+        return {str(name): _safe_configuration_value(item) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_safe_configuration_value(item) for item in value]
+    return {"type": type(value).__name__, "python_only": True}
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -464,6 +498,25 @@ class AttackTechniqueFactory(Identifiable):
     def name(self) -> str:
         """The registry name for this technique."""
         return self._name
+
+    def get_configuration(self) -> dict[str, Any]:
+        """Return safe display settings, not an identity hash or a reconstruction recipe."""
+        return {
+            "attack_args": _safe_configuration_value(self._attack_kwargs),
+            "factory_options": {
+                "adversarial_chat": _safe_configuration_value(self._adversarial_chat),
+                "adversarial_system_prompt": _safe_configuration_value(self._adversarial_system_prompt),
+                "adversarial_seed_prompt": _safe_configuration_value(self._adversarial_seed_prompt),
+                "adversarial_prompt_template": _safe_configuration_value(self._adversarial_prompt_template),
+                "adversarial_system_prompt_prefix": self._adversarial_system_prompt_prefix,
+                "uses_adversarial": self._uses_adversarial,
+                "uses_default_adversarial_target": self.uses_default_adversarial_target,
+                "supports_additional_request_converters": self._supports_additional_request_converters,
+                "scorer_override_policy": self._scorer_override_policy.value,
+                "use_score_as_feedback": self._use_score_as_feedback,
+            },
+            "seed_technique": _safe_configuration_value(self._seed_technique),
+        }
 
     @property
     def description(self) -> str | None:

@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import logging
-from functools import cache
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.registry.technique_catalog import technique_catalog_cache
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _CYBER_DEFAULT_TECHNIQUE_NAMES = {"red_teaming"}
 
 
-@cache
+@technique_catalog_cache
 def _build_cyber_technique() -> type[ScenarioTechnique]:
     """
     Build the Cyber technique class dynamically from the registered technique factories.

@@ -24,11 +24,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
+from pyrit.models import AttackIdentifier, AttackTechniqueSeedGroup, ComponentType, Parameter, Seed, SeedPrompt
+from pyrit.registry.instance_registry import DefaultInstanceRegistry
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
+    from pyrit.models.technique_definition import TechniqueDefinition
     from pyrit.scenario.core.attack_technique_factory import (
         AttackTechniqueFactory,
         ScorerOverridePolicy,
@@ -105,6 +107,45 @@ class AttackTechniqueMetadata(RegistryMetadata):
     """
 
 
+class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
+    """Factory storage with an atomic definition-admission path."""
+
+    def register_definition(self, factory: AttackTechniqueFactory) -> None:
+        """
+        Check selector collisions while holding the same lock as registration.
+
+        Raises:
+            ValueError: If the name or a tag conflicts with an existing selector.
+        """
+        from pyrit.registry.components.scenario_registry import ScenarioRegistry
+
+        local_names: set[str] = set()
+        local_tags: set[str] = set()
+        scenarios = ScenarioRegistry.get_registry_singleton()
+        for name in scenarios.get_class_names():
+            names, tags = scenarios.get_class(name).reserved_technique_selectors()
+            local_names.update(names)
+            local_tags.update(tags)
+        with self._lock:
+            entries = self.get_all_instances()
+            names = {entry.name.casefold(): entry.name for entry in entries}
+            tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
+            names.update({name.casefold(): name for name in local_names})
+            tags.update({tag.casefold(): tag for tag in local_tags})
+            folded_name = factory.name.casefold()
+            if folded_name in names:
+                raise ValueError(f"Technique '{factory.name}' already exists (names are case-insensitive)")
+            if folded_name in tags:
+                raise ValueError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+            for tag in factory.technique_tags:
+                folded = tag.casefold()
+                if folded in names or folded == folded_name:
+                    raise ValueError(f"Tag '{tag}' conflicts with a technique name")
+                if folded in tags and tags[folded] != tag:
+                    raise ValueError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+            self.register(factory, name=factory.name, tags=factory.technique_tags)
+
+
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):
     """
     Registry that holds reusable ``AttackTechniqueFactory`` instances.
@@ -134,10 +175,112 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
 
         super().__init__(lazy_discovery=lazy_discovery)
-        self.instances: InstanceRegistry[AttackTechniqueFactory] = DefaultInstanceRegistry(
-            instance_type=_attack_technique_factory_type
-        )
+        self.instances = TechniqueInstanceRegistry(instance_type=_attack_technique_factory_type)
         self._scorer_override_policy = ScorerOverridePolicy.WARN
+
+    def build_from_definition(self, definition: TechniqueDefinition) -> AttackTechniqueFactory:
+        """
+        Build a validated factory without registering it or creating an attack.
+
+        Returns:
+            AttackTechniqueFactory: The configured deferred factory.
+
+        Raises:
+            ValueError: If the attack or its inputs are not supported.
+        """
+        from pyrit.registry.components.attack_registry import AttackRegistry
+        from pyrit.registry.resolution import resolve_json_constructor_args, resolve_json_parameter
+        from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+
+        registry = AttackRegistry.get_registry_singleton()
+        try:
+            attack_class = registry.get_class(definition.attack_type)
+        except KeyError as exc:
+            raise ValueError(f"Attack type '{definition.attack_type}' is not registered") from exc
+        attack_args = resolve_json_constructor_args(
+            cls=attack_class,
+            raw_args=definition.attack_args,
+            identifier_type=AttackIdentifier,
+            deferred=frozenset({"objective_target", "attack_adversarial_config", "attack_scoring_config"}),
+            forbidden=frozenset({"objective_target", "attack_adversarial_config"}),
+        )
+        options = definition.factory_options.model_dump(exclude_unset=True)
+        accepts_adversarial = any(
+            parameter.name == "attack_adversarial_config"
+            for parameter in registry.get_class_metadata(attack_class).parameters
+        )
+        wired_prompts = {
+            name
+            for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template")
+            if options.get(name) is not None
+        }
+        simulated = definition.seed_technique is not None and any(
+            seed.type == "SeedSimulatedConversation" for seed in definition.seed_technique.seeds
+        )
+        if not accepts_adversarial and (
+            wired_prompts
+            or (options.get("adversarial_chat") is not None and not simulated)
+            or (options.get("uses_adversarial") is True and not simulated)
+        ):
+            raise ValueError(f"Attack '{definition.attack_type}' does not accept adversarial factory settings")
+        if "scorer_override_policy" in options:
+            options["scorer_override_policy"] = ScorerOverridePolicy(options["scorer_override_policy"])
+        if options.get("adversarial_chat") is not None:
+            from pyrit.registry.resolution import resolve_reference_value
+
+            options["adversarial_chat"] = resolve_reference_value(
+                component_type=ComponentType.TARGET,
+                value=options["adversarial_chat"],
+                owner="Technique",
+                name="adversarial_chat",
+            )
+        for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            if name in options:
+                options[name] = resolve_json_parameter(
+                    parameter=Parameter(
+                        name=name, description="", param_type=str | SeedPrompt | None, variants={"SeedPrompt": []}
+                    ),
+                    value=options[name],
+                )
+        seed_group = None
+        if definition.seed_technique is not None:
+            seeds = [
+                resolve_json_parameter(
+                    parameter=Parameter(name="seed", description="", param_type=Seed, variants={}),
+                    value=seed.model_dump(),
+                )
+                for seed in definition.seed_technique.seeds
+            ]
+            seed_group = AttackTechniqueSeedGroup(
+                seeds=seeds,
+                insertion_index=definition.seed_technique.insertion_index,
+                prompt_placement=definition.seed_technique.prompt_placement,
+            )
+        return AttackTechniqueFactory(
+            name=definition.name,
+            description=definition.description,
+            technique_tags=definition.tags,
+            attack_class=attack_class,
+            attack_kwargs=attack_args,
+            seed_technique=seed_group,
+            **options,
+        )
+
+    def register_definition(self, definition: TechniqueDefinition) -> AttackTechniqueFactory:
+        """
+        Validate all settings and selector collisions before one atomic registration.
+
+        Returns:
+            AttackTechniqueFactory: The registered factory.
+        """
+        factory = self.build_from_definition(definition)
+        self.instances.register_definition(factory)
+        return factory
+
+    @property
+    def catalog_revision(self) -> tuple[object, int]:
+        """Factory-container identity and mutation revision, including registry resets."""
+        return self.instances, self.instances.revision
 
     def _discover(self) -> None:
         """Register no classes: the factory owns construction; the catalog is lit up later."""

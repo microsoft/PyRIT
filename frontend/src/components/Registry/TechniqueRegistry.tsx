@@ -1,0 +1,192 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import {
+  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface,
+  DialogTitle, DialogTrigger, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
+  Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text,
+} from '@fluentui/react-components'
+
+import { useRuntime } from '@/hooks/useRuntime'
+import { techniquesApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+import type { TechniqueInstance } from '@/types'
+
+import CreateTechniqueDialog from './CreateTechniqueDialog'
+import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
+
+interface TechniqueRegistryPageProps {
+  ready: boolean
+  runtimeKey: string
+}
+
+function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps) {
+  const styles = useTechniqueRegistryStyles()
+  const [items, setItems] = useState<TechniqueInstance[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [detail, setDetail] = useState<TechniqueInstance | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [focusRestore, setFocusRestore] = useState(0)
+  const mounted = useRef(true)
+  const listEpoch = useRef(0)
+  const detailEpoch = useRef(0)
+  const newButton = useRef<HTMLButtonElement>(null)
+  const pageRoot = useRef<HTMLDivElement>(null)
+  const previousRuntime = useRef(runtimeKey)
+
+  const load = useCallback(async (): Promise<void> => {
+    const epoch = ++listEpoch.current
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await techniquesApi.listTechniques()
+      if (mounted.current && epoch === listEpoch.current) setItems(response.items)
+    } catch (err) {
+      if (mounted.current && epoch === listEpoch.current) setError(toApiError(err).detail)
+    } finally {
+      if (mounted.current && epoch === listEpoch.current) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    mounted.current = true
+    listEpoch.current++
+    detailEpoch.current++
+    if (previousRuntime.current !== runtimeKey) {
+      previousRuntime.current = runtimeKey
+      setItems([])
+      setSearch('')
+      setTypeFilter('')
+      setTagFilter('')
+      setCreateOpen(false)
+      setDetail(null)
+      setFocusRestore((current) => current + 1)
+    }
+    void Promise.resolve().then(() => { if (mounted.current) void load() })
+    return () => {
+      mounted.current = false
+    }
+  }, [load, runtimeKey])
+
+  useEffect(() => {
+    if (focusRestore) {
+      if (newButton.current?.disabled) pageRoot.current?.focus()
+      else newButton.current?.focus()
+    }
+  }, [focusRestore])
+
+  const closeCreate = (): void => {
+    setCreateOpen(false)
+    setFocusRestore((current) => current + 1)
+  }
+
+  const showDetail = async (item: TechniqueInstance): Promise<void> => {
+    const epoch = ++detailEpoch.current
+    setDetail(item)
+    setDetailError(null)
+    setDetailLoading(true)
+    try {
+      const response = await techniquesApi.getTechnique(item.name)
+      if (mounted.current && epoch === detailEpoch.current) setDetail(response)
+    } catch (err) {
+      if (mounted.current && epoch === detailEpoch.current) setDetailError(toApiError(err).detail)
+    } finally {
+      if (mounted.current && epoch === detailEpoch.current) setDetailLoading(false)
+    }
+  }
+
+  const visible = items.filter((item) => (
+    `${item.name} ${item.description ?? ''} ${item.attack_type} ${item.tags.join(' ')}`.toLowerCase().includes(search.toLowerCase())
+    && (!typeFilter || item.attack_type === typeFilter)
+    && (!tagFilter || item.tags.includes(tagFilter))
+  ))
+  const types = [...new Set(items.map((item) => item.attack_type))].sort()
+  const tags = [...new Set(items.flatMap((item) => item.tags))].sort()
+
+  return (
+    <div className={styles.root} ref={pageRoot} tabIndex={-1}>
+      <div className={styles.header}>
+        <Text as="h1" size={600} weight="semibold">Technique Registry</Text>
+        <Text>Inspect named configurations of existing attacks. No attack runs when you add a technique.</Text>
+        <Text>Runtime only. Additions are lost when PyRIT restarts or is reinitialized.</Text>
+      </div>
+      <div className={styles.row}>
+        <Button className={styles.action} disabled={loading || !ready} onClick={() => { void load() }}>Refresh</Button>
+        <Button className={styles.action} ref={newButton} appearance="primary" disabled={!ready}
+          onClick={() => setCreateOpen(true)}>New technique</Button>
+      </div>
+      <div className={styles.row}>
+        <Field label="Search techniques"><Input value={search} onChange={(_, data) => setSearch(data.value)} /></Field>
+        <Field label="Filter by attack type"><Select value={typeFilter} onChange={(_, data) => setTypeFilter(data.value)}>
+          <option value="">All attack types</option>
+          {types.map((type) => <option key={type} value={type}>{type}</option>)}
+        </Select></Field>
+        <Field label="Filter by tag"><Select value={tagFilter} onChange={(_, data) => setTagFilter(data.value)}>
+          <option value="">All tags</option>
+          {tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+        </Select></Field>
+      </div>
+      {loading && <Spinner label="Loading techniques..." />}
+      {!loading && error && <MessageBar intent="error"><MessageBarBody>{error} <Button onClick={() => { void load() }}>Retry</Button></MessageBarBody></MessageBar>}
+      {!loading && !error && items.length === 0 && <Text>No techniques registered. Add a technique or run a technique initializer.</Text>}
+      {!loading && !error && items.length > 0 && visible.length === 0 && <Text>No techniques match these filters.</Text>}
+      {!loading && !error && visible.length > 0 && (
+        <div className={styles.table}>
+          <Table aria-label="Registered techniques">
+            <TableHeader><TableRow>
+              <TableHeaderCell>Name</TableHeaderCell><TableHeaderCell>Description</TableHeaderCell>
+              <TableHeaderCell>Attack type</TableHeaderCell><TableHeaderCell>Tags</TableHeaderCell><TableHeaderCell>Details</TableHeaderCell>
+            </TableRow></TableHeader>
+            <TableBody>{visible.map((item) => (
+              <TableRow key={item.name}>
+                <TableCell>{item.name}</TableCell><TableCell>{item.description ?? 'No description'}</TableCell>
+                <TableCell>{item.attack_type}</TableCell>
+                <TableCell><div className={styles.tags}>{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></TableCell>
+                <TableCell>
+                  <Dialog open={detail?.name === item.name} onOpenChange={(_, data) => {
+                    if (!data.open) { detailEpoch.current++; setDetail(null) }
+                  }}>
+                    <DialogTrigger disableButtonEnhancement>
+                      <Button className={styles.action} onClick={() => { void showDetail(item) }} aria-label={`Details for ${item.name}`}>Details</Button>
+                    </DialogTrigger>
+                    <DialogSurface>
+                      <DialogBody>
+                        <DialogTitle>{item.name}</DialogTitle>
+                        <DialogContent className={styles.content}>
+                          {detailLoading && <Spinner label="Loading technique details..." />}
+                          {detailError && <MessageBar intent="error"><MessageBarBody>{detailError}
+                            <Button onClick={() => { void showDetail(item) }}>Retry details</Button>
+                          </MessageBarBody></MessageBar>}
+                          {!detailLoading && !detailError && detail && (
+                            <>
+                              <Text>{detail.description ?? 'No description'}</Text>
+                              <Text>{detail.uses_default_adversarial_target ? 'Default adversarial target: resolved at execution.' : 'No deferred adversarial target.'}</Text>
+                              <pre className={styles.configuration}>{JSON.stringify(detail.configuration, null, 2)}</pre>
+                              <Text>These are safe display settings, not a reconstruction recipe.</Text>
+                            </>
+                          )}
+                        </DialogContent>
+                        <DialogActions><DialogTrigger disableButtonEnhancement><Button>Close</Button></DialogTrigger></DialogActions>
+                      </DialogBody>
+                    </DialogSurface>
+                  </Dialog>
+                </TableCell>
+              </TableRow>
+            ))}</TableBody>
+          </Table>
+        </div>
+      )}
+      {createOpen && <CreateTechniqueDialog onClose={closeCreate} onCreated={() => { closeCreate(); void load() }} />}
+    </div>
+  )
+}
+
+export default function TechniqueRegistry() {
+  const { generation, ready } = useRuntime()
+  return <TechniqueRegistryPage runtimeKey={`${generation}-${ready}`} ready={ready} />
+}

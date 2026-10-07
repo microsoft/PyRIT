@@ -5,8 +5,9 @@ import {
   Select,
 } from '@fluentui/react-components'
 
-import type { Parameter } from '@/types'
+import type { Parameter, ParameterReferenceOptions } from '@/types'
 
+import ReferenceField from './ReferenceField'
 import { useParameterFieldStyles } from './ParameterField.styles'
 import {
   getInitialFormValues,
@@ -26,6 +27,7 @@ export interface ParameterFieldProps {
   showRequiredError?: boolean
   /** Prefix for `data-testid` attributes. Defaults to `'param'` (e.g. `param-<name>`). */
   testIdPrefix?: string
+  referenceOptions?: ParameterReferenceOptions
 }
 
 /**
@@ -46,11 +48,26 @@ export default function ParameterField({
   allowEmptyList = false,
   showRequiredError = false,
   testIdPrefix = 'param',
+  referenceOptions,
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
   const label = parameter.required ? `${parameter.name} *` : parameter.name
   const testId = `${testIdPrefix}-${parameter.name}`
+
+  if (parameter.reference_type && referenceOptions) {
+    return (
+      <ReferenceField
+        label={label}
+        options={referenceOptions[parameter.reference_type]}
+        value={typeof value === 'string' || Array.isArray(value) ? value : ''}
+        multiple={parameter.is_list}
+        disabled={disabled}
+        hint={parameter.description ?? undefined}
+        onChange={(next) => onChange(parameter.name, next)}
+      />
+    )
+  }
 
   if (kind === 'structured') {
     const current = isStructuredParameterFormValue(value) ? value : { type: '', values: {} }
@@ -84,6 +101,7 @@ export default function ParameterField({
             value={current.values[nested.name] ?? ''}
             disabled={disabled}
             allowEmptyList
+            referenceOptions={referenceOptions}
             testIdPrefix={`${testIdPrefix}-${parameter.name}`}
             onChange={(name, nestedValue) => onChange(parameter.name, {
               ...current,

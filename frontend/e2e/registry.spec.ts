@@ -1,5 +1,99 @@
 import { expect, test, type Page } from "./_fixtures";
-import { mockVersion } from "./_compatibility";
+import { compatibilityHeaders, mockVersion } from "./_compatibility";
+
+test("creates and selects a runtime technique with the real backend @seeded", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const headers = compatibilityHeaders();
+  for (const name of ["objective_scorer_chat", "adversarial_chat", "registry_local_objective"]) {
+    const existing = await request.get(`/api/targets/${name}`, { headers });
+    if (existing.status() === 404) {
+      const created = await request.post("/api/targets", { headers, data: name === "registry_local_objective"
+        ? { name, type: "TextTarget", params: {} }
+        : { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
+          endpoint: "http://127.0.0.1:9/v1", model_name: "local-test", api_key: "local-test-only",
+        } } });
+      expect(created.ok(), await created.text()).toBe(true);
+    } else {
+      expect(existing.ok(), await existing.text()).toBe(true);
+    }
+  }
+  const warm = await request.get("/api/scenarios/catalog/airt.rapid_response", { headers });
+  expect(warm.ok(), await warm.text()).toBe(true);
+  const before = await warm.json();
+  const name = `browser_${Date.now()}`;
+  expect(before.all_techniques).not.toContain(name);
+  let replacementGeneration: string | undefined;
+  await page.route("**/api/runtime", async (route) => {
+    const response = await route.fetch();
+    const readiness = await response.json();
+    await route.fulfill({ json: { ...readiness, generation: replacementGeneration ?? readiness.generation } });
+  });
+
+  const promptRequests: string[] = [];
+  page.on("request", (outgoing) => {
+    if (outgoing.method() === "POST" && /\/api\/(?:message-sends|attacks\/[^/]+\/messages|scenarios\/runs)(?:\/|\?|$)/.test(outgoing.url())) {
+      promptRequests.push(outgoing.url());
+    }
+  });
+  await page.goto("/registry/techniques");
+  await expect(page.getByRole("tab", { name: "Techniques" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
+  await page.getByRole("button", { name: "New technique" }).click();
+  await page.getByRole("textbox", { name: "Registry name" }).fill(name);
+  await page.getByRole("textbox", { name: "Description" }).fill("Local browser technique");
+  await page.getByRole("textbox", { name: "Tags" }).fill("browser_test");
+  await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  const create = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Add technique" }).click();
+  expect((await create).status()).toBe(201);
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
+  await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: `Details for ${name}` }).click();
+  await expect(page.getByText("These are safe display settings, not a reconstruction recipe.")).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+
+  let finishCreate: (() => void) | undefined;
+  const pendingCreate = new Promise<void>((resolve) => { finishCreate = resolve; });
+  let markCreateStarted: (() => void) | undefined;
+  const createStarted = new Promise<void>((resolve) => { markCreateStarted = resolve; });
+  const original = await request.get(`/api/techniques/${name}`, { headers });
+  const originalTechnique = await original.json();
+  await page.route("**/api/techniques", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    markCreateStarted?.();
+    await pendingCreate;
+    await route.fulfill({ status: 201, json: { ...originalTechnique, name: "old_runtime_response" } });
+  });
+  await page.getByRole("button", { name: "New technique" }).click();
+  await page.getByRole("textbox", { name: "Registry name" }).fill("old_runtime_response");
+  await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  await page.getByRole("button", { name: "Add technique" }).click();
+  await createStarted;
+  replacementGeneration = "registry-replacement-test";
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "New technique" })).toBeFocused();
+  await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
+  const staleResponse = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
+  finishCreate?.();
+  await staleResponse;
+  await expect(page.getByRole("cell", { name: "old_runtime_response", exact: true })).toHaveCount(0);
+
+  const current = await request.get("/api/scenarios/catalog/airt.rapid_response", { headers });
+  expect(current.ok(), await current.text()).toBe(true);
+  const after = await current.json();
+  expect(after.all_techniques).toContain(name);
+  expect(after.default_techniques).toEqual(before.default_techniques);
+  await page.goto("/scanner/airt.rapid_response");
+  const checkbox = page.getByRole("checkbox", { name, exact: true });
+  await expect(checkbox).toBeVisible();
+  await checkbox.check();
+  await expect(checkbox).toBeChecked();
+  expect(promptRequests).toEqual([]);
+});
 
 interface RegisteredConverter {
   converter_id: string;

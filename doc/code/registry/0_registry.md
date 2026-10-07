@@ -135,12 +135,122 @@ attack = AttackRegistry.get_registry_singleton().create_instance(
 Simple scalar inputs use the shared resolver. Pass live Python configuration
 objects, such as `AttackAdversarialConfig`, `AttackConverterConfig`, and
 `AttackScoringConfig`, for nested components. Advanced Python values, such as a
-prompt normalizer or a parameter class, pass through unchanged. Nested JSON
-attack recipes are not supported.
+prompt normalizer or a parameter class, pass through unchanged. The shared
+resolver also constructs explicitly declared structured configuration variants.
+Use technique definitions for JSON-native, reusable attack configurations.
 
 An attack class implements the conversation algorithm. An attack technique
 factory selects and configures that class, converters, scorers, and seeds.
 `AttackTechniqueRegistry` continues to store those factories separately.
+
+## Technique Definitions
+
+`TechniqueDefinition` is a JSON-native construction contract under
+`pyrit.models.technique_definition`. It holds names, tags, attack arguments,
+factory options, and typed technique seeds. Models do not import attacks,
+resolve components, or select modules.
+
+`AttackTechniqueRegistry.build_from_definition()` resolves the registered attack
+class and its declared inputs without registering or constructing an attack.
+`register_definition()` also checks selector collisions and registers the factory
+atomically. A failed definition leaves no partial entry. Existing Python factory
+registration and live configuration values remain supported.
+The selectors `all` and `default` are reserved. `types` is also a reserved name.
+Names and tags cannot conflict with existing selectors or differ only by letter case.
+
+After initialization, register this definition through Python or send its JSON
+representation to `POST /api/techniques`:
+
+```python
+from pyrit.models.technique_definition import TechniqueDefinition
+from pyrit.registry import AttackTechniqueRegistry
+
+definition = TechniqueDefinition.model_validate({
+    "name": "encoded_example",
+    "description": "Encode the request with an existing converter.",
+    "tags": ["custom"],
+    "attack_type": "PromptSendingAttack",
+    "attack_args": {
+        "attack_converter_config": {
+            "type": "AttackConverterConfig",
+            "parameters": {
+                "request_converters": [{
+                    "type": "ConverterConfiguration",
+                    "parameters": {
+                        "converters": ["registered_base64", "registered_base64"],
+                        "indexes_to_apply": [],
+                    },
+                }],
+                "response_converters": [],
+            },
+        },
+        "prepended_conversation_config": {
+            "type": "PrependedConversationConfig",
+            "parameters": {"apply_converters_to_roles": ["user"]},
+        },
+    },
+    "factory_options": {"use_score_as_feedback": False},
+    "seed_technique": {
+        "insertion_index": 0,
+        "prompt_placement": "prepend",
+        "seeds": [{
+            "type": "SeedPrompt",
+            "parameters": {
+                "value": "A static prefix",
+                "role": "system",
+                "is_general_technique": True,
+            },
+        }],
+    },
+})
+factory = AttackTechniqueRegistry.get_registry_singleton().register_definition(definition)
+```
+
+The converter name must already be registered. Converter order and duplicate
+entries are retained. An explicit empty `indexes_to_apply` list applies the
+converter to no pieces; it is not the same as omitting the field.
+
+Supported structured inputs include `AttackConverterConfig`,
+`ConverterConfiguration`, `AttackScoringConfig`, `TAPAttackScoringConfig`,
+and `PrependedConversationConfig`. Scoring configurations accept registered
+scorer names, including ordered auxiliary-scorer lists. The factory keeps the
+existing execution scorer-override policy (`warn`, `raise`, or `skip`).
+
+Seed groups accept declared `SeedPrompt` and `SeedSimulatedConversation`
+variants. A simulated-conversation seed uses typed `SeedPrompt` values for
+`adversarial_chat_system_prompt`, `simulated_target_system_prompt`, and optional
+`next_message_system_prompt`. It also accepts `num_turns` and `sequence`.
+Seed validators check general-technique flags, roles, sequence overlap, and
+conversation constraints. Legacy server file-path inputs are not accepted by
+this contract. Seed construction does not generate a conversation.
+
+For adversarial attacks, `factory_options` accepts an optional registered
+`adversarial_chat` name and inline strings or typed `SeedPrompt` values for
+system, seed, and per-turn prompts. The objective target belongs to execution
+and cannot be supplied in `attack_args`. A default adversarial target is resolved
+only when needed at execution.
+
+Custom registered attack classes use the same contract. A custom configuration
+can inherit `StructuredParameterValue` and declare its allowed variants, or
+trusted Python code can call `register_structured_input()` in
+`pyrit.registry.resolution` to declare variants and nested component references.
+Only server-declared types can be constructed. Clients cannot select modules,
+execute code, or deserialize arbitrary objects. Callables and other Python-only
+values need a Python initializer or programmatic factory.
+
+`GET /api/techniques/types` exposes the shared `Parameter` metadata and the
+definition schema. The GUI is a basic subset of this contract; it is not the
+backend's construction boundary. `GET /api/techniques` and detail responses
+use `AttackTechniqueFactory.get_configuration()` for safe display. Identity
+hashes and display projections are not lossless construction recipes.
+
+New definitions are **runtime only**. They are lost on restart or setup reset.
+The instance registry exposes a mutation revision. Compatible scenario enums,
+metadata, estimates, and summary caches use this revision and registry identity,
+including direct `.instances.register()` calls and registry replacement.
+Old scenario instances retain their technique snapshot. Active tasks are not
+cancelled on catalog changes. Scenario filters and fixed local catalogs remain
+in control of which techniques they support.
 
 ## See Also
 

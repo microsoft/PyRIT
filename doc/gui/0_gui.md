@@ -1,6 +1,6 @@
 # PyRIT GUI (CoPyRIT)
 
-CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent UI. It provides an interactive way to run attacks, configure targets and converters, and view results — all from a browser.
+CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent UI. It provides an interactive way to run attacks, configure targets, converters, and techniques, and view results — all from a browser.
 
 ## Getting Started
 
@@ -413,6 +413,47 @@ technique, or dataset before trying again.
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
+### Technique Registry
+
+Open **Registry > Techniques**, or go to `/registry/techniques`. Targets and
+Converters keep their existing registry URLs.
+
+The table shows every registered technique factory, including advanced factories
+from Python initializers. Search by name, description, attack type, or tag. Use
+the attack-type and tag filters to reduce the list. **Details** shows safe
+settings. Target credentials are not shown. These settings are a display
+projection, not a recipe that can reconstruct a factory from its identity hash.
+
+Select **New technique** to configure an existing attack class. Set a unique
+name, a description, and optional comma-separated tags. Names and tags start
+with a letter and use letters, digits, and underscores. `all` and `default`
+are reserved selectors. `types` is also a reserved technique name. Names cannot differ only by letter case or conflict with an
+aggregate tag or a scenario-local technique name. No `core`, `light`, or
+`default` tag is added.
+
+The basic form supports scalar settings and supported structured variants.
+Request and response converters run in the displayed order. You can add the
+same registered converter more than once, move an entry, or remove an entry.
+For an adversarial attack, select a registered adversarial target and set inline
+system, seed, and per-turn prompts. If the adversarial target is not set, PyRIT
+resolves the default at execution. Select the objective target when you run a
+scenario, not when you create a technique.
+
+The form does not edit complex seeds or simulated conversations. It marks
+unsupported inputs and blocks creation when a required input cannot be set.
+Use the [typed REST contract](../code/registry/0_registry.md#technique-definitions)
+or a Python initializer for advanced settings and Python-only values.
+
+Creation does not construct an attack or send prompts. A new technique becomes
+selectable in a compatible scenario without a restart, including after scenario
+metadata or estimates have been cached. Scenario filters and fixed technique
+catalogs still apply. Existing scenario snapshots and active runs do not change.
+
+**Runtime only:** New techniques are lost when PyRIT restarts or is
+reinitialized. There is no persistence, edit, or delete operation in this pane.
+The pane lists only the active registered pool. It does not load more techniques
+or change the configured initializers.
 
 ### Target Configuration
 

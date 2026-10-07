@@ -1955,6 +1955,12 @@ class ScenarioRunService:
         Returns:
             dict[str, ScenarioTechniqueSummary]: Technique metadata keyed by name.
         """
+        from pyrit.registry.technique_catalog import technique_catalog_revision
+
+        revision = technique_catalog_revision()
+        if getattr(self, "_technique_metadata_revision", None) != revision:
+            self._technique_metadata_cache.clear()
+            self._technique_metadata_revision = revision
         cached = self._technique_metadata_cache.get(scenario_name)
         if cached is not None:
             return cached

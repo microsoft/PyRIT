@@ -363,6 +363,63 @@ export interface CreateConverterRequest {
   params?: Record<string, unknown>
 }
 
+export interface TechniqueInstance {
+  name: string
+  description?: string | null
+  attack_type: string
+  tags: string[]
+  uses_adversarial: boolean
+  uses_default_adversarial_target: boolean
+  /** Safe display settings. This is not a reconstruction recipe. */
+  configuration: Record<string, unknown>
+}
+
+export interface TechniqueTypeEntry {
+  attack_type: string
+  description: string
+  parameters: Parameter[]
+  supports_adversarial: boolean
+  supports_converters: boolean
+}
+
+export interface TechniqueTypeResponse {
+  items: TechniqueTypeEntry[]
+  definition_schema: Record<string, unknown>
+  factory_parameters: Parameter[]
+  seed_parameters: Record<string, Parameter[]>
+}
+
+export interface CreateTechniqueRequest {
+  name: string
+  description?: string
+  tags: string[]
+  attack_type: string
+  attack_args: Record<string, unknown>
+  factory_options: {
+    adversarial_chat?: string
+    adversarial_system_prompt?: string
+    adversarial_seed_prompt?: string
+    adversarial_prompt_template?: string
+  }
+}
+
+export interface RegistryReferenceOption {
+  name: string
+  type: string
+}
+
+export interface ParameterReferenceOptions {
+  target: RegistryReferenceOption[]
+  converter: RegistryReferenceOption[]
+  scorer: RegistryReferenceOption[]
+  scenario: RegistryReferenceOption[]
+}
+
+export interface ScorerInstance {
+  scorer_registry_name: string
+  identifier: { class_name: string }
+}
+
 export interface Parameter {
   name: string
   type_name: string
