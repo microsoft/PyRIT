@@ -21,6 +21,10 @@ Use events to coordinate concurrent operations and assert their ordering or conc
 Timeouts that only prevent a test from hanging should allow for busy CI runners, rather than
 acting as performance assertions.
 
+For isolation tests, hold one operation at an explicit gate and observe the other operation
+reaching its intended milestone before releasing that gate. Wait for unrelated persistence or
+finalization separately, rather than including it in a short deadline for the behavior under test.
+
 When observing an operation's cancellation or cleanup, use `wait_for_completion_async` from
 `unit.async_utils`. Unlike `asyncio.wait_for`, its watchdog does not send another cancellation
 request to the operation when the wait expires. Release blocked workers and drain owned tasks

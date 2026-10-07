@@ -57,6 +57,7 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from unit.async_utils import wait_for_completion_async
 from unit.backend.mocks import _make_matching_target_mock, make_attack_result, make_mock_memory
 from unit.mocks import MockPromptTarget
 
@@ -1771,6 +1772,7 @@ class TestConcurrentMessages:
             release_first.set()
             await active
 
+    @pytest.mark.timeout(90)
     async def test_target_pacing_does_not_block_another_target_async(
         self,
         *,
@@ -1785,7 +1787,9 @@ class TestConcurrentMessages:
         )
         await sqlite_instance.add_attack_results_to_memory_async(attack_results=[other_attack])
         waiting, release = asyncio.Event(), asyncio.Event()
+        metadata_started, release_metadata = asyncio.Event(), asyncio.Event()
         delays: list[float] = []
+        update_attack_result = sqlite_instance.update_attack_result_by_id_async
 
         async def pace_async(delay: float) -> None:
             delays.append(delay)
@@ -1795,11 +1799,18 @@ class TestConcurrentMessages:
             else:
                 assert delay == 1
 
+        async def update_attack_result_async(*, attack_result_id: str, update_fields: dict[str, Any]) -> bool:
+            if attack_result_id == other_attack.attack_result_id:
+                metadata_started.set()
+                await release_metadata.wait()
+            return await update_attack_result(attack_result_id=attack_result_id, update_fields=update_fields)
+
         other_request = _request(conversation_id=other_attack.conversation_id)
         other_request.target_registry_name = "other"
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as registry,
             patch("pyrit.prompt_target.common.utils.asyncio.sleep", side_effect=pace_async),
+            patch.object(sqlite_instance, "update_attack_result_by_id_async", side_effect=update_attack_result_async),
         ):
             registry.return_value.get_target_object.side_effect = lambda *, target_registry_name: (
                 other_target if target_registry_name == "other" else target
@@ -1809,19 +1820,31 @@ class TestConcurrentMessages:
                     attack_result_id=ar.attack_result_id, request=_request(conversation_id=ar.conversation_id)
                 )
             )
+            tasks = [active]
             try:
-                await waiting.wait()
-                await asyncio.wait_for(
-                    service.add_message_async(attack_result_id=other_attack.attack_result_id, request=other_request),
-                    timeout=3,
+                await asyncio.wait_for(waiting.wait(), timeout=30)
+                independent = asyncio.create_task(
+                    service.add_message_async(attack_result_id=other_attack.attack_result_id, request=other_request)
                 )
+                tasks.append(independent)
+                await asyncio.wait_for(metadata_started.wait(), timeout=30)
                 assert delays == [2.0, 1.0]
                 assert target.prompt_sent == []
                 assert other_target.prompt_sent == ["Hello"]
                 assert not active.done()
+                assert not independent.done()
+                release_metadata.set()
+                await wait_for_completion_async(future=independent)
+                assert not active.done()
+                release.set()
+                await wait_for_completion_async(future=active)
             finally:
                 release.set()
-                await active
+                release_metadata.set()
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
         assert target.prompt_sent == ["Hello"]
 
     @pytest.mark.parametrize("stage", ["request", "response"])
