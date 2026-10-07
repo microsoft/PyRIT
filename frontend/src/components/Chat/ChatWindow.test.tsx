@@ -1514,6 +1514,7 @@ describe("ChatWindow Integration", () => {
       identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
       capabilities: source.capabilities,
     });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
     mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Hello" }]);
     mockSendResult.mockResolvedValue({
       ...makeTextResponse("Reply"),
@@ -1521,6 +1522,8 @@ describe("ChatWindow Integration", () => {
     } as never);
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
       onConversationCreated={onConversationCreated} /></TestWrapper>);
+    expect(screen.getByText("Temperature:")).toBeInTheDocument();
+    expect(screen.queryByText("Empty keeps the source setting.")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Temperature"), "0.8");
     await user.type(screen.getByRole("textbox"), "Hello");
     await user.click(screen.getByRole("button", { name: /send/i }));
@@ -1536,6 +1539,44 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.createAttack.mock.calls[0][0].target_binding).toEqual(binding);
     expect(onConversationCreated.mock.calls[0][3].binding).toEqual(binding);
     expect(source.identifier.hash).not.toBe("private-hash");
+  });
+
+  it.each([
+    { ready: true, generation: "gen-1", defaultsReady: false },
+    { ready: true, generation: "gen-2", defaultsReady: true },
+    { ready: false, generation: "gen-1", defaultsReady: true },
+  ])("preserves the first-send draft when launch state becomes %j during temperature construction", async (
+    next: { ready: boolean; generation: string; defaultsReady: boolean },
+  ) => {
+    const user = userEvent.setup();
+    const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
+      ready: true, state: "ready", generation: "gen-1",
+    });
+    const source = { ...mockTarget, supports_temperature_override: true };
+    const built = {
+      identifier: { ...source.identifier, hash: "private-hash", temperature: 0.8 },
+      capabilities: source.capabilities,
+    };
+    let finish: (value: typeof built) => void = () => {};
+    jest.mocked(targetsApi.buildTarget).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    mockedMapper.buildMessagePieces.mockResolvedValue([{ data_type: "text", original_value: "Prepared prompt" }]);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source} /></TestWrapper>);
+    await user.type(screen.getByLabelText("Temperature"), "0.8");
+    const input = screen.getByRole("textbox");
+    await user.type(input, "Prepared prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(targetsApi.buildTarget).toHaveBeenCalledTimes(1));
+    runtime.mockReturnValue({
+      ready: next.ready, state: next.ready ? "ready" : "unavailable", generation: next.generation,
+    });
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
+      defaultsReady={next.defaultsReady} labels={{ operation: "replacement" }} /></TestWrapper>);
+    await act(async () => { finish(built); });
+    expect(await screen.findByText(/Runtime or default labels changed while preparing this message/)).toBeInTheDocument();
+    expect(input).toHaveValue("Prepared prompt");
+    expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
   it("shows saved temperature as read-only", () => {
@@ -5384,6 +5425,29 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByTestId("converter-preview-btn")).toBeInTheDocument();
       expect(screen.queryByTestId("converter-params")).not.toBeInTheDocument();
     });
+  });
+
+  it("should show only the registered name and LLM badge in the picker and keep stage settings accessible", async () => {
+    const user = userEvent.setup();
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [{
+        ...makeConverterInstance("translation_spanish", "TranslationConverter"),
+        is_llm_based: true,
+        reconstructable: true,
+      }],
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
+    await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
+    const option = await screen.findByRole("option", { name: /translation_spanish.*TranslationConverter/ });
+    expect(within(option).getByText("translation_spanish")).toBeInTheDocument();
+    expect(within(option).getByText("LLM")).toBeInTheDocument();
+    expect(within(option).queryByText("TranslationConverter")).not.toBeInTheDocument();
+    await user.click(option);
+    expect(screen.getByRole("button", { name: "Reorder converter translation_spanish" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove converter translation_spanish" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Settings for converter translation_spanish" }));
+    expect(screen.getByRole("menuitem", { name: "Settings", exact: true })).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("should not show constructor parameters for a registered converter", async () => {

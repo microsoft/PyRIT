@@ -120,14 +120,10 @@ export const useConverterPanelStyles = makeStyles({
   optionHeader: {
     display: 'flex',
     alignItems: 'baseline',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     flexWrap: 'wrap',
     minWidth: 0,
     gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
-  },
-  optionType: {
-    color: tokens.colorNeutralForeground3,
-    fontFamily: tokens.fontFamilyMonospace,
   },
   converterCard: {
     display: 'flex',
@@ -141,7 +137,7 @@ export const useConverterPanelStyles = makeStyles({
   converterCardHeader: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     gap: tokens.spacingHorizontalS,
     cursor: 'grab',
     userSelect: 'none',
@@ -156,6 +152,22 @@ export const useConverterPanelStyles = makeStyles({
     ':active': {
       cursor: 'grabbing',
     },
+  },
+  converterCardFooter: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalS,
+  },
+  removeConverterButton: {
+    ...mobileTouchTarget,
+    marginLeft: 'auto',
+    flexShrink: 0,
+  },
+  settingsButton: {
+    ...mobileTouchTarget,
+    marginLeft: 'auto',
+    flexShrink: 0,
   },
   previewButton: {
     ...mobileTouchTarget,
@@ -248,11 +260,6 @@ export const useConverterPanelStyles = makeStyles({
     fontSize: tokens.fontSizeBase100,
     fontWeight: tokens.fontWeightSemibold as unknown as string,
     verticalAlign: 'middle',
-  },
-  optionBadges: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '2px',
     flexShrink: 0,
   },
   touchTarget: {

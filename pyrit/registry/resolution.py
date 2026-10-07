@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get
 from pydantic import TypeAdapter, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
-from pyrit.common.brick_contract import init_parameters_are_forwarded
+from pyrit.common.brick_contract import get_constructor_owners
 from pyrit.models import StructuredParameterValue
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 
@@ -227,9 +227,8 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
     Raises:
         ValueError: If a constructor signature cannot be inspected.
     """
-    owners = [owner for owner in cls.__mro__ if "__init__" in owner.__dict__]
     sources: list[tuple[type, inspect.Signature]] = []
-    for index, owner in enumerate(owners):
+    for owner in get_constructor_owners(cls):
         init = owner.__dict__["__init__"]
         try:
             signature = inspect.signature(init)
@@ -251,8 +250,6 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
             parameters.append(param.replace(annotation=annotation))
         sources.append((owner, signature.replace(parameters=parameters)))
 
-        if not init_parameters_are_forwarded(init) or index + 1 == len(owners):
-            break
     return sources
 
 

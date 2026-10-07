@@ -123,6 +123,9 @@ Registered descriptors report `reconstructable` and, for targets,
 Constructor inputs that are not in the registry's build contract are not
 discarded silently: reconstruction is rejected. Such sources can still be used
 as registered objects.
+Reconstruction retains resolved defaults from the declared constructor chain,
+including explicitly forwarded parent parameters. Arguments generated inside a
+constructor are not treated as extra inputs from its caller.
 
 This REST flag applies to targets, converters, and scorers. `AttackRegistry`
 remains a class catalog, not a store of attack instances, and has no new REST

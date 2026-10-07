@@ -320,9 +320,7 @@ def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
         result = method(*bound_args.args, **bound_args.kwargs)
         if resolved is not None:
             retained = vars(self).setdefault("_resolved_constructor_parameters", {})
-            for name, value in resolved.items():
-                if value is not None or name not in retained:
-                    retained[name] = value
+            retained[inspect.unwrap(method)] = resolved
         return result
 
     return wrapper

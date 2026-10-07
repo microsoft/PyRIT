@@ -20,12 +20,13 @@ export function useConversationSave(newAttackContext?: NewAttackContext) {
   const save = useCallback(async (
     input: ConversationSaveInput,
     destination: SaveConversationRequest['destination'],
+    preparationContext?: NewAttackContext,
   ): Promise<AddMessageResponse> => {
     if (pending.current) throw new Error('A conversation save is already in progress.')
     pending.current = true
     setSaving(true)
     try {
-      const initialContext = destination === 'new_attack' ? contextRef.current : undefined
+      const initialContext = destination === 'new_attack' ? preparationContext ?? contextRef.current : undefined
       if (initialContext && !initialContext.ready) {
         throw new Error('Default labels are not ready. Retry after default labels finish loading.')
       }

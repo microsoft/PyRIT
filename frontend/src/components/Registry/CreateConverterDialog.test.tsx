@@ -176,6 +176,40 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.listConverterTypes).toHaveBeenCalledTimes(1)
   })
 
+  it('should clear a prior structured override without clearing untouched settings', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([wordSelectionParameter, {
+      name: 'prefix', type_name: 'str', required: false,
+    }])
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'TextConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash',
+      },
+    }
+    const params = {
+      word_selection_strategy: { type: 'random', parameters: { proportion: 0.3, seed: 42 } },
+      prefix: 'Keep this override',
+    }
+    const onTemporary = jest.fn()
+    mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: converter.identifier })
+    renderDialog({
+      editing: { converter, spec: { source_name: 'source', source_hash: 'source-hash', params } },
+      onTemporary,
+    })
+    const strategy = await screen.findByRole('combobox', { name: 'word_selection_strategy' })
+    expect(strategy).toHaveValue('random')
+    await user.selectOptions(strategy, '')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('TextConverter', {
+      source_name: 'source', source_hash: 'source-hash', params: { prefix: 'Keep this override' },
+    })
+    expect(params.word_selection_strategy.type).toBe('random')
+    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
+  })
+
   it('should never register settings when the temporary apply handler is missing', async () => {
     const user = userEvent.setup()
     renderDialog({

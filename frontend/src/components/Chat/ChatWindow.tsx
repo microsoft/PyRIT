@@ -657,6 +657,13 @@ export default function ChatWindow({
     !operation.controller.signal.aborted
     && pendingSendsRef.current.get(operation.conversationId) === operation
   )
+  const checkSendPreparation = (operation: PendingSend, requireDefaults: boolean): void => {
+    const current = launchStateRef.current
+    if (current.generation !== operation.converterGeneration || !current.ready
+      || (requireDefaults && !current.defaultsReady)) {
+      throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
+    }
+  }
   const isViewingSend = (operation: PendingSend): boolean => (
     viewedAttackRef.current === operation.attackResultId
     && (
@@ -962,16 +969,13 @@ export default function ChatWindow({
       let currentConversationId = conversationId
       let currentActiveConversationId = activeConversationId
       if (!currentAttackResultId) {
-        const currentLaunchState = launchStateRef.current
-        if (currentLaunchState.generation !== operation.converterGeneration
-          || !currentLaunchState.ready || !currentLaunchState.defaultsReady) {
-          throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
-        }
+        checkSendPreparation(operation, true)
         let selectedTarget = activeTarget
         if (temperature.trim()) {
           selectedTarget = await buildTemperatureTarget(activeTarget, Number(temperature))
           if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         }
+        checkSendPreparation(operation, true)
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
           ...(selectedTarget.binding ? { target_binding: selectedTarget.binding } : {}),
@@ -1039,6 +1043,7 @@ export default function ChatWindow({
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         addMessageRequest.target_binding = selectedTarget.binding
       }
+      checkSendPreparation(operation, false)
       submissionAttempted = true
       operation.progress = await attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
@@ -1473,59 +1478,62 @@ export default function ChatWindow({
       role="group"
       aria-label="Chat controls"
     >
-      <div className={mergeClasses(styles.conversationInfo, toolbarContainer ? styles.sharedTarget : undefined)}>
-        {(!attackResultId || targetResolutionStatus === 'unbound' || editDraft !== null) && !isLoadingAttack ? (
-          <ChatTargetPicker
-            target={editDraft !== null ? editorTarget : activeTarget}
-            targets={availableTargets}
-            loading={targetsLoading}
-            error={targetsError}
-            disabled={isSending || isSavingEditor}
-            onSelect={(target) => {
-              setTemperature('')
-              if (editDraft !== null) editor.changeTarget(target)
-              else onSelectTarget(target)
-            }}
-            disabledReason={editDraft !== null
-              ? (target: TargetInstance) => editorTargetDisabledReason(target, editorDataTypes) : undefined}
-          />
-        ) : activeTarget ? (
-          <TargetBadge target={activeTarget} />
-        ) : (
-          <Text size={200} className={styles.noTarget}>
-            No target selected
-          </Text>
+      <div className={styles.conversationControls} role="group" aria-label="Conversation settings">
+        <div className={mergeClasses(styles.conversationInfo, toolbarContainer ? styles.sharedTarget : undefined)}>
+          {(!attackResultId || targetResolutionStatus === 'unbound' || editDraft !== null) && !isLoadingAttack ? (
+            <ChatTargetPicker
+              target={editDraft !== null ? editorTarget : activeTarget}
+              targets={availableTargets}
+              loading={targetsLoading}
+              error={targetsError}
+              disabled={isSending || isSavingEditor}
+              onSelect={(target) => {
+                setTemperature('')
+                if (editDraft !== null) editor.changeTarget(target)
+                else onSelectTarget(target)
+              }}
+              disabledReason={editDraft !== null
+                ? (target: TargetInstance) => editorTargetDisabledReason(target, editorDataTypes) : undefined}
+            />
+          ) : activeTarget ? (
+            <TargetBadge target={activeTarget} />
+          ) : (
+            <Text size={200} className={styles.noTarget}>
+              No target selected
+            </Text>
+          )}
+        </div>
+        {temperatureTarget && (
+          <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
+            hint={temperatureReadOnly ? 'Read-only for this attack.'
+              : temperatureTarget.supports_temperature_override
+                ? editDraft !== null ? 'Changes apply only to a new attack.' : undefined
+                : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
+            <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
+              aria-label="Temperature"
+              value={temperatureReadOnly
+                ? String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? '')
+                : editDraft !== null ? editDraft.temperature : temperature}
+              placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
+              readOnly={temperatureReadOnly}
+              disabled={isSending || isSavingEditor || !temperatureTarget.supports_temperature_override}
+              onChange={(_, data) => {
+                if (editDraft !== null) editor.changeTemperature(data.value)
+                else setTemperature(data.value)
+              }} />
+          </Field>
         )}
+        <div className={styles.editActions}>
+          <Button appearance="subtle" className={styles.ribbonAction} icon={<EditRegular />}
+            disabled={editDraft !== null || isSending || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
+            onClick={() => { void beginEdit() }}
+          >{isLoadingEdit ? 'Loading editor...' : 'Edit Conversation'}</Button>
+          {editDraft !== null && <Button appearance="subtle" className={styles.ribbonAction} icon={<ArrowShuffleRegular />}
+            disabled={isSavingEditor} onClick={() => editorRef.current?.convertConversation()}>Convert Conversation</Button>}
+        </div>
       </div>
-      {temperatureTarget && (
-        <Field label="Temperature"
-          hint={temperatureReadOnly ? 'Read-only for this attack.'
-            : temperatureTarget.supports_temperature_override
-              ? editDraft !== null ? 'Changes apply only to a new attack.' : 'Empty keeps the source setting.'
-              : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
-          <Input type="number" min={0} max={2} step={0.1}
-            aria-label="Temperature"
-            value={temperatureReadOnly
-              ? String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? '')
-              : editDraft !== null ? editDraft.temperature : temperature}
-            placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
-            readOnly={temperatureReadOnly}
-            disabled={isSending || isSavingEditor || !temperatureTarget.supports_temperature_override}
-            onChange={(_, data) => {
-              if (editDraft !== null) editor.changeTemperature(data.value)
-              else setTemperature(data.value)
-            }} />
-        </Field>
-      )}
-      <div className={styles.editActions}>
-        <Button appearance="subtle" className={styles.ribbonAction} icon={<EditRegular />}
-          disabled={editDraft !== null || isSending || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
-          onClick={() => { void beginEdit() }}
-        >{isLoadingEdit ? 'Loading editor...' : 'Edit Conversation'}</Button>
-        {editDraft !== null && <Button appearance="subtle" className={styles.ribbonAction} icon={<ArrowShuffleRegular />}
-          disabled={isSavingEditor} onClick={() => editorRef.current?.convertConversation()}>Convert Conversation</Button>}
-      </div>
-      <div className={mergeClasses(styles.ribbonActions, toolbarContainer ? styles.sharedActions : undefined)}>
+      <div className={mergeClasses(styles.ribbonActions, styles.sharedActions)}
+        role="group" aria-label="Conversation actions">
         <Tooltip content="Render all messages as Markdown by default" relationship="label">
           <Switch
             checked={globalMarkdown}

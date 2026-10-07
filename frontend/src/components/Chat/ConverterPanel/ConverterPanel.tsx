@@ -542,27 +542,6 @@ export default function ConverterPanel({
                       </Text>
                       {converter.is_llm_based && <span className={styles.llmBadge}>LLM</span>}
                       {selectedStages[index]?.temporary && <Text size={200}>Temporary</Text>}
-                      <Menu>
-                        <MenuTrigger disableButtonEnhancement>
-                          <Button appearance="subtle" size="small" icon={<MoreHorizontalRegular />}
-                            aria-label={`Settings for converter ${converter.converter_id}${duplicateStageContext}`}
-                            disabled={isConverting} data-no-drag />
-                        </MenuTrigger>
-                        <MenuPopover><MenuList>
-                          <MenuItem disabled={!converter.reconstructable}
-                            title={converter.reconstructable ? undefined
-                              : converter.reconstruction_error ?? 'This converter does not support separate settings.'}
-                            onClick={() => setSettings({
-                              stageId: converter.stageId, pieceType: effectiveActiveTab,
-                              editing: { converter, spec: selectedStages[index]?.temporary },
-                            })}>Settings</MenuItem>
-                          {selectedStages[index]?.temporary && <MenuItem
-                            onClick={() => setPipeline(effectiveActiveTab, (stages) => stages.map((stage) =>
-                              stage.id === converter.stageId
-                                ? { id: stage.id, converterId: stage.converterId } : stage,
-                            ))}>Reset to registered converter</MenuItem>}
-                        </MenuList></MenuPopover>
-                      </Menu>
                       <Button
                         appearance="subtle"
                         size="small"
@@ -570,7 +549,7 @@ export default function ConverterPanel({
                         data-no-drag
                         aria-label={`Remove converter ${converter.converter_id}${duplicateStageContext}`}
                         onClick={() => removeConverter(index)}
-                        className={styles.touchTarget}
+                        className={styles.removeConverterButton}
                       />
                     </div>
                     {converter.identifier.class_name !== converter.converter_id && (
@@ -606,22 +585,53 @@ export default function ConverterPanel({
                               ? (value: string) => controller.editStageOutput(input.id, converter.stageId, value)
                               : undefined}
                           />
-                          {hasRemaining && (
-                            <Button
-                              size="small"
-                              icon={<PlayRegular />}
-                              className={styles.previewButton}
-                              disabled={isConverting || stage === undefined}
-                              aria-label={`Convert ${input.name} from stage ${index + 2} to end`}
-                              title="Convert all remaining stages from this value."
-                              onClick={() => void controller.convertRemaining(input.id, converter.stageId)}
-                            >
-                              Convert
-                            </Button>
-                          )}
                         </div>
                       )
                     })}
+                    <div className={styles.converterCardFooter}>
+                      {!isBatch && index < selectedConverters.length - 1 && activeInputs.map((input: ConverterInputPiece) => (
+                        <Button
+                          key={input.id}
+                          size="small"
+                          icon={<PlayRegular />}
+                          className={styles.previewButton}
+                          disabled={isConverting || !stageResults[input.id]?.some(
+                            (result: ConverterStageResult) => result.stageId === converter.stageId,
+                          )}
+                          aria-label={`Convert ${input.name} from stage ${index + 2} to end`}
+                          title="Convert all remaining stages from this value."
+                          onClick={() => void controller.convertRemaining(input.id, converter.stageId)}
+                        >
+                          Convert
+                        </Button>
+                      ))}
+                      <Menu>
+                        <MenuTrigger disableButtonEnhancement>
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            icon={<MoreHorizontalRegular />}
+                            className={styles.settingsButton}
+                            aria-label={`Settings for converter ${converter.converter_id}${duplicateStageContext}`}
+                            disabled={isConverting}
+                          />
+                        </MenuTrigger>
+                        <MenuPopover><MenuList>
+                          <MenuItem disabled={!converter.reconstructable}
+                            title={converter.reconstructable ? undefined
+                              : converter.reconstruction_error ?? 'This converter does not support separate settings.'}
+                            onClick={() => setSettings({
+                              stageId: converter.stageId, pieceType: effectiveActiveTab,
+                              editing: { converter, spec: selectedStages[index]?.temporary },
+                            })}>Settings</MenuItem>
+                          {selectedStages[index]?.temporary && <MenuItem
+                            onClick={() => setPipeline(effectiveActiveTab, (stages) => stages.map((stage) =>
+                              stage.id === converter.stageId
+                                ? { id: stage.id, converterId: stage.converterId } : stage,
+                            ))}>Reset to registered converter</MenuItem>}
+                        </MenuList></MenuPopover>
+                      </Menu>
+                    </div>
                   </div>
                 )
               })}

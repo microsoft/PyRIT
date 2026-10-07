@@ -146,13 +146,17 @@ export function useConversationDraft(newAttackContext?: NewAttackContext) {
     setError(null)
     try {
       if (validationError || targetError) throw new Error(validationError ?? targetError)
+      if (destination === 'new_attack' && newAttackContext && !newAttackContext.ready) {
+        throw new Error('Default labels are not ready. Retry after default labels finish loading.')
+      }
       let target = draft.target
       if (draft.temperature.trim()) {
         if (destination !== 'new_attack') throw new Error('Choose New attack to change the temperature.')
         if (!target) throw new Error('Select a target before setting temperature.')
         target = await buildTemperatureTarget(target, Number(draft.temperature))
       }
-      const response = await workflow.save({ ...draft, target }, destination)
+      if (activeId.current !== id) return
+      const response = await workflow.save({ ...draft, target }, destination, newAttackContext)
       if (activeId.current !== id) return
       saved.current = true
       if (draft.temperature.trim()) onSaved(response, target)

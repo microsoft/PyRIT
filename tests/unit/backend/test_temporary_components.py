@@ -7,6 +7,7 @@ import asyncio
 import threading
 import uuid
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -31,7 +32,8 @@ from pyrit.backend.services.message_send_service import MessageSendService, reso
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.common.apply_defaults import reset_default_values, set_default_value
-from pyrit.converter import CaesarConverter, Converter, ConverterResult, LLMGenericTextConverter
+from pyrit.common.brick_contract import forward_init_parameters
+from pyrit.converter import CaesarConverter, Converter, ConverterResult, LLMGenericTextConverter, TranslationConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.models import JSONValue, PromptDataType
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
@@ -75,6 +77,12 @@ class _MutableConverter(Converter):
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         return ConverterResult(output_text=prompt, output_type=input_type)
+
+
+class _ForwardedConverter(LLMGenericTextConverter):
+    @forward_init_parameters
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -242,6 +250,48 @@ class TestTemporaryComponents:
         finally:
             reset_default_values()
             await source.cleanup_target_async()
+            await replacement.cleanup_target_async()
+
+    async def test_translation_reconstruction_uses_only_its_declared_inputs_async(self) -> None:
+        target = source_target()
+        replacement = source_target()
+        try:
+            set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=target)
+            source = TranslationConverter(language="Spanish", max_retries=7)
+            identifier = source.get_identifier()
+            set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=replacement)
+            registry = ConverterRegistry.get_registry_singleton()
+            inputs = registry.get_reconstruction_parameters(source)
+            assert inputs["converter_target"] is target
+            assert "system_prompt_template" not in inputs
+            rebuilt = registry.recreate_instance(source=source, params={"language": "French", "max_retries": "4"})
+            assert rebuilt.language == "french"
+            assert rebuilt._prompt_kwargs["language"] == "french"
+            assert rebuilt.converter_target is target
+            assert rebuilt._max_retry_attempts == 4
+            assert source.language == "spanish"
+            assert source._max_retry_attempts == 7
+            assert source.get_identifier() is identifier
+        finally:
+            reset_default_values()
+            await target.cleanup_target_async()
+            await replacement.cleanup_target_async()
+
+    async def test_forwarded_constructor_reconstruction_retains_parent_defaults_async(self) -> None:
+        target = source_target()
+        replacement = source_target()
+        try:
+            set_default_value(class_type=_ForwardedConverter, parameter_name="converter_target", value=target)
+            source = _ForwardedConverter()
+            set_default_value(class_type=_ForwardedConverter, parameter_name="converter_target", value=replacement)
+            registry = ConverterRegistry.get_registry_singleton()
+            registry.register_class(_ForwardedConverter, name="forwarded")
+            rebuilt = registry.recreate_instance(source=source, params={"max_retry_attempts": "5"})
+            assert rebuilt._converter_target is target
+            assert rebuilt._max_retry_attempts == 5
+        finally:
+            reset_default_values()
+            await target.cleanup_target_async()
             await replacement.cleanup_target_async()
 
     async def test_opaque_constructor_inputs_are_not_silently_discarded_async(self) -> None:

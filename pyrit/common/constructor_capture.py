@@ -8,6 +8,8 @@ from collections.abc import Callable
 from functools import wraps
 from typing import ParamSpec
 
+from pyrit.common.brick_contract import get_constructor_owners
+
 _Params = ParamSpec("_Params")
 
 
@@ -65,7 +67,14 @@ def capture_constructor_parameters(init: Callable[_Params, None]) -> Callable[_P
         init(*args, **kwargs)
         instance = bound.arguments["self"]
         if type(instance).__init__ is captured:
-            parameters.update(vars(instance).pop("_resolved_constructor_parameters", {}))
+            resolved = vars(instance).pop("_resolved_constructor_parameters", {})
+            resolved_parameters: dict[str, object] = {}
+            for owner in reversed(get_constructor_owners(type(instance))):
+                constructor = inspect.unwrap(owner.__dict__["__init__"])
+                for name, value in resolved.get(constructor, {}).items():
+                    if value is not None or name not in resolved_parameters:
+                        resolved_parameters[name] = value
+            parameters.update(resolved_parameters)
             instance._reconstruction_parameters = parameters
 
     vars(captured)["__pyrit_capture_constructor__"] = True

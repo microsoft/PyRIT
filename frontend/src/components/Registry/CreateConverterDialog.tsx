@@ -457,7 +457,11 @@ export default function CreateConverterDialog({
         const spec: SourceInstanceSpec = {
           source_name: editing.spec?.source_name ?? editing.converter.converter_id,
           source_hash: editing.spec?.source_hash ?? editing.converter.identifier.hash,
-          params: { ...editing.spec?.params, ...params },
+          params: {
+            ...Object.fromEntries(Object.entries(editing.spec?.params ?? {})
+              .filter(([name]: [string, unknown]) => !changedParameters.has(name))),
+            ...params,
+          },
         }
         const response = await convertersApi.buildConverter(selectedType, spec)
         if (openEpochRef.current === epoch) onTemporary(spec, response.identifier)
