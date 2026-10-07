@@ -261,10 +261,11 @@ class TestComponentType:
     def test_base_identifier_has_no_multiline_parameters(self):
         assert ComponentIdentifier.get_multiline_parameter_names() == frozenset()
 
-    def test_identity_conflicting_parameter_names_apply_to_all_component_types(self):
-        expected = frozenset({"sas_token"})
-        assert ComponentIdentifier.get_identity_conflicting_parameter_names() == expected
-        assert TargetIdentifier.get_identity_conflicting_parameter_names() == expected
+    def test_target_identity_conflicting_parameter_names(self):
+        assert TargetIdentifier.get_identity_conflicting_parameter_names() == frozenset({"sas_token"})
+
+    def test_base_identifier_has_no_identity_conflicting_parameters(self):
+        assert ComponentIdentifier.get_identity_conflicting_parameter_names() == frozenset()
 
 
 class TestClassAttributeValues:

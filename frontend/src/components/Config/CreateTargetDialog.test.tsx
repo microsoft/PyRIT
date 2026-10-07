@@ -1232,6 +1232,9 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAICompletionTarget");
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
     await user.click(screen.getByText("Advanced settings"));
     await user.click(screen.getByRole("checkbox", { name: "Use empty list for stop" }));
     await user.click(screen.getByText("Create Target"));
@@ -1240,6 +1243,7 @@ describe("CreateTargetDialog", () => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
         type: "OpenAICompletionTarget",
         params: {
+          endpoint: "https://api.openai.com",
           stop: [],
         },
       });
@@ -1260,6 +1264,9 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("OpenAIChatTarget");
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
     await user.click(screen.getByText("Advanced settings"));
 
     fireEvent.change(screen.getByLabelText("Extra Body Parameters"), {
@@ -1275,6 +1282,7 @@ describe("CreateTargetDialog", () => {
       expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
         type: "OpenAIChatTarget",
         params: {
+          endpoint: "https://api.openai.com",
           extra_body_parameters: {
             reasoning: { effort: "high" },
             include: ["usage"],
