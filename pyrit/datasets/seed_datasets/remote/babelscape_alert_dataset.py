@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
+import re
 from typing import TYPE_CHECKING, Literal
 
 from typing_extensions import override
@@ -16,6 +17,14 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 logger = logging.getLogger(__name__)
+
+# ALERT stores every prompt inside an instruction-tuning template. The seed should be the prompt itself.
+_INSTRUCTION_TEMPLATE = re.compile(r"^### Instruction:\n(?P<prompt>.*)\n### Response:\n?$", re.DOTALL)
+
+
+def _strip_instruction_template(prompt: str) -> str:
+    match = _INSTRUCTION_TEMPLATE.match(prompt)
+    return str(match.group("prompt")) if match else prompt
 
 
 class _BabelscapeAlertDataset(_RemoteDatasetLoader):
@@ -135,7 +144,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         # Determine which categories to load
         data_categories = ["alert_adversarial", "alert"] if self.category is None else [self.category]
 
-        prompts: list[tuple[str, str]] = []
+        prompts: list[tuple[str, str, str | None]] = []
         for category_name in data_categories:
             data = await self._fetch_from_huggingface_async(
                 dataset_name=self.source,
@@ -143,7 +152,10 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                 split="test",
                 cache=cache,
             )
-            prompts.extend((item["prompt"], item["category"]) for item in data)
+            prompts.extend(
+                (_strip_instruction_template(item["prompt"]), item["category"], item.get("attack_type"))
+                for item in data
+            )
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
@@ -160,11 +172,11 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                     "red teaming prompts."
                 ),
                 source=f"https://huggingface.co/datasets/{self.source}",
-                metadata={"category": category},
+                metadata={"category": category, **({"attack_type": attack_type} if attack_type else {})},
                 authors=self._AUTHORS,
                 groups=self._GROUPS,
             )
-            for prompt, category in prompts
+            for prompt, category, attack_type in prompts
         ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from Babelscape Alert dataset")
