@@ -235,3 +235,25 @@ def test_init_empty_harm_categories_raises():
 def test_invalid_harm_category_raises():
     with pytest.raises(ValueError, match="Expected AegisHarmCategory"):
         _AegisContentSafetyDataset(harm_categories=["Malware"])
+
+
+async def test_fetch_dataset_merges_repeated_prompts():
+    """A prompt labeled in several rows should load as one seed with the first row's metadata."""
+
+    def row(row_id: str, categories: str) -> dict[str, str]:
+        return {"id": row_id, "prompt": "Same prompt", "prompt_label": "unsafe", "violated_categories": categories}
+
+    rows = {
+        "train": [row("1", "Violence"), row("2", "Violence, Harassment")],
+        "test": [row("3", "Criminal Planning/Confessions")],
+    }
+    loader = _AegisContentSafetyDataset()
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new_callable=AsyncMock, return_value=rows):
+        dataset = await loader.fetch_dataset_async()
+
+    assert len(dataset.seeds) == 1
+    assert dataset.seeds[0].metadata["id"] == "1"
+    assert dataset.seeds[0].metadata["aegis_violated_categories"] == (
+        "Violence, Harassment, Criminal Planning/Confessions"
+    )
