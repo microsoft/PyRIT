@@ -1,17 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import uuid
 from types import SimpleNamespace
 
 from unit.mocks import make_scenario_result
 
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, Score, ScoreStatus
+from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, MessagePiece, Score, ScoreStatus
 from pyrit.output._derivation import (
     attack_score_display,
     group_success_rate,
     resolve_scorer_name,
     resolve_target_info,
     select_attacks,
+    select_objective_scores,
 )
 
 
@@ -116,3 +118,77 @@ def test_resolve_scorer_name_absent_returns_none_value():
     score = Score(score_type="true_false", score_value="true")
     assert resolve_scorer_name(score) is None
     assert resolve_scorer_name(score, none_value="Unknown") == "Unknown"
+
+
+# --- select_objective_scores ---
+
+_OBJECTIVE = ComponentIdentifier(class_name="ObjectiveScorer", class_module="tests", params={"threshold": 0.5})
+_REFUSAL = ComponentIdentifier(class_name="RefusalScorer", class_module="tests")
+
+
+def _stored_score(*, owner: uuid.UUID | None, label: str, scorer: ComponentIdentifier | None) -> Score:
+    return Score(
+        score_type="true_false",
+        score_value="true",
+        score_rationale=label,
+        message_piece_id=owner,
+        scorer_class_identifier=scorer,
+    )
+
+
+def _selected(pieces: list[MessagePiece], scores: list[Score]) -> dict[str, str | None]:
+    selected = select_objective_scores(pieces=pieces, scores=scores, objective_scorer_identifier=_OBJECTIVE)
+    return {piece_id: score.score_rationale for piece_id, score in selected.items()}
+
+
+def test_select_objective_scores_prefers_hash_match_over_earlier_class_name_match():
+    piece = MessagePiece(role="assistant", original_value="reply")
+    same_class = ComponentIdentifier(class_name="ObjectiveScorer", class_module="tests")
+    scores = [
+        _stored_score(owner=piece.id, label="class-only", scorer=same_class),
+        _stored_score(owner=piece.id, label="exact", scorer=_OBJECTIVE),
+    ]
+    assert _selected([piece], scores) == {str(piece.id): "exact"}
+
+
+def test_select_objective_scores_falls_back_to_class_name():
+    piece = MessagePiece(role="assistant", original_value="reply")
+    same_class = ComponentIdentifier(class_name="ObjectiveScorer", class_module="elsewhere")
+    scores = [
+        _stored_score(owner=piece.id, label="auxiliary", scorer=_REFUSAL),
+        _stored_score(owner=piece.id, label="same-class", scorer=same_class),
+    ]
+    assert _selected([piece], scores) == {str(piece.id): "same-class"}
+
+
+def test_select_objective_scores_keeps_the_first_match():
+    piece = MessagePiece(role="assistant", original_value="reply")
+    same_class = ComponentIdentifier(class_name="ObjectiveScorer", class_module="elsewhere")
+    exact = [_stored_score(owner=piece.id, label=label, scorer=_OBJECTIVE) for label in ("first", "second")]
+    class_only = [_stored_score(owner=piece.id, label=label, scorer=same_class) for label in ("first", "second")]
+    assert _selected([piece], exact) == {str(piece.id): "first"}
+    assert _selected([piece], class_only) == {str(piece.id): "first"}
+
+
+def test_select_objective_scores_ignores_auxiliary_unidentified_and_ownerless_scores():
+    piece = MessagePiece(role="assistant", original_value="reply")
+    scores = [
+        _stored_score(owner=piece.id, label="auxiliary", scorer=_REFUSAL),
+        _stored_score(owner=piece.id, label="unidentified", scorer=None),
+        _stored_score(owner=None, label="ownerless", scorer=_OBJECTIVE),
+    ]
+    assert _selected([piece], scores) == {}
+
+
+def test_select_objective_scores_keeps_message_level_score_on_the_piece_that_stores_it():
+    first = MessagePiece(role="assistant", original_value="first")
+    second = MessagePiece(role="assistant", original_value="second")
+    message_level = _stored_score(owner=first.id, label="message-level", scorer=_OBJECTIVE)
+    assert _selected([first, second], [message_level]) == {str(first.id): "message-level"}
+
+
+def test_select_objective_scores_reads_duplicated_piece_score_from_original():
+    original_id = uuid.uuid4()
+    duplicate = MessagePiece(role="assistant", original_value="reply", original_prompt_id=original_id)
+    scores = [_stored_score(owner=original_id, label="original", scorer=_OBJECTIVE)]
+    assert _selected([duplicate], scores) == {str(duplicate.id): "original"}

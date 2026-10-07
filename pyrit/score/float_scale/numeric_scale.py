@@ -3,12 +3,37 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-import yaml
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, model_validator
 
 from pyrit.common import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
+
+
+def _reject_bool(value: Any) -> Any:
+    """
+    Reject a boolean bound, which ``int`` validation would otherwise coerce to 0 or 1.
+
+    ``bool`` subclasses ``int``, so a ``true`` bound in a rubric YAML would be silently
+    reinterpreted as a number and shift or collapse the scale.
+
+    Args:
+        value (Any): The incoming bound.
+
+    Returns:
+        Any: The value unchanged when it is not a bool.
+
+    Raises:
+        ValueError: If the value is a bool.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"scale bound must be an integer, not a bool ({value}).")
+    return value
+
+
+#: An integer scale bound that refuses ``bool``.
+ScaleBound = Annotated[int, BeforeValidator(_reject_bool)]
 
 
 class NumericRange(BaseModel):
@@ -16,8 +41,8 @@ class NumericRange(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    minimum_value: int
-    maximum_value: int
+    minimum_value: ScaleBound
+    maximum_value: ScaleBound
     category: str | None = None
 
     @model_validator(mode="after")
@@ -55,7 +80,7 @@ class NumericRubric(NumericRange):
             ValueError: If the YAML does not contain a mapping or fails model validation.
         """
         resolved_path = verify_and_resolve_path(path)
-        loaded = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        loaded = safe_load_yaml(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, Mapping):
             raise ValueError(f"Numeric rubric YAML file '{resolved_path}' must contain a mapping.")
         return cls.model_validate(loaded)

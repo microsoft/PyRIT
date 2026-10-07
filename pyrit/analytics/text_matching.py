@@ -95,10 +95,16 @@ class ApproximateTextMatching(TextMatching):
             case_sensitive (bool): Whether to perform case-sensitive matching. Defaults to False.
 
         Raises:
-            ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0].
+            ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0], or if ``n`` is
+                not a positive integer.
         """
         if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
             raise ValueError(f"threshold must be finite and between 0.0 and 1.0, got {threshold}")
+        # An n-gram size below 1 silently makes every comparison match: with n=0 the only
+        # n-gram is the empty string, which is a substring of any text, so the overlap is
+        # always 1.0. Reject it here rather than returning a meaningless score.
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValueError(f"n must be a positive integer, got {n!r}")
         self._threshold = threshold
         self._n = n
         self._case_sensitive = case_sensitive
@@ -114,6 +120,9 @@ class ApproximateTextMatching(TextMatching):
         Returns:
             bool: True if n-gram overlap score exceeds threshold, False otherwise.
         """
+        if not target.strip():
+            return False
+
         score = self._calculate_ngram_overlap(target=target, text=text)
         return score >= self._threshold
 
@@ -130,6 +139,12 @@ class ApproximateTextMatching(TextMatching):
             found in the text.
         """
         if not text:
+            return 0.0
+        # A target that is only whitespace carries no content to look for. It is
+        # long enough to form n-grams, so without this it scores a perfect
+        # overlap against any text containing the same run of spaces. The sibling
+        # `ExactTextMatching.is_match` rejects a blank target for the same reason.
+        if not target.strip():
             return 0.0
         if len(target) < self._n:
             return 0.0

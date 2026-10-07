@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from pyrit.common.path import HARM_DEFINITION_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ class HarmDefinition(BaseModel):
 
         try:
             with open(resolved_path, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+                data = safe_load_yaml(f)
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in harm definition file {resolved_path}: {e}") from e
 

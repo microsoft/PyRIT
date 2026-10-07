@@ -17,16 +17,17 @@
 #
 # This notebook covers two categories of image converters:
 #
-# - **[Text to Image](#text-to-image)**: Convert text into images (QR codes, text overlays)
+# - **[Text to Image](#text-to-image)**: Convert text into images (grid composite, QR codes, text overlays)
 # - **[Image to Image](#image-to-image)**: Modify or transform existing images
 
 # %% [markdown]
 # (text-to-image)=
 # ## Text to Image
 #
-# ### QRCodeConverter
 #
-# The `QRCodeConverter` converts text into QR code images:
+# ### GridCompositeConverter
+#
+# The `GridCompositeConverter` renders the prompt text into a composite grid where one cell carries the text payload and the remaining cells are innocuous images, targeting weaknesses in a model's ability to reason across multiple regions of an image at once and accurately evaluate overall safety when a majority of the image is benign.
 
 # %%
 import pathlib
@@ -34,13 +35,34 @@ import pathlib
 from IPython.display import display
 from PIL import Image
 
-from pyrit.converter import QRCodeConverter
+from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter import GridCompositeConverter
 from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
-prompt = "https://github.com/microsoft/PyRIT"
+prompt = "harmful objective"
+# This directory contains example innocuous images used for the grid composite converter.
+images = list(CONVERTER_SEED_PROMPT_PATH.glob("grid_composite/*.png"))
+
+# Defaults to a 2 x 2 grid
+gc_converter = GridCompositeConverter(innocuous_images=images)
+gc_result = await gc_converter.convert_async(prompt=prompt)  # type: ignore
+
+print(f"Grid composite saved to: {gc_result.output_text}")
+
+# Display the grid composite image
+gc_image = Image.open(gc_result.output_text)
+display(gc_image)
+
+# %% [markdown]
+# ### QRCodeConverter
+#
+# The `QRCodeConverter` encodes the prompt text into a QR code image, moving the payload off the text channel so it must be decoded from the image.
+
+# %%
+from pyrit.converter import QRCodeConverter
 
 qr_converter = QRCodeConverter()
 qr_result = await qr_converter.convert_async(prompt=prompt)  # type: ignore

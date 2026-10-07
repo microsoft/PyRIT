@@ -67,10 +67,12 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ContentEntryScorable,
@@ -114,6 +116,11 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
+
+
+class AttackStateConflictError(ValueError):
+    """An atomic attack write no longer matches the state read by its caller."""
+
 
 #: Canonical criteria key of a seed that carries no conditions.
 _NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
@@ -297,6 +304,7 @@ class _AttackResultQuery:
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
     scenario_result_id: str | None = None
+    result_selection: AttackResultSelection = AttackResultSelection.LATEST_PER_CONVERSATION
     min_turns: int | None = None
     max_turns: int | None = None
     limit: int | None = None
@@ -309,8 +317,10 @@ class _AttackResultQuery:
         TODO(PyRIT 1.4): Remove attribution handling in ``labels``.
 
         Raises:
-            ValueError: If attribution aliases conflict or exceed their maximum length.
+            ValueError: If result selection is invalid, or attribution aliases conflict
+                or exceed their maximum length.
         """
+        object.__setattr__(self, "result_selection", AttackResultSelection(self.result_selection))
         for field_name in self._SEQUENCE_FIELDS:
             value = getattr(self, field_name)
             if value is not None:
@@ -887,13 +897,16 @@ class MemoryInterface(abc.ABC):
         ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
+        The caller supplies ownership through ``conversation.attack_result_id``.
+        Registering a conversation that belongs to a different execution raises ``ValueError``.
+
         Args:
             conversation (Conversation): The conversation metadata to record, carrying the
                 ``conversation_id`` and the target it is held with (if known).
 
         Raises:
             ValueError: If ``conversation_id`` is empty, or if a conversation with the same
-                id already exists with a different target.
+                id already exists with a different target or belongs to a different attack execution.
         """
         self._insert_conversation(conversation=conversation)
 
@@ -1026,8 +1039,12 @@ class MemoryInterface(abc.ABC):
         """
         Register conversation metadata in the caller's transaction, without committing.
 
+        The caller supplies the owner explicitly. An existing conversation with no owner
+        can be claimed; one owned by a different execution is never reassigned.
+
         Raises:
-            ValueError: If the ID is empty or the conversation is already held with a different target.
+            ValueError: If the ID is empty, or the conversation is already held with a different
+                target or owned by a different attack execution.
         """
         if not conversation.conversation_id:
             raise ValueError("Cannot register a conversation without a conversation_id.")
@@ -1040,7 +1057,8 @@ class MemoryInterface(abc.ABC):
                     target_identifier=TargetIdentifier.from_component_identifier(conversation.target_identifier),
                 )
             session.add(entry)
-        elif (
+            return
+        if (
             entry.target_identifier is not None
             and existing.target_identifier is not None
             and ComponentIdentifier.model_validate(existing.target_identifier) != conversation.target_identifier
@@ -1049,6 +1067,24 @@ class MemoryInterface(abc.ABC):
                 f"Conversation {conversation.conversation_id} is already registered with a different "
                 f"target ({existing.target_identifier!r}); a conversation is held with exactly one "
                 f"target and cannot be re-registered with {entry.target_identifier!r}."
+            )
+        if entry.attack_result_id is None or existing.attack_result_id == entry.attack_result_id:
+            return
+        session.execute(
+            update(ConversationEntry)
+            .where(
+                ConversationEntry.conversation_id == conversation.conversation_id,
+                ConversationEntry.attack_result_id.is_(None),
+            )
+            .values(attack_result_id=entry.attack_result_id)
+            .execution_options(synchronize_session=False)
+        )
+        session.refresh(existing)
+        if existing.attack_result_id != entry.attack_result_id:
+            raise ValueError(
+                f"Conversation {conversation.conversation_id} belongs to attack result "
+                f"{existing.attack_result_id} and cannot be assigned to attack result {entry.attack_result_id}. "
+                "An attack execution that reuses existing history must copy it into a new conversation."
             )
 
     def _execute_add_conversation_retry(
@@ -1865,6 +1901,10 @@ class MemoryInterface(abc.ABC):
             raise ValueError("update_fields must be provided to update prompt entries.")
         with closing(self._get_session()) as session:
             try:
+                if "atomic_attack_identifier" in update_fields and any(
+                    isinstance(entry, AttackResultEntry) for entry in entries
+                ):
+                    _begin_sqlite_write(session)
                 prompt_entry_ids = [entry.id for entry in entries if isinstance(entry, PromptMemoryEntry)]
                 if prompt_entry_ids and session.get_bind().dialect.name == "mssql":
                     for start in range(0, len(prompt_entry_ids), self._MAX_BIND_VARS):
@@ -1888,6 +1928,16 @@ class MemoryInterface(abc.ABC):
                     entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
+                    if isinstance(entry_in_session, AttackResultEntry):
+                        derived_fields = {"atomic_attack_identifier_hash", "objective_target_eval_hash_v1"} & (
+                            update_fields.keys()
+                        )
+                        if derived_fields:
+                            names = ", ".join(sorted(derived_fields))
+                            raise ValueError(
+                                f"Derived attack result field(s) {names} cannot be updated directly; "
+                                "update atomic_attack_identifier instead."
+                            )
                     for field, value in update_fields.items():
                         if field not in vars(entry_in_session):
                             session.rollback()
@@ -1895,13 +1945,40 @@ class MemoryInterface(abc.ABC):
                                 f"Field '{field}' does not exist in the table '{entry_in_session.__tablename__}'. "
                                 "Rolling back changes..."
                             )
-                        setattr(entry_in_session, field, value)
+                        if isinstance(entry_in_session, AttackResultEntry) and field == "atomic_attack_identifier":
+                            self._update_attack_result_identifier(
+                                session=session, entry=entry_in_session, identifier=value
+                            )
+                        else:
+                            setattr(entry_in_session, field, value)
                 session.commit()
                 return True
             except SQLAlchemyError as e:
                 session.rollback()
                 logger.exception(f"Error updating entries: {e}")
                 raise
+
+    def _update_attack_result_identifier(
+        self,
+        *,
+        session: Session,
+        entry: AttackResultEntry,
+        identifier: ComponentIdentifier | dict[str, Any] | None,
+    ) -> None:
+        """
+        Persist the replacement graph before switching the result's foreign key.
+
+        Args:
+            session (Session): The result update's transaction.
+            entry (AttackResultEntry): The saved result to update.
+            identifier (ComponentIdentifier | dict[str, Any] | None): The new atomic identifier, or None.
+        """
+        prepared = entry._prepare_atomic_attack_identifier(identifier=identifier)
+        if prepared is not None:
+            self._persist_identifier(
+                session=session, identifier=AtomicAttackIdentifier.from_component_identifier(prepared)
+            )
+        entry._set_atomic_attack_identifier(identifier=prepared)
 
     @abc.abstractmethod
     def _get_attack_result_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
@@ -2823,6 +2900,40 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(self._get_conversation, conversation_id=conversation_id)
 
+    def _get_attack_result_conversations(self, *, attack_result_id: str) -> list[Conversation]:
+        """
+        Return the conversations owned by the attack execution that produced ``attack_result_id``.
+
+        Args:
+            attack_result_id (str): The attack result ID.
+
+        Returns:
+            list[Conversation]: The owned conversations' metadata, ordered by conversation ID.
+        """
+        entries = self._query_entries(
+            ConversationEntry,
+            conditions=ConversationEntry.attack_result_id == uuid.UUID(attack_result_id),
+        )
+        return sorted((entry.get_conversation() for entry in entries), key=lambda item: item.conversation_id)
+
+    async def get_attack_result_conversations_async(self, *, attack_result_id: str) -> list[Conversation]:
+        """
+        Read the conversations owned by one attack execution.
+
+        These include its objective conversation and any adversarial, scoring, converter
+        and branch conversations created while it ran. A child attack's conversations
+        belong to the child's result.
+
+        Args:
+            attack_result_id: The ID of the attack result the execution produced.
+
+        Returns:
+            The owned conversations' metadata, ordered by conversation ID.
+        """
+        return await self._run_database_operation_async(
+            self._get_attack_result_conversations, attack_result_id=attack_result_id
+        )
+
     async def update_scenario_result_async(self, *, scenario_result: ScenarioResult) -> None:
         """
         Persist an updated scenario result.
@@ -2920,6 +3031,7 @@ class MemoryInterface(abc.ABC):
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        attack_result_id: str | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
@@ -2943,6 +3055,8 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that
                 allow filtering by various identifier JSON properties. Defaults to None.
+            attack_result_id (str | None, optional): Only return pieces from conversations owned by
+                the attack execution that produced this result. Defaults to None.
 
         Returns:
             Sequence[MessagePiece]: A list of MessagePiece objects that match the specified filters.
@@ -2976,6 +3090,14 @@ class MemoryInterface(abc.ABC):
             if identifier_filters:
                 conditions.extend(
                     self._build_message_piece_identifier_conditions(identifier_filters=identifier_filters)
+                )
+            if attack_result_id:
+                conditions.append(
+                    PromptMemoryEntry.conversation_id.in_(
+                        select(ConversationEntry.conversation_id).where(
+                            ConversationEntry.attack_result_id == uuid.UUID(attack_result_id)
+                        )
+                    )
                 )
 
             # Identify list parameters that may need batching
@@ -3029,7 +3151,7 @@ class MemoryInterface(abc.ABC):
 
         return new_conversation_id, all_pieces
 
-    def _execute_duplicate_conversation(self, *, conversation_id: str) -> str:
+    def _execute_duplicate_conversation(self, *, conversation_id: str, attack_result_id: str | None = None) -> str:
         """
         Duplicate a conversation for reuse.
 
@@ -3039,6 +3161,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
@@ -3048,6 +3171,8 @@ class MemoryInterface(abc.ABC):
         )
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
+        if attack_result_id is None and source_metadata is not None:
+            attack_result_id = source_metadata.attack_result_id
         new_conversation_id, all_pieces = self._dispatch_memory_operation(
             "duplicate_messages", self._execute_duplicate_messages, messages=messages
         )
@@ -3055,14 +3180,20 @@ class MemoryInterface(abc.ABC):
             self._dispatch_memory_operation(
                 "add_conversation_to_memory",
                 self._execute_add_conversation_to_memory,
-                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target),
+                conversation=Conversation(
+                    conversation_id=new_conversation_id,
+                    target_identifier=source_target,
+                    attack_result_id=attack_result_id,
+                ),
             )
             self._dispatch_memory_operation(
                 "add_message_pieces_to_memory", self._execute_add_message_pieces_to_memory, message_pieces=all_pieces
             )
         return new_conversation_id
 
-    def _execute_duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
+    def _execute_duplicate_conversation_excluding_last_turn(
+        self, *, conversation_id: str, attack_result_id: str | None = None
+    ) -> str:
         """
         Duplicate a conversation, excluding the last turn. In this case, last turn is defined as before the last
         user request (e.g. if there is half a turn, it just removes that half).
@@ -3071,6 +3202,7 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
@@ -3095,6 +3227,8 @@ class MemoryInterface(abc.ABC):
 
         source_metadata = self._get_conversation(conversation_id=conversation_id)
         source_target = source_metadata.target_identifier if source_metadata else None
+        if attack_result_id is None and source_metadata is not None:
+            attack_result_id = source_metadata.attack_result_id
         new_conversation_id, all_pieces = self._dispatch_memory_operation(
             "duplicate_messages", self._execute_duplicate_messages, messages=messages_to_duplicate
         )
@@ -3102,7 +3236,11 @@ class MemoryInterface(abc.ABC):
             self._dispatch_memory_operation(
                 "add_conversation_to_memory",
                 self._execute_add_conversation_to_memory,
-                conversation=Conversation(conversation_id=new_conversation_id, target_identifier=source_target),
+                conversation=Conversation(
+                    conversation_id=new_conversation_id,
+                    target_identifier=source_target,
+                    attack_result_id=attack_result_id,
+                ),
             )
             self._dispatch_memory_operation(
                 "add_message_pieces_to_memory", self._execute_add_message_pieces_to_memory, message_pieces=all_pieces
@@ -3293,14 +3431,14 @@ class MemoryInterface(abc.ABC):
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to run schema migrations.")
         run_schema_migrations(engine=self.engine, silent=silent)
-        check_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=True)
 
-    def _check_schema_migration(self, *, silent: bool = False) -> None:
+    def _check_schema_migration(self) -> None:
         """
         Verify that the current database schema matches the models without modifying the database.
 
-        Args:
-            silent (bool): If True, suppresses Alembic console output. Defaults to False.
+        A matching schema is reported by Alembic as console output that confirms nothing happened,
+        so the check is always run silently. A mismatch raises instead of printing.
 
         Raises:
             RuntimeError: If the engine is not initialized.
@@ -3311,7 +3449,7 @@ class MemoryInterface(abc.ABC):
         logger.info("Checking schema migration compatibility.")
         if self.engine is None:
             raise RuntimeError("Engine must be initialized to check schema migrations.")
-        check_schema_migrations(engine=self.engine, silent=silent)
+        check_schema_migrations(engine=self.engine, silent=True)
 
     def reset_database(self) -> None:
         """
@@ -4455,22 +4593,30 @@ class MemoryInterface(abc.ABC):
         Raises:
             SQLAlchemyError: If the database transaction fails.
         """
-        entries = [AttackResultEntry(entry=attack_result) for attack_result in attack_results]
         with closing(self._get_session()) as session:
             try:
                 for attack_result in attack_results:
-                    if attack_result.atomic_attack_identifier is not None:
-                        self._persist_identifier(
-                            session=session,
-                            identifier=AtomicAttackIdentifier.from_component_identifier(
-                                attack_result.atomic_attack_identifier
-                            ),
-                        )
-                session.add_all(entries)
+                    self._add_attack_result_to_session(session=session, attack_result=attack_result)
                 session.commit()
             except SQLAlchemyError:
                 session.rollback()
                 raise
+
+    def _add_attack_result_to_session(self, *, session: Session, attack_result: AttackResult) -> AttackResultEntry:
+        """
+        Insert an attack and its identifier in the caller's transaction.
+
+        Returns:
+            The pending attack entry.
+        """
+        if attack_result.atomic_attack_identifier is not None:
+            self._persist_identifier(
+                session=session,
+                identifier=AtomicAttackIdentifier.from_component_identifier(attack_result.atomic_attack_identifier),
+            )
+        entry = AttackResultEntry(entry=attack_result)
+        session.add(entry)
+        return entry
 
     def _execute_add_conversation_branches_to_attack(
         self,
@@ -4479,20 +4625,27 @@ class MemoryInterface(abc.ABC):
         conversations: Sequence[Conversation],
         message_pieces: Sequence[MessagePiece],
         source_conversation: Conversation | None = None,
+        new_attack: AttackResult | None = None,
+        expected_fields: Mapping[str, Any] | None = None,
+        update_fields: Mapping[str, Any] | None = None,
+        request_fingerprint: str | None = None,
     ) -> bool:
         """
-        Atomically store prepared conversations, copied pieces, and their attack references.
+        Atomically store initial or related conversations, pieces, and attack references.
 
         The caller prepares the copies. This method only persists them, preserving the usual
         conversation and message insertion invariants. A supplied source must still be an
         active objective conversation when the transaction acquires the attack's write lock.
+        Supply ``new_attack`` to create the attack in the same transaction. An optional
+        request fingerprint makes retries with the same conversation IDs idempotent.
 
         Returns:
-            bool: False when the attack no longer exists.
+            bool: True for an insert; False for an identical retry or a missing destination.
 
         Raises:
             ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
-            SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
+            AttackStateConflictError: An expected field or creation identity changed.
+            IntegrityError: If persistence fails; the complete preparation is rolled back.
         """
         conversation_ids = [conversation.conversation_id for conversation in conversations]
         if len(set(conversation_ids)) != len(conversation_ids):
@@ -4501,26 +4654,173 @@ class MemoryInterface(abc.ABC):
             raise ValueError("A prepared branch cannot replace the source conversation")
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
             raise ValueError("Copied message pieces must belong to the prepared branches")
+        for conversation in [*conversations, *([source_conversation] if source_conversation else [])]:
+            if conversation.attack_result_id not in (None, attack_result_id):
+                raise ValueError("Prepared conversations must belong to the destination attack")
 
+        if new_attack and (
+            new_attack.attack_result_id != attack_result_id or new_attack.conversation_id not in conversation_ids
+        ):
+            raise ValueError("The new attack must reference one of the prepared conversations")
+        receipt_key = f"conversation_save:{','.join(sorted(conversation_ids))}"
+        try:
+            with closing(self._get_session()) as session, session.begin():
+                entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
+                if (
+                    request_fingerprint
+                    and entry is not None
+                    and (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                ):
+                    return False
+                if new_attack is not None:
+                    if entry is not None:
+                        raise AttackStateConflictError("The creation identity is already in use")
+                    entry = self._add_attack_result_to_session(session=session, attack_result=new_attack)
+                elif entry is None:
+                    return False
+                self._check_attack_fields(entry=entry, expected_fields=expected_fields or {})
+                if source_conversation is not None:
+                    active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                    if source_conversation.conversation_id not in active_ids:
+                        raise ValueError("Source conversation is not an active objective conversation of this attack")
+                    self._insert_conversation_in_session(
+                        session=session,
+                        conversation=source_conversation.model_copy(update={"attack_result_id": attack_result_id}),
+                    )
+                for conversation in conversations:
+                    if request_fingerprint and session.get(ConversationEntry, conversation.conversation_id) is not None:
+                        raise AttackStateConflictError("The creation identity is already in use")
+                    self._insert_conversation_in_session(
+                        session=session,
+                        conversation=conversation.model_copy(update={"attack_result_id": attack_result_id}),
+                    )
+                self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
+                pruned_ids = list(entry.pruned_conversation_ids or [])
+                for conversation_id in conversation_ids:
+                    if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
+                        pruned_ids.append(conversation_id)
+                entry.pruned_conversation_ids = pruned_ids or None
+                self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields or {})
+                if request_fingerprint:
+                    entry.attack_metadata = {**(entry.attack_metadata or {}), receipt_key: request_fingerprint}
+                entry.timestamp = datetime.now(UTC)
+            return True
+        except IntegrityError:
+            # A concurrent retry may have committed the same new attack before our insert.
+            with closing(self._get_session()) as session:
+                existing = session.get(AttackResultEntry, uuid.UUID(attack_result_id))
+                if (
+                    request_fingerprint
+                    and existing is not None
+                    and (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                ):
+                    return False
+            raise
+
+    def _execute_update_attack_result_conditionally(
+        self,
+        *,
+        attack_result_id: str,
+        expected_fields: Mapping[str, Any],
+        update_fields: Mapping[str, Any],
+        conversation_target: ComponentIdentifier | None = None,
+        expected_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
+    ) -> bool:
+        """
+        Compare and update prepared fields and conversation targets in one transaction.
+
+        Returns:
+            True after a successful update.
+
+        Raises:
+            AttackStateConflictError: The attack changed or a conversation uses another target.
+        """
         with closing(self._get_session()) as session, session.begin():
             entry = self._get_locked_attack_result(session=session, attack_result_id=attack_result_id)
             if entry is None:
-                return False
-            if source_conversation is not None:
+                raise AttackStateConflictError("The destination attack no longer exists")
+            self._check_attack_fields(entry=entry, expected_fields=expected_fields)
+            if expected_conversation_pieces is not None:
                 active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
-                if source_conversation.conversation_id not in active_ids:
-                    raise ValueError("Source conversation is not an active objective conversation of this attack")
-                self._insert_conversation_in_session(session=session, conversation=source_conversation)
-            for conversation in conversations:
-                self._insert_conversation_in_session(session=session, conversation=conversation)
-            self._add_message_pieces_to_session(session=session, message_pieces=message_pieces)
-            pruned_ids = list(entry.pruned_conversation_ids or [])
-            for conversation_id in conversation_ids:
-                if conversation_id != entry.conversation_id and conversation_id not in pruned_ids:
-                    pruned_ids.append(conversation_id)
-            entry.pruned_conversation_ids = pruned_ids or None
-            entry.timestamp = datetime.now(UTC)
-        return True
+                if active_ids != set(expected_conversation_pieces):
+                    raise AttackStateConflictError("The attack's conversation set changed. Retry target selection.")
+                self._check_conversation_history(session=session, expected=expected_conversation_pieces)
+            if conversation_target is not None:
+                target = TargetIdentifier.from_component_identifier(conversation_target)
+                self._persist_target_identifier(session=session, target_identifier=target)
+                for conversation_id in {entry.conversation_id, *(entry.pruned_conversation_ids or [])}:
+                    conversation = session.get(ConversationEntry, conversation_id)
+                    if conversation is None:
+                        session.add(
+                            ConversationEntry(
+                                conversation=Conversation(
+                                    conversation_id=conversation_id,
+                                    target_identifier=target,
+                                    attack_result_id=attack_result_id,
+                                )
+                            )
+                        )
+                    elif conversation.target_identifier_hash not in (None, target.hash):
+                        raise AttackStateConflictError("A conversation already has a different target")
+                    else:
+                        self._insert_conversation_in_session(
+                            session=session,
+                            conversation=Conversation(
+                                conversation_id=conversation_id,
+                                attack_result_id=attack_result_id,
+                            ),
+                        )
+                        conversation.target_identifier = target.model_dump()
+                        conversation.target_identifier_hash = target.hash
+            self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields)
+            return True
+
+    @staticmethod
+    def _check_conversation_history(*, session: Session, expected: Mapping[str, Sequence[MessagePiece]]) -> None:
+        """
+        Compare the validated snapshot and hold history stable until commit.
+
+        Raises:
+            AttackStateConflictError: A message was added, removed, or changed.
+        """
+        for conversation_id, pieces in expected.items():
+            statement = (
+                select(PromptMemoryEntry)
+                .where(PromptMemoryEntry.conversation_id == conversation_id)
+                .with_hint(PromptMemoryEntry, "WITH (UPDLOCK, HOLDLOCK)", dialect_name="mssql")
+            )
+            current = {row.id: row.get_message_piece().model_dump() for row in session.execute(statement).scalars()}
+            if current != {piece.id: piece.model_dump() for piece in pieces}:
+                raise AttackStateConflictError("The conversation history changed. Retry target selection.")
+
+    @staticmethod
+    def _check_attack_fields(*, entry: AttackResultEntry, expected_fields: Mapping[str, Any]) -> None:
+        """
+        Reject a stale write before changing any rows.
+
+        Raises:
+            AttackStateConflictError: An expected field no longer matches.
+        """
+        for field, expected in expected_fields.items():
+            if getattr(entry, field) != expected:
+                raise AttackStateConflictError(f"The attack's {field} changed. Reload before saving.")
+
+    def _apply_attack_fields_in_session(
+        self, *, session: Session, entry: AttackResultEntry, update_fields: Mapping[str, Any]
+    ) -> None:
+        """Persist prepared fields and their identifier references in the caller's transaction."""
+        for field, value in update_fields.items():
+            if field == "atomic_attack_identifier" and value is not None:
+                identifier = AtomicAttackIdentifier.model_validate(value)
+                identifier = AtomicAttackIdentifier.from_component_identifier(
+                    identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+                )
+                self._persist_identifier(session=session, identifier=identifier)
+                entry.atomic_attack_identifier_hash = identifier.hash
+                value = identifier.model_dump()
+            if field == "attack_metadata":
+                value = {**(entry.attack_metadata or {}), **value}
+            setattr(entry, field, value)
 
     def _execute_promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
         """
@@ -4652,6 +4952,7 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        result_selection: AttackResultSelection = AttackResultSelection.LATEST_PER_CONVERSATION,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
@@ -4713,17 +5014,22 @@ class MemoryInterface(abc.ABC):
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            result_selection (AttackResultSelection): Whether to return every distinct result ID
+                or only the newest matching result per conversation. Defaults to
+                ``LATEST_PER_CONVERSATION`` for compatibility. ``ALL_RESULTS`` preserves
+                different result IDs sharing a conversation without conversation deduplication.
             min_turns (int | None, optional): If set, only return attacks whose
                 ``executed_turns`` is greater than or equal to this value. Applied after
-                per-conversation deduplication (i.e. to the surviving newest row per
-                conversation), so it never resurfaces an older duplicate. Defaults to None.
+                result selection, so ``LATEST_PER_CONVERSATION`` never resurfaces an older
+                result, while ``ALL_RESULTS`` checks each result independently. Defaults to None.
             max_turns (int | None, optional): If set, only return attacks whose
                 ``executed_turns`` is less than or equal to this value. Applied after
-                deduplication, mirroring ``min_turns``. Defaults to None.
-            limit (int | None, optional): Maximum number of deduplicated attack results to
+                result selection, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of selected attack results to
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
-                deduplication and pagination happen in the database (via a ``NOT EXISTS`` anti-join)
-                instead of loading every row into memory. Defaults to None (return all).
+                selection and pagination happen in the database instead of loading every row
+                into memory. Only ``LATEST_PER_CONVERSATION`` uses a ``NOT EXISTS`` anti-join.
+                Defaults to None (return all selected results).
             after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
@@ -4733,6 +5039,7 @@ class MemoryInterface(abc.ABC):
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
 
         Raises:
+            ValueError: If ``result_selection`` is not a supported selection mode.
             ValueError: If any label key contains characters outside the allowlist
                 ``[A-Za-z0-9_.-]+``.
             ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
@@ -4756,6 +5063,7 @@ class MemoryInterface(abc.ABC):
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
+            result_selection=result_selection,
             min_turns=min_turns,
             max_turns=max_turns,
             limit=limit,
@@ -4788,6 +5096,7 @@ class MemoryInterface(abc.ABC):
             if paginating:
                 return self._query_paginated_attack_results(
                     conditions=conditions,
+                    result_selection=query.result_selection,
                     min_turns=query.min_turns,
                     max_turns=query.max_turns,
                     limit=query.limit,
@@ -4797,7 +5106,11 @@ class MemoryInterface(abc.ABC):
             entries = self._query_with_list_params(
                 AttackResultEntry, conditions=conditions, list_params=self._build_attack_result_list_params(query=query)
             )
-            results = self._dedup_attack_entries(entries)
+            results = (
+                [entry.get_attack_result() for entry in entries]
+                if query.result_selection is AttackResultSelection.ALL_RESULTS
+                else self._dedup_attack_entries(entries)
+            )
             return self._filter_attack_results_by_turns(
                 results,
                 min_turns=query.min_turns,
@@ -5015,15 +5328,17 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         conditions: list[Any],
+        result_selection: AttackResultSelection,
         min_turns: int | None,
         max_turns: int | None,
         limit: int | None,
         after: AttackResultKeysetCursor | None,
     ) -> list[AttackResult]:
         """
-        Deduplicate in SQL (filter-aware) and return one recency-ordered page of results.
+        Apply result selection in SQL and return one recency-ordered page of results.
 
-        Keeps only the newest row per ``conversation_id`` with a correlated ``NOT EXISTS``
+        ``ALL_RESULTS`` returns every matching result ID without conversation deduplication.
+        ``LATEST_PER_CONVERSATION`` keeps only the newest row per ``conversation_id`` with a correlated ``NOT EXISTS``
         anti-join: a row survives when no other row that passes the same ``conditions``
         shares its conversation and sorts later on ``(timestamp, id)``. This reproduces the
         post-fetch Python dedup but *before* pagination so page sizes stay correct. The
@@ -5047,18 +5362,21 @@ class MemoryInterface(abc.ABC):
         suppress a valid winner.
 
         Args:
-            conditions (list[Any]): Scalar WHERE filters applied before deduplication.
-            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for winners.
-            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for winners.
+            conditions (list[Any]): Scalar WHERE filters applied before result selection.
+            result_selection (AttackResultSelection): Whether to keep all result IDs or only
+                the newest matching result per conversation.
+            min_turns (int | None): Inclusive lower bound on ``executed_turns`` for selected results.
+            max_turns (int | None): Inclusive upper bound on ``executed_turns`` for selected results.
             limit (int | None): Maximum number of results to return.
             after (AttackResultKeysetCursor | None): Keyset anchor; only rows ordered strictly
                 after it are returned. ``None`` starts at the first page.
 
         Returns:
-            list[AttackResult]: The deduplicated, recency-ordered page of attack results.
+            list[AttackResult]: The selected, recency-ordered page of attack results.
         """
         page_conditions: list[Any] = list(conditions)
-        page_conditions.append(self._attack_results_not_superseded_condition(conditions=conditions))
+        if result_selection is AttackResultSelection.LATEST_PER_CONVERSATION:
+            page_conditions.append(self._attack_results_not_superseded_condition(conditions=conditions))
         if min_turns is not None:
             page_conditions.append(AttackResultEntry.executed_turns >= min_turns)
         if max_turns is not None:
@@ -5068,7 +5386,7 @@ class MemoryInterface(abc.ABC):
 
         entries = self._query_entries(
             AttackResultEntry,
-            conditions=and_(*page_conditions),
+            conditions=and_(*page_conditions) if page_conditions else None,
             order_by=self._attack_results_recency_order_by(),
             limit=limit,
         )
@@ -5121,14 +5439,14 @@ class MemoryInterface(abc.ABC):
         results: list[AttackResult], *, min_turns: int | None, max_turns: int | None
     ) -> list[AttackResult]:
         """
-        Filter already-deduplicated attack results by their ``executed_turns`` bounds.
+        Filter selected attack results by their ``executed_turns`` bounds.
 
-        Applied after per-conversation dedup (matching the SQL paginated path) so the bounds
-        act on the surviving newest row per conversation, never resurfacing an older
-        duplicate that falls within range.
+        Applied after result selection, matching the SQL paginated path. With
+        ``LATEST_PER_CONVERSATION``, bounds never resurface an older result; with
+        ``ALL_RESULTS``, bounds apply independently to every matching result ID.
 
         Args:
-            results (list[AttackResult]): Deduplicated attack results to filter.
+            results (list[AttackResult]): Selected attack results to filter.
             min_turns (int | None): Inclusive lower bound on executed turns, or None.
             max_turns (int | None): Inclusive upper bound on executed turns, or None.
 
@@ -6259,13 +6577,16 @@ class MemoryInterface(abc.ABC):
         ``conversation_id`` with a different target is a conflict and raises ``ValueError`` -- a conversation is held
         with exactly one target and is never re-targeted.
 
+        The caller supplies ownership through ``conversation.attack_result_id``.
+        Registering a conversation that belongs to a different execution raises ``ValueError``.
+
         Args:
             conversation (Conversation): The conversation metadata to record, carrying the
                 ``conversation_id`` and the target it is held with (if known).
 
         Raises:
             ValueError: If ``conversation_id`` is empty, or if a conversation with the same
-                id already exists with a different target.
+                id already exists with a different target or belongs to a different attack execution.
         """
         return await self._run_database_operation_async(
             self._execute_add_conversation_to_memory, conversation=conversation
@@ -7383,6 +7704,7 @@ class MemoryInterface(abc.ABC):
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        attack_result_id: str | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Use ``get_message_pieces_async``.
@@ -7411,6 +7733,7 @@ class MemoryInterface(abc.ABC):
             not_data_type=not_data_type,
             converted_value_sha256=converted_value_sha256,
             identifier_filters=identifier_filters,
+            attack_result_id=attack_result_id,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.get_message_pieces)
@@ -7430,6 +7753,7 @@ class MemoryInterface(abc.ABC):
         not_data_type: str | None = None,
         converted_value_sha256: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
+        attack_result_id: str | None = None,
     ) -> Sequence[MessagePiece]:
         """
         Retrieve a list of MessagePiece objects based on the specified filters.
@@ -7453,6 +7777,8 @@ class MemoryInterface(abc.ABC):
             identifier_filters (Sequence[IdentifierFilter] | None, optional):
                 A sequence of IdentifierFilter objects that
                 allow filtering by various identifier JSON properties. Defaults to None.
+            attack_result_id (str | None, optional): Only return pieces from conversations owned by
+                the attack execution that produced this result. Defaults to None.
 
         Returns:
             Sequence[MessagePiece]: A list of MessagePiece objects that match the specified filters.
@@ -7476,6 +7802,7 @@ class MemoryInterface(abc.ABC):
             not_data_type=not_data_type,
             converted_value_sha256=converted_value_sha256,
             identifier_filters=identifier_filters,
+            attack_result_id=attack_result_id,
         )
 
     def duplicate_messages(self, *, messages: Sequence[Message]) -> tuple[str, Sequence[MessagePiece]]:
@@ -7510,7 +7837,7 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(self._execute_duplicate_messages, messages=messages)
 
-    def duplicate_conversation(self, *, conversation_id: str) -> str:
+    def duplicate_conversation(self, *, conversation_id: str, attack_result_id: str | None = None) -> str:
         """
         Use ``duplicate_conversation_async``.
 
@@ -7524,10 +7851,10 @@ class MemoryInterface(abc.ABC):
             new_item="MemoryInterface.duplicate_conversation_async",
             removed_in="1.4.0",
         )
-        return self._execute_duplicate_conversation(conversation_id=conversation_id)
+        return self._execute_duplicate_conversation(conversation_id=conversation_id, attack_result_id=attack_result_id)
 
     @legacy_sync_override(lambda: MemoryInterface.duplicate_conversation)
-    async def duplicate_conversation_async(self, *, conversation_id: str) -> str:
+    async def duplicate_conversation_async(self, *, conversation_id: str, attack_result_id: str | None = None) -> str:
         """
         Duplicate a conversation for reuse.
 
@@ -7537,15 +7864,18 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
         """
         return await self._run_database_operation_async(
-            self._execute_duplicate_conversation, conversation_id=conversation_id
+            self._execute_duplicate_conversation, conversation_id=conversation_id, attack_result_id=attack_result_id
         )
 
-    def duplicate_conversation_excluding_last_turn(self, *, conversation_id: str) -> str:
+    def duplicate_conversation_excluding_last_turn(
+        self, *, conversation_id: str, attack_result_id: str | None = None
+    ) -> str:
         """
         Use ``duplicate_conversation_excluding_last_turn_async``.
 
@@ -7559,10 +7889,14 @@ class MemoryInterface(abc.ABC):
             new_item="MemoryInterface.duplicate_conversation_excluding_last_turn_async",
             removed_in="1.4.0",
         )
-        return self._execute_duplicate_conversation_excluding_last_turn(conversation_id=conversation_id)
+        return self._execute_duplicate_conversation_excluding_last_turn(
+            conversation_id=conversation_id, attack_result_id=attack_result_id
+        )
 
     @legacy_sync_override(lambda: MemoryInterface.duplicate_conversation_excluding_last_turn)
-    async def duplicate_conversation_excluding_last_turn_async(self, *, conversation_id: str) -> str:
+    async def duplicate_conversation_excluding_last_turn_async(
+        self, *, conversation_id: str, attack_result_id: str | None = None
+    ) -> str:
         """
         Duplicate a conversation, excluding the last turn. In this case, last turn is defined as before the last
         user request (e.g. if there is half a turn, it just removes that half).
@@ -7571,12 +7905,15 @@ class MemoryInterface(abc.ABC):
 
         Args:
             conversation_id (str): The conversation ID with existing conversations.
+            attack_result_id (str | None): Destination owner. Defaults to the source owner.
 
         Returns:
             The uuid for the new conversation.
         """
         return await self._run_database_operation_async(
-            self._execute_duplicate_conversation_excluding_last_turn, conversation_id=conversation_id
+            self._execute_duplicate_conversation_excluding_last_turn,
+            conversation_id=conversation_id,
+            attack_result_id=attack_result_id,
         )
 
     def add_message_to_memory(self, *, request: Message) -> None:
@@ -8332,6 +8669,10 @@ class MemoryInterface(abc.ABC):
         conversations: Sequence[Conversation],
         message_pieces: Sequence[MessagePiece],
         source_conversation: Conversation | None = None,
+        new_attack: AttackResult | None = None,
+        expected_fields: Mapping[str, Any] | None = None,
+        update_fields: Mapping[str, Any] | None = None,
+        request_fingerprint: str | None = None,
     ) -> bool:
         """
         Use ``add_conversation_branches_to_attack_async``.
@@ -8351,6 +8692,10 @@ class MemoryInterface(abc.ABC):
             conversations=conversations,
             message_pieces=message_pieces,
             source_conversation=source_conversation,
+            new_attack=new_attack,
+            expected_fields=expected_fields,
+            update_fields=update_fields,
+            request_fingerprint=request_fingerprint,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.add_conversation_branches_to_attack)
@@ -8361,19 +8706,26 @@ class MemoryInterface(abc.ABC):
         conversations: Sequence[Conversation],
         message_pieces: Sequence[MessagePiece],
         source_conversation: Conversation | None = None,
+        new_attack: AttackResult | None = None,
+        expected_fields: Mapping[str, Any] | None = None,
+        update_fields: Mapping[str, Any] | None = None,
+        request_fingerprint: str | None = None,
     ) -> bool:
         """
-        Atomically store prepared conversations, copied pieces, and their attack references.
+        Atomically store initial or related conversations, pieces, and attack references.
 
         The caller prepares the copies. This method only persists them, preserving the usual
         conversation and message insertion invariants. A supplied source must still be an
         active objective conversation when the transaction acquires the attack's write lock.
+        Supply ``new_attack`` to create the attack in the same transaction. An optional
+        request fingerprint makes retries with the same conversation IDs idempotent.
 
         Returns:
-            bool: False when the attack no longer exists.
+            bool: True for an insert; False for an identical retry or a missing destination.
 
         Raises:
             ValueError: If the source is unrelated, branch IDs repeat, or pieces belong elsewhere.
+            AttackStateConflictError: An expected field or creation identity changed.
             SQLAlchemyError: If persistence fails; the complete preparation is rolled back.
         """
         return await self._run_database_operation_async(
@@ -8382,6 +8734,37 @@ class MemoryInterface(abc.ABC):
             conversations=conversations,
             message_pieces=message_pieces,
             source_conversation=source_conversation,
+            new_attack=new_attack,
+            expected_fields=expected_fields,
+            update_fields=update_fields,
+            request_fingerprint=request_fingerprint,
+        )
+
+    async def update_attack_result_conditionally_async(
+        self,
+        *,
+        attack_result_id: str,
+        expected_fields: Mapping[str, Any],
+        update_fields: Mapping[str, Any],
+        conversation_target: ComponentIdentifier | None = None,
+        expected_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
+    ) -> bool:
+        """
+        Compare and update prepared fields and conversation targets in one transaction.
+
+        Returns:
+            True after a successful update.
+
+        Raises:
+            AttackStateConflictError: The attack changed or a conversation uses another target.
+        """
+        return await self._run_database_operation_async(
+            self._execute_update_attack_result_conditionally,
+            attack_result_id=attack_result_id,
+            expected_fields=expected_fields,
+            update_fields=update_fields,
+            conversation_target=conversation_target,
+            expected_conversation_pieces=expected_conversation_pieces,
         )
 
     def promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
@@ -8512,6 +8895,7 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        result_selection: AttackResultSelection = AttackResultSelection.LATEST_PER_CONVERSATION,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
@@ -8548,6 +8932,7 @@ class MemoryInterface(abc.ABC):
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
+            result_selection=result_selection,
             min_turns=min_turns,
             max_turns=max_turns,
             limit=limit,
@@ -8575,6 +8960,7 @@ class MemoryInterface(abc.ABC):
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
+        result_selection: AttackResultSelection = AttackResultSelection.LATEST_PER_CONVERSATION,
         min_turns: int | None = None,
         max_turns: int | None = None,
         limit: int | None = None,
@@ -8636,17 +9022,20 @@ class MemoryInterface(abc.ABC):
                 specific scenario via the ``AttackResultEntry.attribution_parent_id`` foreign key.
                 Combined with ``outcome=AttackOutcome.ERROR`` this is the replacement for the
                 removed per-scenario error_attack_result_ids manifest. Defaults to None.
+            result_selection (AttackResultSelection): Return each distinct saved result ID with
+                ``ALL_RESULTS``, or the newest matching result per conversation with
+                ``LATEST_PER_CONVERSATION``. The default preserves existing callers.
             min_turns (int | None, optional): If set, only return attacks whose
                 ``executed_turns`` is greater than or equal to this value. Applied after
-                per-conversation deduplication (i.e. to the surviving newest row per
-                conversation), so it never resurfaces an older duplicate. Defaults to None.
+                result selection, so the latest-per-conversation mode never resurfaces
+                an older duplicate. Defaults to None.
             max_turns (int | None, optional): If set, only return attacks whose
                 ``executed_turns`` is less than or equal to this value. Applied after
-                deduplication, mirroring ``min_turns``. Defaults to None.
-            limit (int | None, optional): Maximum number of deduplicated attack results to
+                result selection, mirroring ``min_turns``. Defaults to None.
+            limit (int | None, optional): Maximum number of selected attack results to
                 return, ordered by recency. When either ``limit`` or ``after`` is provided,
-                deduplication and pagination happen in the database (via a ``NOT EXISTS`` anti-join)
-                instead of loading every row into memory. Defaults to None (return all).
+                selection and pagination happen in the database; only
+                ``LATEST_PER_CONVERSATION`` uses a ``NOT EXISTS`` anti-join. Defaults to None.
             after (AttackResultKeysetCursor | None, optional): Keyset (seek) anchor from a
                 previous page. When provided, only results ordered strictly after the anchor
                 under the recency sort are returned, giving insert/delete-stable pagination
@@ -8656,6 +9045,7 @@ class MemoryInterface(abc.ABC):
             Sequence[AttackResult]: A list of AttackResult objects that match the specified filters.
 
         Raises:
+            ValueError: If ``result_selection`` is not a supported selection mode.
             ValueError: If any label key contains characters outside the allowlist
                 ``[A-Za-z0-9_.-]+``.
             ValueError: If ``limit`` or ``after`` is combined with ``attack_result_ids`` or
@@ -8680,6 +9070,7 @@ class MemoryInterface(abc.ABC):
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
+            result_selection=result_selection,
             min_turns=min_turns,
             max_turns=max_turns,
             limit=limit,

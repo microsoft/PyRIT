@@ -415,6 +415,22 @@ class TestCreateTarget:
                 request=CreateTargetRequest(name=name, type="TextTarget", params={}),
             )
 
+    async def test_create_target_registers_nothing_when_response_mapping_fails(self, sqlite_instance) -> None:
+        service = TargetService()
+
+        with (
+            patch(
+                "pyrit.backend.services.target_service.target_object_to_instance",
+                side_effect=RuntimeError("mapping failed"),
+            ),
+            pytest.raises(RuntimeError, match="mapping failed"),
+        ):
+            await service.create_target_async(
+                request=CreateTargetRequest(name="unmapped", type="TextTarget", params={}),
+            )
+
+        assert service.get_target_object(target_registry_name="unmapped") is None
+
     async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
         """Every target construction path is owned by the registry."""
         service = TargetService()

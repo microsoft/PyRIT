@@ -761,7 +761,7 @@ async def test_responses_probes_suppress_provider_io_and_preserve_state(
         server_name="test",
     )
     if initialized:
-        provider._tools = [MCPToolDefinition(name="remote", inputSchema={"type": "object", "properties": {}})]
+        provider._tools = [MCPToolDefinition(name="remote", input_schema={"type": "object", "properties": {}})]
     body = {
         "tools": [{"type": "web_search_preview"}],
         "tool_choice": "required",

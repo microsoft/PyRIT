@@ -46,6 +46,8 @@ class AttackIdentifier(ComponentIdentifier):
     adversarial_seed_prompt: Annotated[str | None, Evaluate.Include(), Param.Exclude()] = None
     #: Effective per-turn adversarial prompt template text, if the strategy uses one.
     adversarial_prompt_template: Annotated[str | None, Evaluate.Include(), Param.Exclude()] = None
+    #: ``False`` when the adversarial chat does not see scorer rationales; omitted when enabled (the default).
+    use_score_as_feedback: Annotated[bool | None, Evaluate.Include(), Param.Exclude()] = None
     #: The objective target the attack drives.
     objective_target: Annotated[
         TargetIdentifier | None,

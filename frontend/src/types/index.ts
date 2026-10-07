@@ -131,7 +131,7 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
-  role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system'
+  role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
   /**
@@ -394,6 +394,8 @@ export interface ConverterPreviewRequest {
   original_value: string
   converter_ids: string[]
   original_value_data_type?: string
+  start_token?: string
+  end_token?: string
 }
 
 /** One converter stage of a `/converters/preview` pipeline run. */
@@ -436,6 +438,7 @@ export interface TargetInfo {
 
 export type AttackTargetResolutionStatus =
   | 'idle'
+  | 'unbound'
   | 'loading'
   | 'resolved'
   | 'explicit-mismatch'
@@ -453,6 +456,7 @@ export interface AttackSummary {
   attack_specific_params?: Record<string, unknown> | null
   objective: string
   target?: TargetInfo | null
+  target_unbound?: boolean
   converters: string[]
   outcome?: AttackOutcome | null
   automated_score?: BackendScore | null
@@ -475,7 +479,7 @@ export interface AttackSummary {
 }
 
 export interface CreateAttackRequest {
-  target_registry_name: string
+  target_registry_name?: string
   name?: string
   operator?: string
   operation?: string
@@ -489,6 +493,59 @@ export interface CreateAttackRequest {
 export interface UpdateAttackRequest {
   outcome?: 'undetermined' | 'success' | 'failure' | 'error'
   objective?: string
+  expected_objective?: string
+}
+
+export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'simulated_tool' | 'developer'
+
+export interface ConversationDraftPiece extends MessagePieceRequest {
+  readonly draftId: string
+  previewUrl?: string
+  filename?: string
+  file?: File
+}
+
+export interface ConversationSaveInput {
+  messages: ConversationDraftMessage[]
+  objective: string
+  initialObjective: string
+  target: TargetInstance | null
+  sourceAttackId: string | null
+  sourceConversationId: string | null
+  labels?: Record<string, string>
+}
+
+export interface NewAttackContext {
+  generation: string
+  ready: boolean
+  labels?: Record<string, string>
+}
+
+export interface ConvertedFileChip {
+  name: string
+  url: string
+  iconKind: 'image' | 'audio' | 'video' | 'file'
+}
+
+export interface ConversationDraftMessage extends MessageRequest {
+  readonly id: string
+  role: ConversationDraftRole
+  pieces: ConversationDraftPiece[]
+}
+
+export interface SaveConversationRequest {
+  save_id: string
+  destination: 'same_attack' | 'new_attack'
+  attack_result_id?: string
+  source_attack_result_id?: string
+  source_conversation_id?: string
+  expected_objective?: string
+  objective?: string
+  target_registry_name?: string
+  operator?: string
+  operation?: string
+  labels?: Record<string, string>
+  messages: MessageRequest[]
 }
 
 export interface CreateAttackResponse {
@@ -591,13 +648,16 @@ export interface MessagePieceRequest {
   applied_converter_ids?: string[]
   mime_type?: string
   original_prompt_id?: string
+  source_piece_id?: string
   prompt_metadata?: Record<string, unknown>
 }
 
-export interface PrependedMessageRequest {
+export interface MessageRequest {
   role: string // 'system' | 'user' | 'assistant'
   pieces: MessagePieceRequest[]
 }
+
+export type PrependedMessageRequest = MessageRequest
 
 /**
  * Ordered converter stack applied to specific pieces of a message.
@@ -610,14 +670,14 @@ export interface ConverterConfigurationRequest {
   prompt_data_types_to_apply?: string[]
 }
 
-export interface AddMessageRequest {
-  role: string
-  pieces: MessagePieceRequest[]
+export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
   converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
+  start_token?: string
+  end_token?: string
   target_conversation_id: string
 }
 
@@ -631,6 +691,22 @@ export interface LabelOptionsResponse {
 export interface AddMessageResponse {
   attack: AttackSummary
   messages: ConversationMessagesResponse
+}
+
+export interface MessageSendRequest extends AddMessageRequest {
+  send: true
+  target_registry_name: string
+  submission_id: string
+}
+
+export interface MessageSendStatus {
+  send_id: string
+  attack_result_id: string
+  conversation_id: string
+  request_turn_number: number | null
+  state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
+  error: string | null
+  failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
 }
 
 export interface AttackListResponse {

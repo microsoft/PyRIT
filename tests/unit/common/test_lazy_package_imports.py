@@ -137,6 +137,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.score.true_false.audio_true_false_scorer",
     ),
     (
+        "pyrit.score",
+        "CategoryConflictPolicy",
+        "pyrit.score.response_handler",
+        "pyrit.score.true_false.audio_true_false_scorer",
+    ),
+    (
         "pyrit.score.observation",
         "OtelTraceSource",
         "pyrit.score.observation.otel_trace_source",

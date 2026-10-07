@@ -27,6 +27,8 @@ import type {
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
+  MessageSendRequest,
+  MessageSendStatus,
   AttackConversationsResponse,
   CreateConversationRequest,
   CreateConversationResponse,
@@ -50,6 +52,7 @@ import type {
   BackendScore,
   ManualScoreRequest,
   UpdateAttackRequest,
+  SaveConversationRequest,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -137,7 +140,10 @@ apiClient.interceptors.response.use(
       return Promise.reject(error)
     }
     const originalRequest = error?.config
-    if (error?.response?.status === 401 && originalRequest && !originalRequest._retried) {
+    if (
+      error?.response?.status === 401 && originalRequest && !originalRequest._retried
+      && !originalRequest.url?.endsWith('/message-sends')
+    ) {
       originalRequest._retried = true
       const freshToken = await getAccessToken(true)
       if (freshToken) {
@@ -307,6 +313,10 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
+    const response = await apiClient.post('/attacks/save-conversation', request)
+    return response.data
+  },
   createAttack: async (request: CreateAttackRequest): Promise<CreateAttackResponse> => {
     const response = await apiClient.post('/attacks', request)
     return response.data
@@ -341,6 +351,23 @@ export const attacksApi = {
     const response = await apiClient.post(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
       request
+    )
+    return response.data
+  },
+
+  submitMessageSend: async (attackResultId: string, request: MessageSendRequest): Promise<MessageSendStatus> => {
+    const response = await apiClient.post(
+      `/attacks/${encodeURIComponent(attackResultId)}/message-sends`, request,
+    )
+    return response.data
+  },
+
+  getMessageSend: async (
+    attackResultId: string, sendId: string, signal?: AbortSignal,
+  ): Promise<MessageSendStatus> => {
+    const response = await apiClient.get(
+      `/attacks/${encodeURIComponent(attackResultId)}/message-sends/${encodeURIComponent(sendId)}`,
+      { params: { wait_ms: 1000 }, signal },
     )
     return response.data
   },
