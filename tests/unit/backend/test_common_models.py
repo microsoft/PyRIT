@@ -5,12 +5,39 @@
 Tests for backend common models.
 """
 
+import uuid
+
+import pytest
+from pydantic import BaseModel, TypeAdapter, ValidationError
+
+from pyrit.backend.models.attacks import (
+    AddMessageRequest,
+    CreateAttackRequest,
+    MessagePieceRequest,
+    UpdateAttackRequest,
+)
 from pyrit.backend.models.common import (
+    MAX_FILE_CONTENT_LENGTH,
+    MAX_IDENTIFIER_LENGTH,
+    MAX_ITEMS,
+    MAX_LABEL_KEY_LENGTH,
+    MAX_LABEL_VALUE_LENGTH,
+    MAX_TEXT_LENGTH,
     FieldError,
+    LabelFilterStr,
     PaginationInfo,
     ProblemDetail,
     filter_sensitive_fields,
 )
+from pyrit.backend.models.configuration import (
+    ReinitializeRequest,
+    UpdateConfigurationFileRequest,
+    UpdateEnvironmentFileRequest,
+)
+from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
+from pyrit.backend.models.initializers import RegisterInitializerRequest
+from pyrit.backend.models.scores import ManualScoreRequest
+from pyrit.backend.models.targets import CreateTargetRequest
 
 
 class TestPaginationInfo:
@@ -371,3 +398,111 @@ class TestProblemDetailEdgeCases:
 
         assert "instance" not in data  # None should be excluded
         assert data["type"] == "/errors/test"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"target_registry_name": "t" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"source_conversation_id": "c" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"name": "n" * (MAX_TEXT_LENGTH + 1)},
+        {"labels": {f"key{i}": "value" for i in range(MAX_ITEMS + 1)}},
+        {"labels": {"k" * (MAX_LABEL_KEY_LENGTH + 1): "value"}},
+        {"labels": {"key": "v" * (MAX_LABEL_VALUE_LENGTH + 1)}},
+        {"cutoff_index": -1},
+    ],
+)
+def test_create_attack_request_rejects_values_over_limits(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        CreateAttackRequest.model_validate({"target_registry_name": "target", **overrides})
+
+
+def test_create_attack_request_accepts_values_at_limits() -> None:
+    request = CreateAttackRequest(
+        target_registry_name="t" * MAX_IDENTIFIER_LENGTH,
+        name="n" * MAX_TEXT_LENGTH,
+        labels={f"{i:0{MAX_LABEL_KEY_LENGTH}d}": "v" * MAX_LABEL_VALUE_LENGTH for i in range(MAX_ITEMS)},
+        cutoff_index=0,
+    )
+
+    assert len(request.labels or {}) == MAX_ITEMS
+
+
+def test_update_attack_request_rejects_oversized_objective() -> None:
+    with pytest.raises(ValidationError):
+        UpdateAttackRequest(objective="o" * (MAX_TEXT_LENGTH + 1))
+
+
+def test_update_attack_request_expected_objective_is_not_length_limited() -> None:
+    request = UpdateAttackRequest(objective="o", expected_objective="o" * (MAX_TEXT_LENGTH + 1))
+
+    assert len(request.expected_objective or "") == MAX_TEXT_LENGTH + 1
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"target_conversation_id": "c" * (MAX_IDENTIFIER_LENGTH + 1)},
+        {"converter_ids": ["converter"] * (MAX_ITEMS + 1)},
+        {"request_converter_configurations": [{"converter_ids": ["converter"]}] * (MAX_ITEMS + 1)},
+        {"pieces": [{"original_value": "text", "mime_type": "m" * (MAX_IDENTIFIER_LENGTH + 1)}]},
+    ],
+)
+def test_add_message_request_rejects_values_over_limits(overrides: dict[str, object]) -> None:
+    payload = {"pieces": [{"original_value": "text"}], "target_conversation_id": "conversation", **overrides}
+
+    with pytest.raises(ValidationError):
+        AddMessageRequest.model_validate(payload)
+
+
+def test_message_piece_content_is_not_length_limited() -> None:
+    piece = MessagePieceRequest(original_value="x" * (MAX_TEXT_LENGTH + 1))
+
+    assert len(piece.original_value) == MAX_TEXT_LENGTH + 1
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "field"),
+    [
+        (UpdateConfigurationFileRequest, {"content": "x" * (MAX_FILE_CONTENT_LENGTH + 1), "version": "v"}, "content"),
+        (UpdateEnvironmentFileRequest, {"content": "x" * (MAX_FILE_CONTENT_LENGTH + 1), "version": "v"}, "content"),
+        (ReinitializeRequest, {"version": "v" * (MAX_IDENTIFIER_LENGTH + 1)}, "version"),
+        (
+            RegisterInitializerRequest,
+            {"name": "custom", "script_content": "x" * (MAX_FILE_CONTENT_LENGTH + 1)},
+            "script_content",
+        ),
+        (
+            CreateConverterRequest,
+            {"name": "c", "type": "T", "params": {f"p{i}": 1 for i in range(MAX_ITEMS + 1)}},
+            "params",
+        ),
+        (ConverterPreviewRequest, {"original_value": "x", "converter_ids": ["c"] * (MAX_ITEMS + 1)}, "converter_ids"),
+        (CreateTargetRequest, {"type": "t" * (MAX_IDENTIFIER_LENGTH + 1)}, "type"),
+        (
+            ManualScoreRequest,
+            {
+                "attack_result_id": str(uuid.uuid4()),
+                "message_id": str(uuid.uuid4()),
+                "value": True,
+                "rationale": "r" * (MAX_TEXT_LENGTH + 1),
+            },
+            "rationale",
+        ),
+    ],
+)
+def test_request_models_reject_values_over_limits(
+    model: type[BaseModel], payload: dict[str, object], field: str
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        model.model_validate(payload)
+
+    assert [item["loc"][0] for item in error.value.errors()] == [field]
+
+
+def test_label_filter_limits_ignore_surrounding_whitespace() -> None:
+    padded = f"  {'k' * MAX_LABEL_KEY_LENGTH}  :  {'v' * MAX_LABEL_VALUE_LENGTH}  "
+
+    assert TypeAdapter(LabelFilterStr).validate_python(padded) == padded
+    with pytest.raises(ValidationError, match="limited"):
+        TypeAdapter(LabelFilterStr).validate_python(f"{'k' * (MAX_LABEL_KEY_LENGTH + 1)}:v")

@@ -144,10 +144,11 @@ class AdversarialBenchmark(Scenario):
     #: Bumped from 5 → 6 when objective scoring changed from the registry-selected
     #: default to task-achievement evaluation that supports the benchmark's broad
     #: behavior taxonomy.
+    #: Bumped from 6 → 7 when named-source limits became independent of the total cap.
     #: ``VERSION`` participates in resume identity, so older results cannot be resumed
-    #: as v6. Cache reuse also requires this version so implementation changes cannot
+    #: as v7. Cache reuse also requires this version so implementation changes cannot
     #: silently reuse results produced by an incompatible benchmark definition.
-    VERSION: int = 6
+    VERSION: int = 7
 
     #: AdversarialBenchmark compares attack-success rates across adversarial models; a baseline
     #: attack would be model-independent and contribute no signal to the comparison.

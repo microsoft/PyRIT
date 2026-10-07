@@ -96,12 +96,15 @@ class ApproximateTextMatching(TextMatching):
 
         Raises:
             ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0], or if ``n`` is
-                not an integer >= 1.
+                not a positive integer.
         """
         if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
             raise ValueError(f"threshold must be finite and between 0.0 and 1.0, got {threshold}")
+        # An n-gram size below 1 silently makes every comparison match: with n=0 the only
+        # n-gram is the empty string, which is a substring of any text, so the overlap is
+        # always 1.0. Reject it here rather than returning a meaningless score.
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
-            raise ValueError(f"n must be an integer >= 1, got {n}")
+            raise ValueError(f"n must be a positive integer, got {n!r}")
         self._threshold = threshold
         self._n = n
         self._case_sensitive = case_sensitive

@@ -374,6 +374,12 @@ export interface Parameter {
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
   reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  /** Whether parameter controls must obscure the entered value. */
+  sensitive?: boolean
+  /** Whether parameter controls must preserve line breaks in the entered value. */
+  multiline?: boolean
+  /** Whether the value must be omitted when identity-based authentication is selected. */
+  identity_conflicting?: boolean
   description?: string | null
 }
 
@@ -394,6 +400,8 @@ export interface ConverterPreviewRequest {
   original_value: string
   converter_ids: string[]
   original_value_data_type?: string
+  start_token?: string
+  end_token?: string
 }
 
 /** One converter stage of a `/converters/preview` pipeline run. */
@@ -510,6 +518,12 @@ export interface ConversationSaveInput {
   target: TargetInstance | null
   sourceAttackId: string | null
   sourceConversationId: string | null
+  labels?: Record<string, string>
+}
+
+export interface NewAttackContext {
+  generation: string
+  ready: boolean
   labels?: Record<string, string>
 }
 
@@ -668,6 +682,8 @@ export interface AddMessageRequest extends MessageRequest {
   converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
+  start_token?: string
+  end_token?: string
   target_conversation_id: string
 }
 

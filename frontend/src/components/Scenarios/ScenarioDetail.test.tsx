@@ -162,6 +162,7 @@ function renderDetail(
     defaultObjectiveTarget: makeTarget('target-a'),
     defaultAdversarialTarget: null,
     labels: { operator: 'roakey' },
+    defaultsReady: true,
     onNavigate: jest.fn(),
   }
   const merged = { ...defaultProps, ...props }
@@ -1410,5 +1411,39 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByText('crescendo')).toBeInTheDocument()
     expect(within(preview).getByText('harmbench')).toBeInTheDocument()
     expect(within(preview).getByText('attempts').parentElement).toHaveTextContent('attempts3')
+  })
+  describe('launch gating while generation defaults load', () => {
+    it('disables Launch scan while defaultsReady is false', async () => {
+      renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: false })
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      expect(launch).toBeDisabled()
+    })
+
+    it('enables Launch scan once defaults are ready', async () => {
+      renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: true })
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      await waitFor(() => expect(launch).toBeEnabled())
+    })
+
+    it('gates an open preview and launches with refreshed labels without losing configuration', async () => {
+      const user = userEvent.setup()
+      const view = renderDetail('/scanner/foundry.red_team_agent')
+      await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'target-b')
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+      const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+      const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
+
+      view.updateDefaults({ defaultsReady: false })
+      expect(confirm).toBeDisabled()
+      await user.click(confirm)
+      expect(mockStartRun).not.toHaveBeenCalled()
+      view.updateDefaults({ defaultsReady: true, labels: { operator: 'roakey', operation: 'config_op_v2' } })
+      expect(confirm).toBeEnabled()
+      await user.click(confirm)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        target_name: 'target-b',
+        labels: { operator: 'roakey', operation: 'config_op_v2' },
+      }))
+    })
   })
 })
