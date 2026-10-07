@@ -135,11 +135,63 @@ def test_local_storage_reads_latest_script_content(tmp_path: Path) -> None:
     assert storage.list_scripts() == {"example": "VALUE = 2\n"}
 
 
-def test_direct_python_blob_rejects_name_outside_prefix() -> None:
-    """Test that blobs outside the configured virtual directory are ignored."""
-    assert not CustomInitializerStorage._is_direct_python_blob(
-        blob_name="other/example.py", prefix="custom-initializers/"
+def test_listing_skips_scripts_it_cannot_address(tmp_path: Path) -> None:
+    """Test that every listed name can be passed back into the single-document operations."""
+    for file_name in ["good_one.py", "My-Script.py", "__init__.py", "test-helper.py"]:
+        (tmp_path / file_name).write_text("VALUE = 1\n", encoding="utf-8")
+    storage = CustomInitializerStorage(source=str(tmp_path))
+
+    listed = storage.list_scripts()
+
+    assert sorted(listed) == ["good_one"]
+    for name in listed:
+        storage.get_script_source(name)
+
+
+def test_listing_skips_a_script_that_is_not_text(tmp_path: Path) -> None:
+    """Test that one undecodable file does not hide every other stored initializer."""
+    (tmp_path / "good_one.py").write_bytes(b"VALUE = 1\n")
+    (tmp_path / "broken.py").write_bytes(b"\xff\xfe VALUE = 1")
+    storage = CustomInitializerStorage(source=str(tmp_path))
+
+    assert storage.list_scripts() == {"good_one": "VALUE = 1\n"}
+
+
+def test_stored_crlf_script_is_normalized_before_it_is_handed_back(tmp_path: Path) -> None:
+    """Test that stored CRLF cannot round-trip into the CRCRLF a text-mode rewrite would produce."""
+    (tmp_path / "windows_authored.py").write_bytes(b"VALUE = 1\r\nOTHER = 2\r\n")
+    storage = CustomInitializerStorage(source=str(tmp_path))
+
+    assert storage.list_scripts() == {"windows_authored": "VALUE = 1\nOTHER = 2\n"}
+
+
+def test_blob_listing_skips_a_script_that_is_not_text() -> None:
+    """Test that one undecodable blob does not hide every other stored initializer."""
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.list_blobs.return_value = [SimpleNamespace(name="broken.py"), SimpleNamespace(name="good_one.py")]
+    client.download_blob.side_effect = lambda blob_name: SimpleNamespace(
+        readall=lambda: b"\xff\xfe" if blob_name == "broken.py" else b"VALUE = 1\n"
     )
+    storage = CustomInitializerStorage(source="https://account.blob.core.windows.net/initializers?sig=secret")
+
+    with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+        assert storage.list_scripts() == {"good_one": "VALUE = 1\n"}
+
+
+def test_direct_python_blob_rejects_name_outside_prefix(tmp_path: Path) -> None:
+    """Test that blobs outside the configured virtual directory are ignored."""
+    storage = CustomInitializerStorage(source=str(tmp_path))
+
+    assert not storage._is_direct_document_blob(blob_name="other/example.py", prefix="custom-initializers/")
+
+
+def test_direct_document_blob_rejects_other_extensions(tmp_path: Path) -> None:
+    """Test that only blobs with the configured extension are listed."""
+    storage = CustomInitializerStorage(source=str(tmp_path))
+
+    assert storage._is_direct_document_blob(blob_name="example.py", prefix=None)
+    assert not storage._is_direct_document_blob(blob_name="example.json", prefix=None)
 
 
 def test_local_storage_cannot_open_blob_client(tmp_path: Path) -> None:
