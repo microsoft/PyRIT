@@ -405,18 +405,6 @@ export interface RegistryReferenceOption {
   type: string
 }
 
-export interface ParameterReferenceOptions {
-  target: RegistryReferenceOption[]
-  converter: RegistryReferenceOption[]
-  scorer: RegistryReferenceOption[]
-  scenario: RegistryReferenceOption[]
-}
-
-export interface ScorerInstance {
-  scorer_registry_name: string
-  identifier: { class_name: string }
-}
-
 export interface Parameter {
   name: string
   type_name: string

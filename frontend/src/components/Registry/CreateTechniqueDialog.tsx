@@ -8,16 +8,16 @@ import {
 import ParameterField from '@/components/Parameters/ParameterField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
 import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
-import { convertersApi, scorersApi, targetsApi, techniquesApi } from '@/services/api'
+import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { CreateTechniqueRequest, PaginationInfo, Parameter, ParameterReferenceOptions, TechniqueTypeEntry } from '@/types'
+import type { CreateTechniqueRequest, PaginationInfo, Parameter, RegistryReferenceOption, TechniqueTypeEntry } from '@/types'
 
 import { useCreateTechniqueDialogStyles } from './CreateTechniqueDialog.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 
 function canConfigure(parameter: Parameter): boolean {
-  if (parameter.reference_type) return parameter.reference_type !== 'scenario'
+  if (parameter.reference_type) return false
   if (parameter.variants) {
     return !parameter.is_list && Object.values(parameter.variants).some((parameters) =>
       parameters.every((nested) => !nested.required || canConfigure(nested)))
@@ -61,7 +61,8 @@ interface CreateTechniqueDialogProps {
 export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTechniqueDialogProps) {
   const styles = useCreateTechniqueDialogStyles()
   const [types, setTypes] = useState<TechniqueTypeEntry[]>([])
-  const [references, setReferences] = useState<ParameterReferenceOptions>({ target: [], converter: [], scorer: [], scenario: [] })
+  const [targetOptions, setTargetOptions] = useState<RegistryReferenceOption[]>([])
+  const [converterOptions, setConverterOptions] = useState<RegistryReferenceOption[]>([])
   const [selectedType, setSelectedType] = useState('')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -93,20 +94,15 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
       setLoading(true)
       setError(null)
       try {
-        const [metadata, targets, converters, scorers] = await Promise.all([
+        const [metadata, targets, converters] = await Promise.all([
           techniquesApi.listTypes(),
           loadReferencePages((cursor) => targetsApi.listTargets(200, cursor)),
           convertersApi.listConverters(),
-          loadReferencePages((cursor) => scorersApi.listScorers(cursor)),
         ])
         if (ignore) return
         setTypes(metadata.items)
-        setReferences({
-          target: targets.map((entry) => ({ name: entry.target_registry_name, type: entry.identifier.class_name })),
-          converter: converters.items.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name })),
-          scorer: scorers.map((entry) => ({ name: entry.scorer_registry_name, type: entry.identifier.class_name })),
-          scenario: [],
-        })
+        setTargetOptions(targets.map((entry) => ({ name: entry.target_registry_name, type: entry.identifier.class_name })))
+        setConverterOptions(converters.items.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name })))
       } catch (err) {
         if (!ignore) setError(toApiError(err).detail)
       } finally {
@@ -197,20 +193,20 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
                   ))}
                   {parameters.map((parameter) => (
                     <ParameterField key={parameter.name} parameter={parameter} value={values[parameter.name] ?? ''}
-                      disabled={submitting} referenceOptions={references} allowEmptyList
+                      disabled={submitting} allowEmptyList
                       onChange={(key, value) => setValues({ ...values, [key]: value })} />
                   ))}
                   {selected?.supports_converters && (
                     <>
-                      <ReferenceField label="Request converters" options={references.converter} value={requestConverters} multiple disabled={submitting}
+                      <ReferenceField label="Request converters" options={converterOptions} value={requestConverters} multiple disabled={submitting}
                         onChange={(next) => { if (Array.isArray(next)) setRequestConverters(next) }} />
-                      <ReferenceField label="Response converters" options={references.converter} value={responseConverters} multiple disabled={submitting}
+                      <ReferenceField label="Response converters" options={converterOptions} value={responseConverters} multiple disabled={submitting}
                         onChange={(next) => { if (Array.isArray(next)) setResponseConverters(next) }} />
                     </>
                   )}
                   {selected?.supports_adversarial && (
                     <>
-                      <ReferenceField label="Adversarial target" options={references.target} value={adversarialTarget} disabled={submitting}
+                      <ReferenceField label="Adversarial target" options={targetOptions} value={adversarialTarget} disabled={submitting}
                         hint="Not set: resolve the default adversarial target at execution. The objective target is selected when you run a scenario."
                         onChange={(next) => { if (typeof next === 'string') setAdversarialTarget(next) }} />
                       <Field label="Adversarial system prompt"><Textarea value={systemPrompt} disabled={submitting} onChange={(_, data) => setSystemPrompt(data.value)} /></Field>

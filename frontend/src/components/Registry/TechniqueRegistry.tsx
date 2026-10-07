@@ -29,12 +29,9 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
   const [tagFilter, setTagFilter] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [detail, setDetail] = useState<TechniqueInstance | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detailError, setDetailError] = useState<string | null>(null)
   const [focusRestore, setFocusRestore] = useState(0)
   const mounted = useRef(true)
   const listEpoch = useRef(0)
-  const detailEpoch = useRef(0)
   const newButton = useRef<HTMLButtonElement>(null)
   const pageRoot = useRef<HTMLDivElement>(null)
   const previousRuntime = useRef(runtimeKey)
@@ -56,7 +53,6 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
   useEffect(() => {
     mounted.current = true
     listEpoch.current++
-    detailEpoch.current++
     if (previousRuntime.current !== runtimeKey) {
       previousRuntime.current = runtimeKey
       setItems([])
@@ -83,21 +79,6 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
   const closeCreate = (): void => {
     setCreateOpen(false)
     setFocusRestore((current) => current + 1)
-  }
-
-  const showDetail = async (item: TechniqueInstance): Promise<void> => {
-    const epoch = ++detailEpoch.current
-    setDetail(item)
-    setDetailError(null)
-    setDetailLoading(true)
-    try {
-      const response = await techniquesApi.getTechnique(item.name)
-      if (mounted.current && epoch === detailEpoch.current) setDetail(response)
-    } catch (err) {
-      if (mounted.current && epoch === detailEpoch.current) setDetailError(toApiError(err).detail)
-    } finally {
-      if (mounted.current && epoch === detailEpoch.current) setDetailLoading(false)
-    }
   }
 
   const visible = items.filter((item) => (
@@ -149,20 +130,16 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
                 <TableCell><div className={styles.tags}>{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></TableCell>
                 <TableCell>
                   <Dialog open={detail?.name === item.name} onOpenChange={(_, data) => {
-                    if (!data.open) { detailEpoch.current++; setDetail(null) }
+                    if (!data.open) setDetail(null)
                   }}>
                     <DialogTrigger disableButtonEnhancement>
-                      <Button className={styles.action} onClick={() => { void showDetail(item) }} aria-label={`Details for ${item.name}`}>Details</Button>
+                      <Button className={styles.action} onClick={() => setDetail(item)} aria-label={`Details for ${item.name}`}>Details</Button>
                     </DialogTrigger>
                     <DialogSurface>
                       <DialogBody>
                         <DialogTitle>{item.name}</DialogTitle>
                         <DialogContent className={styles.content}>
-                          {detailLoading && <Spinner label="Loading technique details..." />}
-                          {detailError && <MessageBar intent="error"><MessageBarBody>{detailError}
-                            <Button onClick={() => { void showDetail(item) }}>Retry details</Button>
-                          </MessageBarBody></MessageBar>}
-                          {!detailLoading && !detailError && detail && (
+                          {detail && (
                             <>
                               <Text>{detail.description ?? 'No description'}</Text>
                               <Text>{detail.uses_default_adversarial_target ? 'Default adversarial target: resolved at execution.' : 'No deferred adversarial target.'}</Text>

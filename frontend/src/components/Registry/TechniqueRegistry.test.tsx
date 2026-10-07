@@ -1,8 +1,8 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
-import { convertersApi, scorersApi, targetsApi, techniquesApi } from '@/services/api'
+import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TechniqueInstance, TechniqueTypeResponse } from '@/types'
 
@@ -14,13 +14,11 @@ jest.mock('@/services/api', () => ({
   techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), getTechnique: jest.fn(), createTechnique: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
   convertersApi: { listConverters: jest.fn() },
-  scorersApi: { listScorers: jest.fn() },
 }))
 
 const techniques = jest.mocked(techniquesApi)
 const targets = jest.mocked(targetsApi)
 const converters = jest.mocked(convertersApi)
-const scorers = jest.mocked(scorersApi)
 
 function technique(name: string, attackType = 'PromptSendingAttack', tags = ['basic']): TechniqueInstance {
   return { name, attack_type: attackType, tags, description: `${name} description`,
@@ -33,7 +31,7 @@ const metadata: TechniqueTypeResponse = {
       parameters: [{ name: 'max_attempts_on_failure', type_name: 'int', required: false },
         { name: 'settings', type_name: 'Settings', required: false, variants: { basic: [
           { name: 'enabled', type_name: 'bool', required: false },
-          { name: 'converter', type_name: 'Converter', reference_type: 'converter', required: true },
+          { name: 'limit', type_name: 'int', required: true },
         ] } }] },
     { attack_type: 'RedTeamingAttack', description: 'Uses an adversarial target', parameters: [],
       supports_adversarial: true, supports_converters: true },
@@ -59,11 +57,10 @@ describe('TechniqueRegistry', () => {
     jest.clearAllMocks()
     for (const method of [
       ...Object.values(techniques), ...Object.values(targets),
-      ...Object.values(converters), ...Object.values(scorers),
+      ...Object.values(converters),
     ]) method.mockReset()
     mockRuntime = { generation: 1, ready: true }
     techniques.listTechniques.mockResolvedValue({ items: [technique('first'), technique('second', 'RedTeamingAttack', ['advanced'])] })
-    techniques.getTechnique.mockImplementation(async (name) => technique(name))
     techniques.listTypes.mockResolvedValue(metadata)
     techniques.createTechnique.mockResolvedValue(technique('created'))
     targets.listTargets.mockResolvedValue({
@@ -73,10 +70,10 @@ describe('TechniqueRegistry', () => {
       { converter_id: 'b64', identifier: { class_name: 'Base64Converter', class_module: 'pyrit.converter', hash: 'b64', pyrit_version: '1' } },
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', class_module: 'pyrit.converter', hash: 'rot13', pyrit_version: '1' } },
     ] })
-    scorers.listScorers.mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
   })
 
   it('loads, filters, inspects safe settings, and refreshes the list', async () => {
+    techniques.getTechnique.mockRejectedValue(new Error('Detail unavailable'))
     const user = userEvent.setup()
     render(tree())
     expect(screen.getByText('Loading techniques...')).toBeInTheDocument()
@@ -90,6 +87,8 @@ describe('TechniqueRegistry', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by tag' }), 'basic')
     await user.click(screen.getByRole('button', { name: 'Details for first' }))
     await screen.findByText(/safe display settings, not a reconstruction recipe/i)
+    expect(within(screen.getByRole('dialog')).getByText(/"attempts": 0/)).toBeInTheDocument()
+    expect(techniques.getTechnique).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Filter by tag' }), '')
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
@@ -107,18 +106,13 @@ describe('TechniqueRegistry', () => {
     expect(screen.getByText('No techniques match these filters.')).toBeInTheDocument()
   })
 
-  it('reports list and detail errors with retry', async () => {
+  it('reports list errors with retry', async () => {
     techniques.listTechniques.mockRejectedValueOnce(new Error('List unavailable'))
-    techniques.getTechnique.mockRejectedValueOnce(new Error('Detail unavailable'))
     const user = userEvent.setup()
     render(tree())
     await screen.findByText('List unavailable')
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     await screen.findByRole('table')
-    await user.click(screen.getByRole('button', { name: 'Details for first' }))
-    await screen.findByText('Detail unavailable')
-    await user.click(screen.getByRole('button', { name: 'Retry details' }))
-    await screen.findByText(/safe display settings/)
   })
 
   it('creates a metadata-driven configuration with false, zero, and ordered duplicate references', async () => {
@@ -131,7 +125,7 @@ describe('TechniqueRegistry', () => {
     await user.type(screen.getByLabelText('max_attempts_on_failure'), '0')
     await user.selectOptions(screen.getByLabelText('settings'), 'basic')
     await user.selectOptions(screen.getByLabelText('enabled'), 'false')
-    await user.selectOptions(screen.getByRole('combobox', { name: /converter \*/ }), 'rot13')
+    await user.type(screen.getByLabelText('limit *'), '0')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Request converters' }), 'b64')
     await user.click(screen.getByRole('button', { name: 'Add to Request converters' }))
     await user.click(screen.getByRole('button', { name: 'Add to Request converters' }))
@@ -144,7 +138,7 @@ describe('TechniqueRegistry', () => {
     await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
     const request = techniques.createTechnique.mock.calls[0][0]
     expect(request).toMatchObject({ name: 'created', tags: ['mine', 'basic'], type: 'PromptSendingAttack', params: {
-      max_attempts_on_failure: 0, settings: { type: 'basic', parameters: { enabled: false, converter: 'rot13' } },
+      max_attempts_on_failure: 0, settings: { type: 'basic', parameters: { enabled: false, limit: 0 } },
     }, request_converters: ['b64', 'rot13', 'b64'], response_converters: ['rot13'] })
     expect(request.params).not.toHaveProperty('objective_target')
     await waitFor(() => expect(screen.getByRole('button', { name: 'New technique' })).toHaveFocus())

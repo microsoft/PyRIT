@@ -17,8 +17,6 @@ import type {
   CreateTechniqueRequest,
   TechniqueInstance,
   TechniqueTypeResponse,
-  ScorerInstance,
-  PaginationInfo,
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
@@ -269,11 +267,6 @@ export const techniquesApi = {
     (await apiClient.get(`/techniques/${encodeURIComponent(name)}`)).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
-}
-
-export const scorersApi = {
-  listScorers: async (cursor?: string): Promise<{ items: ScorerInstance[]; pagination: PaginationInfo }> =>
-    (await apiClient.get('/scorers', { params: { limit: 200, cursor } })).data,
 }
 
 export const convertersApi = {

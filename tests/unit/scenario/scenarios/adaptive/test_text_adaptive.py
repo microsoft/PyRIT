@@ -11,10 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.scenario.core import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
@@ -180,10 +182,18 @@ class TestTextAdaptiveBasics:
         assert estimate.minimum_attack_count is None
         assert estimate.maximum_attack_count is None
 
-    def test_get_technique_class_is_cached(self):
+    def test_get_technique_class_is_cached_across_runtime_catalog_changes(self) -> None:
         cls_a = TextAdaptive.get_technique_class()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registry.instances.register(
+            AttackTechniqueFactory(name="runtime_only", attack_class=PromptSendingAttack),
+            name="runtime_only",
+        )
         cls_b = TextAdaptive.get_technique_class()
         assert cls_a is cls_b
+        assert "runtime_only" not in {technique.value for technique in cls_b.get_all_techniques()}
+        AttackTechniqueRegistry.reset_registry_singleton()
+        assert TextAdaptive.get_technique_class() is cls_a
 
     def test_get_default_technique(self):
         strat = TextAdaptive.get_technique_class().default()

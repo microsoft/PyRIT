@@ -35,9 +35,13 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   });
 
   const promptRequests: string[] = [];
+  const detailRequests: string[] = [];
   page.on("request", (outgoing) => {
     if (outgoing.method() === "POST" && /\/api\/(?:message-sends|attacks\/[^/]+\/messages|scenarios\/runs)(?:\/|\?|$)/.test(outgoing.url())) {
       promptRequests.push(outgoing.url());
+    }
+    if (outgoing.method() === "GET" && new URL(outgoing.url()).pathname === `/api/techniques/${name}`) {
+      detailRequests.push(outgoing.url());
     }
   });
   await page.goto("/registry/techniques");
@@ -69,6 +73,8 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("button", { name: `Details for ${name}` }).click();
   await expect(page.getByText("These are safe display settings, not a reconstruction recipe.")).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: `Details for ${name}` })).toBeFocused();
+  expect(detailRequests).toEqual([]);
 
   let finishCreate: (() => void) | undefined;
   const pendingCreate = new Promise<void>((resolve) => { finishCreate = resolve; });
