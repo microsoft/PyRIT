@@ -410,24 +410,25 @@ class TestSetupFrontend:
         mock_frontend_path.exists.return_value = True
         mock_frontend_path.__str__ = lambda self: str(tmp_path)
 
-        # setup_frontend mounts onto the shared app; restore its routes so the catch-all SPA mount
-        # does not leak into later tests (it turns unmatched API paths into 404s).
-        original_routes = list(app.router.routes)
-        try:
-            with (
-                patch("pyrit.backend.main.DEV_MODE", False),
-                patch("pyrit.backend.main.Path") as mock_path_cls,
-                patch("builtins.print"),
-            ):
-                mock_path_instance = MagicMock()
-                mock_path_instance.parent.__truediv__ = MagicMock(return_value=mock_frontend_path)
-                mock_path_cls.return_value = mock_path_instance
+        with (
+            patch("pyrit.backend.main.DEV_MODE", False),
+            patch("pyrit.backend.main.Path") as mock_path_cls,
+            patch.object(app, "mount") as mount,
+            patch("builtins.print"),
+        ):
+            mock_path_instance = MagicMock()
+            mock_path_instance.parent.__truediv__ = MagicMock(return_value=mock_frontend_path)
+            mock_path_cls.return_value = mock_path_instance
 
-                setup_frontend()
+            setup_frontend()
 
-            assert any(getattr(route, "name", None) == "frontend" for route in app.router.routes)
-        finally:
-            app.router.routes[:] = original_routes
+        mount.assert_called_once()
+        assert mount.call_args.args[0] == "/"
+        static_files = mount.call_args.args[1]
+        assert isinstance(static_files, SPAStaticFiles)
+        assert static_files.directory == str(tmp_path)
+        assert static_files.html
+        assert mount.call_args.kwargs == {"name": "frontend"}
 
     def test_frontend_missing_warns_but_continues(self) -> None:
         """Test that setup_frontend warns but does not exit when frontend is missing."""
