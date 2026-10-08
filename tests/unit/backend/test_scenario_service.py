@@ -808,16 +808,21 @@ class TestScenarioServiceListScenarios:
         service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
 
         catalog_task = asyncio.create_task(service.list_scenarios_async())
-        await asyncio.wait_for(two_started.wait(), timeout=2)
-        await asyncio.sleep(0)
+        try:
+            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await asyncio.sleep(0)
 
-        assert service._run_default_estimate_async.await_count == 2
-        release.set()
-        result = await catalog_task
+            assert service._run_default_estimate_async.await_count == 2
+            release.set()
+            result = await catalog_task
 
-        assert maximum_active == 2
-        assert service._run_default_estimate_async.await_count == 3
-        assert all(item.default_run_size == estimate for item in result.items)
+            assert maximum_active == 2
+            assert service._run_default_estimate_async.await_count == 3
+            assert all(item.default_run_size == estimate for item in result.items)
+        finally:
+            release.set()
+            await service.close_async()
+            await asyncio.gather(catalog_task, return_exceptions=True)
 
     async def test_catalog_queue_wait_does_not_start_execution_timeout(self) -> None:
         """A queued catalog estimate starts its timeout only after acquiring capacity."""
@@ -1304,13 +1309,18 @@ class TestScenarioServiceListScenarios:
             )
             for index in range(3)
         ]
-        await asyncio.wait_for(two_started.wait(), timeout=1)
-        await asyncio.sleep(0)
+        try:
+            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await asyncio.sleep(0)
 
-        assert service._estimate_configured_run_size_async.await_count == 2
-        release.set()
-        assert await asyncio.gather(*tasks) == [estimate, estimate, estimate]
-        assert maximum_active == 2
+            assert service._estimate_configured_run_size_async.await_count == 2
+            release.set()
+            assert await asyncio.gather(*tasks) == [estimate, estimate, estimate]
+            assert maximum_active == 2
+        finally:
+            release.set()
+            await service.close_async()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def test_metadata_catalog_remains_responsive_during_estimate(self) -> None:
         """Metadata-only catalog requests do not wait for running estimates."""

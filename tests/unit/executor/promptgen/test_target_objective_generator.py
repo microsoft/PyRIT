@@ -3,6 +3,8 @@
 
 import asyncio
 import json
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -16,6 +18,37 @@ from pyrit.executor.promptgen import TargetObjectiveGenerator
 from pyrit.executor.promptgen.target_objective_generator import TargetObjectiveGeneratorContext
 from pyrit.memory import MemoryInterface
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, SeedPrompt
+
+
+@contextmanager
+def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Generator[AsyncMock, None, None]:
+    """Mock setup and retry-history I/O so timeout tests reach their intended await."""
+    with (
+        patch.object(generator._target, "set_system_prompt_async", new_callable=AsyncMock) as setup,
+        patch.object(generator._normalizer.memory, "get_message_pieces_async", new_callable=AsyncMock, return_value=[]),
+        patch.object(
+            generator._normalizer.memory,
+            "delete_conversation_pieces_after_sequence_async",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+    ):
+        yield setup
+
+
+@contextmanager
+def _controlled_timeouts() -> Generator[list[tuple[float | None, asyncio.Timeout]], None, None]:
+    """Expire real asyncio deadlines at the intended await, not during unrelated setup."""
+    timeouts: list[tuple[float | None, asyncio.Timeout]] = []
+    original_timeout = asyncio.timeout
+
+    def capture_timeout(delay: float | None) -> asyncio.Timeout:
+        timeout = original_timeout(None)
+        timeouts.append((delay, timeout))
+        return timeout
+
+    with patch("pyrit.executor.promptgen.target_objective_generator.asyncio.timeout", new=capture_timeout):
+        yield timeouts
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -213,6 +246,7 @@ value: |
                 target=MockPromptTarget(), system_prompt=SeedPrompt(value="image.png", data_type="image_path")
             )
 
+    @pytest.mark.timeout(30)
     async def test_timeout_bounds_pending_send_and_cleanup_async(self, caplog: pytest.LogCaptureFixture) -> None:
         generator = TargetObjectiveGenerator(target=MockPromptTarget(), timeout_seconds=1)
         cancelled = asyncio.Event()
@@ -220,32 +254,89 @@ value: |
 
         async def wait_forever_async(**kwargs: object) -> None:
             try:
+                timeouts[0][1].reschedule(asyncio.get_running_loop().time())
                 await asyncio.Event().wait()
             finally:
                 cancelled.set()
 
         async def reset_async(*, conversation_id: str) -> None:
             try:
+                timeouts[-1][1].reschedule(asyncio.get_running_loop().time())
                 await asyncio.Event().wait()
             finally:
                 cleanup_cancelled.set()
 
         with (
+            _isolate_pre_send_io(generator) as setup,
+            _controlled_timeouts() as timeouts,
             patch.object(generator, "_CLEANUP_TIMEOUT_SECONDS", 0.01),
-            patch.object(generator._normalizer, "send_prompt_async", side_effect=wait_forever_async),
+            patch.object(
+                generator._normalizer, "send_prompt_async", new_callable=AsyncMock, side_effect=wait_forever_async
+            ) as send,
             patch.object(generator._target, "reset_conversation_async", side_effect=reset_async) as reset,
         ):
-            async with asyncio.timeout(3):
-                with pytest.raises(TimeoutError):
-                    await generator.execute_async(instructions="Test", count=2)
+            with pytest.raises(TimeoutError):
+                await generator.execute_async(instructions="Test", count=2)
+        assert [delay for delay, _ in timeouts] == [1, 0.01]
+        assert all(timeout.expired() for _, timeout in timeouts)
+        send.assert_awaited_once()
         assert cancelled.is_set()
         assert cleanup_cancelled.is_set()
+        setup.assert_awaited_once()
         reset.assert_awaited_once()
         assert "Timed out resetting generation conversation" in caplog.text
 
+    @pytest.mark.timeout(30)
+    @pytest.mark.parametrize(
+        ("pending_method", "conversation_initialized"),
+        [
+            ("set_system_prompt_async", False),
+            ("get_message_pieces_async", True),
+            ("delete_conversation_pieces_after_sequence_async", True),
+        ],
+    )
+    async def test_timeout_before_send_preserves_cleanup_contract_async(
+        self, *, pending_method: str, conversation_initialized: bool
+    ) -> None:
+        generator = TargetObjectiveGenerator(target=MockPromptTarget(), timeout_seconds=1)
+        context = TargetObjectiveGeneratorContext(instructions="Test", count=2)
+        cancelled = asyncio.Event()
+        pending_owner = generator._normalizer.memory if conversation_initialized else generator._target
+
+        async def wait_forever_async(**kwargs: object) -> None:
+            try:
+                timeouts[0][1].reschedule(asyncio.get_running_loop().time())
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        with (
+            _isolate_pre_send_io(generator),
+            _controlled_timeouts() as timeouts,
+            patch.object(
+                pending_owner, pending_method, new_callable=AsyncMock, side_effect=wait_forever_async
+            ) as pending,
+            patch.object(generator._normalizer, "send_prompt_async", new_callable=AsyncMock) as send,
+            patch.object(generator._target, "reset_conversation_async", new_callable=AsyncMock) as reset,
+        ):
+            with pytest.raises(TimeoutError):
+                await generator.execute_with_context_async(context=context)
+        assert timeouts[0][0] == 1
+        assert timeouts[0][1].expired()
+        pending.assert_awaited_once()
+        assert cancelled.is_set()
+        assert context._used
+        assert context._conversation_initialized is conversation_initialized
+        send.assert_not_awaited()
+        if conversation_initialized:
+            reset.assert_awaited_once_with(conversation_id=context.conversation_id)
+        else:
+            reset.assert_not_awaited()
+
+    @pytest.mark.timeout(30)
     @pytest.mark.parametrize("failure", [None, ConnectionError("Generation failed"), asyncio.CancelledError()])
     async def test_cleanup_timeout_preserves_outcome_async(
-        self, failure: BaseException | None, caplog: pytest.LogCaptureFixture
+        self, *, failure: BaseException | None, caplog: pytest.LogCaptureFixture
     ) -> None:
         generator = TargetObjectiveGenerator(target=MockPromptTarget())
         response = Message.from_prompt(prompt='{"objectives": ["A goal"]}', role="assistant")
@@ -253,11 +344,14 @@ value: |
 
         async def reset_async(*, conversation_id: str) -> None:
             try:
+                timeouts[-1][1].reschedule(asyncio.get_running_loop().time())
                 await asyncio.Event().wait()
             finally:
                 cleanup_cancelled.set()
 
         with (
+            _isolate_pre_send_io(generator) as setup,
+            _controlled_timeouts() as timeouts,
             patch.object(generator, "_CLEANUP_TIMEOUT_SECONDS", 0.01),
             patch.object(
                 generator._normalizer,
@@ -265,22 +359,27 @@ value: |
                 new_callable=AsyncMock,
                 return_value=response,
                 side_effect=failure,
-            ),
-            patch.object(generator._target, "reset_conversation_async", side_effect=reset_async),
+            ) as send,
+            patch.object(generator._target, "reset_conversation_async", side_effect=reset_async) as reset,
         ):
-            async with asyncio.timeout(1):
-                if failure is None:
-                    result = await generator.execute_async(instructions="Test", count=1)
-                    assert result.objectives == ["A goal"]
-                elif isinstance(failure, asyncio.CancelledError):
-                    with pytest.raises(asyncio.CancelledError) as error:
-                        await generator.execute_async(instructions="Test", count=1)
-                    assert error.value is failure
-                else:
-                    with pytest.raises(RuntimeError) as generation_error:
-                        await generator.execute_async(instructions="Test", count=1)
-                    assert generation_error.value.__cause__ is failure
+            if failure is None:
+                result = await generator.execute_async(instructions="Test", count=1)
+                assert result.objectives == ["A goal"]
+            elif isinstance(failure, asyncio.CancelledError):
+                with pytest.raises(asyncio.CancelledError) as error:
+                    await generator.execute_async(instructions="Test", count=1)
+                assert error.value is failure
+            else:
+                with pytest.raises(RuntimeError) as generation_error:
+                    await generator.execute_async(instructions="Test", count=1)
+                assert generation_error.value.__cause__ is failure
+        assert [delay for delay, _ in timeouts] == [generator._timeout_seconds, 0.01]
+        assert not timeouts[0][1].expired()
+        assert timeouts[1][1].expired()
+        reset.assert_awaited_once()
         assert cleanup_cancelled.is_set()
+        setup.assert_awaited_once()
+        send.assert_awaited_once()
         assert "Timed out resetting generation conversation" in caplog.text
 
     async def test_cancellation_propagates_async(self) -> None:

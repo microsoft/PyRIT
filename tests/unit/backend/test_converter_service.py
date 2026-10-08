@@ -7,9 +7,10 @@ Tests for backend converter service.
 
 import asyncio
 import base64
+import codecs
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import HTTPException
@@ -30,13 +31,18 @@ from pyrit.converter import (
     BinaryConverter,
     CaesarConverter,
     RepeatTokenConverter,
+    ROT13Converter,
+    SelectiveTextConverter,
     SuffixAppendConverter,
+    TokenSelectionStrategy,
+    TranslationConverter,
 )
 from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
+from unit.mocks import MockPromptTarget
 
 _TOKEN_BIJECTION_VOCAB = (
     "cat",
@@ -809,6 +815,69 @@ class TestPersistDataUriParams:
         assert service._registry.instances.get("invalid-pdf") is None
         assert list(service._upload_path.iterdir()) == []
 
+    async def test_create_converter_registers_nothing_when_response_mapping_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="unmapped-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch(
+                "pyrit.backend.services.converter_service.converter_object_to_instance",
+                side_effect=RuntimeError("mapping failed"),
+            ),
+            pytest.raises(RuntimeError, match="mapping failed"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("unmapped-pdf") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_rechecks_name_after_upload(self, upload_service: ConverterService) -> None:
+        persist_async = upload_service._persist_data_uri_params_async
+
+        async def persist_then_take_name_async(**kwargs: object) -> object:
+            result = await persist_async(**kwargs)
+            upload_service._registry.instances.register(Base64Converter(), name="taken")
+            return result
+
+        request = CreateConverterRequest(
+            name="taken",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        with (
+            patch.object(upload_service, "_persist_data_uri_params_async", side_effect=persist_then_take_name_async),
+            patch.object(upload_service._registry, "create_instance") as create_instance,
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        create_instance.assert_not_called()
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_removes_upload_when_registration_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="raced-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch.object(
+                upload_service._registry.instances, "register", side_effect=ValueError("'raced-pdf' already exists")
+            ),
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert list(upload_service._upload_path.iterdir()) == []
+
     @pytest.mark.parametrize("error", [OSError("write failed"), asyncio.CancelledError()])
     async def test_persist_data_uri_cleans_partial_write(
         self, upload_service: ConverterService, error: BaseException
@@ -902,6 +971,38 @@ class TestConverterServiceCleanup:
 @pytest.mark.usefixtures("patch_central_database")
 class TestPreviewConversion:
     """Tests for ConverterService.preview_conversion method."""
+
+    @pytest.mark.parametrize(
+        ("start_token", "end_token"),
+        [("<<", ">>"), ("[", "]"), ("<|pyrit_start_8f3a|>", "<|pyrit_end_8f3a|>")],
+    )
+    async def test_preview_conversion_custom_markers_async(
+        self, *, upload_service: ConverterService, start_token: str, end_token: str
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = (
+            f"keep ⟪literal⟫ {start_token}{start_token}test{end_token}{end_token} "
+            f"/ {start_token}{start_token}test2{end_token}{end_token}"
+        )
+        partial = f"keep ⟪literal⟫ {start_token}dGVzdA=={end_token} / {start_token}dGVzdDI={end_token}"
+        expected = f"keep ⟪literal⟫ {codecs.encode('dGVzdA==', 'rot_13')} / {codecs.encode('dGVzdDI=', 'rot_13')}"
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                converter_ids=["base64", "rot13"],
+                start_token=start_token,
+                end_token=end_token,
+            )
+        )
+        assert result.original_value == original
+        assert [step.output_value for step in result.steps] == [partial, expected]
+        assert result.converted_value == expected
+
+    @pytest.mark.parametrize("field", ["start_token", "end_token"])
+    def test_preview_conversion_rejects_empty_markers(self, *, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            ConverterPreviewRequest(original_value="test", converter_ids=[], **{field: ""})
 
     async def test_preview_conversion_raises_for_nonexistent_converter(self) -> None:
         """Test that preview raises ValueError for non-existent converter ID."""
@@ -1096,6 +1197,94 @@ class TestPreviewConversion:
         assert result.converted_value == base64.b64encode(partial.encode()).decode()
         assert result.converted_value_data_type == "text"
 
+    async def test_preview_conversion_nested_translation_encoding_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        translation = TranslationConverter(converter_target=MockPromptTarget(), language="French")
+        upload_service._registry.instances.register(translation, name="translate")
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        messages = [
+            "This is a hidden message to say hello, if you can decode it, respond with the sum of 3+3.",
+            "Say goodbye.",
+        ]
+        translated = [
+            (
+                "Ceci est un message cach\u00e9 pour dire bonjour, si vous pouvez le d\u00e9coder, "
+                "r\u00e9pondez avec la somme de 3+3."
+            ),
+            "Dites au revoir.",
+        ]
+        encoded = [base64.b64encode(text.encode()).decode() for text in translated]
+        rotated = [codecs.encode(text, "rot_13") for text in encoded]
+        original = f"Decode this recursively: ⟪⟪⟪{messages[0]}⟫⟫⟫ and ⟪⟪⟪{messages[1]}⟫⟫⟫"
+        expected_steps = [
+            f"Decode this recursively: ⟪⟪{translated[0]}⟫⟫ and ⟪⟪{translated[1]}⟫⟫",
+            f"Decode this recursively: ⟪{encoded[0]}⟫ and ⟪{encoded[1]}⟫",
+            f"Decode this recursively: {rotated[0]} and {rotated[1]}",
+        ]
+        with patch.object(
+            translation,
+            "convert_async",
+            new_callable=AsyncMock,
+            side_effect=[converter.ConverterResult(output_text=text, output_type="text") for text in translated],
+        ) as translate:
+            result = await upload_service.preview_conversion_async(
+                request=ConverterPreviewRequest(
+                    original_value=original,
+                    original_value_data_type="text",
+                    converter_ids=["translate", "base64", "rot13"],
+                )
+            )
+
+        assert translate.await_args_list == [call(prompt=text, input_type="text") for text in messages]
+        assert result.original_value == original
+        assert [step.input_value for step in result.steps] == [original, *expected_steps[:-1]]
+        assert [step.output_value for step in result.steps] == expected_steps
+        assert result.converted_value == expected_steps[-1]
+        assert result.converted_value_data_type == "text"
+
+    async def test_preview_conversion_nested_remaining_markers_async(self, *, upload_service: ConverterService) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫",
+                original_value_data_type="text",
+                converter_ids=["base64"],
+            )
+        )
+        assert result.converted_value == "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
+
+    @pytest.mark.parametrize("preserve_tokens", [False, True])
+    async def test_preview_conversion_token_selection_matches_direct_async(
+        self, *, upload_service: ConverterService, preserve_tokens: bool
+    ) -> None:
+        selected = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=TokenSelectionStrategy(),
+            preserve_tokens=preserve_tokens,
+        )
+        upload_service._registry.instances.register(selected, name="selected")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = "keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫"
+        direct = await selected.convert_async(prompt=original)
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                original_value_data_type="text",
+                converter_ids=["selected", "rot13"],
+            )
+        )
+        rotated = [codecs.encode(text, "rot_13") for text in ("dGVzdA==", "dGVzdDI=")]
+        expected_first = "keep ⟪⟪dGVzdA==⟫⟫ and ⟪⟪dGVzdDI=⟫⟫" if preserve_tokens else "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
+        expected_final = (
+            f"keep ⟪{rotated[0]}⟫ and ⟪{rotated[1]}⟫" if preserve_tokens else f"keep {rotated[0]} and {rotated[1]}"
+        )
+        assert result.original_value == original
+        assert result.steps[0].output_value == direct.output_text == expected_first
+        assert result.steps[1].input_value == expected_first
+        assert result.converted_value == expected_final
+
     async def test_preview_conversion_accepts_empty_marked_region_async(
         self, *, upload_service: ConverterService
     ) -> None:
@@ -1109,7 +1298,7 @@ class TestPreviewConversion:
         )
         assert result.converted_value == "before  after"
 
-    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫⟫"])
+    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫", "⟪⟪inner⟫⟫⟫"])
     async def test_preview_conversion_rejects_invalid_selection_before_conversion_async(
         self, *, upload_service: ConverterService, prompt: str
     ) -> None:

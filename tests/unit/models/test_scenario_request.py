@@ -6,7 +6,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest
+from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest, ScenarioRunSizeEstimateRequest
 
 
 def _make_request(*, dataset_filters: dict[str, list[str]] | None) -> RunScenarioRequest:
@@ -64,3 +64,62 @@ class TestExposedDatasetFilters:
         for name in DATASET_FILTERS:
             assert name in hints, f"'{name}' is not a MemoryInterface.get_seeds_async parameter"
             assert _allows_sequence(hints[name]), f"'{name}' must be a Sequence-typed get_seeds parameter"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"scenario_name": "s" * 257},
+        {"scenario_result_id": "r" * 257},
+        {"techniques": ["technique"] * 101},
+        {"initializers": ["i" * 257]},
+        {"dataset_filters": {"harm_categories": ["cyber"] * 101}},
+        {"labels": {f"key{i}": "value" for i in range(101)}},
+        {"labels": {"k" * 129: "value"}},
+        {"labels": {"key": "v" * 1_025}},
+        {"scenario_params": {f"param{i}": 1 for i in range(101)}},
+        {"initializer_args": {"target": {f"arg{i}": 1 for i in range(101)}}},
+    ],
+)
+def test_run_request_rejects_values_over_limits(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        RunScenarioRequest.model_validate({"scenario_name": "s", "target_name": "t", **overrides})
+
+
+def test_run_request_accepts_values_at_limits() -> None:
+    request = RunScenarioRequest(
+        scenario_name="s" * 256,
+        target_name="t",
+        techniques=["technique"] * 100,
+        labels={"k" * 128: "v" * 1_024},
+    )
+
+    assert request.techniques is not None
+    assert len(request.techniques) == 100
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_requests_accept_technique_with_converter_modifiers(model: type) -> None:
+    technique = "prompt_sending" + "".join(f":converter.{'c' * 64}" for _ in range(4))
+
+    request = model.model_validate({"scenario_name": "s", "target_name": "t", "techniques": [technique]})
+
+    assert request.techniques == [technique]
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_requests_reject_oversized_technique(model: type) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate({"scenario_name": "s", "target_name": "t", "techniques": ["t" * 4_097]})
+
+
+def test_estimate_request_rejects_too_many_dataset_names() -> None:
+    with pytest.raises(ValidationError):
+        ScenarioRunSizeEstimateRequest(dataset_names=["dataset"] * 101)
+
+
+def test_run_request_bounds_dataset_filter_keys() -> None:
+    with pytest.raises(ValidationError) as error:
+        RunScenarioRequest(scenario_name="s", target_name="t", dataset_filters={"k" * 257: ["x"]})
+
+    assert error.value.errors()[0]["type"] == "string_too_long"
