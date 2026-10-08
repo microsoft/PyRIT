@@ -7,6 +7,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 
 import { attacksApi, convertersApi } from '@/services/api'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import type { AddMessageResponse, BackendMessage, ConversationDraftMessage, TargetInstance } from '@/types'
 import { toConversationDraft } from '@/utils/conversationDraft'
 
@@ -56,7 +57,13 @@ function setupEditor(
     path: '/',
     element: <EditorHarness />,
   }, { path: '/next', element: <p>Next page</p> }])
-  const { unmount } = render(<FluentProvider theme={webLightTheme}><RouterProvider router={router} /></FluentProvider>)
+  const { unmount } = render(
+    <FluentProvider theme={webLightTheme}>
+      <UserPreferencesProvider accountKey={null}>
+        <RouterProvider router={router} />
+      </UserPreferencesProvider>
+    </FluentProvider>,
+  )
   return { onSaved, router, unmount }
 }
 
