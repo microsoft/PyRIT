@@ -3,12 +3,13 @@ import { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperative
 import { Button, Caption1, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, AddRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
-import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, PieceConversion, TargetInstance } from '@/types'
+import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
 
 import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
+import MultiSendSettings from './MultiSendSettings'
 import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 interface StatusBannerProps {
@@ -103,7 +104,10 @@ export interface ChatInputAreaHandle {
 
 interface ChatInputAreaProps {
   onSend: (
-    originalValue: string, convertedValue: string | undefined, attachments: MessageAttachment[],
+    originalValue: string,
+    convertedValue: string | undefined,
+    attachments: MessageAttachment[],
+    options?: MultiSendOptions,
   ) => Promise<ChatSendOutcome>
   conversionRevisionKey?: string
   disabled?: boolean
@@ -150,6 +154,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const styles = usePromptEditorStyles()
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<MessageAttachment[]>([])
+  const [sendOptions, setSendOptions] = useState<MultiSendOptions>({ count: 1, requestConverterMode: 'shared' })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const inputRef = useRef(input)
   const attachmentsRef = useRef(attachments)
@@ -199,7 +204,11 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const handleSend = async (): Promise<void> => {
     if (!canSend) return
     const submittedRevision = draftRevisionRef.current
-    const outcome = await onSend(inputRef.current, convertedValue ?? undefined, attachmentsRef.current)
+    const sending = sendOptions.count === 1
+      ? onSend(inputRef.current, convertedValue ?? undefined, attachmentsRef.current)
+      : onSend(inputRef.current, convertedValue ?? undefined, attachmentsRef.current, sendOptions)
+    setSendOptions((previous: MultiSendOptions) => ({ ...previous, count: 1 }))
+    const outcome = await sending
     if (outcome.clearDraft && draftRevisionRef.current === submittedRevision) {
       changeText('')
       // Recovery may still own submitted attachments; keep their URLs alive.
@@ -254,6 +263,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             </Caption1>
           </div>}
           actions={<>
+            <MultiSendSettings options={sendOptions} disabled={disabled || sendDisabled} onChange={setSendOptions} />
             {activeTarget?.capabilities?.supports_multi_turn === false && <Tooltip
               content="This target does not track conversation history — each turn is sent independently." relationship="description">
               <span className={styles.singleTurnWarning}><InfoRegular fontSize={18} /></span>
