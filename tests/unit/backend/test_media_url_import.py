@@ -158,16 +158,24 @@ async def test_error_status_is_rejected_without_query_string(
 async def test_request_log_omits_query_string_only_while_downloading(
     transport: Callable[[Handler], list[httpx.Request]], caplog: pytest.LogCaptureFixture
 ) -> None:
-    transport(lambda request: httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"}))
+    trace_logger = logging.getLogger("httpcore.http11")
 
-    with caplog.at_level(logging.INFO, logger="httpx"):
+    def respond(request: httpx.Request) -> httpx.Response:
+        trace_logger.debug("receive_response_headers.complete Location=https://example.test/next.png?sig=secret")
+        return httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"})
+
+    transport(respond)
+
+    with caplog.at_level(logging.DEBUG, logger="httpx"), caplog.at_level(logging.DEBUG, logger="httpcore"):
         await download_media_url_async(url="https://example.test/cat.png?sig=secret")
+        trace_logger.debug("receive_response_headers.complete Location=https://other.test/next?keep=1")
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:
             await client.get("https://other.test/page?keep=1")
 
     assert "HTTP Request: GET https://example.test/cat.png " in caplog.text
     assert "secret" not in caplog.text
     assert "HTTP Request: GET https://other.test/page?keep=1 " in caplog.text
+    assert "Location=https://other.test/next?keep=1" in caplog.text
 
 
 _SIGNED_DETAIL = "failed for https://example.test/slow.png?sig=secret"

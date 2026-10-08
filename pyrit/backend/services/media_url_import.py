@@ -63,15 +63,27 @@ def redact_url(url: str) -> str:
 
 
 class _RedactRequestLog(logging.Filter):
-    """Redact the URLs httpx logs for each request while a media URL is downloading."""
+    """
+    Keep media URL query strings out of HTTP client logs while a media URL is downloading.
+
+    httpx request lines are logged with the redacted URL. httpcore's protocol traces are dropped,
+    because they include response headers such as a signed redirect ``Location``.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if _redact_request_log.get() and isinstance(record.args, tuple):
+        if not _redact_request_log.get():
+            return True
+        if record.name.startswith("httpcore."):
+            return False
+        if isinstance(record.args, tuple):
             record.args = tuple(redact_url(str(arg)) if isinstance(arg, httpx.URL) else arg for arg in record.args)
         return True
 
 
-logging.getLogger("httpx").addFilter(_RedactRequestLog())
+_request_log_filter = _RedactRequestLog()
+logging.getLogger("httpx").addFilter(_request_log_filter)
+logging.getLogger("httpcore.http11").addFilter(_request_log_filter)
+logging.getLogger("httpcore.http2").addFilter(_request_log_filter)
 
 
 def media_content_type(download: MediaDownload) -> str | None:
