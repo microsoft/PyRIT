@@ -6262,6 +6262,7 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.error_type,
                 AttackResultEntry.error_message,
                 AttackResultEntry.attribution_data,
+                AttackResultEntry.attack_metadata,
                 ScoreEntry.id.label("score_id"),
                 ScoreEntry.score_value,
                 ScoreEntry.score_type,
@@ -6321,6 +6322,7 @@ class MemoryInterface(abc.ABC):
                     error_type=row.error_type,
                     error_message=row.error_message,
                     attribution_data=row.attribution_data or {},
+                    attack_metadata=row.attack_metadata or {},
                     score=score,
                 )
             )

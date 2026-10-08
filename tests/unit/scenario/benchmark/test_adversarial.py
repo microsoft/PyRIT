@@ -63,6 +63,7 @@ from pyrit.models import (
     ObjectiveTargetEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
+    ScenarioRunPlanGroupKind,
     ScenarioRunSizeEstimateStatus,
     ScenarioRunState,
     Score,
@@ -2051,6 +2052,7 @@ def _make_cache_reuse_candidate(*, seed_groups: list[AttackSeedGroup]) -> MagicM
     candidate.technique_name = None
     candidate.technique_eval_hash = "technique-hash"
     candidate.seed_groups = list(seed_groups)
+    candidate.group_kind = ScenarioRunPlanGroupKind.ATTACK
     candidate.drop_seed_groups_with_hashes.side_effect = lambda *, hashes: setattr(
         candidate,
         "seed_groups",

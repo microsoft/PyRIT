@@ -8,7 +8,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from pyrit.analytics.scenario_statistics import (
     ScenarioPlanLookup,
@@ -23,6 +23,7 @@ from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     AttackResult,
+    AttackResultMetadata,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ScenarioAtomicGroupProgress,
@@ -39,6 +40,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioScorerIdentity,
     ScenarioSeedGroupProgress,
@@ -397,6 +399,7 @@ class ScenarioProgressReadModel:
                     display_group=group.display_group,
                     status=group_status,
                     technique_details=technique_details_by_group.get(group.id),
+                    kind=group.kind or ScenarioRunPlanGroupKind.UNKNOWN,
                     **counts.model_dump(),
                 )
             )
@@ -659,6 +662,7 @@ class ScenarioProgressReadModel:
         )
         atomic_group_id = unit.atomic_group_id
         seed_group_id = unit.seed_group_id
+        result_metadata = AttackResultMetadata.from_metadata(metadata=delta.attribution_data)
         return ScenarioProgressResult(
             attack_result_id=delta.attack_result_id,
             conversation_id=delta.conversation_id,
@@ -673,7 +677,25 @@ class ScenarioProgressReadModel:
             error_type=delta.error_type,
             error_message=delta.error_message,
             score=delta.score,
+            result_role=result_metadata.result_role,
+            child_attack_result_ids=ScenarioProgressReadModel._read_child_attack_result_ids(
+                attack_metadata=delta.attack_metadata
+            ),
+            attempt_index=result_metadata.attempt_index,
         )
+
+    @staticmethod
+    def _read_child_attack_result_ids(*, attack_metadata: dict[str, Any]) -> list[str]:
+        """
+        Read the ordered child result IDs that ``SequentialAttack`` stores in its metadata.
+
+        Returns:
+            list[str]: The child IDs in stored order, or an empty list when none are recorded.
+        """
+        child_ids = attack_metadata.get("child_attack_result_ids")
+        if isinstance(child_ids, list) and all(isinstance(child_id, str) for child_id in child_ids):
+            return list(child_ids)
+        return []
 
     @staticmethod
     def _synthesize_legacy_plan(*, deltas: list[ScenarioAttackResultDelta]) -> ScenarioRunPlan:

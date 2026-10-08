@@ -20,6 +20,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
     SeedObjective,
     SeedPrompt,
@@ -108,6 +109,7 @@ def mock_atomic_attacks():
     mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
     run1 = MagicMock(spec=AtomicAttack)
+    run1.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run1.atomic_attack_name = "attack_run_1"
     run1.display_group = "attack_run_1"
     run1._attack = mock_attack
@@ -116,6 +118,7 @@ def mock_atomic_attacks():
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
+    run2.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run2.atomic_attack_name = "attack_run_2"
     run2.display_group = "attack_run_2"
     run2._attack = mock_attack
@@ -124,6 +127,7 @@ def mock_atomic_attacks():
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
+    run3.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run3.atomic_attack_name = "attack_run_3"
     run3.display_group = "attack_run_3"
     run3._attack = mock_attack
@@ -320,6 +324,7 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_attack.atomic_attack_name = "duplicate_attack"
         atomic_attack.display_group = "duplicate_attack"
         atomic_attack.technique_eval_hash = "duplicate-technique"
@@ -353,6 +358,7 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_attack.atomic_attack_name = "unique_attack"
         atomic_attack.display_group = "custom display group"
         atomic_attack.technique_name = "test"
@@ -757,6 +763,7 @@ class TestScenarioProperties:
         mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
         single_run_mock = MagicMock(spec=AtomicAttack)
+        single_run_mock.group_kind = ScenarioRunPlanGroupKind.ATTACK
         single_run_mock.atomic_attack_name = "attack_1"
         single_run_mock.display_group = "attack_1"
         single_run_mock._attack = mock_attack
@@ -779,6 +786,7 @@ class TestScenarioProperties:
         many_runs = []
         for i in range(10):
             run = MagicMock(spec=AtomicAttack)
+            run.group_kind = ScenarioRunPlanGroupKind.ATTACK
             run.atomic_attack_name = f"attack_{i}"
             run.display_group = f"attack_{i}"
             run._attack = mock_attack
