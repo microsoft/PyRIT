@@ -4,6 +4,7 @@
 import os
 import uuid
 from collections.abc import AsyncGenerator, MutableSequence, Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,7 @@ from sqlalchemy.dialects import mssql
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.memory_interface import AttackResultKeysetCursor
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
@@ -549,6 +551,42 @@ def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_inter
     assert "CROSS APPLY OPENJSON" in str(compiled)
     assert "JOIN LATERAL" not in str(compiled)
     assert str(scenario_result_id) in str(compiled.params)
+
+
+def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    statement = uninitialized_memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()], plan_entry_ids=[]
+    )
+    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+
+    assert (
+        "HISTORY_UNITS.TIMESTAMP DESC, "
+        "LOWER(CAST(HISTORY_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
+    ) in sql
+
+
+def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    session = MagicMock()
+    session.execute.return_value.all.return_value = []
+    cursor = AttackResultKeysetCursor(
+        timestamp=datetime(2026, 10, 7, tzinfo=UTC),
+        attack_result_id="00000000-0000-4000-8000-ffffffffffff",
+    )
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        result = uninitialized_memory_interface._execute_get_scenario_attack_result_deltas(
+            scenario_result_id=str(uuid.uuid4()), cursor=cursor, limit=1
+        )
+
+    sql = str(session.execute.call_args.args[0].compile(dialect=mssql.dialect())).upper()
+    canonical_id = "LOWER(CAST([ATTACKRESULTENTRIES].ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2"
+    assert result == ([], False)
+    assert f"({canonical_id}) > (LOWER(CAST(" in sql
+    assert f"{canonical_id} ASC" in sql
+    assert "COLLATE LATIN1_GENERAL_100_BIN2)" in sql
 
 
 @pytest.mark.parametrize(
