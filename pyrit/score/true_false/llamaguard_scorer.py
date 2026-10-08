@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.llm_scoring import _parse_judgment_observation, _run_llm_scoring_async
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -111,6 +112,7 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
                 Defaults to TrueFalseScoreAggregator.OR.
         """
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._message_role = message_role
         self._policy = policy or LlamaGuardPolicy.from_yaml(_DEFAULT_LLAMA_GUARD_3_POLICY_PATH)
         self._prompt_template = _resolve_prompt_template(
@@ -128,7 +130,6 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
-            chat_target=chat_target,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -148,17 +149,14 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Score one text message with LlamaGuard.
-
-        Args:
-            message_piece (MessagePiece): The text message to classify.
-            objective (str | None): Objective retained on the resulting score. It is not included
-                in the LlamaGuard conversation. Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A single true/false LlamaGuard score.
+            list[Score]: The scorer's verdict.
         """
         request_prompt = render_llamaguard_prompt(
             message=message_piece.converted_value,
@@ -166,16 +164,20 @@ class LlamaGuardScorer(MessageTrueFalseScorer):
             policy=self._policy,
             prompt_template=self._prompt_template,
         )
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=None,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=request_prompt.value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            category=self.SCORE_CATEGORY,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=None,
+                    value=request_prompt.value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self.SCORE_CATEGORY,
+                )
+            ),
         )
         return [
             unvalidated_score.to_score(
