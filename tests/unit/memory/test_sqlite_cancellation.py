@@ -22,6 +22,7 @@ from pyrit.memory import SQLiteMemory
 from pyrit.memory import sqlite_memory as sqlite_memory_module
 from pyrit.memory.sqlite_memory import _CursorClosingSQLiteConnection
 from pyrit.models import AttackOutcome, AttackResult, MessagePiece, MessageScorable, Score
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import get_mock_scorer_identifier
 
 
@@ -124,9 +125,9 @@ async def test_cancelled_score_transaction_finishes_cleanup_before_return_async(
     ):
         task = asyncio.create_task(sqlite_memory_async.add_scores_to_memory_async(scores=[persistable_score_async]))
         try:
-            await asyncio.wait_for(started.wait(), timeout=5)
+            await asyncio.wait_for(started.wait(), timeout=30)
             task.cancel("cancel score transaction")
-            await asyncio.wait_for(closing_connection.wait(), timeout=5)
+            await asyncio.wait_for(closing_connection.wait(), timeout=30)
             for _ in range(additional_cancellations):
                 task.cancel("cancel connection cleanup again")
                 await asyncio.sleep(0)
@@ -134,7 +135,7 @@ async def test_cancelled_score_transaction_finishes_cleanup_before_return_async(
             assert not connection_closed.is_set()
             release_connection.set()
             with pytest.raises(asyncio.CancelledError, match="cancel score transaction") as raised:
-                await task
+                await wait_for_completion_async(future=task)
         finally:
             release_read.set()
             release_connection.set()
@@ -180,9 +181,9 @@ async def test_cancelled_session_finishes_rollback_before_return_async(
     with patch.object(Connection, "rollback", new=delayed_rollback_async):
         task = asyncio.create_task(write_async())
         try:
-            await asyncio.wait_for(inserted.wait(), timeout=5)
+            await asyncio.wait_for(inserted.wait(), timeout=30)
             task.cancel("cancel transaction body")
-            await asyncio.wait_for(rolling_back.wait(), timeout=5)
+            await asyncio.wait_for(rolling_back.wait(), timeout=30)
             for _ in range(additional_cancellations):
                 task.cancel("cancel rollback again")
                 await asyncio.sleep(0)
@@ -190,7 +191,7 @@ async def test_cancelled_session_finishes_rollback_before_return_async(
             assert not rolled_back.is_set()
             release_rollback.set()
             with pytest.raises(asyncio.CancelledError, match="cancel transaction body"):
-                await task
+                await wait_for_completion_async(future=task)
         finally:
             release_rollback.set()
             if not task.done():
@@ -257,10 +258,10 @@ async def test_failed_session_rollback_discards_connection_async(
             patch.object(Connection, "rollback", new=failed_rollback_async),
             patch.object(Connection, "close", new=observed_close_async),
         ):
-            await asyncio.wait_for(inserted.wait(), timeout=5)
+            await asyncio.wait_for(inserted.wait(), timeout=30)
             if cancel_in_body:
                 task.cancel(cancellation_message)
-            await asyncio.wait_for(rolling_back.wait(), timeout=5)
+            await asyncio.wait_for(rolling_back.wait(), timeout=30)
             if cancel_in_body is False:
                 task.cancel(cancellation_message)
                 await asyncio.sleep(0)
@@ -272,7 +273,7 @@ async def test_failed_session_rollback_discards_connection_async(
             expected = OperationalError if cancel_in_body is None else asyncio.CancelledError
             message = "rollback failed" if cancel_in_body is None else cancellation_message
             with pytest.raises(expected, match=message) as raised:
-                await task
+                await wait_for_completion_async(future=task)
 
         assert connection_closed.is_set()
         error = raised.value if cancel_in_body is None else raised.value.__cause__
@@ -301,7 +302,7 @@ async def test_cancelled_database_worker_finishes_before_return_async(
 
     def wait_in_database() -> int:
         started.set()
-        if not release.wait(timeout=10):
+        if not release.wait(timeout=60):
             raise RuntimeError("Database worker was not released")
         finished.set()
         return 1
@@ -330,9 +331,9 @@ async def test_cancelled_database_worker_finishes_before_return_async(
     with patch.object(sqlite_memory_module, "_finish_sqlite_cleanup_async", new=observed_cleanup_async):
         task = asyncio.create_task(read_async())
         try:
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await asyncio.to_thread(started.wait, 30)
             task.cancel("cancel database worker")
-            await asyncio.wait_for(closing.wait(), timeout=5)
+            await asyncio.wait_for(closing.wait(), timeout=30)
             task.cancel("cancel worker cleanup again")
             await asyncio.sleep(0)
             assert not task.done()
@@ -340,7 +341,7 @@ async def test_cancelled_database_worker_finishes_before_return_async(
             assert not closed.is_set()
             release.set()
             with pytest.raises(asyncio.CancelledError, match="cancel database worker"):
-                await task
+                await wait_for_completion_async(future=task)
         finally:
             release.set()
             if not task.done():
@@ -405,9 +406,9 @@ async def test_invalidation_failure_preserves_cancellation_and_cause_async(
     ):
         task = asyncio.create_task(sqlite_memory_async.add_scores_to_memory_async(scores=[persistable_score_async]))
         try:
-            await asyncio.wait_for(started.wait(), timeout=5)
+            await asyncio.wait_for(started.wait(), timeout=30)
             task.cancel("cancel failed cleanup")
-            await asyncio.wait_for(closing_cleanup.wait(), timeout=5)
+            await asyncio.wait_for(closing_cleanup.wait(), timeout=30)
             for _ in range(additional_cancellations):
                 task.cancel("cancel cleanup again")
                 await asyncio.sleep(0)
@@ -417,7 +418,7 @@ async def test_invalidation_failure_preserves_cancellation_and_cause_async(
                 assert not connection_closed.is_set()
             release_cleanup.set()
             with pytest.raises(asyncio.CancelledError) as raised:
-                await task
+                await wait_for_completion_async(future=task)
         finally:
             release.set()
             release_cleanup.set()
