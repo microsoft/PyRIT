@@ -40,7 +40,7 @@ from pyrit.models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator
 
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -356,7 +356,7 @@ class AttackAnalyticsReader:
     @asynccontextmanager
     async def _session_async(
         self, *, control: QueryControl, consistent: bool = False
-    ) -> AsyncIterator[tuple[AsyncSession, str, list[str]]]:
+    ) -> AsyncGenerator[tuple[AsyncSession, str, list[str]], None]:
         """
         Own an async session and its cancellation hooks until database work finishes.
 

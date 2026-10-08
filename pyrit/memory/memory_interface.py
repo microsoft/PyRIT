@@ -20,7 +20,21 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
-from sqlalchemy import MetaData, and_, case, exists, false, func, literal, not_, or_, select, update
+from sqlalchemy import (
+    MetaData,
+    Unicode,
+    and_,
+    case,
+    exists,
+    false,
+    func,
+    literal,
+    not_,
+    or_,
+    select,
+    type_coerce,
+    update,
+)
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -113,6 +127,7 @@ from pyrit.models import (
 from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
 
 if TYPE_CHECKING:
+    from sqlalchemy.sql import SQLColumnExpression
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
@@ -239,6 +254,9 @@ class ScenarioHistoryAggregate:
     total_retries: int
     latest_attempt_timestamp: datetime | None
     atomic_attack_names: tuple[str, ...]
+    # True when some attempt is identified only by its atomic identifier's seeds. SQL can't derive the logical seed
+    # group from those, so callers should count the run with pyrit.analytics.compute_scenario_statistics instead.
+    needs_sdk_statistics: bool = False
 
     @classmethod
     def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
@@ -2119,9 +2137,19 @@ class MemoryInterface(abc.ABC):
         """Return a compact persisted start-time expression when the backend supports one."""
         return literal(None)
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_id_order_expression(
+        self, *, attempt_id: "SQLColumnExpression[uuid.UUID]"
+    ) -> "SQLColumnExpression[uuid.UUID] | SQLColumnExpression[str]":
+        """Return the scenario attempt ID's canonical string ordering."""
+        return attempt_id
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """
         Return backend-specific JSON expressions for scenario attempt unit attribution.
+
+        The expressions are the atomic attack name, the technique hash, the attributed seed group
+        (NULL when absent), and a key built from the atomic identifier's ordered seed hashes (NULL
+        when it has none).
 
         Raises:
             NotImplementedError: If the memory backend does not support Scenario history queries.
@@ -2452,7 +2480,7 @@ class MemoryInterface(abc.ABC):
                 message_piece_id=piece_id,
             )
             for observation in observations
-            for position, piece_id in enumerate(observation.response_message_piece_ids)
+            for position, piece_id in enumerate(observation.evidence_message_piece_ids)
         ]
         score_observation_links = [
             ScoreObservationEntry(
@@ -5892,6 +5920,19 @@ class MemoryInterface(abc.ABC):
                 .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
                 .distinct()
             ).all()
+            _, _, attributed_seed_group_id, identifier_seed_key = self._get_scenario_attempt_unit_expressions()
+            sdk_run_ids = {
+                str(scenario_result_id)
+                for (scenario_result_id,) in session.execute(
+                    select(AttackResultEntry.attribution_parent_id)
+                    .where(
+                        AttackResultEntry.attribution_parent_id.in_(entry_ids),
+                        attributed_seed_group_id.is_(None),
+                        identifier_seed_key.is_not(None),
+                    )
+                    .distinct()
+                ).all()
+            }
 
         names_by_run: dict[str, list[str]] = {}
         for scenario_result_id, atomic_attack_name in name_rows:
@@ -5911,6 +5952,7 @@ class MemoryInterface(abc.ABC):
                 total_retries=row.total_retries or 0,
                 latest_attempt_timestamp=row.latest_attempt_timestamp,
                 atomic_attack_names=tuple(sorted(names_by_run.get(run_id, ()))),
+                needs_sdk_statistics=run_id in sdk_run_ids,
             )
         return aggregates
 
@@ -5926,14 +5968,18 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A statement selecting one aggregate row per scenario run with attempts.
         """
-        atomic_name, technique_hash, seed_group_id = self._get_scenario_attempt_unit_expressions()
+        atomic_name, technique_hash, attributed_seed_group_id, _ = self._get_scenario_attempt_unit_expressions()
+        # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
+        # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
+        # because SQL can't derive the logical seed group from those seeds.
         attempts = (
             select(
                 AttackResultEntry.id.label("attempt_id"),
                 AttackResultEntry.attribution_parent_id.label("scenario_result_id"),
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
-                seed_group_id.label("seed_group_id"),
+                attributed_seed_group_id.label("attributed_seed_group_id"),
+                func.coalesce(attributed_seed_group_id, AttackResultEntry.objective_sha256, "").label("seed_group_id"),
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
@@ -5971,7 +6017,7 @@ class MemoryInterface(abc.ABC):
                 partition_by=unit_partition,
                 order_by=(
                     units.c.timestamp.desc(),
-                    units.c.attempt_id.desc(),
+                    self._get_scenario_attempt_id_order_expression(attempt_id=units.c.attempt_id).desc(),
                 ),
             )
             .label("unit_rank"),
@@ -6002,6 +6048,13 @@ class MemoryInterface(abc.ABC):
         Returns:
             Any: A statement selecting one row per attempt with its resolved unit identity.
         """
+        # Without a matching planned group, a unit is its atomic attack name plus technique configuration,
+        # the same identity pyrit.analytics.scenario_statistics uses, so configurations sharing a name stay apart.
+        unplanned_group_id = (
+            type_coerce(attempts.c.atomic_attack_name, Unicode)
+            .concat(literal("\x1f", Unicode))
+            .concat(type_coerce(attempts.c.technique_eval_hash, Unicode))
+        )
         if not plan_entry_ids:
             return select(
                 attempts.c.scenario_result_id,
@@ -6009,12 +6062,22 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
-                attempts.c.atomic_attack_name.label("unit_group_id"),
+                unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
                 literal(1).label("is_planned"),
             )
 
         planned_units, plan_seeds = self._get_scenario_plan_unit_subqueries(scenario_result_ids=plan_entry_ids)
+        # How many planned groups share each atomic attack name, so name-only matches can require a unique group.
+        groups_per_name = (
+            select(
+                planned_units.c.scenario_result_id,
+                planned_units.c.atomic_attack_name,
+                func.count(func.distinct(planned_units.c.atomic_group_id)).label("group_count"),
+            )
+            .group_by(planned_units.c.scenario_result_id, planned_units.c.atomic_attack_name)
+            .subquery("history_planned_groups_per_name")
+        )
         planned = (
             select(
                 planned_units.c.scenario_result_id,
@@ -6024,6 +6087,16 @@ class MemoryInterface(abc.ABC):
                 planned_units.c.technique_eval_hash,
                 planned_units.c.seed_group_id,
                 plan_seeds.c.objective_sha256,
+                groups_per_name.c.group_count,
+                func.count()
+                .over(
+                    partition_by=(
+                        planned_units.c.scenario_result_id,
+                        planned_units.c.atomic_group_id,
+                        plan_seeds.c.objective_sha256,
+                    )
+                )
+                .label("objective_match_count"),
             )
             .select_from(
                 planned_units.outerjoin(
@@ -6032,25 +6105,32 @@ class MemoryInterface(abc.ABC):
                         plan_seeds.c.scenario_result_id == planned_units.c.scenario_result_id,
                         plan_seeds.c.seed_group_id == planned_units.c.seed_group_id,
                     ),
+                ).join(
+                    groups_per_name,
+                    and_(
+                        groups_per_name.c.scenario_result_id == planned_units.c.scenario_result_id,
+                        groups_per_name.c.atomic_attack_name == planned_units.c.atomic_attack_name,
+                    ),
                 )
             )
             .subquery("history_planned_units")
         )
-        # An attempt persisted without seed-group attribution falls back to its objective hash,
-        # so it is matched against the planned seed group carrying that same objective hash.
-        seed_matches_exactly = planned.c.seed_group_id == attempts.c.seed_group_id
+        # Without explicit seed attribution, an objective must identify exactly one planned seed group.
+        seed_matches_exactly = planned.c.seed_group_id == attempts.c.attributed_seed_group_id
         match_condition = and_(
             planned.c.scenario_result_id == attempts.c.scenario_result_id,
             planned.c.atomic_attack_name == attempts.c.atomic_attack_name,
+            # Same rule as ScenarioPlanLookup.resolve_group: without a technique hash, the name must be unambiguous.
             or_(
-                attempts.c.technique_eval_hash == "",
+                and_(attempts.c.technique_eval_hash == "", planned.c.group_count == 1),
                 planned.c.technique_eval_hash == attempts.c.technique_eval_hash,
             ),
             or_(
                 seed_matches_exactly,
                 and_(
-                    attempts.c.seed_group_id == attempts.c.objective_sha256,
-                    planned.c.objective_sha256 == attempts.c.seed_group_id,
+                    attempts.c.attributed_seed_group_id.is_(None),
+                    planned.c.objective_sha256 == attempts.c.objective_sha256,
+                    planned.c.objective_match_count == 1,
                 ),
             ),
         )
@@ -6062,6 +6142,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.timestamp,
                 attempts.c.total_retries,
                 attempts.c.atomic_attack_name,
+                unplanned_group_id.label("unplanned_group_id"),
                 attempts.c.seed_group_id,
                 planned.c.atomic_group_id,
                 planned.c.seed_group_id.label("planned_seed_group_id"),
@@ -6085,7 +6166,7 @@ class MemoryInterface(abc.ABC):
             matched.c.outcome,
             matched.c.timestamp,
             matched.c.total_retries,
-            func.coalesce(matched.c.atomic_group_id, matched.c.atomic_attack_name).label("unit_group_id"),
+            func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
             # Runs outside the plan-resolution set keep their raw identity and stay counted.
             case(
@@ -6150,14 +6231,18 @@ class MemoryInterface(abc.ABC):
 
         scenario_uuid = uuid.UUID(scenario_result_id)
         conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        attempt_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
         if cursor is not None:
             cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            cursor_id_order = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(cursor_uuid, type_=AttackResultEntry.id.type)
+            )
             conditions.append(
                 or_(
                     AttackResultEntry.timestamp > cursor.timestamp,
                     and_(
                         AttackResultEntry.timestamp == cursor.timestamp,
-                        AttackResultEntry.id > cursor_uuid,
+                        attempt_id_order > cursor_id_order,
                     ),
                 )
             )
@@ -6177,6 +6262,7 @@ class MemoryInterface(abc.ABC):
                 AttackResultEntry.error_type,
                 AttackResultEntry.error_message,
                 AttackResultEntry.attribution_data,
+                AttackResultEntry.attack_metadata,
                 ScoreEntry.id.label("score_id"),
                 ScoreEntry.score_value,
                 ScoreEntry.score_type,
@@ -6189,7 +6275,7 @@ class MemoryInterface(abc.ABC):
                 func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
             )
             .where(and_(*conditions))
-            .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
+            .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
             .limit(limit + 1)
         )
         with closing(self._get_session()) as session:
@@ -6236,6 +6322,7 @@ class MemoryInterface(abc.ABC):
                     error_type=row.error_type,
                     error_message=row.error_message,
                     attribution_data=row.attribution_data or {},
+                    attack_metadata=row.attack_metadata or {},
                     score=score,
                 )
             )

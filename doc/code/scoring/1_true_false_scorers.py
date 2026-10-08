@@ -33,6 +33,33 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 # These run locally and deterministically — no model call, no credentials. Use them in CI
 # and to score large response sets cheaply.
 #
+# ### OutputMatchesScorer
+#
+# Use `OutputMatches` for a criterion stored with a seed or supplied per call:
+#
+# %%
+from pyrit.models import Contains, ContentScorable, OutputMatches, ScoringExpectation
+from pyrit.score import OutputMatchesScorer
+
+expectation = ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="answer")),))
+scores = await OutputMatchesScorer().score_async(scorable=ContentScorable(value="The ANSWER"), expectation=expectation)
+assert scores[0].get_value() is True
+print(f"[output match] {scores[0].get_value()}")
+
+# %% [markdown]
+# `Contains`, `Equals`, and `Regex` default to case-insensitive matching and edge-whitespace
+# normalization. Internal whitespace is unchanged. `Regex` preserves the authored pattern and
+# searches the candidate text. For literal equality, use
+# `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
+# `Contains` returns false for empty candidate text; `Equals` can match two empty values.
+# Blank or invalid regex patterns fail before scoring.
+#
+# By default, `OutputMatchesScorer` matches each supported text piece independently and returns
+# True if any piece matches. It does not combine text across pieces before matching.
+#
+# Existing `SubStringScorer` and `DecodingScorer` behavior is unchanged. Decoding infers candidate
+# text from the paired request; `OutputMatchesScorer` is the explicit expected-output path.
+#
 # ### RegexScorer
 #
 # `RegexScorer` returns True if **any** named pattern matches. Subclass it to ship a
@@ -325,23 +352,24 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # WildGuard's bundled prompt includes the full
 # [AI2 completion wrapper](https://github.com/allenai/wildguard/blob/main/wildguard/utils.py).
-# Serve `allenai/wildguard` through an OpenAI-compatible **completions** endpoint, then configure:
-#
-# ```python
-# from pyrit.prompt_target import OpenAICompletionTarget
-# from pyrit.score import WildGuardScorer
-#
-# target = OpenAICompletionTarget(
-#     model_name="allenai/wildguard",
-#     endpoint="http://localhost:8000/v1",  # Your WildGuard completion server
-#     api_key="your-server-key",  # Use the authentication required by your server
-#     max_tokens=128,
-#     temperature=0,
-# )
-# scorer = WildGuardScorer(chat_target=target, user_prompt="The original user request")
-# scores = await scorer.score_text_async("The model response")
-# ```
-#
+# Serve `allenai/wildguard` through an OpenAI-compatible **completions** endpoint.
+# This configuration example constructs the scorer without sending a request.
+# Replace the example URL and key with your server settings before scoring.
+# %%
+from pyrit.prompt_target import OpenAICompletionTarget
+from pyrit.score import WildGuardScorer
+
+wildguard_target = OpenAICompletionTarget(
+    model_name="allenai/wildguard",
+    endpoint="http://localhost:8000/v1",
+    api_key="your-server-key",
+    max_tokens=128,
+    temperature=0,
+)
+wildguard_scorer = WildGuardScorer(chat_target=wildguard_target, user_prompt="The original user request")
+print(type(wildguard_scorer).__name__)
+
+# %% [markdown]
 # The checkpoint does not supply a tokenizer chat template, so
 # `HuggingFaceChatTarget(model_id="allenai/wildguard")` is not a drop-in alternative.
 # Do not apply a second chat wrapper to the bundled prompt. If using a chat server that
