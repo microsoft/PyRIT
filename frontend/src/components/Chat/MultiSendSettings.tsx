@@ -75,7 +75,8 @@ export default function MultiSendSettings({ options, disabled, onChange }: Multi
             </RadioGroup>
           </Field>
           <Text size={200}>
-            Repeats run unapplied pipelines on the original inputs. Applied previews stay unchanged in either mode.
+            Single sends and shared repeats use only applied conversions. Use Add converted value before sending.
+            {' '}Independent repeats run unapplied pipelines on original inputs. Applied previews stay unchanged in either mode.
           </Text>
         </div>
       </PopoverSurface>

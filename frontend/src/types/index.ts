@@ -636,17 +636,19 @@ export interface AddMessageResponse {
   messages: ConversationMessagesResponse
 }
 
+export type RepeatConversionMode = 'shared' | 'per_branch'
+
 export interface MessageSendRequest extends AddMessageRequest {
   send: true
   target_registry_name: string
   submission_id: string
   count?: number
-  request_converter_mode?: 'shared' | 'per_branch'
+  request_converter_mode?: RepeatConversionMode
 }
 
 export interface MultiSendOptions {
   count: number
-  requestConverterMode: 'shared' | 'per_branch'
+  requestConverterMode: RepeatConversionMode
 }
 
 export interface MessageSendConversation {

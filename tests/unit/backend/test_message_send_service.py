@@ -3135,6 +3135,50 @@ class TestAsyncMessageSend:
 @pytest.mark.timeout(20)
 @pytest.mark.usefixtures("patch_central_database")
 class TestRepeatedMessageSend:
+    async def test_missing_validated_target_fails_before_branch_registration_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        request = _submission(conversation_id=attack.conversation_id, count=3)
+        validated = await service._validate_message_async(attack_result_id=attack.attack_result_id, request=request)
+        validated.target = None
+        with (
+            patch.object(service, "_validate_message_async", new_callable=AsyncMock, return_value=validated),
+            patch.object(service, "_prepare_copies", wraps=service._prepare_copies) as copies,
+            patch.object(
+                sqlite_instance, "add_conversation_branches_to_attack_async", new_callable=AsyncMock
+            ) as register,
+            patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as dispatch,
+        ):
+            status = await service.submit_async(attack_result_id=attack.attack_result_id, request=request)
+            status = await _settle_send_async(service=service, status=status)
+        assert status.state == MessageSendState.FAILED
+        assert status.failure_stage == MessageSendFailureStage.PREPARATION
+        assert status.error == service.FAILURE_MESSAGES[MessageSendFailureStage.PREPARATION]
+        assert status.conversations == []
+        copies.assert_not_called()
+        register.assert_not_awaited()
+        dispatch.assert_not_awaited()
+        assert await sqlite_instance.get_message_pieces_async() == []
+        assert (
+            await sqlite_instance.get_attack_result_conversations_async(attack_result_id=attack.attack_result_id) == []
+        )
+        [updated] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert updated.get_active_conversation_ids() == {attack.conversation_id}
+        assert not service._scheduler._conversations
+        [failure] = [
+            record
+            for record in caplog.records
+            if record.name == "pyrit.backend.services.message_send_service" and record.exc_info
+        ]
+        assert failure.exc_info is not None
+        assert isinstance(failure.exc_info[1], ValueError)
+        assert str(failure.exc_info[1]) == "Target object for 'target' not found"
+
     @pytest.mark.parametrize("history_kind", ["empty", "system", "multipart"])
     async def test_snapshot_lineage_and_nested_selected_only_repetition_async(
         self,

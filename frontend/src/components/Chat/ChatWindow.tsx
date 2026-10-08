@@ -962,6 +962,7 @@ export default function ChatWindow({
     // Capture all piece conversions upfront before any async work or state clears
     const conversions = { ...activePieceConversions }
     const count = options?.count ?? 1
+    const converterMode = options?.requestConverterMode ?? 'shared'
     const pipelines = count > 1 ? { ...converters.pipelines } : undefined
     const operation: PendingSend = {
       submissionId: generateClientId(),
@@ -1099,7 +1100,7 @@ export default function ChatWindow({
       if (!currentAttackResultId || !effectiveConvId) {
         throw new Error('Message send is missing an attack or conversation ID.')
       }
-      const requestConfigurations = count > 1 ? buildRequestConverterConfigurations(
+      const requestConfigurations = count > 1 && converterMode === 'per_branch' ? buildRequestConverterConfigurations(
         buildConverterInputs(originalValue, attachments), pieceIds, pipelines ?? {}, conversions,
       ) : []
       const addMessageRequest: MessageSendRequest = {
@@ -1111,9 +1112,9 @@ export default function ChatWindow({
         submission_id: operation.submissionId,
         ...(count > 1 ? {
           count,
-          request_converter_mode: options?.requestConverterMode ?? 'shared',
-          request_converter_configurations: requestConfigurations.length ? requestConfigurations : undefined,
+          request_converter_mode: converterMode,
         } : {}),
+        ...(requestConfigurations.length ? { request_converter_configurations: requestConfigurations } : {}),
       }
       submissionAttempted = true
       operation.progress = await attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)

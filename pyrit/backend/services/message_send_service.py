@@ -411,7 +411,8 @@ class MessageSendService:
     async def _prepare_repeated_send_async(
         self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage
     ) -> dict[str, Message]:
-        assert validated.target is not None
+        if validated.target is None:
+            raise ValueError(f"Target object for '{request.target_registry_name}' not found")
         source = await self._memory.get_conversation_metadata_async(conversation_id=request.target_conversation_id)
         if source is None:
             source = Conversation(conversation_id=request.target_conversation_id)

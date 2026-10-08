@@ -126,9 +126,11 @@ not fifteen. Historical messages keep their original-piece lineage and are not
 converted again.
 
 **Convert once, reuse for all** is the default request-converter mode.
-**Convert independently for each** runs the request pipeline separately for each
-conversation. For repeats, selected but unapplied pipelines run on the original
-inputs. An explicitly applied preview, including manual edits, is reused exactly
+For single sends and shared repeats in the GUI, use **Add converted value** to apply
+conversions before sending. Selected but unapplied pipelines are not run.
+**Convert independently for each** runs selected but unapplied request pipelines
+separately on each conversation's original inputs when the count is greater than 1.
+An explicitly applied preview, including manual edits, is reused exactly
 in either mode. Converter order, repeated stages, and original/converted values
 are preserved. API response converters always run independently per conversation.
 
@@ -145,7 +147,9 @@ provider delivery unknown. Inspect saved conversations before deciding to send a
 
 API clients use the existing `POST /api/attacks/{id}/message-sends` endpoint with
 `count` (a strict integer, default `1`) and `request_converter_mode` (`shared`,
-the default, or `per_branch`). Status retains the selected `conversation_id` and
+the default, or `per_branch`). API clients can supply `request_converter_configurations`
+in either mode: `shared` converts once and reuses the result, while `per_branch`
+converts independently. Status retains the selected `conversation_id` and
 `request_turn_number`; repeated sends also return `conversations` with individual
 states and explicit failure stages after history copies commit atomically.
 All conversations consume the shared admission budget, so a request is rejected

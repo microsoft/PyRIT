@@ -18,6 +18,7 @@ import {
   MessageSendConversation,
   MessageSendStatus,
   PromptResponseError,
+  RepeatConversionMode,
   TargetCapabilities,
   TargetInfo,
   TargetInstance,
@@ -397,6 +398,23 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
+  async function chooseCount(
+    user: ReturnType<typeof userEvent.setup>,
+    count: number,
+    mode?: RepeatConversionMode,
+  ): Promise<void> {
+    await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+    for (let index = 1; index < count; index++) {
+      await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+    }
+    if (mode) {
+      await user.click(screen.getByRole("radio", {
+        name: mode === "shared" ? "Convert once, reuse for all" : "Convert independently for each",
+      }));
+    }
+    await user.keyboard("{Escape}");
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockedAttacksApi.getMessages.mockReset();
@@ -748,14 +766,6 @@ describe("ChatWindow Integration", () => {
             request_turn_number: 0, state, error: null, failure_stage: null,
           })),
         };
-      }
-
-      async function chooseCount(user: ReturnType<typeof userEvent.setup>, count: number): Promise<void> {
-        await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
-        for (let index = 1; index < count; index++) {
-          await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
-        }
-        await user.keyboard("{Escape}");
       }
 
       it("settles completed conversations independently and cannot unlock a newer send on a finished copy", async () => {
@@ -6055,9 +6065,16 @@ describe("ChatWindow Integration", () => {
     expect(request.pieces).toHaveLength(removeFailed ? 1 : 2);
   });
 
-  it("keeps a pipeline after sending but does not reuse the previous message's applied result", async () => {
+  it.each<[number, "default" | RepeatConversionMode]>([
+    [1, "default"], [1, "per_branch"], [3, "default"], [3, "shared"], [3, "per_branch"],
+  ])("keeps a pipeline after sending without reusing applied results (n=%s, mode=%s)", async (
+    count: number, mode: "default" | RepeatConversionMode,
+  ) => {
     const user = userEvent.setup();
-    mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [
+      makeConverterInstance("base64", "Base64Converter"),
+      makeConverterInstance("suffix", "SuffixAppendConverter"),
+    ] });
     mockedConvertersApi.previewConversion.mockResolvedValue({
       original_value: "hello", original_value_data_type: "text",
       converted_value: "aGVsbG8=", converted_value_data_type: "text",
@@ -6069,7 +6086,14 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
-    mockSendResult.mockResolvedValue(makeTextResponse("response") as never);
+    mockSendResult.mockResolvedValue({
+      attack: {
+        attack_result_id: "ar-persist", conversation_id: "conv-persist",
+        attack_type: "ManualAttack", objective: "", outcome: "undetermined", converters: [],
+        message_count: 2, related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+      },
+      ...makeTextResponse("response"),
+    });
     render(<TestWrapper><ChatWindow
       {...defaultProps} attackResultId="ar-persist" conversationId="conv-persist" activeConversationId="conv-persist"
     /></TestWrapper>);
@@ -6080,16 +6104,43 @@ describe("ChatWindow Integration", () => {
     await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
     await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
     await user.click(screen.getByRole("button", { name: "Add converted value" }));
+    await chooseCount(user, count, mode === "default" ? undefined : mode);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(screen.getByTestId("chat-input")).toHaveValue(""));
     expect(screen.getByTestId("converter-item-base64")).toBeInTheDocument();
     expect(screen.queryByTestId("converted-indicator")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add converted value" })).toBeDisabled();
     await user.type(screen.getByTestId("chat-input"), "next");
+    await user.click(screen.getByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /SuffixAppendConverter/ }));
+    await user.click(screen.getByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
+    await chooseCount(user, count, mode === "default" ? undefined : mode);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockSendResult).toHaveBeenCalledTimes(2));
-    expect(mockSendResult.mock.calls[0][1].pieces[0].applied_converter_ids).toEqual(["base64"]);
-    expect(mockSendResult.mock.calls[1][1].pieces[0].applied_converter_ids).toBeUndefined();
+    const firstRequest = mockedAttacksApi.submitMessageSend.mock.calls[0][1];
+    const secondRequest = mockedAttacksApi.submitMessageSend.mock.calls[1][1];
+    expect(firstRequest.pieces[0]).toEqual({
+      data_type: "text", original_value: "hello", converted_value: "aGVsbG8=",
+      converted_value_data_type: "text", applied_converter_ids: ["base64"],
+    });
+    expect(firstRequest).not.toHaveProperty("request_converter_configurations");
+    expect(secondRequest.pieces).toEqual([{ data_type: "text", original_value: "next" }]);
+    if (count > 1 && mode === "per_branch") {
+      expect(secondRequest.request_converter_configurations).toEqual([
+        { converter_ids: ["base64", "suffix", "base64"], indexes_to_apply: [0] },
+      ]);
+    } else {
+      expect(secondRequest).not.toHaveProperty("request_converter_configurations");
+    }
+    if (count === 1) {
+      expect(secondRequest).not.toHaveProperty("count");
+      expect(secondRequest).not.toHaveProperty("request_converter_mode");
+    } else {
+      expect(secondRequest.count).toBe(count);
+      expect(secondRequest.request_converter_mode).toBe(mode === "default" ? "shared" : mode);
+    }
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
   });
 
   it.each(["Working input - Text", "Stage 1 output - Text"])(
@@ -6141,8 +6192,15 @@ describe("ChatWindow Integration", () => {
     },
   );
 
-  it.each(["original chat", ""])("sends the exact edited pane result with original text %j", async (original: string) => {
+  it.each<[string, number, RepeatConversionMode]>([
+    ["original chat", 1, "shared"], ["", 1, "shared"],
+    ["original chat", 3, "shared"], ["", 3, "shared"],
+    ["original chat", 3, "per_branch"], ["", 3, "per_branch"],
+  ])("sends the exact edited pane result with original text %j (n=%s, mode=%s)", async (
+    original: string, count: number, mode: RepeatConversionMode,
+  ) => {
     const user = userEvent.setup();
+    const appliedResult = "  final manual result\nsecond line  ";
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
     mockedConvertersApi.previewConversion.mockResolvedValue({
       original_value: "working draft", original_value_data_type: "text",
@@ -6171,18 +6229,20 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
     const output = await screen.findByRole("textbox", { name: "Stage 1 output - Text" });
     await user.clear(output);
-    await user.type(output, "final manual result");
+    await user.type(output, appliedResult);
     await user.click(screen.getByRole("button", { name: "Add converted value" }));
     expect(screen.getByTestId("chat-input")).toHaveValue(original);
-    expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue("final manual result");
+    expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue(appliedResult);
+    await chooseCount(user, count, mode);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockSendResult).toHaveBeenCalledWith("ar-edited", expect.objectContaining({
       pieces: [{
         data_type: "text", original_value: original,
-        converted_value: "final manual result", converted_value_data_type: "text",
+        converted_value: appliedResult, converted_value_data_type: "text",
         applied_converter_ids: ["base64"],
       }],
     })));
+    expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1]).not.toHaveProperty("request_converter_configurations");
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
   });
 

@@ -185,6 +185,10 @@ describe("ChatInputArea", () => {
     const increase = screen.getByRole("button", { name: "Increase repetitions" });
     expect(decrease).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Convert once, reuse for all" })).toBeChecked();
+    const converterHelp = screen.getByText(/single sends and shared repeats use only applied conversions/i);
+    expect(converterHelp).toHaveTextContent("Use Add converted value before sending.");
+    expect(converterHelp).toHaveTextContent("Independent repeats run unapplied pipelines on original inputs.");
+    expect(converterHelp).toHaveTextContent("Applied previews stay unchanged in either mode.");
     for (let count = 1; count < 10; count++) await user.click(increase);
     expect(increase).toBeDisabled();
     expect(screen.getByRole("button", { name: "Repetitions: 10" })).toHaveTextContent("n=10");

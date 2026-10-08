@@ -73,7 +73,7 @@ export function applyConvertedValues(
   })
 }
 
-/** Repeat-send runs unapplied pipelines on original inputs; exact applied previews are never rerun. */
+/** Build unapplied pipelines for independent repeats, skipping exact applied previews. */
 export function buildRequestConverterConfigurations(
   inputs: ConverterInputPiece[],
   pieceIds: string[],
