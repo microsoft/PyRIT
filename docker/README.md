@@ -250,7 +250,14 @@ You can further customize the container by:
 
 ## Security Note
 
-The JupyterLab instance is configured to run without authentication by default for ease of use. For production deployments, consider adding authentication or running behind a secured proxy.
+Docker Compose and the run script publish JupyterLab and GUI ports on
+`127.0.0.1` only by default. JupyterLab generates an access token shown in the
+container logs. Non-admin GUI APIs allow unauthenticated access when the required
+Entra settings are all unset or empty at backend startup; partial configuration
+is rejected. Administrator routes remain restricted by default.
+Do not expose either service remotely without authentication, HTTPS, and
+appropriate network access restrictions.
+See the [GUI Compose security guidance](./QUICKSTART.md#docker-compose).
 
 ## Documentation & Support
 

@@ -31,6 +31,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate-compose-bindings:
+    name: Validate Compose Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Require loopback-only published ports
+        working-directory: docker
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PYRIT_SOURCE_COMMIT = git rev-parse --verify HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cannot determine source commit."
+          }
+          $sourceStatus = git status --porcelain
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cannot determine source dirty state."
+          }
+          $env:PYRIT_SOURCE_DIRTY = if ($sourceStatus) { 'true' } else { 'false' }
+          $json = docker compose --file docker-compose.yaml --profile gui --profile jupyter config --format json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker Compose configuration resolution failed."
+          }
+          $services = ($json | ConvertFrom-Json).services
+          $expectedPorts = @{ 'pyrit-gui' = 8000; 'pyrit-jupyter' = 8888 }
+          foreach ($service in $expectedPorts.Keys) {
+            $port = $expectedPorts[$service]
+            $bindings = @($services.$service.ports)
+            if ($bindings.Count -ne 1 -or
+                $bindings[0].host_ip -ne '127.0.0.1' -or
+                $bindings[0].published -ne "$port" -or
+                $bindings[0].target -ne $port -or
+                $bindings[0].protocol -ne 'tcp') {
+              throw "Expected only 127.0.0.1:${port}:${port}/tcp for ${service}; got $($bindings | ConvertTo-Json -Compress)."
+            }
+            Write-Output "${service}: verified 127.0.0.1:${port}:${port}/tcp"
+          }
+
   build-and-test-local:
     name: Build and test (local)
     runs-on: ubuntu-latest

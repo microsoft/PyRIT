@@ -26,10 +26,21 @@ from pyrit.backend.models.targets import (
     TargetTypeEntry,
     TargetTypeResponse,
 )
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.parameter import Parameter
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
+
+_ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
+    "OpenAITarget": frozenset({"endpoint", "model_name"}),
+    "AzureBlobStorageTarget": frozenset({"container_url"}),
+    "AzureMLChatTarget": frozenset({"endpoint"}),
+    "HackAPromptTarget": frozenset({"cookie", "session_id"}),
+    "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
+    "PromptShieldTarget": frozenset({"endpoint"}),
+}
 
 
 class TargetService:
@@ -148,6 +159,31 @@ class TargetService:
             raise ValueError(f"Unsupported target authentication mode: {auth_mode!r}")
         return supported_auth_modes
 
+    def _project_target_parameters(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> list[Parameter]:
+        """
+        Project registry parameters into the API contract.
+
+        Environment-backed values remain optional in Python constructors so targets
+        can resolve them from dotenv configuration. The GUI must still collect them
+        explicitly, so the API marks those values required without changing the
+        target constructor signatures.
+
+        Args:
+            target_type (str): Registered target class name.
+            parameters (tuple[Parameter, ...]): Constructor parameters derived by the registry.
+
+        Returns:
+            list[Parameter]: Parameters projected for dynamic form generation.
+        """
+        target_cls = self._registry.get_class(target_type)
+        required_names = frozenset().union(
+            *(_ENV_BACKED_REQUIRED_PARAMETERS.get(base.__name__, frozenset()) for base in target_cls.__mro__)
+        )
+        return [
+            parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
+            for parameter in parameters
+        ]
+
     async def list_target_types_async(self) -> TargetTypeResponse:
         """
         List all available target types from the target class registry.
@@ -165,7 +201,10 @@ class TargetService:
         items: list[TargetTypeEntry] = [
             TargetTypeEntry(
                 target_type=metadata.class_name,
-                parameters=list(metadata.parameters),
+                parameters=self._project_target_parameters(
+                    target_type=metadata.class_name,
+                    parameters=metadata.parameters,
+                ),
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
@@ -182,7 +221,8 @@ class TargetService:
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
         by the target classes themselves. This service only enforces the
         request-level auth contract: for ``identity`` it confirms the target
-        supports it and omits the api_key so the target validates its own
+        supports it and omits the api_key plus any registry-flagged
+        identity-conflicting parameters so the target validates its own
         endpoint and authenticates itself. The response is built before the
         target is registered, so a failed request leaves no registered target.
 
@@ -211,6 +251,15 @@ class TargetService:
                 raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
             # Omit any api_key so the target validates its own endpoint and authenticates itself.
             params.pop("api_key", None)
+            # Omit any other parameter the registry metadata marks as conflicting with
+            # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
+            # can't silently override the selected auth mode by also supplying it.
+            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+            if metadata is not None:
+                for parameter in metadata.parameters:
+                    if parameter.identity_conflicting:
+                        params.pop(parameter.name, None)
+        params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
