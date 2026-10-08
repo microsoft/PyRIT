@@ -14,7 +14,6 @@ from pyrit.converter import RandomTranslationConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import Parameter, SeedDataset
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.technique_catalog import technique_catalog_cache
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechniqueFactory,
@@ -107,7 +106,7 @@ def _extra_default_factories() -> dict[str, AttackTechniqueFactory]:
     return {_PROMPT_SENDING: _prompt_sending_factory()}
 
 
-@technique_catalog_cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_multilingual_technique() -> type[ScenarioTechnique]:
     """
     Build the Multilingual technique class from text-compatible registered factories.
@@ -126,7 +125,7 @@ def _build_multilingual_technique() -> type[ScenarioTechnique]:
         for factory in pool.values()
         if factory.can_append_request_converter(converter_type=TranslationConverter)
     ]
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="MultilingualTechnique",
         factories=factories,
         default_names={_PROMPT_SENDING},

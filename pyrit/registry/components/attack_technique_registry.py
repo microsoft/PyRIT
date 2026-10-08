@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from functools import lru_cache, wraps
+from typing import TYPE_CHECKING, Any, cast
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
@@ -30,10 +31,22 @@ from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Protocol
+
     from pyrit.scenario.core.attack_technique_factory import (
         AttackTechniqueFactory,
         ScorerOverridePolicy,
     )
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+
+    class _CachedScenarioTechniqueClass(Protocol):
+        """A scenario enum function with the existing cache-reset interface."""
+
+        cache_clear: Callable[[], None]
+
+        def __call__(self) -> type[ScenarioTechnique]: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +153,9 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
     property (``register``, ``get``, ``get_all_instances``, ``get_by_tag``, …),
     a ``DefaultInstanceRegistry``. Attack classes come from ``AttackRegistry``;
     this registry has no separate class catalog.
+
+    ``cache_scenario_technique_class`` refreshes scenario selection enums when
+    registered factories change. It does not create or cache attack instances.
     """
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
@@ -258,7 +274,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
     @property
     def catalog_revision(self) -> tuple[object, int]:
-        """Factory-container identity and mutation revision, including registry resets."""
+        """Cache key for scenario selections, metadata, and estimates derived from registered factories."""
         return self.instances, self.instances.revision
 
     def _discover(self) -> None:
@@ -334,13 +350,43 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return self._scorer_override_policy
 
     @staticmethod
+    def cache_scenario_technique_class(
+        builder: Callable[[], type[ScenarioTechnique]],
+    ) -> _CachedScenarioTechniqueClass:
+        """
+        Cache a scenario's selectable technique enum until registered factories change.
+
+        Reuse the same enum class while the registry is unchanged. After registration,
+        removal, or registry reset, the next call builds a new selection enum. Existing
+        scenarios keep their old enum reference. Only the latest result is cached.
+
+        Args:
+            builder (Callable[[], type[ScenarioTechnique]]): The scenario's enum function.
+
+        Returns:
+            _CachedScenarioTechniqueClass: The cached enum function, with ``cache_clear`` for setup reset.
+        """
+
+        @lru_cache(maxsize=1)
+        def cached(revision: tuple[object, int]) -> type[ScenarioTechnique]:
+            return builder()
+
+        @wraps(builder)
+        def current() -> type[ScenarioTechnique]:
+            return cached(AttackTechniqueRegistry.get_registry_singleton().catalog_revision)
+
+        result = cast("_CachedScenarioTechniqueClass", current)
+        result.cache_clear = cached.cache_clear
+        return result
+
+    @staticmethod
     def build_technique_class_from_factories(
         *,
         class_name: str,
         factories: list[AttackTechniqueFactory],
         default_tags: set[str] | None = None,
         default_names: set[str] | None = None,
-    ) -> type:
+    ) -> type[ScenarioTechnique]:
         """
         Build a ``ScenarioTechnique`` enum subclass dynamically from technique factories.
 
@@ -375,7 +421,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 those techniques are filtered out. Mutually exclusive with ``default_tags``.
 
         Returns:
-            type: A ``ScenarioTechnique`` subclass with the generated members.
+            type[ScenarioTechnique]: A ``ScenarioTechnique`` subclass with the generated members.
 
         Raises:
             ValueError: If both ``default_tags`` and ``default_names`` are provided, or if generated

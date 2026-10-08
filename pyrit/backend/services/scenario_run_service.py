@@ -1955,9 +1955,9 @@ class ScenarioRunService:
         Returns:
             dict[str, ScenarioTechniqueSummary]: Technique metadata keyed by name.
         """
-        from pyrit.registry.technique_catalog import technique_catalog_revision
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 
-        revision = technique_catalog_revision()
+        revision = AttackTechniqueRegistry.get_registry_singleton().catalog_revision
         if getattr(self, "_technique_metadata_revision", None) != revision:
             self._technique_metadata_cache.clear()
             self._technique_metadata_revision = revision

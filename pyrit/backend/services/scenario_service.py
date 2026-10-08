@@ -20,8 +20,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
 )
-from pyrit.registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.registry.technique_catalog import technique_catalog_revision
+from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
 from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
 
@@ -229,7 +228,11 @@ class ScenarioService:
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate."""
-        cache_key = (metadata.registry_name, metadata.scenario_version, technique_catalog_revision())
+        cache_key = (
+            metadata.registry_name,
+            metadata.scenario_version,
+            AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+        )
         cache = getattr(self, "_estimate_cache", None)
         if cache is None:
             cache = OrderedDict()
@@ -542,7 +545,12 @@ class ScenarioService:
             sort_keys=True,
             separators=(",", ":"),
         )
-        return scenario_name, scenario_class, request_json, technique_catalog_revision()
+        return (
+            scenario_name,
+            scenario_class,
+            request_json,
+            AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+        )
 
 
 @lru_cache(maxsize=1)

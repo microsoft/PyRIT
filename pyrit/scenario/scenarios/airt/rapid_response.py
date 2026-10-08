@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
-from pyrit.registry.technique_catalog import technique_catalog_cache
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@technique_catalog_cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     """
     Build the RapidResponse technique class dynamically from the registered factories.
@@ -42,12 +42,10 @@ def _build_rapid_response_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = list(registry.get_factories_or_raise().values())
 
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="RapidResponseTechnique",
         factories=factories,
         default_tags={"light"},

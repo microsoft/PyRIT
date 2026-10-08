@@ -60,6 +60,8 @@ reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not
 change. List and detail responses include Python-created factories without
 disclosing target credentials.
 Scenario-local factories take precedence over registered factories of the same name.
+`AttackTechniqueRegistry.cache_scenario_technique_class` refreshes scenario selection
+enums when registered factories change; it does not create attacks.
 
 ### Manual Messages
 

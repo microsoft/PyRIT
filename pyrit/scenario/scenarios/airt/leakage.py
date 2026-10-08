@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.technique_catalog import technique_catalog_cache
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
@@ -49,7 +48,7 @@ def _leakage_factories() -> list[AttackTechniqueFactory]:
     return get_technique_factories()
 
 
-@technique_catalog_cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_leakage_technique() -> type[ScenarioTechnique]:
     """
     Build the Leakage technique class dynamically from core + leakage-specific factories.
@@ -64,7 +63,7 @@ def _build_leakage_technique() -> type[ScenarioTechnique]:
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = registry.get_factories_or_raise()
     factories.update({factory.name: factory for factory in _leakage_factories()})
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[return-value, ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="LeakageTechnique",
         factories=list(factories.values()),
         default_names={"role_play_movie_script", "many_shot", "first_letter", "image"},
