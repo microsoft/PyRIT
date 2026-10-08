@@ -19,6 +19,10 @@ interface TechniqueRegistryPageProps {
   runtimeKey: string
 }
 
+function omitNullSetting(_key: string, value: unknown): unknown {
+  return value === null ? undefined : value
+}
+
 function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps) {
   const styles = useTechniqueRegistryStyles()
   const [items, setItems] = useState<TechniqueInstance[]>([])
@@ -143,8 +147,9 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
                             <>
                               <Text>{detail.description ?? 'No description'}</Text>
                               <Text>{detail.uses_default_adversarial_target ? 'Default adversarial target: resolved at execution.' : 'No deferred adversarial target.'}</Text>
-                              <pre className={styles.configuration}>{JSON.stringify(detail.configuration, null, 2)}</pre>
-                              <Text>These are safe display settings, not a reconstruction recipe.</Text>
+                              <Text as="h3" weight="semibold">Configuration</Text>
+                              <pre className={styles.configuration} aria-label="Technique configuration">{JSON.stringify(detail.configuration, omitNullSetting, 2)}</pre>
+                              <pre className={styles.configuration} aria-label="Factory evaluation identifier">{JSON.stringify(detail.evaluation_identifier, omitNullSetting, 2)}</pre>
                             </>
                           )}
                         </DialogContent>

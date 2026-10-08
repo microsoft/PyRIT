@@ -372,6 +372,8 @@ export interface TechniqueInstance {
   uses_default_adversarial_target: boolean
   /** Safe display settings. This is not a reconstruction recipe. */
   configuration: Record<string, unknown>
+  /** Registered factory identity, not the evaluation identity of a constructed attack. */
+  evaluation_identifier: ComponentIdentifier
 }
 
 export interface TechniqueTypeEntry {

@@ -60,6 +60,7 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("button", { name: "Add technique" }).click();
   const created = await create;
   expect(created.status()).toBe(201);
+  const createdTechnique = await created.json();
   const body = created.request().postDataJSON();
   expect(body).toMatchObject({
     name, type: "PromptSendingAttack", params: { max_attempts_on_failure: 0 },
@@ -71,7 +72,16 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
   await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
   await page.getByRole("button", { name: `Details for ${name}` }).click();
-  await expect(page.getByText("These are safe display settings, not a reconstruction recipe.")).toBeVisible();
+  await expect(page.getByLabel("Technique configuration", { exact: true })).toBeVisible();
+  const evaluationIdentifier = page.getByLabel("Factory evaluation identifier", { exact: true });
+  await expect(evaluationIdentifier).toContainText(createdTechnique.evaluation_identifier.eval_hash);
+  const displayedIdentity = JSON.parse(await evaluationIdentifier.innerText());
+  expect(displayedIdentity.hash).toEqual(createdTechnique.evaluation_identifier.hash);
+  expect(displayedIdentity.eval_hash).toEqual(createdTechnique.evaluation_identifier.eval_hash);
+  expect(displayedIdentity.name).toEqual(name);
+  expect(await page.getByLabel("Technique configuration", { exact: true }).innerText()).not.toContain(': null');
+  expect(await evaluationIdentifier.innerText()).not.toContain(': null');
+  await expect(page.getByText("These are safe display settings, not a reconstruction recipe.")).toHaveCount(0);
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("button", { name: `Details for ${name}` })).toBeFocused();
   expect(detailRequests).toEqual([]);

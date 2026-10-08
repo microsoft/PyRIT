@@ -62,6 +62,8 @@ disclosing target credentials.
 Scenario-local factories take precedence over registered factories of the same name.
 `AttackTechniqueRegistry.cache_scenario_technique_class` refreshes scenario selection
 enums when registered factories change; it does not create attacks.
+Responses also include `evaluation_identifier`: the registered factory's identity
+with its evaluation hash, not the final attack or scenario run identity.
 
 ### Manual Messages
 

@@ -4,6 +4,7 @@
 """Real factory projections, REST shapes, and revision-aware scenario caches."""
 
 import asyncio
+import json
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -12,13 +13,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.mappers.technique_mappers import technique_to_instance
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ScenarioRunSizeEstimate, ScenarioRunSizeEstimateRequest, SeedObjective
+from pyrit.models import (
+    AttackSeedGroup,
+    EvaluationIdentifier,
+    ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateRequest,
+    SeedObjective,
+)
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import AttackTechniqueFactory
@@ -55,6 +64,7 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
         "uses_adversarial",
         "uses_default_adversarial_target",
         "configuration",
+        "evaluation_identifier",
     }
     assert await service.get_async("missing") is None
     AttackRegistry.get_registry_singleton().register_class(PromptSendingAttack, name="alias")
@@ -70,6 +80,39 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
     assert metadata.model_dump_json()
     created = await service.create_async(CreateTechniqueRequest(name="from_alias", type="alias"))
     assert created.attack_type == "PromptSendingAttack"
+
+
+@pytest.mark.parametrize("name", ["red_teaming", "crescendo_journalist_interview"])
+def test_factory_evaluation_identifier_uses_real_identity_without_creating_attacks(
+    *, registry: AttackTechniqueRegistry, name: str
+) -> None:
+    factory = registry.get_factories_or_raise()[name]
+    identifier = factory.get_identifier()
+    with patch.object(factory, "create", side_effect=AssertionError("Listing must not construct an attack")):
+        item = technique_to_instance(name=name, factory=factory)
+
+    assert item.evaluation_identifier == identifier.with_eval_hash(EvaluationIdentifier(identifier).eval_hash)
+    assert item.evaluation_identifier.hash == identifier.hash
+    assert item.evaluation_identifier.eval_hash == identifier.hash
+    assert factory.get_identifier().eval_hash is None
+    assert item.evaluation_identifier.params["name"] == name
+    if name == "crescendo_journalist_interview":
+        seed = item.configuration["seed_technique"]["seeds"][0]
+        prompt = seed["adversarial_chat_system_prompt"]["value"]
+        assert json.loads(seed["value"])["adversarial_chat_system_prompt"]["value"] == prompt
+        seed_identifier = item.evaluation_identifier.get_child_list("technique_seeds")[0]
+        assert json.loads(seed_identifier.params["value"])["adversarial_chat_system_prompt"]["value"] == prompt
+        assert "adversarial_chat_system_prompt" not in seed_identifier.params
+
+
+def test_factory_evaluation_identifier_does_not_expose_target_credentials(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    target = OpenAIChatTarget(endpoint="https://local.invalid/v1", model_name="local", api_key="private-test-key")
+    factory = registry.create_factory(name="private_target", attack_type="RedTeamingAttack", adversarial_chat=target)
+    item = technique_to_instance(name=factory.name, factory=factory)
+    assert item.evaluation_identifier.params["adversarial_chat"] == target.get_identifier().hash
+    assert "private-test-key" not in item.model_dump_json()
 
 
 def test_rest_create_detail_types_and_errors(
@@ -89,6 +132,7 @@ def test_rest_create_detail_types_and_errors(
     )
     assert created.status_code == 201, created.text
     assert created.json()["configuration"]["attack_args"]["max_attempts_on_failure"] == 0
+    assert created.json()["evaluation_identifier"]["eval_hash"] == created.json()["evaluation_identifier"]["hash"]
     assert client.get("/api/techniques/rest_example").json() == created.json()
     assert client.get("/api/techniques/missing").status_code == 404
     assert (
