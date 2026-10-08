@@ -16,12 +16,14 @@ if TYPE_CHECKING:
         get_cached_results_for_technique,
         get_cached_results_for_technique_async,
     )
+    from pyrit.analytics.scenario_statistics import compute_scenario_statistics
     from pyrit.analytics.text_matching import ApproximateTextMatching, ExactTextMatching, TextMatching
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "analyze_results": "pyrit.analytics.result_analysis",
     "ApproximateTextMatching": "pyrit.analytics.text_matching",
     "AttackStats": "pyrit.analytics.result_analysis",
+    "compute_scenario_statistics": "pyrit.analytics.scenario_statistics",
     "ConversationAnalytics": "pyrit.analytics.conversation_analytics",
     "ExactTextMatching": "pyrit.analytics.text_matching",
     "get_cached_results_for_technique": "pyrit.analytics.result_analysis",

@@ -4,7 +4,7 @@
 """Shared attack fixtures for backend service tests."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -29,7 +29,7 @@ async def _settle_send_async(
 
 
 @asynccontextmanager
-async def message_send_lifecycle_async(service: MessageSendService) -> AsyncIterator[None]:
+async def message_send_lifecycle_async(service: MessageSendService) -> AsyncGenerator[None, None]:
     """Drain owned sends before the enclosing mocks and memory fixtures close."""
     try:
         yield

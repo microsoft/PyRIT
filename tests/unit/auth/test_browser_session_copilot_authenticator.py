@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -206,7 +206,7 @@ async def _browser_lifetime_async(
     *,
     phase: str,
     cleanup_error: Exception | None = None,
-) -> AsyncIterator[_BrowserLifetimeHarness]:
+) -> AsyncGenerator[_BrowserLifetimeHarness, None]:
     harness = _BrowserLifetimeHarness(phase=phase, cleanup_error=cleanup_error)
     authenticator = harness.authenticator
     original_stop = authenticator._stop_browser_thread_async
