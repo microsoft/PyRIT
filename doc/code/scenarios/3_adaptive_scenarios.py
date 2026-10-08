@@ -257,6 +257,10 @@ for technique, n in total_picks.most_common():
 # Roles describe results without changing how progress is counted: a parent and its children still
 # belong to one planned unit.
 #
+# SDK consumers can use `AttackResultMetadata.from_metadata(metadata=result.attribution_data)` from
+# `pyrit.models` to read the same role and parent-relative index as the progress API. Execution writes
+# these fields with `AttackResultMetadata.to_metadata()`, keeping their storage and legacy handling shared.
+#
 # This excerpt of a progress response shows one Adaptive objective whose first attempt failed and whose
 # second succeeded (other fields omitted):
 #

@@ -18,7 +18,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
-    AttackResultRole,
+    AttackResultMetadata,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     ScenarioAtomicGroupProgress,
@@ -830,6 +830,7 @@ class ScenarioProgressReadModel:
                 seed_group_id = matching_seed_ids[0]
         if not seed_group_id:
             seed_group_id = config_hash({"objective": delta.objective})
+        result_metadata = AttackResultMetadata.from_metadata(metadata=delta.attribution_data)
         return ScenarioProgressResult(
             attack_result_id=delta.attack_result_id,
             conversation_id=delta.conversation_id,
@@ -844,28 +845,12 @@ class ScenarioProgressReadModel:
             error_type=delta.error_type,
             error_message=delta.error_message,
             score=delta.score,
-            result_role=ScenarioProgressReadModel._read_result_role(attribution_data=delta.attribution_data),
+            result_role=result_metadata.result_role,
             child_attack_result_ids=ScenarioProgressReadModel._read_child_attack_result_ids(
                 attack_metadata=delta.attack_metadata
             ),
-            attempt_index=ScenarioProgressReadModel._read_attempt_index(attribution_data=delta.attribution_data),
+            attempt_index=result_metadata.attempt_index,
         )
-
-    @staticmethod
-    def _read_result_role(*, attribution_data: dict[str, Any]) -> AttackResultRole:
-        """
-        Read the role recorded by the producing strategy.
-
-        A row without a recognized role is ``UNKNOWN``. Nothing is inferred from other
-        fields, such as an empty conversation ID.
-
-        Returns:
-            AttackResultRole: The recorded role, or ``UNKNOWN``.
-        """
-        try:
-            return AttackResultRole(attribution_data.get("result_role"))
-        except ValueError:
-            return AttackResultRole.UNKNOWN
 
     @staticmethod
     def _read_child_attack_result_ids(*, attack_metadata: dict[str, Any]) -> list[str]:
@@ -879,19 +864,6 @@ class ScenarioProgressReadModel:
         if isinstance(child_ids, list) and all(isinstance(child_id, str) for child_id in child_ids):
             return list(child_ids)
         return []
-
-    @staticmethod
-    def _read_attempt_index(*, attribution_data: dict[str, Any]) -> int | None:
-        """
-        Read a child result's 1-based position under its orchestration parent.
-
-        Returns:
-            int | None: The recorded position, or None when absent or invalid.
-        """
-        attempt_index = attribution_data.get("attempt_index")
-        if isinstance(attempt_index, int) and not isinstance(attempt_index, bool) and attempt_index >= 1:
-            return attempt_index
-        return None
 
     @staticmethod
     def _synthesize_legacy_plan(*, deltas: list[ScenarioAttackResultDelta]) -> ScenarioRunPlan:

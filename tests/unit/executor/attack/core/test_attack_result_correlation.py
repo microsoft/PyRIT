@@ -25,6 +25,8 @@ from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
+    AttackResultRole,
     AttackSeedGroup,
     Message,
     MessagePiece,
@@ -263,6 +265,9 @@ async def test_standalone_result_records_its_role_without_a_parent_async(
     assert (stored.outcome == AttackOutcome.ERROR) is fail
     assert stored.attribution_parent_id is None
     assert stored.attribution_data == {"result_role": "target_facing"}
+    assert AttackResultMetadata.from_metadata(metadata=stored.attribution_data) == AttackResultMetadata(
+        result_role=AttackResultRole.TARGET_FACING
+    )
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -290,6 +295,10 @@ async def test_standalone_sequential_results_record_their_roles_without_a_parent
     assert all(result.attribution_parent_id is None for result in stored)
     assert sorted(result.attribution_data["result_role"] for result in stored) == ["orchestration", "target_facing"]
     assert all(result.attribution_data.keys() == {"result_role"} for result in stored)
+    assert {AttackResultMetadata.from_metadata(metadata=result.attribution_data).result_role for result in stored} == {
+        AttackResultRole.ORCHESTRATION,
+        AttackResultRole.TARGET_FACING,
+    }
 
 
 async def test_history_from_an_earlier_execution_is_copied_into_a_new_conversation_async(

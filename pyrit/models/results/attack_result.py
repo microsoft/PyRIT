@@ -192,11 +192,8 @@ class AttackResult(StrategyResult):
     retry_events: list[RetryEvent] = Field(default_factory=list)
     total_retries: int = 0
 
-    # Attribution / parent linkage (infrastructure-managed). Set by the attack
-    # persistence path when an AttackResultAttribution is present on the
-    # AttackContext. User code should not set these directly; ad-hoc
-    # AttackResults created outside an orchestrator leave both fields as None
-    # and the corresponding DB columns remain NULL.
+    # Infrastructure-managed parent linkage and producer metadata. Strategies
+    # record their role even without an orchestrator; the parent ID stays None.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
 

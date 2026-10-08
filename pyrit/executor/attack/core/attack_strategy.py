@@ -33,6 +33,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
     AttackResultRole,
     ComponentIdentifier,
     ConversationReference,
@@ -458,8 +459,11 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             context: The per-task AttackContext.
             result: The AttackResult that is about to be persisted.
         """
-        attribution_data: dict[str, Any] = {"result_role": context._result_role.value}
         attribution = context._attribution
+        attribution_data = AttackResultMetadata(
+            result_role=context._result_role,
+            attempt_index=attribution.attempt_index if attribution is not None else None,
+        ).to_metadata()
         if attribution is None:
             result.attribution_data = attribution_data
             return
@@ -469,8 +473,6 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
         if attribution.seed_group_id is not None:
             attribution_data["seed_group_id"] = attribution.seed_group_id
-        if attribution.attempt_index is not None:
-            attribution_data["attempt_index"] = attribution.attempt_index
         result.attribution_data = attribution_data
 
     @staticmethod
