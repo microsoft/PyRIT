@@ -115,6 +115,28 @@ def test_scenario_selection_cache_refreshes_after_removal_or_registry_reset(
     assert _build_selection_enum() is current
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["get_all_techniques", "get_aggregate_tags", "resolve", "expand", "tags", "description", "name", "value", "mro"],
+)
+def test_inherited_enum_attributes_fail_before_runtime_registration(
+    *, scenario_selection_registry: AttackTechniqueRegistry, name: str
+) -> None:
+    before = _build_selection_enum()
+    revision = scenario_selection_registry.catalog_revision
+    factory = AttackTechniqueFactory(name=name, attack_class=_StubAttack)
+    with pytest.raises(ValueError, match="inherited ScenarioTechnique attribute"):
+        scenario_selection_registry.instances.register_runtime(factory)
+    assert scenario_selection_registry.catalog_revision == revision
+    assert scenario_selection_registry.instances.get_names() == ["base"]
+    assert _build_selection_enum() is before
+    assert [technique.value for technique in before.get_all_techniques()] == ["base"]
+    with pytest.raises(ValueError, match="inherited ScenarioTechnique attribute"):
+        scenario_selection_registry.build_technique_class_from_factories(
+            class_name="InvalidTechnique", factories=[factory]
+        )
+
+
 class TestAttackTechniqueRegistrySingleton:
     """Tests for the singleton pattern."""
 

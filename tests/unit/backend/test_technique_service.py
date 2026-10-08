@@ -254,6 +254,28 @@ def test_rest_create_detail_types_and_errors(
     assert "unknown" not in registry.instances.get_names()
 
 
+@pytest.mark.parametrize("name", ["get_all_techniques", "get_aggregate_tags", "resolve", "expand", "tags", "mro"])
+def test_rest_rejects_inherited_enum_names_without_changing_scenarios(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], name: str
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    scenario_registry = ScenarioRegistry.get_registry_singleton()
+    scorer = SubStringScorer(substring="yes")
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+        patch.object(scenario_registry, "_discover"),
+    ):
+        scenario_registry.register_class(RapidResponse, name="airt.rapid_response")
+        before = scenario_registry.get_registered_class_metadata("airt.rapid_response")
+        revision = registry.catalog_revision
+        response = client.post("/api/techniques", json={"name": name, "type": "PromptSendingAttack"})
+        assert response.status_code == 400, response.text
+        assert "inherited ScenarioTechnique attribute" in response.json()["detail"]
+        assert registry.catalog_revision == revision
+        assert name not in registry.instances.get_names()
+        assert scenario_registry.get_registered_class_metadata("airt.rapid_response") is before
+
+
 @pytest.mark.parametrize("name", ["first_letter", "image", "prompt_sending"])
 def test_rest_accepts_scenario_local_names(
     *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], name: str

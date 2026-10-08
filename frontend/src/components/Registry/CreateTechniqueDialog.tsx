@@ -10,45 +10,28 @@ import ReferenceField from '@/components/Parameters/ReferenceField'
 import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { CreateTechniqueRequest, PaginationInfo, Parameter, RegistryReferenceOption, TechniqueTypeEntry } from '@/types'
+import type { CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry } from '@/types'
+import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import { useCreateTechniqueDialogStyles } from './CreateTechniqueDialog.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 
-function canConfigure(parameter: Parameter): boolean {
+function canConfigure(parameter: Parameter, allowStructured = true): boolean {
   if (parameter.reference_type) return false
   if (parameter.variants) {
-    return !parameter.is_list && Object.values(parameter.variants).some((parameters) =>
-      parameters.every((nested) => !nested.required || canConfigure(nested)))
+    return allowStructured && !parameter.is_list && Object.values(parameter.variants).some((parameters) =>
+      parameters.every((nested) => !nested.required || canConfigure(nested, false)))
   }
   return SCALAR_TYPES.has(parameter.type_name) || Boolean(parameter.choices?.length)
 }
 
-async function loadReferencePages<T>(
-  load: (cursor?: string) => Promise<{ items: T[]; pagination: PaginationInfo }>,
-): Promise<T[]> {
-  const items: T[] = []
-  const seen = new Set<string>()
-  let cursor: string | undefined
-  do {
-    const page = await load(cursor)
-    items.push(...page.items)
-    if (!page.pagination.has_more) return items
-    const next = page.pagination.next_cursor
-    if (!next || seen.has(next)) throw new Error('The registry returned an invalid page cursor.')
-    seen.add(next)
-    cursor = next
-  } while (cursor)
-  return items
-}
-
-function guiParameters(parameters: Parameter[]): Parameter[] {
-  return parameters.filter(canConfigure).map((parameter) => parameter.variants ? {
+function guiParameters(parameters: Parameter[], allowStructured = true): Parameter[] {
+  return parameters.filter((parameter) => canConfigure(parameter, allowStructured)).map((parameter) => parameter.variants ? {
     ...parameter,
     variants: Object.fromEntries(Object.entries(parameter.variants)
-      .filter(([, nested]) => nested.every((entry) => !entry.required || canConfigure(entry)))
-      .map(([name, nested]) => [name, guiParameters(nested)])),
+      .filter(([, nested]) => nested.every((entry) => !entry.required || canConfigure(entry, false)))
+      .map(([name, nested]) => [name, guiParameters(nested, false)])),
   } : parameter)
 }
 
@@ -100,7 +83,12 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
       try {
         const [metadata, targets, converters] = await Promise.all([
           techniquesApi.listTypes(),
-          loadReferencePages((cursor) => targetsApi.listTargets(200, cursor)),
+          fetchAllPages(
+            (cursor: string | undefined) => targetsApi.listTargets(200, cursor),
+            undefined,
+            (entry) => entry.target_registry_name,
+            true,
+          ),
           convertersApi.listConverters(),
         ])
         if (ignore) return

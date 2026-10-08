@@ -4,7 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { TechniqueInstance, TechniqueListResponse, TechniqueTypeResponse } from '@/types'
+import type { Parameter, TechniqueInstance, TechniqueListResponse, TechniqueTypeResponse } from '@/types'
 
 import TechniqueRegistry from './TechniqueRegistry'
 
@@ -245,6 +245,66 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Add technique' }))
     await screen.findByText(/Do not use all, default, or types\./)
     expect(techniques.createTechnique).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides nested variants but keeps valid single-level settings configurable', async () => {
+    const child: Parameter = {
+      name: 'child', type_name: 'ChildSettings', required: true,
+      variants: { child: [{ name: 'enabled', type_name: 'bool', required: false }] },
+    }
+    techniques.listTypes.mockResolvedValue({ items: [
+      { attack_type: 'NestedRequiredAttack', description: '', supports_adversarial: false, supports_converters: false,
+        parameters: [{ name: 'settings', type_name: 'ParentSettings', required: true, variants: { parent: [child] } }] },
+      { attack_type: 'MixedAttack', description: '', supports_adversarial: false, supports_converters: false,
+        parameters: [{ name: 'settings', type_name: 'ParentSettings', required: true, variants: {
+          nested_required: [child],
+          basic: [{ ...child, required: false }, { name: 'limit', type_name: 'int', required: true }],
+        } }] },
+    ] })
+    render(tree())
+    const user = await openCreate()
+    expect(screen.queryByRole('option', { name: 'NestedRequiredAttack' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'MixedAttack')
+    const settings = screen.getByLabelText('settings *')
+    expect(within(settings).queryByRole('option', { name: 'nested_required' })).not.toBeInTheDocument()
+    await user.selectOptions(settings, 'basic')
+    expect(screen.queryByLabelText('child')).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText('limit *'), '0')
+    await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'basic_settings')
+    await user.click(screen.getByRole('button', { name: 'Add technique' }))
+    await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(1))
+    expect(techniques.createTechnique.mock.calls[0][0].params).toEqual({
+      settings: { type: 'basic', parameters: { limit: 0 } },
+    })
+  })
+
+  it('loads all target-reference pages with the shared loader', async () => {
+    targets.listTargets
+      .mockResolvedValueOnce({ items: [makeTarget({ target_registry_name: 'local' })],
+        pagination: { limit: 200, has_more: true, next_cursor: 'local' } })
+      .mockResolvedValueOnce({ items: [makeTarget({ target_registry_name: 'later' })],
+        pagination: { limit: 200, has_more: false } })
+    render(tree())
+    const user = await openCreate()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'RedTeamingAttack')
+    expect(screen.getByRole('option', { name: /later/ })).toBeInTheDocument()
+    expect(targets.listTargets.mock.calls).toEqual([[200, undefined], [200, 'local']])
+  })
+
+  it('reports invalid reference cursors instead of showing a partial form', async () => {
+    targets.listTargets.mockResolvedValue({
+      items: [], pagination: { limit: 200, has_more: true },
+    })
+    render(tree())
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'New technique' }))
+    await screen.findByText('The registry returned an invalid page cursor.')
+    expect(screen.queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
+    targets.listTargets.mockResolvedValue({
+      items: [makeTarget({ target_registry_name: 'local' })], pagination: { limit: 200, has_more: false },
+    })
+    await user.click(screen.getByRole('button', { name: 'Retry metadata' }))
+    await screen.findByRole('combobox', { name: 'Attack type' })
   })
 
   it('reports metadata failure and permits retry', async () => {

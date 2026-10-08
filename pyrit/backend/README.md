@@ -57,7 +57,11 @@ Creation does not run an attack. The scenario supplies the objective target and
 scoring configuration; an omitted adversarial target uses the execution default.
 Invalid settings or selector collisions return 400 without registering a factory;
 invalid request shapes return 422. `all` and `default` are reserved selectors;
-`types` is also a reserved name.
+`types` is also a reserved name. Names cannot replace inherited `ScenarioTechnique`
+attributes such as `resolve` or `get_all_techniques`.
+
+The basic GUI supports scalar inputs and one level of declared structured settings.
+It hides nested structured settings that the shared resolver cannot construct.
 
 Additions are runtime-only and available in compatible scenarios. Restart or
 reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not

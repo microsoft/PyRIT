@@ -84,6 +84,11 @@ def _validate_generated_member_collisions(
     Raises:
         ValueError: If a factory or aggregate would collide with a reserved or generated member.
     """
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+
+    inherited_names = {
+        name for base in (*ScenarioTechnique.__mro__, *type(ScenarioTechnique).__mro__) for name in vars(base)
+    }
     member_sources = {"ALL": "reserved aggregate 'all'", "DEFAULT": "reserved aggregate 'default'"}
     value_sources = {"all": "reserved aggregate 'all'", "default": "reserved aggregate 'default'"}
 
@@ -97,6 +102,11 @@ def _validate_generated_member_collisions(
             raise ValueError(
                 f"Cannot build {class_name}: {source} maps to enum value {member_value!r}, "
                 f"already used by {existing}. Rename the tag or factory."
+            )
+        if member_name in inherited_names:
+            raise ValueError(
+                f"Cannot build {class_name}: {source} maps to enum member name {member_name!r}, "
+                "which conflicts with an inherited ScenarioTechnique attribute. Rename the tag or factory."
             )
         member_sources[member_name] = source
         value_sources[member_value] = source
@@ -137,6 +147,11 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
                     raise ValueError(f"Tag '{tag}' conflicts with a technique name")
                 if folded in tags and tags[folded] != tag:
                     raise ValueError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+            _validate_generated_member_collisions(
+                class_name="ScenarioTechnique",
+                factories=[factory],
+                aggregate_tags=set(factory.technique_tags) - {"all", "default"},
+            )
             self.register(factory, name=factory.name, tags=factory.technique_tags)
 
 
