@@ -58,7 +58,13 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from unit.async_utils import wait_for_completion_async
-from unit.backend.mocks import _make_matching_target_mock, make_attack_result, make_mock_memory
+from unit.backend.mocks import (
+    _make_matching_target_mock,
+    _settle_send_async,
+    make_attack_result,
+    make_mock_memory,
+    message_send_lifecycle_async,
+)
 from unit.mocks import MockPromptTarget
 
 
@@ -2711,18 +2717,73 @@ def _submission(*, conversation_id: str = "main", submission_id: str = "submissi
     return MessageSendRequest(**_request(conversation_id=conversation_id).model_dump(), submission_id=submission_id)
 
 
-async def _settle_send_async(*, service: MessageSendService, status: MessageSendStatus) -> MessageSendStatus:
-    async with asyncio.timeout(10):
-        while status.state not in (MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED):
-            status = await service.get_status_async(
-                attack_result_id=status.attack_result_id, send_id=status.send_id, wait_ms=1000
-            )
-    return status
-
-
 @pytest.mark.timeout(20)
 @pytest.mark.usefixtures("patch_central_database")
 class TestAsyncMessageSend:
+    @pytest.mark.parametrize(
+        "terminal_state", [MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED]
+    )
+    async def test_settle_send_waits_past_finalizing_async(self, terminal_state: MessageSendState) -> None:
+        service = MagicMock(spec=MessageSendService)
+        accepted = MessageSendStatus(send_id="send", attack_result_id="attack", conversation_id="main")
+        finalizing = accepted.model_copy(update={"state": MessageSendState.FINALIZING})
+        terminal = accepted.model_copy(update={"state": terminal_state})
+        service.get_status_async.side_effect = [finalizing, terminal]
+
+        result = await _settle_send_async(service=service, status=accepted)
+
+        assert result.state == terminal_state
+        assert service.get_status_async.await_count == 2
+        assert all(
+            call.kwargs == {"attack_result_id": "attack", "send_id": "send", "wait_ms": 1000}
+            for call in service.get_status_async.await_args_list
+        )
+
+    @pytest.mark.parametrize("failure", ["assertion", "timeout"])
+    async def test_send_lifecycle_drains_pending_work_on_test_failure_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+        failure: str,
+    ) -> None:
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def hold_send_async(**_: Any) -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        send_dependencies[1].side_effect = hold_send_async
+        error = AssertionError if failure == "assertion" else TimeoutError
+        status: MessageSendStatus | None = None
+        task: asyncio.Task[None] | None = None
+        with pytest.raises(error):
+            async with message_send_lifecycle_async(message_send_service):
+                status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+                await started.wait()
+                task = message_send_service._sends[status.send_id].task
+                assert task is not None
+                if failure == "assertion":
+                    raise AssertionError("controlled test failure")
+                try:
+                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0.01)
+                except TimeoutError:
+                    assert not task.done()
+                    assert not cancelled.is_set()
+                    raise
+
+        assert task is not None
+        assert status is not None
+        assert task.done()
+        assert cancelled.is_set()
+        assert not message_send_service._scheduler._conversations
+        assert (
+            await message_send_service.get_status_async(attack_result_id="attack", send_id=status.send_id)
+        ).state == MessageSendState.INTERRUPTED
+
     async def test_failure_is_not_terminal_until_evidence_reads_and_finalization_finish_async(
         self,
         *,

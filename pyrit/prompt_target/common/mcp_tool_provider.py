@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -21,6 +22,8 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pyrit.prompt_target.common.tool_provider import Tool
 
 if TYPE_CHECKING:
+    from typing import TextIO
+
     from mcp.types import CallToolResult
     from mcp.types import Tool as MCPToolDefinition
 
@@ -249,7 +252,7 @@ class MCPToolProvider:
             env=self._server_config.env,
             cwd=self._server_config.cwd,
         )
-        async with stdio_client(server) as (read_stream, write_stream):
+        async with stdio_client(server, errlog=self._get_stdio_stderr()) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 yield session
@@ -334,6 +337,28 @@ class MCPToolProvider:
             Tools that carry both their definitions and execution behavior.
         """
         return [_MCPTool(provider=self, definition=definition) for definition in await self.list_tools_async()]
+
+    @staticmethod
+    def _get_stdio_stderr() -> TextIO:
+        """
+        Select a subprocess-compatible stderr without discarding server diagnostics.
+
+        Returns:
+            Current stderr, or the original stream when notebook capture has no file descriptor.
+
+        Raises:
+            RuntimeError: If neither stderr stream exposes a usable file descriptor.
+        """
+        streams: list[TextIO | None] = [sys.stderr, sys.__stderr__]
+        for stream in streams:
+            if stream is None:
+                continue
+            try:
+                stream.fileno()
+            except (OSError, ValueError):
+                continue
+            return stream
+        raise RuntimeError("MCP stdio requires a stderr stream with a file descriptor for server diagnostics.")
 
     @staticmethod
     def _serialize_call_result(*, result: CallToolResult) -> dict[str, object]:
