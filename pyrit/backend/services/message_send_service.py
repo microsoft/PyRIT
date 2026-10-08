@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -244,7 +244,7 @@ class MessageSendService:
     @asynccontextmanager
     async def add_message_context_async(
         self, *, attack_result_id: str, request: AddMessageRequest
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None, None]:
         """
         Add a message and keep its conversation reserved through the caller's response reads.
 

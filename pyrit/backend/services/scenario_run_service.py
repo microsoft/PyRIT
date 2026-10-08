@@ -16,7 +16,7 @@ import json
 import logging
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -263,7 +263,7 @@ class ScenarioRunService:
             return await self._start_run_locked_async(request=request)
 
     @contextlib.asynccontextmanager
-    async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncIterator[None]:
+    async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
         """Reject overlapping resume requests even if the first attempt fails immediately."""
         if scenario_result_id is None:
             yield

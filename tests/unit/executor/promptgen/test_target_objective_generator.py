@@ -3,7 +3,7 @@
 
 import asyncio
 import json
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,7 @@ from pyrit.models import JsonResponseConfig, Message, MessagePiece, SeedPrompt
 
 
 @contextmanager
-def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Iterator[AsyncMock]:
+def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Generator[AsyncMock, None, None]:
     """Mock setup and retry-history I/O so timeout tests reach their intended await."""
     with (
         patch.object(generator._target, "set_system_prompt_async", new_callable=AsyncMock) as setup,
@@ -37,7 +37,7 @@ def _isolate_pre_send_io(generator: TargetObjectiveGenerator) -> Iterator[AsyncM
 
 
 @contextmanager
-def _controlled_timeouts() -> Iterator[list[tuple[float | None, asyncio.Timeout]]]:
+def _controlled_timeouts() -> Generator[list[tuple[float | None, asyncio.Timeout]], None, None]:
     """Expire real asyncio deadlines at the intended await, not during unrelated setup."""
     timeouts: list[tuple[float | None, asyncio.Timeout]] = []
     original_timeout = asyncio.timeout

@@ -3,7 +3,7 @@
 
 import inspect
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -209,7 +209,7 @@ async def test_create_session_async_uses_stdio_transport() -> None:
     stdio_parameters: StdioServerParameters | None = None
 
     @asynccontextmanager
-    async def fake_stdio_client(parameters: StdioServerParameters) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    async def fake_stdio_client(parameters: StdioServerParameters) -> AsyncGenerator[tuple[MagicMock, MagicMock], None]:
         nonlocal stdio_parameters
         stdio_parameters = parameters
         yield streams
@@ -250,7 +250,7 @@ async def test_create_session_async_uses_mcp_http_timeouts() -> None:
     @asynccontextmanager
     async def fake_streamable_http_client_async(
         url: str, *, http_client: httpx2.AsyncClient
-    ) -> AsyncIterator[tuple[MagicMock, MagicMock]]:
+    ) -> AsyncGenerator[tuple[MagicMock, MagicMock], None]:
         nonlocal http_client_used
         assert url == "http://127.0.0.1:8000/mcp/notes"
         assert isinstance(http_client, httpx2.AsyncClient)

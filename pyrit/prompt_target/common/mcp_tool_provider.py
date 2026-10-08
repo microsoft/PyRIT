@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -21,8 +21,6 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pyrit.prompt_target.common.tool_provider import Tool
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from mcp.types import CallToolResult
     from mcp.types import Tool as MCPToolDefinition
 
@@ -232,7 +230,7 @@ class MCPToolProvider:
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     @asynccontextmanager
-    async def _create_session_async(self) -> AsyncIterator[ClientSession]:
+    async def _create_session_async(self) -> AsyncGenerator[ClientSession, None]:
         if isinstance(self._server_config, MCPStreamableHTTPServerConfig):
             timeout = httpx2.Timeout(self._HTTP_TIMEOUT_SECONDS, read=self._HTTP_READ_TIMEOUT_SECONDS)
             async with httpx2.AsyncClient(headers=self._server_config.headers, timeout=timeout) as http_client:
@@ -257,7 +255,7 @@ class MCPToolProvider:
                 yield session
 
     @asynccontextmanager
-    async def execution_scope_async(self) -> AsyncIterator[None]:
+    async def execution_scope_async(self) -> AsyncGenerator[None, None]:
         """Keep one MCP session open for a target send."""
         async with self._create_session_async() as session:
             token = self._active_session.set(session)
