@@ -23,6 +23,7 @@ import {
 
 import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import type { ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance } from '@/types'
 import ParameterField from '@/components/Parameters/ParameterField'
 import {
@@ -150,7 +151,9 @@ function ParameterInput({
     return (
       <Field
         label={label}
-        hint={`Select a registered ${parameter.reference_type}.`}
+        hint={parameter.reference_type === 'target'
+          ? 'The default adversarial target is selected when available. You can select a different target.'
+          : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
         <Select value={value} onChange={(_, data) => onChange(data.value)}>
@@ -243,6 +246,7 @@ export default function CreateConverterDialog({
   const styles = useCreateConverterDialogStyles()
   const [converterTypes, setConverterTypes] = useState<ConverterTypeEntry[]>([])
   const [targets, setTargets] = useState<TargetInstance[]>([])
+  const { adversarialTarget } = useTargetPreferences(targets)
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [selectedType, setSelectedType] = useState('')
   const [registryName, setRegistryName] = useState('')
@@ -373,6 +377,12 @@ export default function CreateConverterDialog({
             && isEditableParameter(parameter) && parameter.default != null)
           .map((parameter) => [parameter.name, parameterDefaultValue(parameter)]),
       ),
+      ...(adversarialTarget ? Object.fromEntries(
+        parameters
+          .filter((parameter: Parameter) => !parameter.variants
+            && parameter.reference_type === 'target')
+          .map((parameter: Parameter) => [parameter.name, adversarialTarget.target_registry_name]),
+      ) : {}),
     })
     setShowValidation(false)
     setError(null)
