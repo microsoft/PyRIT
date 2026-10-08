@@ -133,9 +133,14 @@ Run security assessments from the command line with `pyrit_scan` or the interact
 pyrit_scan run airt.scam --target openai_chat
 ```
 
-[![Play the PyRIT Scanner walkthrough](scanner-demo.png)](assets/videos/scanner-walkthrough.mp4)
+```{iframe} videos/scanner-player.html
+:width: 100%
+:title: PyRIT Scanner walkthrough
+:placeholder: scanner-demo.png
+:class: landing-demo-video
+```
 
-[Watch the Scanner walkthrough](assets/videos/scanner-walkthrough.mp4).
+[Open the Scanner walkthrough directly](assets/videos/scanner-walkthrough.mp4).
 
 Use `pyrit_scan --help` to learn more about what else `pyrit_scan` can do.
 For more details, see the [Scanner](scanner/0_scanner) page.
@@ -149,9 +154,14 @@ Start the local web app and give it a try:
 ```bash
 pyrit_backend # serves webapp on http://localhost:8000/
 ```
-[![Play the CoPyRIT GUI walkthrough](copyrit-demo.png)](assets/videos/copyrit-walkthrough.mp4)
+```{iframe} videos/copyrit-player.html
+:width: 100%
+:title: CoPyRIT GUI walkthrough
+:placeholder: copyrit-demo.png
+:class: landing-demo-video
+```
 
-[Watch the CoPyRIT GUI walkthrough](assets/videos/copyrit-walkthrough.mp4).
+[Open the CoPyRIT GUI walkthrough directly](assets/videos/copyrit-walkthrough.mp4).
 
 For more details, see the [GUI](gui/0_gui) page.
 :::

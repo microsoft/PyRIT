@@ -178,6 +178,19 @@ html.dark .myst-card > .myst-card-body > img.ecosystem-logo {
   margin-bottom: 0.5rem;
 }
 
+.landing-demo-video {
+  display: block;
+  width: 100%;
+  margin: 1rem 0;
+  background: #0b0b0b;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.landing-demo-video > div {
+  padding-bottom: 56.25% !important;
+}
+
 /* --- Roakey sprite animations ----------------------------------------------
    Each sprite is a fixed-size window onto a horizontal frame strip. With
    `object-fit: none` the strip renders at 1:1 and the box clips it to a single
