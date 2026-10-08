@@ -608,10 +608,8 @@ allowlisted image, audio, and video extensions inline. Other files, including PD
 SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
 
 **Temporary compatibility, scheduled for removal with the chat migration:**
-the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
-registry metadata for the current UI. Create requests without a name receive a
-generated `compat_...` name. New clients should not depend on these routes or
-unnamed creation.
+target create requests without a name receive a generated `compat_...` name.
+New clients should supply an explicit name.
 
 ## Connection Health
 
