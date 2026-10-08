@@ -118,7 +118,7 @@ class ScenarioPlanLookup:
         Returns:
             ScenarioRunPlanAtomicGroup | None: The uniquely matching group.
         """
-        if technique_eval_hash is not None:
+        if technique_eval_hash:
             return self.groups_by_identity.get((atomic_attack_name, technique_eval_hash))
         matching_groups = self.groups_by_name.get(atomic_attack_name, ())
         return matching_groups[0] if len(matching_groups) == 1 else None

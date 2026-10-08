@@ -127,6 +127,7 @@ from pyrit.models import (
 from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
 
 if TYPE_CHECKING:
+    from sqlalchemy.sql import SQLColumnExpression
     from sqlalchemy.sql.elements import ColumnElement
 
 logger = logging.getLogger(__name__)
@@ -2135,6 +2136,12 @@ class MemoryInterface(abc.ABC):
     def _get_scenario_started_at_expression(self) -> Any:
         """Return a compact persisted start-time expression when the backend supports one."""
         return literal(None)
+
+    def _get_scenario_attempt_id_order_expression(
+        self, *, attempt_id: "SQLColumnExpression[uuid.UUID]"
+    ) -> "SQLColumnExpression[uuid.UUID] | SQLColumnExpression[str]":
+        """Return the scenario attempt ID's canonical string ordering."""
+        return attempt_id
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """
@@ -6010,7 +6017,7 @@ class MemoryInterface(abc.ABC):
                 partition_by=unit_partition,
                 order_by=(
                     units.c.timestamp.desc(),
-                    units.c.attempt_id.desc(),
+                    self._get_scenario_attempt_id_order_expression(attempt_id=units.c.attempt_id).desc(),
                 ),
             )
             .label("unit_rank"),
@@ -6081,6 +6088,15 @@ class MemoryInterface(abc.ABC):
                 planned_units.c.seed_group_id,
                 plan_seeds.c.objective_sha256,
                 groups_per_name.c.group_count,
+                func.count()
+                .over(
+                    partition_by=(
+                        planned_units.c.scenario_result_id,
+                        planned_units.c.atomic_group_id,
+                        plan_seeds.c.objective_sha256,
+                    )
+                )
+                .label("objective_match_count"),
             )
             .select_from(
                 planned_units.outerjoin(
@@ -6099,8 +6115,7 @@ class MemoryInterface(abc.ABC):
             )
             .subquery("history_planned_units")
         )
-        # An attempt persisted without seed-group attribution is matched to the planned seed group in its
-        # atomic group carrying the same objective hash (objectives are unique within an atomic group).
+        # Without explicit seed attribution, an objective must identify exactly one planned seed group.
         seed_matches_exactly = planned.c.seed_group_id == attempts.c.attributed_seed_group_id
         match_condition = and_(
             planned.c.scenario_result_id == attempts.c.scenario_result_id,
@@ -6115,6 +6130,7 @@ class MemoryInterface(abc.ABC):
                 and_(
                     attempts.c.attributed_seed_group_id.is_(None),
                     planned.c.objective_sha256 == attempts.c.objective_sha256,
+                    planned.c.objective_match_count == 1,
                 ),
             ),
         )
@@ -6215,14 +6231,18 @@ class MemoryInterface(abc.ABC):
 
         scenario_uuid = uuid.UUID(scenario_result_id)
         conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        attempt_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
         if cursor is not None:
             cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            cursor_id_order = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(cursor_uuid, type_=AttackResultEntry.id.type)
+            )
             conditions.append(
                 or_(
                     AttackResultEntry.timestamp > cursor.timestamp,
                     and_(
                         AttackResultEntry.timestamp == cursor.timestamp,
-                        AttackResultEntry.id > cursor_uuid,
+                        attempt_id_order > cursor_id_order,
                     ),
                 )
             )
@@ -6254,7 +6274,7 @@ class MemoryInterface(abc.ABC):
                 func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
             )
             .where(and_(*conditions))
-            .order_by(AttackResultEntry.timestamp.asc(), AttackResultEntry.id.asc())
+            .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
             .limit(limit + 1)
         )
         with closing(self._get_session()) as session:

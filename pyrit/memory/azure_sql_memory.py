@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import (
     Integer,
+    String,
     Unicode,
     and_,
     bindparam,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     literal_column,
     text,
 )
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.engine import make_url
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -46,6 +48,7 @@ from pyrit.models import ConversationStats
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
+    from sqlalchemy.sql import SQLColumnExpression
 
 logger = logging.getLogger(__name__)
 
@@ -797,6 +800,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     def _get_scenario_started_at_expression(self) -> Any:
         """Return the persisted execution start without loading full scenario metadata."""
         return func.json_value(ScenarioResultEntry.scenario_metadata, "$.started_at")
+
+    def _get_scenario_attempt_id_order_expression(
+        self, *, attempt_id: "SQLColumnExpression[uuid.UUID]"
+    ) -> "SQLColumnExpression[str]":
+        # Native SQL Server UUID ordering differs from the SDK's canonical string comparison.
+        return func.lower(sql_cast(attempt_id, String(36))).collate("Latin1_General_100_BIN2")
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQL Server JSON expressions for persisted scenario attempt attribution."""

@@ -19,7 +19,7 @@ import pytest
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -51,6 +51,8 @@ class _Attempt:
     seed_context: str | None = None
     # Attribute the attempt to the logical seed group made of the objective and this prompt context.
     attributed_seed_context: str | None = None
+    attack_result_id: str | None = None
+    seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,40 @@ _HISTORIES = {
             # An older error row without seed attribution resolves to the planned unit by objective.
             _Attempt("attack", "A", AttackOutcome.ERROR),
             _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_group_id="a"),
+        ],
+    ),
+    "empty_technique_hash_matched_by_saved_plan": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[_Attempt("attack", "A", AttackOutcome.SUCCESS, eval_hash="", seed_group_id="a")],
+    ),
+    "ambiguous_objectives_with_explicit_attribution": _History(
+        plan=_plan(
+            _group(name="attack", eval_hash="eval", seed_ids=["a", "b"]),
+            seeds=[_seed("a", "A"), _seed("b", "A")],
+        ),
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.FAILURE, seed_group_id="a"),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_group_id="b"),
+        ],
+    ),
+    "tied_timestamps_use_canonical_attempt_id": _History(
+        attempts=[
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.SUCCESS,
+                seed_group_id="a",
+                attack_result_id="ffffffff-ffff-4fff-bfff-000000000001",
+                seconds=0,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                attack_result_id="00000000-0000-4000-8000-ffffffffffff",
+                seconds=0,
+            ),
         ],
     ),
     "technique_configurations_sharing_a_name": _History(
@@ -216,6 +252,9 @@ _EXPECTED_OVERALL = {
     "legacy_identities_without_plan": 66,
     "legacy_technique_configurations_sharing_a_name": 50,
     "legacy_error_matched_by_saved_plan": 100,
+    "empty_technique_hash_matched_by_saved_plan": 100,
+    "ambiguous_objectives_with_explicit_attribution": 50,
+    "tied_timestamps_use_canonical_attempt_id": 100,
     "technique_configurations_sharing_a_name": 50,
     "legacy_attempt_with_ambiguous_name": 0,
     "legacy_seed_groups_sharing_an_objective": 50,
@@ -264,10 +303,11 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
             )
         attack_results.append(
             AttackResult(
+                attack_result_id=attempt.attack_result_id or str(uuid.uuid4()),
                 conversation_id=f"conversation-{index}",
                 objective=attempt.objective,
                 outcome=attempt.outcome,
-                timestamp=_T0 + timedelta(seconds=index),
+                timestamp=_T0 + timedelta(seconds=index if attempt.seconds is None else attempt.seconds),
                 attribution_parent_id=str(scenario_result_id),
                 attribution_data=attribution_data,
                 atomic_attack_identifier=atomic_attack_identifier,
@@ -349,11 +389,6 @@ async def test_historical_attempt_counts_stay_separate_from_units(sqlite_instanc
     assert statistics.unattributed_attempts == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="The history list rejects plans with two seed groups sharing an objective and falls back to legacy "
-    "totals, while run detail keeps using the plan. Known gap that predates the shared statistics.",
-)
 async def test_ambiguous_objective_within_group_agrees_between_list_and_detail(sqlite_instance) -> None:
     history = _History(
         plan=_plan(
@@ -370,8 +405,27 @@ async def test_ambiguous_objective_within_group_agrees_between_list_and_detail(s
     [list_item] = [item for item in runs.items if item.scenario_result_id == scenario_result_id]
 
     assert detail is not None
+    assert list_item.planned_total_available
+    assert list_item.total_attacks == detail.total_attacks == 2
     assert list_item.objective_achieved_rate == detail.objective_achieved_rate
-    assert list_item.completed_attacks == detail.completed_attacks
+    assert list_item.completed_attacks == detail.completed_attacks == 0
+
+
+async def test_tied_timestamp_progress_pages_follow_canonical_attempt_id(sqlite_instance: MemoryInterface) -> None:
+    history = _HISTORIES["tied_timestamps_use_canonical_attempt_id"]
+    run_id = await _persist(sqlite_instance, history)
+    expected_ids = sorted(attempt.attack_result_id for attempt in history.attempts if attempt.attack_result_id)
+    cursor = None
+    for index, expected_id in enumerate(expected_ids):
+        page, has_more = await sqlite_instance.get_scenario_attack_result_deltas_async(
+            scenario_result_id=run_id, cursor=cursor, limit=1
+        )
+        assert [delta.attack_result_id for delta in page] == [expected_id]
+        assert has_more == (index < len(expected_ids) - 1)
+        cursor = AttackResultKeysetCursor(timestamp=page[0].timestamp, attack_result_id=page[0].attack_result_id)
+    assert await sqlite_instance.get_scenario_attack_result_deltas_async(
+        scenario_result_id=run_id, cursor=cursor, limit=1
+    ) == ([], False)
 
 
 async def test_history_aggregate_flags_runs_with_identifier_only_attempts(sqlite_instance) -> None:

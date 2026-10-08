@@ -1568,11 +1568,10 @@ class ScenarioRunService:
                     raise ValueError("conflicting objective hashes for seed group")
                 seed_hash_by_id[seed_id] = objective_sha256
             for group in atomic_groups:
-                objective_hashes = [
-                    seed_hash_by_id[seed_id] for seed_id in group.seed_group_ids if seed_id in seed_hash_by_id
-                ]
-                if len(objective_hashes) != len(set(objective_hashes)):
-                    raise ValueError("ambiguous objective hash within atomic group")
+                if len(group.seed_group_ids) != len(set(group.seed_group_ids)):
+                    raise ValueError("duplicate seed group IDs within atomic group")
+                if set(group.seed_group_ids) - seed_hash_by_id.keys():
+                    raise ValueError("atomic group references unknown seed groups")
             return atomic_groups
         except (json.JSONDecodeError, ValidationError, ValueError):
             logger.warning(
