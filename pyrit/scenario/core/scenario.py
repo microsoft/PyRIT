@@ -1043,6 +1043,7 @@ class Scenario(ABC):
                     seed_group_ids=seed_group_ids,
                     description=technique.description if technique else None,
                     tags=sorted(technique.tags) if technique else [],
+                    kind=atomic_attack.group_kind,
                 )
             )
         return ScenarioRunPlan(
