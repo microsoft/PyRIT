@@ -413,6 +413,7 @@ class TestSetupFrontend:
         with (
             patch("pyrit.backend.main.DEV_MODE", False),
             patch("pyrit.backend.main.Path") as mock_path_cls,
+            patch.object(app, "mount") as mount,
             patch("builtins.print"),
         ):
             mock_path_instance = MagicMock()
@@ -420,6 +421,14 @@ class TestSetupFrontend:
             mock_path_cls.return_value = mock_path_instance
 
             setup_frontend()
+
+        mount.assert_called_once()
+        assert mount.call_args.args[0] == "/"
+        static_files = mount.call_args.args[1]
+        assert isinstance(static_files, SPAStaticFiles)
+        assert static_files.directory == str(tmp_path)
+        assert static_files.html
+        assert mount.call_args.kwargs == {"name": "frontend"}
 
     def test_frontend_missing_warns_but_continues(self) -> None:
         """Test that setup_frontend warns but does not exit when frontend is missing."""
