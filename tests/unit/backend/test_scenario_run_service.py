@@ -2352,7 +2352,7 @@ class TestScenarioRunServiceListRuns:
         if scenario_registry_name is None or technique_name is not None:
             lookup.assert_not_called()
 
-    async def test_history_falls_back_for_duplicate_objective_hashes_within_one_group(self, mock_memory) -> None:
+    async def test_history_preserves_plan_for_duplicate_objective_hashes_within_one_group(self, mock_memory) -> None:
         record = _make_history_record(result_id="sr-ambiguous-objective", run_state=ScenarioRunState.COMPLETED)
         group = ScenarioRunPlanAtomicGroup(
             id="group-1",
@@ -2373,8 +2373,9 @@ class TestScenarioRunServiceListRuns:
 
         summary = (await ScenarioRunService().list_runs_async()).items[0]
 
-        assert summary.planned_total_available is False
-        assert summary.total_attacks is None
+        assert summary.planned_total_available is True
+        assert summary.total_attacks == 2
+        mock_memory.get_scenario_history_aggregates_async.assert_not_called()
 
     async def test_history_requeries_legacy_aggregates_when_plan_is_rejected(self, mock_memory) -> None:
         """A plan the service cannot trust forces a plan-free aggregate re-query."""

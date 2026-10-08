@@ -6,6 +6,7 @@
 import asyncio
 import os
 from collections.abc import Generator
+from contextlib import ExitStack
 from pathlib import Path
 from threading import Event
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -189,18 +190,29 @@ async def test_active_work_rejects_apply_without_stopping_or_mutating(runtime: R
     assert not hasattr(service, "request_stop") or not service.request_stop.called
 
 
+@pytest.mark.parametrize("count", [1, 3])
 async def test_admitted_manual_send_blocks_reinitialization_without_an_http_request_async(
     runtime: RuntimeLifecycle,
+    count: int,
 ) -> None:
     get_manual_send_scheduler.cache_clear()
     try:
         scheduler = get_manual_send_scheduler()
-        with scheduler.reserve(conversation_id="accepted-send"):
+        with ExitStack() as reservations:
+            source = reservations.enter_context(ExitStack())
+            source.enter_context(scheduler.reserve(conversation_id="accepted-send"))
+            for index in range(count - 1):
+                reservations.enter_context(scheduler.reserve(conversation_id=f"copy-{index}"))
             assert not runtime.operations
             await apply_async(runtime)
             assert runtime.outcome == "busy"
             assert runtime.generation == "original"
             lifecycle_module.close_services_async.assert_not_awaited()
+            if count > 1:
+                source.close()
+                await apply_async(runtime)
+                assert runtime.outcome == "busy"
+                assert runtime.generation == "original"
         await apply_async(runtime)
         assert runtime.generation != "original"
     finally:

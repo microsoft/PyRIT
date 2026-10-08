@@ -16,6 +16,7 @@ import type {
   ConversationMessagesResponse,
   CreateConversationResponse,
   MessageSendStatus,
+  AttackConversationsResponse,
   TargetInstance,
 } from "@/types";
 import { readMessageSendResult } from "./_attacks";
@@ -216,6 +217,92 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(localTarget.registryName);
     await page.getByTitle("Chat", { exact: true }).click();
+  });
+
+  test("repeats and nests only the selected conversation through the real backend", async ({ page, request, localTarget }, testInfo) => {
+    let submissions = 0;
+    page.on("request", (outgoing: Request) => { if (isMessagePost(outgoing)) submissions += 1; });
+    const initial = await sendFromComposer(page, "History shared by the repeats");
+    const attackId = initial.attack.attack_result_id;
+    let selectedId = initial.messages.conversation_id;
+    const path = `/api/attacks/${encodeURIComponent(attackId)}`;
+    const readConversation = async (conversationId: string): Promise<ConversationMessagesResponse> => {
+      const response = await request.get(`${path}/messages?conversation_id=${encodeURIComponent(conversationId)}`, {
+        headers: compatibilityHeaders(),
+      });
+      expect(response.ok()).toBeTruthy();
+      return response.json();
+    };
+    let previousIds = [selectedId];
+    for (const count of [5, 3]) {
+      const before = new Map(await Promise.all(previousIds.map(async (id: string) => (
+        [id, await readConversation(id)] as const
+      ))));
+      const source = before.get(selectedId);
+      if (!source) throw new Error("Expected the selected history");
+      await expect(page.getByRole("button", { name: "Repetitions: 1", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Repetitions: 1", exact: true }).click();
+      for (let index = 1; index < count; index++) {
+        await page.getByRole("button", { name: "Increase repetitions", exact: true }).click();
+      }
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await page.getByTestId("chat-input").fill(`Repeat ${count}`);
+      const [submitted] = await Promise.all([
+        page.waitForResponse((response) => isMessagePost(response.request())),
+        page.getByTestId("chat-input").press("Enter"),
+      ]);
+      expect(submitted.status(), await submitted.text()).toBe(202);
+      const accepted: MessageSendStatus = await submitted.json();
+      expect(accepted.count).toBe(count);
+      expect(accepted.conversation_id).toBe(selectedId);
+      await readMessageSendResult(request, accepted);
+      const completedResponse = await request.get(`${path}/message-sends/${accepted.send_id}`, {
+        headers: compatibilityHeaders(),
+      });
+      const completed: MessageSendStatus = await completedResponse.json();
+      expect(completed.state).toBe("completed");
+      expect(completed.conversations).toHaveLength(count);
+      const repeatedIds = completed.conversations?.map((conversation) => conversation.conversation_id);
+      if (!repeatedIds) throw new Error("Expected committed conversation IDs");
+      expect(repeatedIds[0]).toBe(selectedId);
+      const sourceOrigins = source.messages.flatMap((message) => message.message_pieces.map(
+        (piece) => piece.original_prompt_id,
+      ));
+      for (const id of repeatedIds) {
+        const conversation = await readConversation(id);
+        expect(conversation.messages).toHaveLength(source.messages.length + 2);
+        expect(conversation.messages.slice(0, -2).flatMap((message) => message.message_pieces.map(
+          (piece) => piece.original_prompt_id,
+        ))).toEqual(sourceOrigins);
+        expect(conversation.messages.at(-2)?.message_pieces[0].original_value).toBe(`Repeat ${count}`);
+        await expect(page.getByRole("button", { name: `Open conversation ${id}`, exact: true })).toBeVisible();
+      }
+      for (const id of previousIds.filter((candidate: string) => candidate !== selectedId)) {
+        expect(await readConversation(id)).toEqual(before.get(id));
+      }
+      const listingResponse = await request.get(`${path}/conversations`, { headers: compatibilityHeaders() });
+      const listing: AttackConversationsResponse = await listingResponse.json();
+      expect(listing.conversations).toHaveLength(count === 5 ? 5 : 7);
+      previousIds = listing.conversations.map((conversation) => conversation.conversation_id);
+      selectedId = repeatedIds[1];
+      await selectConversation(page, selectedId);
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Repetitions: 1", exact: true })).toBeVisible();
+    }
+    expect(submissions).toBe(3);
+    expect(localTarget.requestBodies).toHaveLength(9);
+    await expect(page.getByText("Repeat 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Loading conversation...", { exact: true })).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("repeat-desktop.png"), animations: "disabled" });
+    if (await page.getByTestId("conversation-panel").isVisible()) {
+      await page.getByTestId("close-panel-btn").click();
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Repetitions: 1", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Increase repetitions", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("repeat-mobile.png"), animations: "disabled" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 
   test("accepts before target completion and continues after leaving chat", async ({ page, request, localTarget }) => {

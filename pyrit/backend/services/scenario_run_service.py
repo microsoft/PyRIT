@@ -15,14 +15,15 @@ import json
 import logging
 import uuid
 from collections import OrderedDict, deque
-from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
+from pyrit.analytics.scenario_statistics import compute_scenario_statistics
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.services.pagination import (
@@ -264,7 +265,7 @@ class ScenarioRunService:
             return await self._start_run_locked_async(request=request)
 
     @contextlib.asynccontextmanager
-    async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncIterator[None]:
+    async def _reserve_resume_request_async(self, scenario_result_id: str | None) -> AsyncGenerator[None, None]:
         """Reject overlapping resume requests even if the first attempt fails immediately."""
         if scenario_result_id is None:
             yield
@@ -698,6 +699,7 @@ class ScenarioRunService:
                 **aggregates,
                 **(await self._memory.get_scenario_history_aggregates_async(scenario_result_ids=unusable_plan_ids)),
             }
+        aggregates = await self._recount_with_sdk_statistics_async(aggregates=aggregates, plans=plans)
         items = [
             self._build_history_summary(
                 record=record,
@@ -1373,14 +1375,12 @@ class ScenarioRunService:
                 scenario_result_id,
             )
             plan = None
-        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
 
         # Build result fields from DB (always computed so in-progress runs show progress)
         total_attacks, completed_attacks, objective_achieved_rate, successful_attacks = (
             self._progress_read_model.calculate_progress_counts(
                 scenario_result=scenario_result,
                 plan=plan,
-                plan_lookup=plan_lookup,
             )
         )
         techniques_used = (
@@ -1399,6 +1399,7 @@ class ScenarioRunService:
         persisted_retries: list[int] = []
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
         attempts_by_unit: dict[ResultUnitIdentity, int] = {}
+        plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
                 unit_identity = self._progress_read_model.resolve_result_unit_identity(
@@ -1514,11 +1515,10 @@ class ScenarioRunService:
                     raise ValueError("conflicting objective hashes for seed group")
                 seed_hash_by_id[seed_id] = objective_sha256
             for group in atomic_groups:
-                objective_hashes = [
-                    seed_hash_by_id[seed_id] for seed_id in group.seed_group_ids if seed_id in seed_hash_by_id
-                ]
-                if len(objective_hashes) != len(set(objective_hashes)):
-                    raise ValueError("ambiguous objective hash within atomic group")
+                if len(group.seed_group_ids) != len(set(group.seed_group_ids)):
+                    raise ValueError("duplicate seed group IDs within atomic group")
+                if set(group.seed_group_ids) - seed_hash_by_id.keys():
+                    raise ValueError("atomic group references unknown seed groups")
             return atomic_groups
         except (json.JSONDecodeError, ValidationError, ValueError):
             logger.warning(
@@ -1526,6 +1526,40 @@ class ScenarioRunService:
                 record.scenario_result_id,
             )
             return None
+
+    async def _recount_with_sdk_statistics_async(
+        self,
+        *,
+        aggregates: dict[str, ScenarioHistoryAggregate],
+        plans: Mapping[str, list[ScenarioRunPlanAtomicGroup] | None],
+    ) -> dict[str, ScenarioHistoryAggregate]:
+        """
+        Recount runs the SQL aggregate can't resolve with the shared statistics.
+
+        Attempts identified only by their atomic identifier's seeds need the logical seed group derived
+        from those seeds, which only ``pyrit.analytics.scenario_statistics`` can do. Those runs are loaded
+        and counted the same way as run detail, so the history list never disagrees with it.
+
+        Returns:
+            dict[str, ScenarioHistoryAggregate]: The aggregates, with flagged runs recounted.
+        """
+        run_ids = [run_id for run_id, aggregate in aggregates.items() if aggregate.needs_sdk_statistics]
+        if not run_ids:
+            return aggregates
+        recounted = dict(aggregates)
+        for scenario_result in await self._memory.get_scenario_results_async(scenario_result_ids=run_ids):
+            run_id = str(scenario_result.id)
+            # A plan this service rejected counts as a legacy run, as in the SQL path.
+            overall = compute_scenario_statistics(scenario_result, use_saved_plan=plans.get(run_id) is not None).overall
+            recounted[run_id] = replace(
+                aggregates[run_id],
+                unit_count=overall.completed,
+                completed_units=overall.completed,
+                successful_units=overall.succeeded,
+                error_attempts=overall.errors,
+                total_retries=overall.retries,
+            )
+        return recounted
 
     def _build_history_summary(
         self,
