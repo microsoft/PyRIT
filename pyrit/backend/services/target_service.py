@@ -53,6 +53,22 @@ def set_target_upload_directory(*, directory: str | None) -> None:
     _target_upload_directory = directory
 
 
+def _names_server_path(parameter: Parameter) -> bool:
+    return parameter.is_path or parameter.is_path_or_str
+
+
+def _can_create_through_api(target_cls: type[PromptTarget]) -> bool:
+    """
+    Return whether the API may create a target type under the current server configuration.
+
+    Returns:
+        bool: False for types that load model code, or upload local files while no upload directory is configured.
+    """
+    if target_cls.loads_local_code:
+        return False
+    return not (target_cls.upload_directory_parameter and _target_upload_directory is None)
+
+
 class TargetService:
     """
     Service for managing target instances.
@@ -221,7 +237,7 @@ class TargetService:
                 "with an initializer instead."
             )
         for parameter in parameters:
-            if parameter.name in params and (parameter.is_path or parameter.is_path_or_str):
+            if parameter.name in params and _names_server_path(parameter):
                 raise ValueError(
                     f"Parameter '{parameter.name}' of '{target_type}' names a path on this server and cannot be "
                     "set through the API."
@@ -231,14 +247,14 @@ class TargetService:
         """
         List all available target types from the target class registry.
 
-        Returns every registered target with its derived constructor
-        parameters and the auth modes it supports, all projected from the
-        registry's ``TargetMetadata``. Types that load model code, or upload
-        local files when the server has no upload directory configured, are
-        listed but cannot be created through the API, and neither can parameters
-        that name server paths. Deciding which entries to surface to a user is a
-        presentation concern owned by the caller (e.g. the frontend), not this
-        service.
+        Returns every target the API can create under the server configuration,
+        with the constructor parameters callers may supply and the auth modes it
+        supports, all projected from the registry's ``TargetMetadata``. Types that
+        load model code, or upload local files when the server has no upload
+        directory configured, are left out, and so are parameters that name server
+        paths; the registry metadata keeps them. Deciding which entries to surface to
+        a user is a presentation concern owned by the caller (e.g. the frontend), not
+        this service.
 
         Returns:
             TargetTypeResponse containing all available target classes.
@@ -247,14 +263,19 @@ class TargetService:
         items: list[TargetTypeEntry] = [
             TargetTypeEntry(
                 target_type=metadata.class_name,
-                parameters=self._project_target_parameters(
-                    target_type=metadata.class_name,
-                    parameters=metadata.parameters,
-                ),
+                parameters=[
+                    parameter
+                    for parameter in self._project_target_parameters(
+                        target_type=metadata.class_name,
+                        parameters=metadata.parameters,
+                    )
+                    if not _names_server_path(parameter)
+                ],
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
+            if _can_create_through_api(self._registry.get_class(metadata.class_name))
         ]
         return TargetTypeResponse(items=items)
 

@@ -171,13 +171,17 @@ async def download_media_url_async(*, url: str) -> MediaDownload:
                 if not _is_plain_http_url(request.url):
                     raise ValueError(f"Media URL {shown} redirected to a URL that is not a plain http or https URL.")
             raise ValueError(f"Media URL {shown} redirected more than {MAX_MEDIA_URL_REDIRECTS} times.")
+    # The httpx exceptions are not chained because their messages quote the full URL, query string included,
+    # and callers may log the raised error with its traceback. The failure is logged here with the redacted URL.
+    except httpx.InvalidURL:
+        raise ValueError(f"Media URL {shown} is not a valid http or https URL.") from None
     except httpx.HTTPStatusError as exc:
         _log_download_failure(shown=shown, reason=f"HTTP {exc.response.status_code}", exc=exc)
-        raise ValueError(f"Media URL {shown} returned HTTP {exc.response.status_code}.") from exc
+        raise ValueError(f"Media URL {shown} returned HTTP {exc.response.status_code}.") from None
     except (httpx.HTTPError, TimeoutError) as exc:
         reason = _failure_reason(exc)
         _log_download_failure(shown=shown, reason=reason, exc=exc)
-        raise ValueError(f"Media URL {shown} could not be downloaded: {reason}.") from exc
+        raise ValueError(f"Media URL {shown} could not be downloaded: {reason}.") from None
 
 
 def _failure_reason(exc: BaseException) -> str:

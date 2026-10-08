@@ -195,6 +195,8 @@ class ConfigurationLoader(YamlLoadable):
             raise TypeError("allow_media_url_import must be a bool.")
         if self.target_upload_directory is not None and not isinstance(self.target_upload_directory, str):
             raise TypeError("target_upload_directory must be a string path.")
+        if self.target_upload_directory is not None and not is_non_empty_string(self.target_upload_directory):
+            raise ValueError("target_upload_directory must be a non-empty path.")
         self._validate_allow_custom_initializers()
         self._normalize_memory_db_type()
         self._normalize_initializers()

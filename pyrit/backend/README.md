@@ -225,11 +225,11 @@ request values before using them:
   in `.pyrit_conf` to turn imports off. Converter file parameters given a URL are downloaded
   the same way.
 - Target types that load model code (`HuggingFaceChatTarget`) cannot be created through the
-  API, and target parameters that name server paths cannot be set through it. Targets that
-  upload local files (`HTTPXAPITarget`) can be created through the API only when
-  `target_upload_directory` is set in `.pyrit_conf`; the server passes that directory to the
-  target, which uploads files only from inside it. Register such targets in Python or with an
-  initializer for other settings.
+  API, and target parameters that name server paths cannot be set through it; the target type
+  catalog leaves both out. Targets that upload local files (`HTTPXAPITarget`) can be created
+  through the API only when `target_upload_directory` is set in `.pyrit_conf`; the server passes
+  that directory to the target, which uploads files only from inside it. Register such targets
+  in Python or with an initializer for other settings.
 
 Intentional exceptions:
 

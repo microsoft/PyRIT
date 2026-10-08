@@ -265,7 +265,6 @@ class TestListTargetTypes:
             ("OpenAIChatTarget", {"endpoint", "model_name"}),
             ("AzureBlobStorageTarget", {"container_url"}),
             ("HackAPromptTarget", {"cookie", "session_id"}),
-            ("HuggingFaceChatTarget", {"hf_access_token"}),
             ("PromptShieldTarget", {"endpoint"}),
             ("AzureMLChatTarget", {"endpoint"}),
         ],
@@ -301,21 +300,39 @@ class TestListTargetTypes:
 
     async def test_types_preserve_registry_parameter_order_without_mutating_metadata(self) -> None:
         service = TargetService()
-        result = await service.list_target_types_async()
+        with patch.object(target_service_module, "_target_upload_directory", None):
+            result = await service.list_target_types_async()
         metadata_by_name = {
             metadata.class_name: metadata for metadata in service._registry.get_all_registered_class_metadata()
         }
 
-        assert {entry.target_type for entry in result.items} == set(metadata_by_name)
+        assert {entry.target_type for entry in result.items} == set(metadata_by_name) - {
+            "HuggingFaceChatTarget",
+            "HTTPXAPITarget",
+        }
         for entry in result.items:
             registry_parameters = metadata_by_name[entry.target_type].parameters
             assert [parameter.name for parameter in entry.parameters] == [
-                parameter.name for parameter in registry_parameters
+                parameter.name for parameter in registry_parameters if parameter.name != "working_directory"
             ]
 
         registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
         assert registry_openai["endpoint"].required is False
         assert registry_openai["model_name"].required is False
+        registry_copilot = {parameter.name for parameter in metadata_by_name["GitHubCopilotTarget"].parameters}
+        assert "working_directory" in registry_copilot
+
+    async def test_types_list_the_upload_target_without_its_directory_once_configured(self, tmp_path: Path) -> None:
+        service = TargetService()
+
+        with patch.object(target_service_module, "_target_upload_directory", str(tmp_path)):
+            result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "HTTPXAPITarget")
+        names = [parameter.name for parameter in entry.parameters]
+        assert "file_path" in names
+        assert "allowed_upload_directory" not in names
+        assert "HuggingFaceChatTarget" not in {item.target_type for item in result.items}
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()

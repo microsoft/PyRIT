@@ -95,6 +95,11 @@ class TestConfigurationLoader:
         with pytest.raises(TypeError, match=r"target_upload_directory must be a string path"):
             ConfigurationLoader(target_upload_directory=invalid_value)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("blank_value", ["", "   "])
+    def test_rejects_blank_target_upload_directory(self, blank_value: str) -> None:
+        with pytest.raises(ValueError, match=r"target_upload_directory must be a non-empty path"):
+            ConfigurationLoader(target_upload_directory=blank_value)
+
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
         for db_type in ["in_memory", "sqlite", "azure_sql"]:

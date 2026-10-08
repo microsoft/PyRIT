@@ -146,6 +146,8 @@ async def test_error_status_is_rejected_without_query_string(
     ):
         await download_media_url_async(url="https://user.example.test/cat.png?sv=1&sig=secret#frag")
     assert "secret" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
     assert "https://user.example.test/cat.png" in str(error.value)
     assert "HTTP 404 (HTTPStatusError)" in caplog.text
     assert "secret" not in caplog.text
@@ -205,7 +207,8 @@ async def test_network_failures_name_the_reason_and_limit(
         await download_media_url_async(url="https://example.test/slow.png?sig=secret")
 
     assert str(error.value) == f"Media URL https://example.test/slow.png could not be downloaded: {reason}."
-    assert error.value.__cause__ is not None
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
     assert f"https://example.test/slow.png could not be downloaded: {reason} ({cause}" in caplog.text
     assert "secret" not in caplog.text
 
@@ -215,6 +218,7 @@ async def test_network_failures_name_the_reason_and_limit(
     [
         ("ftp://example.test/cat.png", "http or https"),
         ("https:///cat.png", "http or https"),
+        ("https://exa\x01mple.test/cat.png?sig=secret", "not a valid http or https URL"),
         ("https://user:pass@example.test/cat.png", "credentials"),
     ],
 )

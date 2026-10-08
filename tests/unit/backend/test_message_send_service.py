@@ -4,6 +4,7 @@
 """Tests for the shared synchronous manual-message owner."""
 
 import asyncio
+import traceback
 import uuid
 from collections.abc import AsyncGenerator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -3207,6 +3209,42 @@ class TestAsyncMessageSend:
         assert status.state == MessageSendState.FAILED
         assert status.failure_stage == MessageSendFailureStage.PREPARATION
         assert status.error
+
+    @pytest.mark.parametrize("count", [1, 2])
+    async def test_failed_url_import_logs_no_signed_query_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        caplog: pytest.LogCaptureFixture,
+        count: int,
+    ) -> None:
+        service, ar, _, _ = real_send_context
+        request = MessageSendRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path", original_value="https://example.test/cat.png?sig=secret", import_url=True
+                )
+            ],
+            target_conversation_id=ar.conversation_id,
+            target_registry_name="target",
+            send=True,
+            submission_id="submission",
+            count=count,
+        )
+
+        def create_client() -> httpx.AsyncClient:
+            return httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(404)))
+
+        with patch("pyrit.backend.services.media_url_import._create_client", create_client):
+            status = await service.submit_async(attack_result_id=ar.attack_result_id, request=request)
+            status = await _settle_send_async(service=service, status=status)
+
+        assert status.state == MessageSendState.FAILED
+        assert status.failure_stage == MessageSendFailureStage.PREPARATION
+        [failure] = [record for record in caplog.records if record.exc_info]
+        assert "returned HTTP 404" in str(failure.exc_info[1])
+        assert "secret" not in "".join(traceback.format_exception(*failure.exc_info))
+        assert "secret" not in caplog.text
 
     @pytest.mark.parametrize("count", [1, 3])
     @pytest.mark.parametrize("failure", ["conversion", "normalization", "validation", "target", "metadata"])
