@@ -201,6 +201,8 @@ async def test_start_run_checks_scenario_params_in_the_preparation_worker(
     assert lookup_threads
     assert loop_thread not in lookup_threads
     assert run_initializers.await_count == (0 if rejected else 1)
+    # The finished preparation's done callback can still be queued when its error reaches the caller.
+    await asyncio.sleep(0)
     await service.close_async()
 
 
