@@ -343,6 +343,19 @@ async def test_management_applies_media_url_import_setting(enabled: bool) -> Non
     set_enabled.assert_called_once_with(enabled=enabled)
 
 
+@pytest.mark.parametrize("directory", [None, "/srv/uploads"])
+async def test_management_applies_target_upload_directory(directory: str | None) -> None:
+    service = RuntimeLifecycle(app=FastAPI(), source=ConfigurationFileService(config_file_value=None))
+    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=directory)
+    with (
+        patch.object(lifecycle_module, "set_target_upload_directory") as set_directory,
+        patch.object(lifecycle_module.InitializerRegistry, "get_registry_singleton", return_value=MagicMock()),
+    ):
+        await service._management_async(config)
+
+    set_directory.assert_called_once_with(directory=directory)
+
+
 def test_authorization_policy_does_not_change_with_environment(runtime: RuntimeLifecycle) -> None:
     runtime.app.state.auth_environment["PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"] = ""
     request = Request({"type": "http", "app": runtime.app})

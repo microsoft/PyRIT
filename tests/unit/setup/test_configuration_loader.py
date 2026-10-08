@@ -85,6 +85,16 @@ class TestConfigurationLoader:
         with pytest.raises(TypeError, match=r"allow_media_url_import must be a bool"):
             ConfigurationLoader(allow_media_url_import=invalid_value)  # type: ignore[arg-type]
 
+    def test_target_upload_directory_is_unset_by_default(self) -> None:
+        assert ConfigurationLoader().target_upload_directory is None
+        config = ConfigurationLoader.from_dict({"target_upload_directory": "/srv/uploads"})
+        assert config.target_upload_directory == "/srv/uploads"
+
+    @pytest.mark.parametrize("invalid_value", [1, True, [], {}])
+    def test_rejects_non_string_target_upload_directory(self, invalid_value: object) -> None:
+        with pytest.raises(TypeError, match=r"target_upload_directory must be a string path"):
+            ConfigurationLoader(target_upload_directory=invalid_value)  # type: ignore[arg-type]
+
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
         for db_type in ["in_memory", "sqlite", "azure_sql"]:

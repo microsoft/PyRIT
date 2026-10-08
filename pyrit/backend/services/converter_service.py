@@ -37,7 +37,11 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
     PreviewStep,
 )
-from pyrit.backend.services.media_persistence import is_managed_blob_url, persist_media_value_async
+from pyrit.backend.services.media_persistence import (
+    is_managed_blob_url,
+    media_source_metadata,
+    persist_media_value_async,
+)
 from pyrit.backend.services.media_url_import import download_media_url_async, media_extension
 from pyrit.common.azure_storage import redact_url_credentials
 from pyrit.memory import data_serializer_factory
@@ -217,16 +221,19 @@ class ConverterService:
 
         For non-text data types (image_path, audio_path, etc.), persists base64 data
         to a temporary file so converters can operate on file paths. Marked text
-        regions use the request's delimiter settings for every stage.
+        regions use the request's delimiter settings for every stage. When the
+        request imports an http(s) URL, the response returns the stored copy and
+        its source metadata, so a later send can reuse the same bytes.
 
         Returns:
             ConverterPreviewResponse with step-by-step conversion results.
         """
         original_value = request.original_value
         data_type = request.original_value_data_type
+        source_metadata: dict[str, str] = {}
 
-        # For path-based data types and URLs, resolve references, import URLs, or persist base64/data URIs.
-        if str(data_type).endswith("_path") or data_type == "url":
+        # For path-based data types, resolve references, import URLs on request, or persist base64/data URIs.
+        if str(data_type).endswith("_path"):
             result = await persist_media_value_async(
                 value=original_value,
                 data_type=data_type,
@@ -235,10 +242,11 @@ class ConverterService:
                 # explicit/data-URI MIME metadata.
                 use_data_uri_mime_type=False,
                 require_valid_base64_after_path_error=True,
+                import_url=request.import_url,
                 serializer_factory=data_serializer_factory,
             )
             original_value = result.value
-            data_type = result.data_type or data_type
+            source_metadata = media_source_metadata(result)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters_async(
@@ -250,11 +258,12 @@ class ConverterService:
         )
 
         return ConverterPreviewResponse(
-            original_value=request.original_value,
+            original_value=original_value if source_metadata else request.original_value,
             original_value_data_type=request.original_value_data_type,
             converted_value=final_value,
             converted_value_data_type=final_type,
             steps=steps,
+            prompt_metadata=source_metadata,
         )
 
     def get_converter_objects_for_ids(self, *, converter_ids: list[str]) -> list[Any]:

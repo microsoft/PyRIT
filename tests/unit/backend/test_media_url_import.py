@@ -3,6 +3,7 @@
 
 """Tests for the bounded media URL download."""
 
+import logging
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -135,24 +136,78 @@ async def test_redirect_body_is_not_read(
 
 
 async def test_error_status_is_rejected_without_query_string(
-    transport: Callable[[Handler], list[httpx.Request]],
+    transport: Callable[[Handler], list[httpx.Request]], caplog: pytest.LogCaptureFixture
 ) -> None:
     transport(lambda request: httpx.Response(404))
 
-    with pytest.raises(ValueError, match="returned HTTP 404") as error:
+    with (
+        caplog.at_level(logging.WARNING, logger=media_url_import.__name__),
+        pytest.raises(ValueError, match="returned HTTP 404") as error,
+    ):
         await download_media_url_async(url="https://user.example.test/cat.png?sv=1&sig=secret#frag")
     assert "secret" not in str(error.value)
     assert "https://user.example.test/cat.png" in str(error.value)
+    assert "HTTP 404 (HTTPStatusError)" in caplog.text
+    assert "secret" not in caplog.text
 
 
-async def test_network_error_is_rejected(transport: Callable[[Handler], list[httpx.Request]]) -> None:
+_SIGNED_DETAIL = "failed for https://example.test/slow.png?sig=secret"
+
+
+@pytest.mark.parametrize(
+    ("make_error", "reason", "cause"),
+    [
+        (
+            lambda request: httpx.ConnectTimeout(_SIGNED_DETAIL, request=request),
+            "connecting timed out after 10 seconds",
+            "ConnectTimeout",
+        ),
+        (
+            lambda request: httpx.ReadTimeout(_SIGNED_DETAIL, request=request),
+            "no data arrived for 30 seconds",
+            "ReadTimeout",
+        ),
+        (
+            lambda request: httpx.WriteTimeout(_SIGNED_DETAIL, request=request),
+            "sending the request timed out after 30 seconds",
+            "WriteTimeout",
+        ),
+        (
+            lambda request: httpx.PoolTimeout(_SIGNED_DETAIL, request=request),
+            "no connection was free within 30 seconds",
+            "PoolTimeout",
+        ),
+        (lambda request: TimeoutError(_SIGNED_DETAIL), "the download took longer than 60 seconds", "TimeoutError"),
+        (lambda request: httpx.ConnectError(_SIGNED_DETAIL, request=request), "the connection failed", "ConnectError"),
+        (
+            lambda request: httpx.RemoteProtocolError(_SIGNED_DETAIL, request=request),
+            "the request failed (RemoteProtocolError)",
+            "RemoteProtocolError",
+        ),
+    ],
+)
+async def test_network_failures_name_the_reason_and_limit(
+    transport: Callable[[Handler], list[httpx.Request]],
+    caplog: pytest.LogCaptureFixture,
+    make_error: Callable[[httpx.Request], BaseException],
+    reason: str,
+    cause: str,
+) -> None:
     def fail(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow", request=request)
+        raise make_error(request)
 
     transport(fail)
 
-    with pytest.raises(ValueError, match="could not be downloaded"):
-        await download_media_url_async(url="https://example.test/slow.png")
+    with (
+        caplog.at_level(logging.WARNING, logger=media_url_import.__name__),
+        pytest.raises(ValueError) as error,
+    ):
+        await download_media_url_async(url="https://example.test/slow.png?sig=secret")
+
+    assert str(error.value) == f"Media URL https://example.test/slow.png could not be downloaded: {reason}."
+    assert error.value.__cause__ is not None
+    assert f"https://example.test/slow.png could not be downloaded: {reason} ({cause}" in caplog.text
+    assert "secret" not in caplog.text
 
 
 @pytest.mark.parametrize(

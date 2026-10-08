@@ -44,6 +44,7 @@ from pyrit.backend.services.manual_send_scheduler import (
     ManualSendQueueFullError,
     ManualSendScheduler,
 )
+from pyrit.backend.services.media_url_import import MediaDownload
 from pyrit.backend.services.message_send_service import MessageSendService, get_message_send_service
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
@@ -983,6 +984,48 @@ class TestCreateAttack:
         assert factory.call_args.kwargs["category"] == "prompt-memory-entries"
         stored_piece = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"][0]
         assert stored_piece.original_value == stored_path
+
+    async def test_create_attack_records_the_source_of_imported_prepended_media(
+        self, attack_service, mock_memory
+    ) -> None:
+        stored_path = "/results/prompt-memory-entries/images/imported.png"
+        serializer = MagicMock(value=stored_path)
+        serializer.get_data_filename_async = AsyncMock(return_value=stored_path)
+        serializer.save_data_async = AsyncMock()
+        download = MediaDownload(content=b"PNG", content_type="image/png", final_url="https://example.test/cat")
+        prepended = [
+            PrependedMessageRequest(
+                role="user",
+                pieces=[
+                    MessagePieceRequest(
+                        data_type="image_path", original_value="https://example.test/cat?sig=secret", import_url=True
+                    )
+                ],
+            )
+        ]
+
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service,
+            patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer),
+            patch(
+                "pyrit.backend.services.media_persistence.download_media_url_async", AsyncMock(return_value=download)
+            ),
+            patch("pyrit.backend.services.attack_service.set_message_piece_sha256_async", new_callable=AsyncMock),
+        ):
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_get_target_service.return_value = mock_target_service
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", prepended_conversation=prepended)
+            )
+
+        stored_piece = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"][0]
+        assert (stored_piece.original_value_data_type, stored_piece.original_value) == ("image_path", stored_path)
+        assert stored_piece.prompt_metadata["media_source_url"] == "https://example.test/cat"
+        assert "secret" not in str(stored_piece.prompt_metadata)
 
     async def test_create_attack_lowers_system_prompt_to_system_message(self, attack_service, mock_memory) -> None:
         """Test that system_prompt is lowered to a single system-role message at sequence 0."""

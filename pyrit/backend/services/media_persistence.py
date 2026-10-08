@@ -9,7 +9,7 @@ import asyncio
 import base64
 import binascii
 import mimetypes
-from collections.abc import Callable, Coroutine, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -18,9 +18,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.services.media_url_import import (
+    MediaDownload,
     download_media_url_async,
     media_content_type,
-    media_extension,
     redact_url,
 )
 from pyrit.common.azure_storage import is_azure_blob_uri, redact_url_credentials
@@ -36,8 +36,11 @@ MEDIA_SUBDIRECTORIES = frozenset({"prompt-memory-entries", "seed-prompt-entries"
 # Media type families of the path data types; binary_path accepts any content.
 _MEDIA_FAMILIES: dict[PromptDataType, str] = {"image_path": "image", "audio_path": "audio", "video_path": "video"}
 _CHECKED_FAMILIES = frozenset({"image", "audio", "video", "text"})
-# Data types whose request values are stored as managed media before use.
-_IMPORTED_DATA_TYPES = frozenset({*MEDIA_PATH_DATA_TYPES, "url"})
+# Prompt metadata that records where imported media came from, for the original and converted values.
+_MEDIA_SOURCE_PREFIXES = ("media_source", "converted_media_source")
+MEDIA_SOURCE_METADATA_KEYS = frozenset(
+    f"{prefix}_{field}" for prefix in _MEDIA_SOURCE_PREFIXES for field in ("url", "content_type")
+)
 
 
 class MediaOrigin(str, Enum):
@@ -60,7 +63,7 @@ class MediaPersistenceResult:
     resolved: bool
     mime_type: str | None = None
     extension: str | None = None
-    data_type: PromptDataType | None = None
+    source: str | None = None
 
 
 SerializerFactory = Callable[..., Any]
@@ -251,18 +254,21 @@ async def _write_owned_media_async(
         raise
 
 
-def _downloaded_data_type(*, content_type: str | None) -> PromptDataType:
+def _imported_extension(*, download: MediaDownload, data_type: PromptDataType) -> str:
     """
-    Return the path data type for downloaded ``url`` content.
+    Choose the file extension for imported media of a declared path type.
 
     Returns:
-        PromptDataType: ``image_path``, ``audio_path``, or ``video_path`` by media family, else ``binary_path``.
+        str: The extension of the reported (or URL-implied) media type when it fits the declared
+            type, else the declared type's default extension.
     """
-    family = (content_type or "").split("/", 1)[0]
-    for data_type, data_family in _MEDIA_FAMILIES.items():
-        if family == data_family:
-            return data_type
-    return "binary_path"
+    content_type = media_content_type(download)
+    expected_family = _MEDIA_FAMILIES.get(data_type)
+    if content_type and expected_family in (None, content_type.split("/", 1)[0]):
+        extension = mimetypes.guess_extension(content_type, strict=False)
+        if extension:
+            return extension
+    return DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
 
 
 async def _import_media_url_async(
@@ -273,28 +279,27 @@ async def _import_media_url_async(
     created_paths: list[str] | None,
 ) -> MediaPersistenceResult:
     """
-    Download a media URL once and store the bytes in managed media storage.
+    Download a media URL once and store the bytes in managed media storage under the declared type.
 
-    A ``url`` value is stored under the path data type of its content. Other path types keep
-    their declared type and must not receive content of a different media family.
+    A missing or generic reported content type is accepted, since the caller declared the type;
+    content of a different media family than the declared type is rejected.
 
     Returns:
-        MediaPersistenceResult: The managed reference to the stored copy.
+        MediaPersistenceResult: The managed reference to the stored copy and its redacted source URL.
 
     Raises:
         ValueError: If the download fails or the content does not match the declared media type.
     """
     download = await download_media_url_async(url=url)
     content_type = media_content_type(download)
-    resolved_type = _downloaded_data_type(content_type=content_type) if data_type == "url" else data_type
-    expected_family = _MEDIA_FAMILIES.get(resolved_type)
+    expected_family = _MEDIA_FAMILIES.get(data_type)
     family = (content_type or "").split("/", 1)[0]
     if expected_family and family in _CHECKED_FAMILIES and family != expected_family:
         raise ValueError(f"Media URL {redact_url(url)} returned {content_type}, not {expected_family} content.")
-    extension = media_extension(download, default=DEFAULT_MEDIA_EXTENSIONS.get(str(resolved_type), ".bin"))
+    extension = _imported_extension(download=download, data_type=data_type)
     serializer = serializer_factory(
         category="prompt-memory-entries",
-        data_type=resolved_type,
+        data_type=data_type,
         extension=extension,
     )
     await _write_owned_media_async(
@@ -309,8 +314,21 @@ async def _import_media_url_async(
         resolved=True,
         mime_type=content_type,
         extension=extension,
-        data_type=resolved_type,
+        source=redact_url(url),
     )
+
+
+def _is_read_from_result_storage(url: str) -> bool:
+    """
+    Return whether the storage layer reads this URL from the server's own blob container.
+
+    The storage layer treats any URL on a ``blob.core.windows.net`` host as Azure storage and reads
+    it from the configured container, keeping only the blob path.
+
+    Returns:
+        bool: True when reading the URL would read a blob in this server's result storage.
+    """
+    return "blob.core.windows.net" in urlparse(url).netloc
 
 
 async def persist_media_value_async(
@@ -320,11 +338,12 @@ async def persist_media_value_async(
     mime_type: str | None = None,
     use_data_uri_mime_type: bool = True,
     require_valid_base64_after_path_error: bool = False,
+    import_url: bool = False,
     serializer_factory: SerializerFactory = data_serializer_factory,
     created_paths: list[str] | None = None,
 ) -> MediaPersistenceResult:
     """
-    Classify and, when needed, persist one path-typed or ``url`` media value.
+    Classify and, when needed, persist one path-typed media value.
 
     The two policy flags preserve the small historical differences between
     attack ingestion and converter preview while keeping origin detection,
@@ -332,33 +351,44 @@ async def persist_media_value_async(
     ``/api/media`` references are accepted only when they point into this
     server's media storage, so callers cannot make the server read other files.
     Blob URLs inside this server's result storage are kept as references, without
-    their query string, since the server reads them with its own credentials; any
-    other http(s) URL is downloaded once into managed storage, so converters and
-    targets only see the stored copy.
+    their query string, since the server reads them with its own credentials.
+    Other http(s) URLs are kept as references, or downloaded once into managed
+    storage under the declared type when ``import_url`` is set; Azure Blob URLs
+    outside the result storage must be imported, because the storage layer would
+    read them from this server's own container.
 
     Returns:
         A typed result containing the resolved value and persistence metadata.
 
     Raises:
         ValueError: If the value names a file outside the server's media storage, or a
-            URL cannot be imported.
+            URL cannot be imported or must be imported.
     """
     if value.startswith(("http://", "https://")):
         if is_managed_blob_url(value):
-            blob_type, _ = mimetypes.guess_type(urlparse(value).path, strict=False)
             return MediaPersistenceResult(
                 value=redact_url_credentials(value),
                 origin=MediaOrigin.REMOTE_URL,
                 persisted=False,
                 resolved=True,
                 mime_type=mime_type,
-                data_type=_downloaded_data_type(content_type=blob_type) if data_type == "url" else data_type,
             )
-        return await _import_media_url_async(
-            url=value, data_type=data_type, serializer_factory=serializer_factory, created_paths=created_paths
+        if import_url:
+            return await _import_media_url_async(
+                url=value, data_type=data_type, serializer_factory=serializer_factory, created_paths=created_paths
+            )
+        if _is_read_from_result_storage(value):
+            raise ValueError(
+                f"Media URL {redact_url(value)} points to Azure Blob Storage outside this server's result storage. "
+                "Set import_url to download it, or send it as a url piece."
+            )
+        return MediaPersistenceResult(
+            value=value,
+            origin=MediaOrigin.REMOTE_URL,
+            persisted=False,
+            resolved=True,
+            mime_type=mime_type,
         )
-    if data_type == "url":
-        raise ValueError("URL pieces must use an http or https URL.")
 
     reference_path = _media_reference_path(value)
     if reference_path is not None:
@@ -420,6 +450,36 @@ async def persist_media_value_async(
     )
 
 
+def media_source_entries(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    """
+    Return the media source entries that persistence recorded in a piece's prompt metadata.
+
+    Returns:
+        dict[str, Any]: The entries whose keys are in ``MEDIA_SOURCE_METADATA_KEYS``.
+    """
+    return {key: value for key, value in (metadata or {}).items() if key in MEDIA_SOURCE_METADATA_KEYS}
+
+
+def media_source_metadata(result: MediaPersistenceResult, *, prefix: str = "media_source") -> dict[str, str]:
+    """
+    Return prompt metadata naming where an imported media value came from.
+
+    Args:
+        result (MediaPersistenceResult): The persistence result for one value.
+        prefix (str): Key prefix, so a piece can record its original and converted sources apart.
+
+    Returns:
+        dict[str, str]: The redacted source URL and the content type the server reported, or an
+            empty dict when the value was not imported.
+    """
+    if result.source is None:
+        return {}
+    metadata = {f"{prefix}_url": result.source}
+    if result.mime_type:
+        metadata[f"{prefix}_content_type"] = result.mime_type
+    return metadata
+
+
 async def persist_message_pieces_async(
     *,
     pieces: Sequence[MessagePieceRequest],
@@ -434,9 +494,10 @@ async def persist_message_pieces_async(
     values to be **file paths**, so base64 data is written to the results
     store and the request values are replaced with the resulting file path.
     Values that already reference stored media are kept after they are
-    checked to be inside this server's media storage. Media URLs and ``url``
-    pieces are downloaded once into the results store; a ``url`` piece takes
-    the path data type of its content.
+    checked to be inside this server's media storage. Media URLs stay
+    references unless the piece sets ``import_url``; imported values are
+    stored under their declared type, and the piece's prompt metadata records
+    where they came from. ``url`` pieces are left unchanged.
 
     Args:
         pieces (Sequence[MessagePieceRequest]): Request pieces to resolve in place.
@@ -446,46 +507,48 @@ async def persist_message_pieces_async(
     """
     for piece in pieces:
         original_value = piece.original_value
-        original_type = piece.data_type
         converted_value = piece.converted_value
         converted_type = piece.converted_value_data_type or piece.data_type
         mirrors_original = converted_value is None or (
             converted_value == piece.original_value and converted_type == piece.data_type
         )
+        source_metadata: dict[str, str] = {}
         original_resolved = False
-        if original_type in _IMPORTED_DATA_TYPES:
+        if piece.data_type in MEDIA_PATH_DATA_TYPES:
             result = await persist_media_value_async(
                 value=original_value,
-                data_type=original_type,
+                data_type=piece.data_type,
                 mime_type=piece.mime_type,
+                import_url=piece.import_url,
                 serializer_factory=serializer_factory,
                 created_paths=persisted_paths,
             )
             if result.resolved:
                 original_resolved = True
                 original_value = result.value
-                original_type = result.data_type or original_type
+                source_metadata.update(media_source_metadata(result))
                 if mirrors_original:
                     converted_value = original_value
-                    converted_type = original_type
 
         if (
             converted_value is not None
-            and converted_type in _IMPORTED_DATA_TYPES
+            and converted_type in MEDIA_PATH_DATA_TYPES
             and not (mirrors_original and original_resolved)
         ):
             result = await persist_media_value_async(
                 value=converted_value,
                 data_type=converted_type,
+                import_url=piece.import_url,
                 serializer_factory=serializer_factory,
                 created_paths=persisted_paths,
             )
             if result.resolved:
                 converted_value = result.value
-                converted_type = result.data_type or converted_type
+                source_metadata.update(media_source_metadata(result, prefix="converted_media_source"))
 
         piece.original_value = original_value
-        piece.data_type = original_type
         piece.converted_value = converted_value
-        if piece.converted_value_data_type is not None or converted_type != original_type:
-            piece.converted_value_data_type = converted_type
+        if source_metadata:
+            # Without other metadata the message mapper records the piece's mime_type; keep it.
+            existing = piece.prompt_metadata or ({"mime_type": piece.mime_type} if piece.mime_type else {})
+            piece.prompt_metadata = {**existing, **source_metadata}

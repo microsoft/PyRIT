@@ -21,6 +21,7 @@ from pyrit.backend.services.service_lifecycle import (
     has_active_manual_sends,
     outstanding_estimates,
 )
+from pyrit.backend.services.target_service import set_target_upload_directory
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry
@@ -103,6 +104,7 @@ class RuntimeLifecycle:
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         set_media_url_import_enabled(enabled=config.allow_media_url_import)
+        set_target_upload_directory(directory=config.target_upload_directory)
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
 

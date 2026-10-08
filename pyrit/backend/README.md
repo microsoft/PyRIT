@@ -210,19 +210,26 @@ request values before using them:
   converters, must be uploaded content, a media URL, or a reference into this server's media
   storage: the `prompt-memory-entries` and `seed-prompt-entries` folders under the memory
   results path. Other file paths are rejected.
-- Media URLs and `url` pieces are downloaded once into that storage (60 second limit,
-  100 MiB limit, at most 3 redirects, no request credentials forwarded), and only the stored
-  copy reaches converters and targets, so signed URLs are not passed to model providers.
-  This includes messages that are stored without being sent, because stored history is
-  replayed to targets later. A `url` piece takes the media type of its content
-  (`image_path`, `audio_path`, `video_path`, or `binary_path`); send a literal URL as `text`.
-  Blob URLs inside the configured results container are kept as references, without their
-  query string, instead of being downloaded. Set `allow_media_url_import: false` in
-  `.pyrit_conf` to reject media URLs instead.
-- Target types that read local files or load model code (`HTTPXAPITarget`,
-  `HuggingFaceChatTarget`) cannot be created through the API. Register them in Python or
-  with an initializer, where the operator controls their settings; for example, set
-  `HTTPXAPITarget(allowed_upload_directory=...)` so uploads stay inside one folder.
+- Media URLs are kept as references by default, and `url` pieces always pass through
+  unchanged. Azure Blob URLs outside the configured results container are rejected as media
+  references, because the storage layer would read them from this server's own container;
+  blob URLs inside it are kept without their query string.
+- A caller imports a media URL by setting `import_url` on a message piece or a converter
+  preview with an `image_path`, `audio_path`, `video_path`, or `binary_path` type. The server
+  downloads it once into managed storage (10 second connect, 30 second read, and 60 second
+  total limits, 100 MiB limit, at most 3 redirects, no request credentials forwarded) and
+  stores it under the declared type. Converters and targets then see only the stored copy,
+  and the piece's prompt metadata records the source URL, without credentials or query
+  string, and the reported content type. A preview that imports returns the stored copy and
+  that metadata, so sending them reuses the same bytes. Set `allow_media_url_import: false`
+  in `.pyrit_conf` to turn imports off. Converter file parameters given a URL are downloaded
+  the same way.
+- Target types that load model code (`HuggingFaceChatTarget`) cannot be created through the
+  API, and target parameters that name server paths cannot be set through it. Targets that
+  upload local files (`HTTPXAPITarget`) can be created through the API only when
+  `target_upload_directory` is set in `.pyrit_conf`; the server passes that directory to the
+  target, which uploads files only from inside it. Register such targets in Python or with an
+  initializer for other settings.
 
 Intentional exceptions:
 

@@ -1131,14 +1131,18 @@ class TestPreviewConversion:
         with _results_root(str(tmp_path)), pytest.raises(ValueError, match="results directory"):
             await service.preview_conversion_async(request=request)
 
-    async def test_preview_imports_url_input_as_media(self, tmp_path: Path) -> None:
-        """A URL preview input is downloaded once and converted as the stored media type."""
+    async def test_preview_imports_url_input_and_returns_the_stored_copy(self, tmp_path: Path) -> None:
+        """An imported URL is downloaded once, and the response returns the stored copy for a later send."""
         service = ConverterService()
-        serializer = MagicMock(value=str(tmp_path / "prompt-memory-entries" / "imported.png"))
+        stored = str(tmp_path / "prompt-memory-entries" / "imported.png")
+        serializer = MagicMock(value=stored)
         serializer.save_data_async = AsyncMock()
         download = MediaDownload(content=b"PNG", content_type="image/png", final_url="https://example.test/cat")
         request = ConverterPreviewRequest(
-            original_value="https://example.test/cat", original_value_data_type="url", converter_ids=[]
+            original_value="https://example.test/cat?sig=secret",
+            original_value_data_type="image_path",
+            converter_ids=[],
+            import_url=True,
         )
 
         with (
@@ -1152,11 +1156,40 @@ class TestPreviewConversion:
         ):
             result = await service.preview_conversion_async(request=request)
 
-        download_mock.assert_awaited_once_with(url="https://example.test/cat")
+        download_mock.assert_awaited_once_with(url="https://example.test/cat?sig=secret")
         factory.assert_called_once_with(category="prompt-memory-entries", data_type="image_path", extension=".png")
         serializer.save_data_async.assert_awaited_once_with(b"PNG")
-        assert result.original_value_data_type == "url"
-        assert (result.converted_value, result.converted_value_data_type) == (serializer.value, "image_path")
+        assert (result.original_value, result.original_value_data_type) == (stored, "image_path")
+        assert (result.converted_value, result.converted_value_data_type) == (stored, "image_path")
+        assert result.prompt_metadata == {
+            "media_source_url": "https://example.test/cat",
+            "media_source_content_type": "image/png",
+        }
+
+    @pytest.mark.parametrize("data_type", ["url", "image_path"])
+    async def test_preview_keeps_url_input_as_a_reference_without_import(self, tmp_path: Path, data_type: str) -> None:
+        service = ConverterService()
+        url = "https://example.test/cat.png?sig=signature"
+        request = ConverterPreviewRequest(original_value=url, original_value_data_type=data_type, converter_ids=[])
+
+        with (
+            _results_root(str(tmp_path)),
+            patch("pyrit.backend.services.media_persistence.download_media_url_async") as download_mock,
+        ):
+            result = await service.preview_conversion_async(request=request)
+
+        download_mock.assert_not_called()
+        assert (result.original_value, result.converted_value) == (url, url)
+        assert result.prompt_metadata == {}
+
+    def test_preview_import_requires_a_declared_media_type(self) -> None:
+        with pytest.raises(ValidationError, match="declare the media type"):
+            ConverterPreviewRequest(
+                original_value="https://example.test/cat",
+                original_value_data_type="url",
+                converter_ids=[],
+                import_url=True,
+            )
 
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""

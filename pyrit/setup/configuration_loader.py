@@ -118,8 +118,11 @@ class ConfigurationLoader(YamlLoadable):
         operation: Name for the current operation.
         enable_live_reinitialization: Whether administrators may replace the live
             single-process backend runtime from the GUI.
-        allow_media_url_import: Whether the backend downloads http(s) media URLs from API
-            requests into managed storage. When False, such URLs are rejected.
+        allow_media_url_import: Whether the backend downloads http(s) media URLs that API
+            callers ask it to import. When False, import requests are rejected.
+        target_upload_directory: Directory that targets created through the backend API may
+            upload local files from (``HTTPXAPITarget``). When unset, such targets cannot be
+            created through the API.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -165,6 +168,7 @@ class ConfigurationLoader(YamlLoadable):
     enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
     allow_media_url_import: bool = True
+    target_upload_directory: str | None = None
     custom_initializers_source: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -189,6 +193,8 @@ class ConfigurationLoader(YamlLoadable):
             raise TypeError("enable_live_reinitialization must be a bool.")
         if not isinstance(self.allow_media_url_import, bool):
             raise TypeError("allow_media_url_import must be a bool.")
+        if self.target_upload_directory is not None and not isinstance(self.target_upload_directory, str):
+            raise TypeError("target_upload_directory must be a string path.")
         self._validate_allow_custom_initializers()
         self._normalize_memory_db_type()
         self._normalize_initializers()

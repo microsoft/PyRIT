@@ -15,6 +15,7 @@ Targets can be:
 import asyncio
 import logging
 import uuid
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -29,9 +30,12 @@ from pyrit.backend.models.targets import (
 from pyrit.common import REQUIRED_VALUE
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.parameter import Parameter
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
+
+_target_upload_directory: str | None = None
 
 _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
     "OpenAITarget": frozenset({"endpoint", "model_name"}),
@@ -41,6 +45,12 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
     "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
     "PromptShieldTarget": frozenset({"endpoint"}),
 }
+
+
+def set_target_upload_directory(*, directory: str | None) -> None:
+    """Set the directory that targets created through the API may upload local files from."""
+    global _target_upload_directory
+    _target_upload_directory = directory
 
 
 class TargetService:
@@ -184,16 +194,51 @@ class TargetService:
             for parameter in parameters
         ]
 
+    @staticmethod
+    def _reject_server_resources(
+        *,
+        target_type: str,
+        target_cls: type[PromptTarget],
+        params: Mapping[str, Any],
+        parameters: Sequence[Parameter],
+    ) -> None:
+        """
+        Reject requests that would make a target load model code or read files chosen by the caller.
+
+        Raises:
+            ValueError: If the target loads model code, uploads local files while no upload
+                directory is configured, or a supplied parameter names a server path.
+        """
+        if target_cls.loads_local_code:
+            raise ValueError(
+                f"Target type '{target_type}' loads model code on this server and cannot be created through the "
+                "API. Register it in Python or with an initializer instead."
+            )
+        if target_cls.upload_directory_parameter and _target_upload_directory is None:
+            raise ValueError(
+                f"Target type '{target_type}' uploads files from this server and can only be created through the "
+                "API when target_upload_directory is set in the server configuration. Register it in Python or "
+                "with an initializer instead."
+            )
+        for parameter in parameters:
+            if parameter.name in params and (parameter.is_path or parameter.is_path_or_str):
+                raise ValueError(
+                    f"Parameter '{parameter.name}' of '{target_type}' names a path on this server and cannot be "
+                    "set through the API."
+                )
+
     async def list_target_types_async(self) -> TargetTypeResponse:
         """
         List all available target types from the target class registry.
 
         Returns every registered target with its derived constructor
         parameters and the auth modes it supports, all projected from the
-        registry's ``TargetMetadata``. Types that read local files or load model
-        code are listed but cannot be created through the API. Deciding which
-        entries to surface to a user is a presentation concern owned by the
-        caller (e.g. the frontend), not this service.
+        registry's ``TargetMetadata``. Types that load model code, or upload
+        local files when the server has no upload directory configured, are
+        listed but cannot be created through the API, and neither can parameters
+        that name server paths. Deciding which entries to surface to a user is a
+        presentation concern owned by the caller (e.g. the frontend), not this
+        service.
 
         Returns:
             TargetTypeResponse containing all available target classes.
@@ -221,12 +266,13 @@ class TargetService:
         reference resolution, and construction are owned by the
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
         by the target classes themselves. This service only enforces the
-        request-level contract: it rejects target types that read local files or
-        load model code, and for ``identity`` it confirms the target supports it
-        and omits the api_key plus any registry-flagged identity-conflicting
-        parameters so the target validates its own endpoint and authenticates
-        itself. The response is built before the target is registered, so a
-        failed request leaves no registered target.
+        request-level contract: it rejects target types that load model code,
+        rejects parameters that name server paths, gives targets that upload local
+        files the operator-configured upload directory, and for ``identity`` it
+        confirms the target supports it and omits the api_key plus any
+        registry-flagged identity-conflicting parameters so the target validates
+        its own endpoint and authenticates itself. The response is built before
+        the target is registered, so a failed request leaves no registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -235,11 +281,12 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not registered, uses local files or
-                model code, or identity auth is requested but unsupported by the
-                target type. Construction errors (unknown params, incompatible inner
-                targets, unrecognized identity endpoints) are raised by the
-                registry / target classes.
+            ValueError: If the target type is not registered, loads model code,
+                uploads local files without a configured upload directory, or a
+                parameter names a server path, or identity auth is requested but
+                unsupported by the target type. Construction errors (unknown params,
+                incompatible inner targets, unrecognized identity endpoints) are
+                raised by the registry / target classes.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -247,11 +294,11 @@ class TargetService:
             )
 
         target_cls = self._registry.get_class(request.type)
-        if target_cls.uses_host_resources:
-            raise ValueError(
-                f"Target type '{request.type}' reads local files or loads model code and cannot be created "
-                "through the API. Register it in Python or with an initializer instead."
-            )
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+        parameters = metadata.parameters if metadata is not None else ()
+        self._reject_server_resources(
+            target_type=request.type, target_cls=target_cls, params=request.params, parameters=parameters
+        )
         params: dict[str, Any] = dict(request.params)
 
         if request.auth_mode == "identity":
@@ -262,12 +309,12 @@ class TargetService:
             # Omit any other parameter the registry metadata marks as conflicting with
             # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
             # can't silently override the selected auth mode by also supplying it.
-            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
-            if metadata is not None:
-                for parameter in metadata.parameters:
-                    if parameter.identity_conflicting:
-                        params.pop(parameter.name, None)
+            for parameter in parameters:
+                if parameter.identity_conflicting:
+                    params.pop(parameter.name, None)
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        if target_cls.upload_directory_parameter:
+            params[target_cls.upload_directory_parameter] = _target_upload_directory
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.

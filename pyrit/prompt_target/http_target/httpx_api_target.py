@@ -37,8 +37,7 @@ class HTTPXAPITarget(HTTPTarget):
     """
 
     _PATH_TYPES: frozenset[str] = frozenset({"image_path", "audio_path", "video_path", "binary_path"})
-    # Uploads files from the local file system.
-    uses_host_resources: ClassVar[bool] = True
+    upload_directory_parameter: ClassVar[str | None] = "allowed_upload_directory"
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,

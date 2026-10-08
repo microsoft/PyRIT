@@ -23,6 +23,7 @@ from pyrit.backend.models.common import (
     TextStr,
 )
 from pyrit.models import (
+    MEDIA_PATH_DATA_TYPES,
     AttackResult,
     ChatMessageRole,
     ConversationReference,
@@ -398,6 +399,31 @@ class MessagePieceRequest(BaseModel):
     source_piece_id: uuid.UUID | None = Field(
         None, description="Source piece for a complete conversation save; verified against its source conversation."
     )
+    import_url: bool = Field(
+        False,
+        description="Download this piece's http(s) media values once into managed storage instead of keeping the "
+        "URLs as references. The stored copies keep the declared image_path, audio_path, video_path, or "
+        "binary_path type.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_import_url(self) -> "MessagePieceRequest":
+        """
+        Validate that a URL import names the media type to store.
+
+        Returns:
+            The validated request piece.
+
+        Raises:
+            ValueError: If import_url is set on a piece without a media path type.
+        """
+        converted_type = self.converted_value_data_type or self.data_type
+        if self.import_url and not {self.data_type, converted_type} & MEDIA_PATH_DATA_TYPES:
+            raise ValueError(
+                "import_url needs an image_path, audio_path, video_path, or binary_path value; "
+                "declare the media type to store the URL as."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_converted_value_data_type(self) -> "MessagePieceRequest":

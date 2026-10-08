@@ -9,10 +9,10 @@ This module defines the Instance models and preview functionality.
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr
-from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
+from pyrit.models import MEDIA_PATH_DATA_TYPES, ConverterIdentifier, Parameter, PromptDataType
 
 __all__ = [
     "ConverterInstance",
@@ -121,13 +121,43 @@ class ConverterPreviewRequest(BaseModel):
     converter_ids: list[IdentifierStr] = Field(..., max_length=MAX_ITEMS, description="Converter instance IDs to apply")
     start_token: str = Field(default="⟪", min_length=1, description="Opening marker for selected text regions")
     end_token: str = Field(default="⟫", min_length=1, description="Closing marker for selected text regions")
+    import_url: bool = Field(
+        False,
+        description="Download an http(s) original_value once into managed storage instead of passing the URL on. "
+        "The stored copy keeps the declared image_path, audio_path, video_path, or binary_path type.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_import_url(self) -> "ConverterPreviewRequest":
+        """
+        Validate that a URL import names the media type to store.
+
+        Returns:
+            The validated preview request.
+
+        Raises:
+            ValueError: If import_url is set without a media path type.
+        """
+        if self.import_url and self.original_value_data_type not in MEDIA_PATH_DATA_TYPES:
+            raise ValueError(
+                "import_url needs an image_path, audio_path, video_path, or binary_path original_value_data_type; "
+                "declare the media type to store the URL as."
+            )
+        return self
 
 
 class ConverterPreviewResponse(BaseModel):
     """Response from converter preview."""
 
-    original_value: str = Field(..., description="Original input text")
+    original_value: str = Field(
+        ..., description="Original input, or the stored copy that conversion used when an http(s) URL was imported"
+    )
     original_value_data_type: PromptDataType = Field(..., description="Data type of original value")
     converted_value: str = Field(..., description="Final converted text")
     converted_value_data_type: PromptDataType = Field(..., description="Data type of converted value")
     steps: list[PreviewStep] = Field(..., description="Step-by-step conversion results")
+    prompt_metadata: dict[str, str] = Field(
+        default_factory=dict,
+        description="Source information for an imported original value. Send it as the piece's prompt_metadata "
+        "with the stored copy to keep it in the conversation.",
+    )

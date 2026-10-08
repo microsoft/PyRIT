@@ -37,7 +37,7 @@ class HuggingFaceChatTarget(PromptTarget):
     )
 
     # Loads models, and optionally their code, on the local machine.
-    uses_host_resources: ClassVar[bool] = True
+    loads_local_code: ClassVar[bool] = True
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None

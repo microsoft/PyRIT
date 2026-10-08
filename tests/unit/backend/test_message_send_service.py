@@ -867,13 +867,17 @@ class TestPersistBase64Pieces:
         with pytest.raises(ValueError, match="results directory"):
             await MessageSendService._persist_base64_pieces_async(request)
 
-    async def test_url_piece_is_imported_before_sending_async(self, *, tmp_path: Path) -> None:
+    async def test_imported_url_is_stored_before_sending_async(self, *, tmp_path: Path) -> None:
         stored = str(tmp_path / "prompt-memory-entries" / "imported.png")
         serializer = MagicMock(value=stored)
         serializer.save_data_async = AsyncMock()
         download = MediaDownload(content=b"PNG", content_type="image/png", final_url="https://example.com/cat")
         request = AddMessageRequest(
-            pieces=[MessagePieceRequest(data_type="url", original_value="https://example.com/cat?sig=secret")],
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path", original_value="https://example.com/cat?sig=secret", import_url=True
+                )
+            ],
             send=True,
             target_conversation_id="test-id",
         )

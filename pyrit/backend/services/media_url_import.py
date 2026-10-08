@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import re
 from dataclasses import dataclass
@@ -16,9 +17,13 @@ import httpx
 
 from pyrit.common.net_utility import get_httpx_client
 
+logger = logging.getLogger(__name__)
+
 MAX_MEDIA_URL_BYTES = 100 * 1024 * 1024
 MAX_MEDIA_URL_REDIRECTS = 3
-_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+_CONNECT_TIMEOUT_SECONDS = 10.0
+_READ_TIMEOUT_SECONDS = 30.0
+_TIMEOUT = httpx.Timeout(_READ_TIMEOUT_SECONDS, connect=_CONNECT_TIMEOUT_SECONDS)
 _DEADLINE_SECONDS = 60.0
 _GENERIC_CONTENT_TYPES = frozenset({"application/octet-stream", "binary/octet-stream"})
 _URL_SUFFIX_PATTERN = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
@@ -167,6 +172,43 @@ async def download_media_url_async(*, url: str) -> MediaDownload:
                     raise ValueError(f"Media URL {shown} redirected to a URL that is not a plain http or https URL.")
             raise ValueError(f"Media URL {shown} redirected more than {MAX_MEDIA_URL_REDIRECTS} times.")
     except httpx.HTTPStatusError as exc:
+        _log_download_failure(shown=shown, reason=f"HTTP {exc.response.status_code}", exc=exc)
         raise ValueError(f"Media URL {shown} returned HTTP {exc.response.status_code}.") from exc
     except (httpx.HTTPError, TimeoutError) as exc:
-        raise ValueError(f"Media URL {shown} could not be downloaded.") from exc
+        reason = _failure_reason(exc)
+        _log_download_failure(shown=shown, reason=reason, exc=exc)
+        raise ValueError(f"Media URL {shown} could not be downloaded: {reason}.") from exc
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """
+    Describe why a download failed, with the limit that was hit, without quoting the exception.
+
+    httpx exception messages can include the full URL and its query string, so they are not repeated.
+
+    Returns:
+        str: A short reason such as ``connecting timed out after 10 seconds``.
+    """
+    if isinstance(exc, httpx.ConnectTimeout):
+        return f"connecting timed out after {_CONNECT_TIMEOUT_SECONDS:g} seconds"
+    if isinstance(exc, httpx.ReadTimeout):
+        return f"no data arrived for {_READ_TIMEOUT_SECONDS:g} seconds"
+    if isinstance(exc, httpx.WriteTimeout):
+        return f"sending the request timed out after {_READ_TIMEOUT_SECONDS:g} seconds"
+    if isinstance(exc, httpx.PoolTimeout):
+        return f"no connection was free within {_READ_TIMEOUT_SECONDS:g} seconds"
+    if isinstance(exc, TimeoutError):
+        return f"the download took longer than {_DEADLINE_SECONDS:g} seconds"
+    if isinstance(exc, httpx.ConnectError):
+        return "the connection failed"
+    return f"the request failed ({type(exc).__name__})"
+
+
+def _log_download_failure(*, shown: str, reason: str, exc: BaseException) -> None:
+    """Log a failed download with the redacted URL and the exception classes in its cause chain."""
+    causes: list[str] = []
+    cause: BaseException | None = exc
+    while cause is not None and len(causes) < 4:
+        causes.append(type(cause).__name__)
+        cause = cause.__cause__ or cause.__context__
+    logger.warning("Media URL %s could not be downloaded: %s (%s)", shown, reason, " <- ".join(causes))

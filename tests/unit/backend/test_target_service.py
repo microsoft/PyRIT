@@ -6,10 +6,12 @@ Tests for backend target service.
 """
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import pyrit.backend.services.target_service as target_service_module
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
@@ -406,25 +408,57 @@ class TestCreateTarget:
             await service.create_target_async(request=request)
 
     @pytest.mark.parametrize(
-        ("target_type", "params"),
+        ("target_type", "params", "upload_directory", "error"),
         [
-            ("HTTPXAPITarget", {"http_url": "http://localhost:8080/upload"}),
-            ("HuggingFaceChatTarget", {"model_id": "example/model"}),
+            ("HuggingFaceChatTarget", {"model_id": "example/model"}, None, "loads model code"),
+            ("HTTPXAPITarget", {"http_url": "http://localhost:8080/upload"}, None, "target_upload_directory"),
+            (
+                "HTTPXAPITarget",
+                {"http_url": "http://localhost:8080/upload", "allowed_upload_directory": "/"},
+                "configured",
+                "'allowed_upload_directory' of 'HTTPXAPITarget' names a path on this server",
+            ),
+            (
+                "GitHubCopilotTarget",
+                {"model_name": "gpt-5", "working_directory": "/"},
+                None,
+                "'working_directory' of 'GitHubCopilotTarget' names a path on this server",
+            ),
         ],
     )
-    async def test_create_target_rejects_types_using_host_resources(
-        self, sqlite_instance, target_type: str, params: dict[str, str]
+    async def test_create_target_rejects_server_resources(
+        self,
+        sqlite_instance,
+        tmp_path: Path,
+        target_type: str,
+        params: dict[str, str],
+        upload_directory: str | None,
+        error: str,
     ) -> None:
         service = TargetService()
         request = CreateTargetRequest(name="host-target", type=target_type, params=params)
+        configured_directory = str(tmp_path) if upload_directory else None
 
         with (
-            patch.object(service._registry, "create_named_instance") as create,
-            pytest.raises(ValueError, match="cannot be created through the API"),
+            patch.object(target_service_module, "_target_upload_directory", configured_directory),
+            patch.object(service._registry, "create_instance") as create,
+            pytest.raises(ValueError, match=error),
         ):
             await service.create_target_async(request=request)
 
         create.assert_not_called()
+
+    async def test_create_upload_target_uses_the_configured_directory(self, sqlite_instance, tmp_path: Path) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            name="uploader", type="HTTPXAPITarget", params={"http_url": "http://localhost:8080/upload"}
+        )
+
+        with patch.object(target_service_module, "_target_upload_directory", str(tmp_path)):
+            await service.create_target_async(request=request)
+
+        target = service.get_target_object(target_registry_name="uploader")
+        assert target.allowed_upload_directory == tmp_path.resolve()
 
     async def test_create_target_success(self, sqlite_instance) -> None:
         """Test successful target creation."""
