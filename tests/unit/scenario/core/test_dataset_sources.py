@@ -3,7 +3,6 @@
 
 """Named selection, explicit preparation, and durable storage contracts."""
 
-from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -172,36 +171,47 @@ def test_inline_source_caps_raise_on_construction_and_override(
     assert config.with_overrides(max_total="all").max_total == "all"
 
 
-def test_total_only_source_caps_raise_but_explicit_all_is_unlimited() -> None:
-    config = DatasetAttackConfiguration(
-        sources=[DatasetSource(name="ingredient", max_size="all")], sampling_scope="total_only"
-    )
-    with pytest.raises(DatasetConstraintError, match="Total-only.*max_total"):
-        DatasetAttackConfiguration(sources=[DatasetSource(name="ingredient", max_size=2)], sampling_scope="total_only")
-    with pytest.raises(DatasetConstraintError, match="Total-only.*max_total"):
-        config.with_overrides(max_per_dataset=2)
-    assert config.source_limit("ingredient") == "all"
-
-
-@pytest.mark.parametrize(("scope", "expected"), [("per_dataset", 10), ("total_only", 17)])
-async def test_sampling_scope_controls_default_caps_async(
-    *, memory: MagicMock, scope: Literal["per_dataset", "total_only"], expected: int
+@pytest.mark.parametrize(("per_dataset", "expected"), [("default", 10), ("all", 17)])
+async def test_explicit_source_limits_control_selection_async(
+    *, memory: MagicMock, per_dataset: DatasetLimit, expected: int
 ) -> None:
     config = DatasetAttackConfiguration(
-        sources=[DatasetSource(name="a"), DatasetSource(name="b")], sampling_scope=scope, max_total=17
+        sources=[DatasetSource(name="a"), DatasetSource(name="b")], max_per_dataset=per_dataset, max_total=17
     )
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         assert len(await config.get_attack_seed_groups_async()) == expected
     assert config.get_size_budget() == BoundedDatasetSize(value=expected)
     changed = config.with_overrides(max_total=3)
-    assert changed.sampling_scope == scope
+    assert changed.max_per_dataset == config.max_per_dataset
     assert config.max_total == 17
     assert changed.get_size_budget() == BoundedDatasetSize(value=3)
 
 
-def test_invalid_sampling_scope_raises() -> None:
-    with pytest.raises(DatasetConstraintError, match="sampling_scope"):
-        DatasetAttackConfiguration(sampling_scope="invalid")  # type: ignore[arg-type]
+@pytest.mark.parametrize("compound", [False, True])
+async def test_total_sampling_keeps_empty_source_keys_async(*, memory: MagicMock, compound: bool) -> None:
+    sources = [DatasetSource(name="a"), DatasetSource(name="b")]
+    config = (
+        CompoundDatasetAttackConfiguration(
+            configurations=[DatasetAttackConfiguration(sources=[source]) for source in sources],
+            max_total=1,
+        )
+        if compound
+        else DatasetAttackConfiguration(sources=sources, max_total=1)
+    )
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        groups = await config.get_attack_groups_by_dataset_async()
+    assert list(groups) == ["a", "b"]
+    assert sorted(map(len, groups.values())) == [0, 1]
+
+
+async def test_all_empty_groups_raise_with_retained_keys_async(memory: MagicMock) -> None:
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="a")])
+    with (
+        patch.object(CentralMemory, "get_memory_instance", return_value=memory),
+        patch.object(config, "_build_attack_groups", return_value=[]),
+        pytest.raises(DatasetConstraintError, match="attack-group dataset is empty"),
+    ):
+        await config.get_attack_groups_by_dataset_async()
 
 
 @pytest.mark.parametrize("default", [None, "", "default"])

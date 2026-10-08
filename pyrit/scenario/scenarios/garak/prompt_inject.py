@@ -25,9 +25,9 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
 )
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.scenarios.garak._prompt_injection import sample_with_coverage
 from pyrit.score import (
     SubStringScorer,
     TrueFalseCompositeScorer,
@@ -62,7 +62,6 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         self,
         *,
         goal_texts: Sequence[str] | None = None,
-        sampling_scope: Literal["total_only"] = "total_only",
         **kwargs: Any,
     ) -> None:
         """
@@ -70,21 +69,20 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
 
         Args:
             goal_texts (Sequence[str] | None): Text that the target is asked to return.
-            sampling_scope (Literal["total_only"]): Sample assembled groups, not ingredient rows.
             **kwargs (Any): Arguments for ``DatasetAttackConfiguration``.
 
         Raises:
             ValueError: If goal texts are empty or duplicated.
-            DatasetConstraintError: If sampling_scope is not total_only.
         """
-        if sampling_scope != "total_only":
-            raise DatasetConstraintError("PromptInject requires total_only sampling.")
-        super().__init__(sampling_scope=sampling_scope, **kwargs)
+        super().__init__(**kwargs)
         goal_texts = _DEFAULT_GOAL_TEXTS if goal_texts is None else goal_texts
         self._set_goal_texts(goal_texts=goal_texts)
 
     def _default_max_total(self) -> int:
         return self.DEFAULT_MAX_DATASET_SIZE
+
+    def _default_max_per_dataset(self) -> Literal["all"]:
+        return "all"
 
     def _set_goal_texts(self, *, goal_texts: Sequence[str]) -> None:
         """
@@ -125,7 +123,7 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             groups_by_dataset=groups_by_dataset,
             cap=self.max_total,
             required_keys=self._goal_texts,
-            key=lambda group: (group.objective.metadata or {})["goal_text"],
+            key=lambda _, group: (group.objective.metadata or {})["goal_text"],
         )
 
     def validate_configuration(self) -> None:
@@ -136,6 +134,8 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             DatasetConstraintError: If the sources are unsupported or the cap cannot cover all goals.
         """
         super().validate_configuration()
+        if any(self.source_limit(source.name) != "all" for source in self.sources):
+            raise DatasetConstraintError("PromptInject ingredient sources must be uncapped; use max_total.")
         if not self.dataset_names:
             raise DatasetConstraintError(
                 "PromptInject requires the prompt_inject_contexts dataset; inline seeds are not supported."

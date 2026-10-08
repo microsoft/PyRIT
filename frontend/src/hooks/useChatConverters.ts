@@ -377,16 +377,24 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     restoredText: string,
     restoredAttachments: MessageAttachment[],
     conversions: Record<string, PieceConversion>,
+    pipelines?: Record<string, ConverterPipelineStage[]>,
   ): void => {
     activeRun.current = null
-    const restoredPipelines: Record<string, ConverterPipelineStage[]> = {}
-    for (const conversion of Object.values(conversions)) {
-      restoredPipelines[conversion.pieceType] = conversion.converterInstanceIds.map((converterId: string) => ({
-        id: generateClientId(), converterId,
-      }))
+    const restoredPipelines: Record<string, ConverterPipelineStage[]> = { ...pipelines }
+    if (!pipelines) {
+      for (const conversion of Object.values(conversions)) {
+        restoredPipelines[conversion.pieceType] = conversion.converterInstanceIds.map((converterId: string) => ({
+          id: generateClientId(), converterId,
+        }))
+      }
     }
     setState((current: ConversionState) => {
       let next = reconcileInputs(current, buildConverterInputs(restoredText, restoredAttachments))
+      if (pipelines) {
+        for (const pieceType of Object.keys(next.pipelines)) {
+          if (!restoredPipelines[pieceType]) next = changePipeline(next, pieceType, [])
+        }
+      }
       for (const [pieceType, stages] of Object.entries(restoredPipelines)) {
         const previous = next.pipelines[pieceType] ?? []
         if (previous.length !== stages.length || previous.some(

@@ -31,6 +31,7 @@ from pyrit.scenario.core import (
     AtomicAttack,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetSource,
     Scenario,
     ScenarioTechnique,
 )
@@ -225,13 +226,24 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
     "configuration_class",
     [ApiKeyDatasetConfiguration, PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
 )
-def test_ingredient_configurations_accept_explicit_sampling_scope(
+def test_ingredient_configurations_require_uncapped_sources(
     configuration_class: type[DatasetAttackConfiguration],
 ) -> None:
-    config = configuration_class(sampling_scope="total_only")
+    scenario_class = {
+        ApiKeyDatasetConfiguration: ApiKey,
+        PromptInjectDatasetConfiguration: PromptInject,
+        LatentInjectionDatasetConfiguration: LatentInjection,
+    }[configuration_class]
+    config = configuration_class(sources=[DatasetSource(name=name) for name in scenario_class.required_datasets()])
     assert config.max_per_dataset == "all"
-    with pytest.raises(ValueError, match="requires total_only"):
-        configuration_class(sampling_scope="per_dataset")
+    for limit in (None, "default", "all"):
+        config.with_overrides(max_per_dataset=limit).validate_configuration()
+    with pytest.raises(ValueError, match="ingredient sources must be uncapped"):
+        config.with_overrides(max_per_dataset=2).validate_configuration()
+    with pytest.raises(ValueError, match="ingredient sources must be uncapped"):
+        config.with_overrides(
+            sources=[DatasetSource(name=name, max_size=2) for name in config.dataset_names]
+        ).validate_configuration()
 
 
 @pytest.mark.usefixtures("patch_central_database")

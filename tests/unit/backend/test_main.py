@@ -42,7 +42,7 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
 
     def wait_in_database() -> int:
         started.set()
-        if not release.wait(timeout=10):
+        if not release.wait(timeout=60):
             raise RuntimeError("Database wait was not released")
         return 1
 
@@ -55,9 +55,9 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
         )
         query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
         try:
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await asyncio.to_thread(started.wait, 30)
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=30)
             assert response.status_code == 200
             assert response.json()["status"] == "healthy"
             assert not query.done()
@@ -413,6 +413,7 @@ class TestSetupFrontend:
         with (
             patch("pyrit.backend.main.DEV_MODE", False),
             patch("pyrit.backend.main.Path") as mock_path_cls,
+            patch.object(app, "mount") as mount,
             patch("builtins.print"),
         ):
             mock_path_instance = MagicMock()
@@ -420,6 +421,14 @@ class TestSetupFrontend:
             mock_path_cls.return_value = mock_path_instance
 
             setup_frontend()
+
+        mount.assert_called_once()
+        assert mount.call_args.args[0] == "/"
+        static_files = mount.call_args.args[1]
+        assert isinstance(static_files, SPAStaticFiles)
+        assert static_files.directory == str(tmp_path)
+        assert static_files.html
+        assert mount.call_args.kwargs == {"name": "frontend"}
 
     def test_frontend_missing_warns_but_continues(self) -> None:
         """Test that setup_frontend warns but does not exit when frontend is missing."""

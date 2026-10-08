@@ -198,9 +198,9 @@ class TestLatentDefaults:
 class TestLatentPopulation:
     async def test_budget_coverage_and_full_resolution_async(self) -> None:
         config = _config(families=["whois", "resume"], max_dataset_size=4)
-        with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(3)):
+        with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(3)):
             flat = await config.get_attack_seed_groups_async()
-        with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(3)):
+        with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(3)):
             grouped = await config.get_attack_groups_by_dataset_async()
         assert [group.logical_id for group in flat] == [
             group.logical_id for groups in grouped.values() for group in groups

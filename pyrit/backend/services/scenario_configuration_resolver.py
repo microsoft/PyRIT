@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models.dataset_limit import DatasetLimit, normalize_dataset_limit
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import DatasetSource
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
@@ -147,8 +148,6 @@ class ScenarioConfigurationResolver:
                 resolved["technique_converters"] = technique_converters
 
         if dataset_names or has_total_override or filters:
-            from pyrit.scenario import DatasetSource
-
             default_config = introspection_instance._default_dataset_config
             config = default_config.with_overrides(filters=filters)
             if dataset_names:

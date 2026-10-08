@@ -112,6 +112,51 @@ Type a message and press Enter (or click Send) to send it to the chat target. Th
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
+#### Repeating a Message
+
+Use **n=1** beside Send to choose **1 to 10** repetitions. Enter and Send use the
+same settings, and the count resets to 1 after submission. Count 1 keeps the
+ordinary chat behavior.
+
+For count `n`, CoPyRIT keeps the selected conversation and creates exactly `n-1`
+copies of its history before sending the next message once in each. All copies
+belong to the same attack. Repeating again branches only the selected conversation:
+five conversations followed by three repetitions from one of them produces seven,
+not fifteen. Historical messages keep their original-piece lineage and are not
+converted again.
+
+**Convert once, reuse for all** is the default request-converter mode.
+For single sends and shared repeats in the GUI, use **Add converted value** to apply
+conversions before sending. Selected but unapplied pipelines are not run.
+**Convert independently for each** runs selected but unapplied request pipelines
+separately on each conversation's original inputs when the count is greater than 1.
+An explicitly applied preview, including manual edits, is reused exactly
+in either mode. Converter order, repeated stages, and original/converted values
+are preserved. API response converters always run independently per conversation.
+
+Compact progress links open each conversation in the ordinary chat and sidebar.
+A completed conversation can continue while its siblings are still sending.
+One failure does not undo successful siblings. A known preparation failure offers
+**Restore prompt**; a stored processing error offers the existing clean-conversation
+recovery. Review the restored draft and converter choices before submitting again.
+
+Progress is transient, not a durable delivery receipt. If progress or saved-message
+reads fail, use **Refresh progress** or **Refresh saved messages**. These retry reads
+only, never the send. Interrupted sends and missing/expired handles can leave
+provider delivery unknown. Inspect saved conversations before deciding to send again.
+
+API clients use the existing `POST /api/attacks/{id}/message-sends` endpoint with
+`count` (a strict integer, default `1`) and `request_converter_mode` (`shared`,
+the default, or `per_branch`). API clients can supply `request_converter_configurations`
+in either mode: `shared` converts once and reuses the result, while `per_branch`
+converts independently. Custom `start_token` and `end_token` conversion markers
+are honored in both modes. Status retains the selected `conversation_id` and
+`request_turn_number`; repeated sends also return `conversations` with individual
+states and explicit failure stages after history copies commit atomically.
+All conversations consume the shared admission budget, so a request is rejected
+without creating copies if there is insufficient capacity. The synchronous
+messages endpoint and `send=false` context storage are unchanged.
+
 #### Editing Converter Pipelines
 
 Open **Converters** and use the picker above the working input to add registered

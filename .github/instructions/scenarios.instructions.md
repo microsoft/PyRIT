@@ -120,11 +120,27 @@ Resolve parameter-dependent source names before preparation, not during seed rea
 ### Basic — named datasets:
 ```python
 DatasetAttackConfiguration(
-    sources=[DatasetSource(name="airt_hate"), DatasetSource(name="airt_violence")],
+    sources=[
+        DatasetSource(name="harmbench"),
+        DatasetSource(name="airt_hate", max_size=10),
+        DatasetSource(name="team_objectives", max_size="all"),
+    ],
     max_per_dataset=5,
-    max_total=10,
+    max_total=12,
 )
 ```
+
+With filtered populations of 100, 40, and 7 groups, selection has two steps:
+
+| Dataset | Full population | After source cap |
+| --- | --- | --- |
+| `harmbench` | 100 | 5 (inherits `max_per_dataset`) |
+| `airt_hate` | 40 | 10 (explicit `max_size`) |
+| `team_objectives` | 7 | 7 (`"all"` removes the source cap) |
+
+The total cap then samples 12 groups from these 22 groups. The split can be 3, 6,
+and 3, for example; it is not balanced or guaranteed to cover every dataset.
+A dataset with no selected groups keeps its key with an empty list.
 
 ### Advanced — custom subclass for filtering:
 ```python
@@ -144,8 +160,8 @@ Options:
   `NEVER` requires stored data. A filter miss must never fetch.
 - `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
 - Validators run on full filtered populations before any sampling.
-- Ingredients must remain complete. Use `sampling_scope="total_only"` on their
-  dataset configuration; cap the combined attack groups, not each ingredient dataset.
+- Ingredients must remain complete. Use `max_per_dataset="all"` and no finite source
+  `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.
 - Use `with_overrides()` instead of reconstructing a subclass or mutating its defaults.
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.

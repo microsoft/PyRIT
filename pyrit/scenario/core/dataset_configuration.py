@@ -33,7 +33,6 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
 
-from pyrit.common import forward_init_parameters
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -792,52 +791,12 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
 
-    @forward_init_parameters
-    def __init__(
-        self,
-        *,
-        sampling_scope: Literal["per_dataset", "total_only"] = "per_dataset",
-        **kwargs: Any,
-    ) -> None:
-        """
-        Configure scenario attack groups with a finite default selection cap.
-
-        Args:
-            sampling_scope (Literal["per_dataset", "total_only"]): Apply per-dataset caps before the total cap,
-                or cap only the combined attack groups. Use total_only for complete ingredient populations.
-            **kwargs (Any): Dataset source, limits, filters, and validation options. Default limits are
-                5 per named objective source, or 5 total for inline groups. Use "all" to remove a limit.
-        """
-        self.sampling_scope = sampling_scope
-        super().__init__(**kwargs)
-
     def _default_max_total(self) -> ResolvedDatasetLimit:
         return 5 if self._seeds is not None or self._seed_groups is not None else "all"
 
     def _default_max_per_dataset(self) -> ResolvedDatasetLimit:
         inline = self._seeds is not None or self._seed_groups is not None
-        return 5 if self.sampling_scope == "per_dataset" and not inline else "all"
-
-    def _validate_selection_options(self) -> None:
-        """
-        Validate limits against the configured sampling scope without reading datasets.
-
-        Raises:
-            DatasetConstraintError: If the sampling scope is invalid or conflicts with per-dataset limits.
-        """
-        super()._validate_selection_options()
-        if self.sampling_scope not in ("per_dataset", "total_only"):
-            raise DatasetConstraintError("'sampling_scope' must be 'per_dataset' or 'total_only'.")
-        if self.sampling_scope == "total_only" and (
-            self.max_per_dataset != "all" or any(self.source_limit(source.name) != "all" for source in self.sources)
-        ):
-            raise DatasetConstraintError("Total-only sampling does not support per-dataset limits; use max_total.")
-
-    def get_size_budget(self) -> ScenarioDatasetSizeEstimate:
-        """Return the selection budget, excluding ingredient row counts."""
-        if self.sampling_scope == "total_only":
-            return scenario_dataset_size_from_limit(self.max_total)
-        return super().get_size_budget()
+        return 5 if not inline else "all"
 
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
@@ -935,7 +894,8 @@ class DatasetAttackConfiguration(DatasetConfiguration):
 
         Inline configs resolve under the ``INLINE_DATASET_NAME`` label. Validate the
         full seed set, apply source limits, then apply ``max_total`` to the union.
-        Survivors retain their source association.
+        Survivors retain their source association. A source with no selected groups
+        keeps its key with an empty list.
 
         Args:
             apply_sampling (bool): When True (default), apply source and total sampling.
@@ -953,11 +913,10 @@ class DatasetAttackConfiguration(DatasetConfiguration):
         """
         selection = await self._resolve_attack_groups_async()
         sampled = selection.select(apply_sampling=apply_sampling)
-        result = {name: groups for name, groups in sampled.items() if groups}
-        if not result:
+        if not any(sampled.values()):
             names = ", ".join(self.dataset_names) if self.dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
-        return result
+        return sampled
 
     async def _resolve_attack_groups_async(self) -> _ResolvedAttackGroups:
         self.validate_configuration()
@@ -981,14 +940,14 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             dict[str, list[AttackSeedGroup]]: The globally sampled groups, still keyed by dataset.
         """
         limited = groups_by_dataset
-        if self.sampling_scope == "per_dataset" and self.sources:
+        if any(self.source_limit(source.name) != "all" for source in self.sources):
             limited = {
                 name: self._sample_source_groups(name=name, groups=groups) for name, groups in groups_by_dataset.items()
             }
         pairs = [(name, group) for name, groups in limited.items() for group in groups]
-        result: dict[str, list[AttackSeedGroup]] = {}
+        result: dict[str, list[AttackSeedGroup]] = {name: [] for name in limited}
         for name, group in self._apply_max_dataset_size(pairs):
-            result.setdefault(name, []).append(group)
+            result[name].append(group)
         return result
 
     def _sample_source_groups(self, *, name: str, groups: list[AttackSeedGroup]) -> list[AttackSeedGroup]:

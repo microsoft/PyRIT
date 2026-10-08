@@ -84,22 +84,20 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
     DEFAULT_MAX_DATASET_SIZE: ClassVar[int] = 20
 
     @forward_init_parameters
-    def __init__(self, *, sampling_scope: Literal["total_only"] = "total_only", **kwargs: Any) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the configuration.
 
         Args:
-            sampling_scope (Literal["total_only"]): Sample assembled groups, not ingredient rows.
             **kwargs (Any): Arguments for ``DatasetAttackConfiguration``.
 
-        Raises:
-            DatasetConstraintError: If sampling_scope is not total_only.
         """
-        if sampling_scope != "total_only":
-            raise DatasetConstraintError("ApiKey requires total_only sampling.")
-        super().__init__(sampling_scope=sampling_scope, **kwargs)
+        super().__init__(**kwargs)
         self._techniques: list[ApiKeyTechnique] = [ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey]
         self.excluded_values: tuple[str, ...] = ()
+
+    def _default_max_per_dataset(self) -> Literal["all"]:
+        return "all"
 
     def _set_techniques(self, techniques: Sequence[ApiKeyTechnique]) -> None:
         """Set the techniques whose populations are sampled."""
@@ -127,6 +125,8 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
             DatasetConstraintError: If the required corpus datasets are not selected.
         """
         super().validate_configuration()
+        if any(self.source_limit(source.name) != "all" for source in self.sources):
+            raise DatasetConstraintError("ApiKey ingredient sources must be uncapped; use max_total.")
         if set(self.dataset_names) != set(_CORPUS_DATASETS):
             raise DatasetConstraintError(
                 f"ApiKey requires exactly these datasets: {list(_CORPUS_DATASETS)}; inline seeds are not supported."
@@ -316,6 +316,8 @@ class ApiKey(Scenario):
         """
         attacks: list[AtomicAttack] = []
         for technique_name, seed_groups in context.seed_groups_by_dataset.items():
+            if not seed_groups:
+                continue
             converters = self._technique_converters.get(technique_name, [])
             converter_config = (
                 AttackConverterConfig(

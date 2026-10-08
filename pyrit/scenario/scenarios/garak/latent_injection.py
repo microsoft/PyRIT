@@ -27,9 +27,9 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetSource,
     ResolvedDataset,
 )
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.scenarios.garak._prompt_injection import sample_with_coverage
 from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator, TrueFalseScorer
 
 if TYPE_CHECKING:
@@ -105,7 +105,6 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
         self,
         *,
         families: Sequence[str] | None = None,
-        sampling_scope: Literal["total_only"] = "total_only",
         **kwargs: Any,
     ) -> None:
         """
@@ -113,20 +112,18 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
 
         Args:
             families (Sequence[str] | None): Selected families, excluding latent jailbreak by default.
-            sampling_scope (Literal["total_only"]): Sample assembled groups, not ingredient rows.
             **kwargs (Any): Standard dataset settings. An explicit uncapped configuration uses all groups.
 
-        Raises:
-            DatasetConstraintError: If sampling_scope is not total_only.
         """
-        if sampling_scope != "total_only":
-            raise DatasetConstraintError("LatentInjection requires total_only sampling.")
-        super().__init__(sampling_scope=sampling_scope, **kwargs)
+        super().__init__(**kwargs)
         self._set_families(families=self.DEFAULT_FAMILIES if families is None else families)
         self.coverage_keys: list[tuple[str, str]] = []
 
     def _default_max_total(self) -> int:
         return self.DEFAULT_MAX_DATASET_SIZE
+
+    def _default_max_per_dataset(self) -> Literal["all"]:
+        return "all"
 
     @property
     def families(self) -> list[str]:
@@ -156,6 +153,8 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
             DatasetConstraintError: If the required ingredient datasets are not selected.
         """
         super().validate_configuration()
+        if any(self.source_limit(source.name) != "all" for source in self.sources):
+            raise DatasetConstraintError("LatentInjection ingredient sources must be uncapped; use max_total.")
         if set(self.dataset_names) != set(LatentInjection.required_datasets()):
             raise DatasetConstraintError(
                 "LatentInjection requires exactly its five ingredient datasets; inline seeds are not supported."
@@ -302,7 +301,7 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
             groups_by_dataset=groups_by_dataset,
             cap=self.max_total,
             required_keys=self.coverage_keys,
-            key=self._coverage_key,
+            key=lambda _, group: self._coverage_key(group),
         )
 
     @staticmethod

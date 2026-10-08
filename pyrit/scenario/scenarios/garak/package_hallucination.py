@@ -191,7 +191,7 @@ class PackageHallucination(Scenario):
             # Preload only the Rust registry and prompt corpus. Other registries are fetched
             # on demand when their techniques are selected.
             default_dataset_config=DatasetAttackConfiguration(
-                sampling_scope="total_only",
+                max_per_dataset="all",
                 sources=[
                     DatasetSource(name=name) for name in [_LANGUAGE_SPECS["rust"].dataset_name, *_CORPUS_DATASETS]
                 ],

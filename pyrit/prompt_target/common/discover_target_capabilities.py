@@ -42,7 +42,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -125,7 +125,7 @@ def _permissive_configuration(
     *,
     target: PromptTarget,
     extra_input_modalities: Iterable[frozenset[PromptDataType]] | None = None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """
     Temporarily replace ``target``'s configuration with one that declares every
     boolean capability as natively supported.
@@ -177,7 +177,7 @@ def _permissive_configuration(
 
 
 @contextmanager
-def _disable_probe_tools(*, target: PromptTarget) -> Iterator[None]:
+def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]:
     """Disable configured tools during probes and restore all settings on exit."""
     from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget

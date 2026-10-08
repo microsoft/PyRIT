@@ -43,6 +43,7 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from pyrit.models import AttackSeedGroup
@@ -253,6 +254,10 @@ class AdversarialBenchmark(Scenario):
         )
         self._constructor_use_cached: bool = use_cached
         self._precomputed_cached_results: dict[str, list[AttackResult]] = {}
+        # Per atomic attack, the one seed group each cached result stands in for, keyed by objective hash.
+        # The run plan lists exactly these and the cached copies are attributed to them, so every planned
+        # cached unit has a result.
+        self._cached_seed_groups: dict[str, dict[str, AttackSeedGroup]] = {}
         self._cached_results_by_name: dict[str, list[AttackResult]] = {}
 
         technique_class = _build_benchmark_technique()
@@ -705,11 +710,20 @@ class AdversarialBenchmark(Scenario):
             atomic_attacks: Candidate attacks whose seed groups may be pruned.
         """
         self._precomputed_cached_results = {}
+        self._cached_seed_groups = {}
         reusable = await self._collect_reusable_cached_results_async(atomic_attacks=atomic_attacks)
         for attack in atomic_attacks:
             prior_results = reusable.get(attack.atomic_attack_name, [])
             if not prior_results:
                 continue
+            representatives: dict[str, AttackSeedGroup] = {}
+            for seed_group in attack.seed_groups:
+                representatives.setdefault(to_sha256(seed_group.objective.value), seed_group)
+            self._cached_seed_groups[attack.atomic_attack_name] = {
+                objective_hash: representatives[objective_hash]
+                for objective_hash in (to_sha256(result.objective) for result in prior_results)
+                if objective_hash in representatives
+            }
             attack.drop_seed_groups_with_hashes(hashes={to_sha256(result.objective) for result in prior_results})
             self._precomputed_cached_results[attack.atomic_attack_name] = prior_results
 
@@ -847,6 +861,19 @@ class AdversarialBenchmark(Scenario):
             scorer_identifier = attack_identifier.get_child("objective_scorer") if attack_identifier else None
         return ScorerEvaluationIdentifier(scorer_identifier).eval_hash if scorer_identifier else None
 
+    def _get_planned_seed_groups(self, *, atomic_attack: AtomicAttack) -> Sequence[AttackSeedGroup]:
+        """
+        Keep cached objectives in the run plan, so their copied results count as planned units.
+
+        Args:
+            atomic_attack (AtomicAttack): The initialized atomic attack.
+
+        Returns:
+            Sequence[AttackSeedGroup]: The seed groups still to execute, then one seed group per cached result.
+        """
+        cached = self._cached_seed_groups.get(atomic_attack.atomic_attack_name, {})
+        return [*atomic_attack.seed_groups, *cached.values()]
+
     async def _persist_precomputed_cached_results_async(self) -> None:
         """
         Copy reusable results into the current scenario result.
@@ -859,11 +886,21 @@ class AdversarialBenchmark(Scenario):
         if not self._scenario_result_id:
             raise ValueError("Cannot persist cached results before the scenario result is initialized.")
 
+        attacks_by_name = {attack.atomic_attack_name: attack for attack in self._atomic_attacks}
         copies: list[AttackResult] = []
         for attack_name, results in self._precomputed_cached_results.items():
+            # Attribute each copy to the planned unit it satisfies, so every reader counts it
+            # the same way no matter how the original row was attributed.
+            cached_seed_groups = self._cached_seed_groups.get(attack_name, {})
+            attack = attacks_by_name.get(attack_name)
             for result in results:
                 attribution_data = dict(result.attribution_data or {})
                 attribution_data["parent_collection"] = attack_name
+                if attack is not None:
+                    attribution_data["parent_eval_hash"] = attack.technique_eval_hash
+                cached_seed_group = cached_seed_groups.get(to_sha256(result.objective))
+                if cached_seed_group is not None:
+                    attribution_data["seed_group_id"] = cached_seed_group.logical_id
                 metadata = dict(result.metadata)
                 metadata.setdefault("cached_from_attack_result_id", result.attack_result_id)
                 copies.append(

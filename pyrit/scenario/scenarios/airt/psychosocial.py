@@ -32,6 +32,7 @@ from pyrit.executor.attack import (
     CrescendoAttack,
 )
 from pyrit.models import (
+    AttackSeedGroup,
     BoundedDatasetSize,
     ScenarioDatasetSizeEstimate,
     ScenarioRunSizeComponent,
@@ -48,6 +49,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
 )
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
@@ -361,10 +363,11 @@ class Psychosocial(Scenario):
     is emitted (toggle with ``include_baseline``).
 
     Dataset selection is bound to the selected sub-harms. Source caps apply independently,
-    then ``max_total`` caps the combined population. Unrelated dataset names are rejected.
+    then ``max_total`` caps the combined population while keeping every selected sub-harm.
+    The total must cover each selected sub-harm. Unrelated dataset names are rejected.
     """
 
-    VERSION: int = 5
+    VERSION: int = 6
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -487,6 +490,37 @@ class Psychosocial(Scenario):
             ]
         )
         super()._validate_runtime_configuration()
+        cap = self._dataset_config.max_total
+        if cap != "all" and cap < len(self._selected_sub_harms()):
+            raise DatasetConstraintError(
+                f"Psychosocial max_total ({cap}) must cover every selected sub-harm "
+                f"({len(self._selected_sub_harms())}); use max_per_dataset=1 for one objective per sub-harm."
+            )
+
+    async def _resolve_seed_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Apply source caps, then sample the total while keeping every selected sub-harm.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: Selected groups keyed by sub-harm dataset.
+        """
+        populations = await super()._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        if not apply_sampling:
+            return populations
+        selected = {
+            harm.dataset_name: self._dataset_config._sample_source_groups(
+                name=harm.dataset_name, groups=populations.get(harm.dataset_name, [])
+            )
+            for harm in self._selected_sub_harms()
+        }
+        return sample_with_coverage(
+            groups_by_dataset=selected,
+            cap=self._dataset_config.max_total,
+            required_keys=list(selected),
+            key=lambda name, _: name,
+        )
 
     def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """
@@ -550,7 +584,7 @@ class Psychosocial(Scenario):
             per-sub-harm baselines prepended when enabled.
 
         Raises:
-            ValueError: If no seed groups were loaded for any selected sub-harm.
+            ValueError: If a selected sub-harm has no seed groups.
         """
         # Resolved lazily so a no-arg ``Psychosocial()`` works for registry metadata introspection.
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
@@ -560,7 +594,7 @@ class Psychosocial(Scenario):
         max_turns = int(self.params.get("max_turns", 5))
         seed_groups_by_dataset = context.seed_groups_by_dataset
 
-        if not any(seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
+        if all(not seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
             harm_names = ", ".join(f"'{harm.dataset_name}'" for harm in sub_harms)
             raise ValueError(
                 "No seed groups were loaded for any selected psychosocial sub-harm. Ensure the "
@@ -572,8 +606,7 @@ class Psychosocial(Scenario):
         for harm in sub_harms:
             seed_groups = seed_groups_by_dataset.get(harm.dataset_name)
             if not seed_groups:
-                logger.warning(f"No seed groups loaded for dataset '{harm.dataset_name}'; skipping sub-harm.")
-                continue
+                raise ValueError(f"No seed groups loaded for selected sub-harm dataset '{harm.dataset_name}'.")
 
             scorer = self._scorers_by_harm[harm.name]
             scoring_config = AttackScoringConfig(objective_scorer=scorer)
