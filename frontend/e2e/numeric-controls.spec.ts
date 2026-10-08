@@ -51,11 +51,23 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         pagination: { limit: 200, has_more: false },
       },
       '/api/targets/types': {
-        items: ['AzureMLChatTarget', 'RoundRobinTarget'].map((targetType) => ({
-          target_type: targetType,
-          parameters: [],
-          supported_auth_modes: ['api_key'],
-        })),
+        items: [
+          {
+            target_type: 'AzureMLChatTarget',
+            parameters: [
+              { name: 'max_new_tokens', type_name: 'int', required: false, default: '400' },
+              { name: 'temperature', type_name: 'float', required: false, default: '1.0' },
+              { name: 'top_p', type_name: 'float', required: false, default: '1.0' },
+              { name: 'repetition_penalty', type_name: 'float', required: false, default: '1.0' },
+            ],
+            supported_auth_modes: ['api_key'],
+          },
+          {
+            target_type: 'RoundRobinTarget',
+            parameters: [],
+            supported_auth_modes: ['api_key'],
+          },
+        ],
       },
       '/api/labels': { source: 'attacks', labels: {} },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
@@ -79,8 +91,8 @@ async function clickNativeSpinner(input: Locator, direction: 'up' | 'down'): Pro
   if (!box) throw new Error('Expected a visible numeric input.')
   const paddingRight = await input.evaluate((element) => parseFloat(getComputedStyle(element).paddingRight))
   // Chromium's native spinner is a UA shadow control, not an accessible button.
+  // Native spinners auto-repeat when held, so a single-step check must not hold the mouse down.
   await input.click({
-    delay: 200,
     position: { x: box.width - paddingRight - 8, y: box.height / 2 + (direction === 'up' ? -4 : 4) },
   })
 }
@@ -169,22 +181,29 @@ test('native scenario dataset and shared dynamic parameter controls step once', 
   await expect(datasetSize).toHaveValue('')
 })
 
-test('native Azure ML numeric controls retain their configured steps and reset defaults', async ({ page }) => {
+test('native Azure ML advanced controls retain steps and reset to default guidance', async ({ page }) => {
   await page.goto('/registry/targets')
   await page.getByRole('button', { name: /new target/i }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('combobox', { name: 'Target Type' }).click()
   await page.getByRole('option', { name: /Implementation: AzureMLChatTarget/ }).click()
+  await dialog.getByText('Advanced settings').click()
 
   for (const [label, initial] of [['Max New Tokens', 400], ['Temperature', 1], ['Top P', 1], ['Repetition Penalty', 1]] as const) {
-    await expectNativeSteps(dialog.getByRole('spinbutton', { name: label, exact: true }), initial)
+    const input = dialog.getByRole('spinbutton', { name: label, exact: true })
+    await expect(input).toHaveValue('')
+    await expect(input).toHaveAttribute('placeholder', `Defaults to ${initial === 1 ? '1.0' : initial}`)
+    await expectNativeSteps(input, initial)
   }
   await dialog.getByRole('spinbutton', { name: 'Temperature', exact: true }).fill('0.7')
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.getByRole('button', { name: /new target/i }).click()
   await dialog.getByRole('combobox', { name: 'Target Type' }).click()
   await page.getByRole('option', { name: /Implementation: AzureMLChatTarget/ }).click()
-  await expect(dialog.getByRole('spinbutton', { name: 'Temperature', exact: true })).toHaveValue('1.0')
+  await dialog.getByText('Advanced settings').click()
+  const resetTemperature = dialog.getByRole('spinbutton', { name: 'Temperature', exact: true })
+  await expect(resetTemperature).toHaveValue('')
+  await expect(resetTemperature).toHaveAttribute('placeholder', 'Defaults to 1.0')
 })
 
 test('native round-robin weights step once and preserve bounds and integer validation', async ({ page }) => {
