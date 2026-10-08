@@ -171,3 +171,21 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching()  # Default threshold=0.5, n=3, case_sensitive=False
         # Should work with defaults
         assert matcher.is_match(target="hello", text="hello world") is True
+
+
+class TestApproximateTextMatchingNValidation:
+    @pytest.mark.parametrize("n", [0, -1, -5])
+    def test_init_rejects_non_positive_n(self, n):
+        # n=0 makes the only n-gram the empty string, which every text contains, so the
+        # overlap is 1.0 for completely unrelated text. Reject rather than score garbage.
+        with pytest.raises(ValueError, match="n must be a positive integer"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [True, 2.5, "3", None])
+    def test_init_rejects_non_integer_n(self, n):
+        with pytest.raises(ValueError, match="n must be a positive integer"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [1, 3, 4, 50])
+    def test_init_accepts_positive_integer_n(self, n):
+        assert ApproximateTextMatching(n=n).get_overlap_score(target="abc", text="abc") >= 0.0

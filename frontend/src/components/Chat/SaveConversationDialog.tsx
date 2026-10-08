@@ -12,6 +12,7 @@ import { useSaveConversationDialogStyles } from './SaveConversationDialog.styles
 interface SaveConversationDialogProps {
   initialDestination?: SaveConversationRequest['destination']
   sameAttackDisabledReason?: string
+  newAttackDisabledReason?: string
   objectiveChanged: boolean
   saving: boolean
   error: string | null
@@ -21,7 +22,7 @@ interface SaveConversationDialogProps {
 }
 
 export default function SaveConversationDialog({
-  initialDestination, sameAttackDisabledReason, objectiveChanged, saving, error, validationError, onClose, onSave,
+  initialDestination, sameAttackDisabledReason, newAttackDisabledReason, objectiveChanged, saving, error, validationError, onClose, onSave,
 }: SaveConversationDialogProps) {
   const styles = useSaveConversationDialogStyles()
   const [destination, setDestination] = useState<SaveConversationRequest['destination']>(
@@ -46,7 +47,7 @@ export default function SaveConversationDialog({
                   <Radio value="same_attack" label="Same attack" disabled={Boolean(sameAttackDisabledReason)} />
                 </span>
               </Tooltip>
-              <Radio value="new_attack" label="New attack" />
+              <Radio value="new_attack" label="New attack" disabled={Boolean(newAttackDisabledReason)} />
             </RadioGroup>
             {destination === 'same_attack' && objectiveChanged && (
               <MessageBar intent="warning"><MessageBarBody>
@@ -55,6 +56,9 @@ export default function SaveConversationDialog({
               </MessageBarBody></MessageBar>
             )}
             {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
+            {destination === 'new_attack' && newAttackDisabledReason && (
+              <MessageBar intent="warning"><MessageBarBody>{newAttackDisabledReason}</MessageBarBody></MessageBar>
+            )}
             {validationError && <MessageBar intent="error"><MessageBarBody>{validationError}</MessageBarBody></MessageBar>}
           </DialogContent>
           <DialogActions>
@@ -62,7 +66,9 @@ export default function SaveConversationDialog({
             <Button
               className={styles.button}
               appearance="primary"
-              disabled={saving || Boolean(validationError) || (destination === 'same_attack' && Boolean(sameAttackDisabledReason))}
+              disabled={saving || Boolean(validationError)
+                || (destination === 'same_attack' && Boolean(sameAttackDisabledReason))
+                || (destination === 'new_attack' && Boolean(newAttackDisabledReason))}
               onClick={() => onSave(destination)}
             >{saving ? 'Saving...' : 'Save conversation'}</Button>
           </DialogActions>
