@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pyrit.models.score.condition import (
         AnswerMatches,
         Condition,
+        ContentWritten,
         DivergesFromRepetition,
         MatchesObjective,
         ToolCallRequirement,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
         Observation,
         ObservationPayload,
         ScorerTargetResponsePayload,
+        SurfaceObservationPayload,
         ToolEventsObservationPayload,
     )
     from pyrit.models.score.scorable import (
@@ -40,6 +42,8 @@ if TYPE_CHECKING:
         MessageScorable,
         Scorable,
         ScorableUnion,
+        ScoringScope,
+        SurfaceScorable,
         TraceScorable,
         scorable_from_dict,
     )
@@ -51,6 +55,7 @@ if TYPE_CHECKING:
         UndeterminedScoreError,
         UnvalidatedScore,
     )
+    from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry
     from pyrit.models.score.trace import (
         ToolExecution,
         TraceCoverage,
@@ -67,6 +72,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Condition": "pyrit.models.score.condition",
     "ContentEntryScorable": "pyrit.models.score.scorable",
     "ContentScorable": "pyrit.models.score.scorable",
+    "ContentWritten": "pyrit.models.score.condition",
     "DivergesFromRepetition": "pyrit.models.score.condition",
     "ScorerTargetResponsePayload": "pyrit.models.score.observation",
     "MatchesObjective": "pyrit.models.score.condition",
@@ -79,6 +85,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score.score",
     "ScoreType": "pyrit.models.score.score",
     "ScoringExpectation": "pyrit.models.score.expectation",
+    "ScoringScope": "pyrit.models.score.scorable",
+    "SurfaceCoverage": "pyrit.models.score.surface",
+    "SurfaceEntry": "pyrit.models.score.surface",
+    "SurfaceObservationPayload": "pyrit.models.score.observation",
+    "SurfaceScorable": "pyrit.models.score.scorable",
     "ToolCallRequirement": "pyrit.models.score.condition",
     "ToolEventsObservationPayload": "pyrit.models.score.observation",
     "ToolExecution": "pyrit.models.score.trace",

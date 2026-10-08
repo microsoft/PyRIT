@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
     from pyrit.score.observation.execution import NonReplayableObservationError
+    from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
+    from pyrit.score.true_false.file_write_scorer import FileWriteScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
     from pyrit.score.true_false.gandalf_scorer import GandalfScorer
     from pyrit.score.true_false.garak_exploitation_scorer import GarakExploitationDetector, GarakExploitationScorer
@@ -195,6 +197,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "InsecureCodeScorer": "pyrit.score.float_scale.insecure_code_scorer",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
+    "FileWriteScorer": "pyrit.score.true_false.file_write_scorer",
+    "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
     "ObservationSource": "pyrit.score.observation.observation_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
     "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",

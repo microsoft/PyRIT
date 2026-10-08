@@ -209,6 +209,22 @@ class AnswerMatches(Condition):
     correct_answer_label: str | None = Field(default=None, min_length=1)
 
 
+class ContentWritten(Condition):
+    """
+    The named location holds content: any content, or content containing ``contains``.
+
+    The condition supplies the locator, so a scorer builds the ``SurfaceScorable`` from
+    ``uri`` and ``match`` and judges only the content criterion against what its source
+    acquired. ``match="glob"`` asks whether any covered location holds such content.
+    """
+
+    condition_type: Literal["content_written"] = "content_written"
+    uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")
+    match: Literal["exact", "glob"] = "exact"
+    #: Text the content must contain; None means any non-empty content counts.
+    contains: str | None = Field(default=None, min_length=1)
+
+
 def _parse_conditions(value: Any) -> Any:
     """
     Rebuild discriminator-tagged conditions without losing subclass fields.

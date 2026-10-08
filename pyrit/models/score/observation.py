@@ -21,8 +21,10 @@ from pyrit.models.score.scorable import (
     ContentScorable,
     MessageScorable,
     ScorableUnion,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    SurfaceScorable,
     TraceScorable,
 )
+from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry
 from pyrit.models.score.trace import ToolExecution, TraceCoverage
 
 if TYPE_CHECKING:
@@ -313,8 +315,61 @@ class ToolEventsObservationPayload(BaseModel):
         return self
 
 
+class SurfaceObservationPayload(BaseModel):
+    """
+    An immutable snapshot of the locations a surface scorable names.
+
+    Entries are the locations that fell inside the scorable's scope. Locations a source saw
+    but excluded as outside the scope are counted, not retained, so a reader can tell
+    "nothing there" from "something there that this run did not write".
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["surface"] = "surface"
+    schema_version: Literal[1] = 1
+    scope: SurfaceScorable
+    entries: tuple[SurfaceEntry, ...] = ()
+    coverage: SurfaceCoverage = Field(default_factory=SurfaceCoverage)
+    excluded_outside_scope: int = Field(default=0, ge=0)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _validate_schema_version(cls, value: Any) -> Any:
+        """
+        Require the exact supported schema version, without numeric coercion.
+
+        Returns:
+            Any: The supported schema version.
+
+        Raises:
+            ValueError: If the version is not exactly the supported integer.
+        """
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported surface payload schema_version; expected 1.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_entries(self) -> SurfaceObservationPayload:
+        """
+        Keep entries unique and, for an exact locator, limited to that one location.
+
+        Returns:
+            SurfaceObservationPayload: The validated snapshot.
+
+        Raises:
+            ValueError: If an entry repeats or falls outside an exact locator.
+        """
+        uris = [entry.uri for entry in self.entries]
+        if len(set(uris)) != len(uris):
+            raise ValueError("Surface entries must name each location once.")
+        if self.scope.match == "exact" and any(uri != self.scope.uri for uri in uris):
+            raise ValueError("An exact surface scope can only hold an entry for its own location.")
+        return self
+
+
 ObservationPayload = Annotated[
-    ScorerTargetResponsePayload | ToolEventsObservationPayload,
+    ScorerTargetResponsePayload | ToolEventsObservationPayload | SurfaceObservationPayload,
     Field(discriminator="kind"),
 ]
 
@@ -381,6 +436,27 @@ class Observation(BaseModel):
             raise ValueError("Unavailable tool acquisition cannot contain events.")
         return self
 
+    @model_validator(mode="after")
+    def _validate_surface_acquisition(self) -> Observation:
+        """
+        Require acquisition status to agree with the retained surface snapshot.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If acquisition, scope, or coverage are inconsistent.
+        """
+        if not isinstance(self.payload, SurfaceObservationPayload):
+            return self
+        if not isinstance(self.scorable, SurfaceScorable) or self.scorable != self.payload.scope:
+            raise ValueError("Surface observations require a SurfaceScorable matching their payload scope.")
+        if (self.acquisition is Acquisition.COMPLETE) != self.payload.coverage.complete:
+            raise ValueError("Surface acquisition and coverage completeness must agree.")
+        if self.acquisition in (Acquisition.UNAVAILABLE, Acquisition.ERROR) and self.payload.entries:
+            raise ValueError("Unavailable or failed surface acquisition cannot contain entries.")
+        return self
+
     @property
     def response_message_piece_ids(self) -> tuple[uuid.UUID, ...]:
         """The ordered message references retained by this payload."""
@@ -417,7 +493,7 @@ class Observation(BaseModel):
         Raises:
             ValueError: If scored or response evidence is missing, modified, or unsupported.
         """
-        if isinstance(self.payload, ToolEventsObservationPayload):
+        if isinstance(self.payload, (ToolEventsObservationPayload, SurfaceObservationPayload)):
             return
         payload = self.payload
         payload.validate_scored_evidence(

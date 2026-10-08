@@ -286,6 +286,11 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
+- Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
+  root directory. `FileWriteScorer` builds the scorable from its `ContentWritten` condition and,
+  for a `MessageScorable`, scopes it to the run with a `ScoringScope` (the attack's id and time
+  window). Correlating an external write to a run is best effort; a source applies the parts
+  of the scope it can check and records the rest.
 - `pyrit.score.observation` owns acquisition and replay support, not evaluation.
   `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
   and matchers decide whether it meets a condition. Its local SDK exporter
