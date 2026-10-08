@@ -9,7 +9,7 @@ and n-gram based approximate matching through a unified TextMatching interface.
 """
 
 import math
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class TextMatching(Protocol):
@@ -18,6 +18,9 @@ class TextMatching(Protocol):
 
     Classes implementing this protocol must provide an is_match method that
     checks if a target string matches text according to some strategy.
+
+    Matchers may additionally expose ``get_identifier_params()`` with stable,
+    JSON-serializable behavioral parameters for use in scorer identifiers.
     """
 
     def is_match(self, *, target: str, text: str) -> bool:
@@ -51,6 +54,15 @@ class ExactTextMatching(TextMatching):
         """
         self._case_sensitive = case_sensitive
         self._ignore_whitespace = ignore_whitespace
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration that determines matching behavior.
+
+        Returns:
+            dict[str, Any]: Behavioral parameters for scorer identifiers.
+        """
+        return {"case_sensitive": self._case_sensitive, "ignore_whitespace": self._ignore_whitespace}
 
     def is_match(self, *, target: str, text: str) -> bool:
         """
@@ -96,15 +108,27 @@ class ApproximateTextMatching(TextMatching):
 
         Raises:
             ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0], or if ``n`` is
-                not an integer >= 1.
+                not a positive integer.
         """
         if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
             raise ValueError(f"threshold must be finite and between 0.0 and 1.0, got {threshold}")
+        # An n-gram size below 1 silently makes every comparison match: with n=0 the only
+        # n-gram is the empty string, which is a substring of any text, so the overlap is
+        # always 1.0. Reject it here rather than returning a meaningless score.
         if not isinstance(n, int) or isinstance(n, bool) or n < 1:
-            raise ValueError(f"n must be an integer >= 1, got {n}")
+            raise ValueError(f"n must be a positive integer, got {n!r}")
         self._threshold = threshold
         self._n = n
         self._case_sensitive = case_sensitive
+
+    def get_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration that determines matching behavior.
+
+        Returns:
+            dict[str, Any]: Behavioral parameters for scorer identifiers.
+        """
+        return {"threshold": self._threshold, "n": self._n, "case_sensitive": self._case_sensitive}
 
     def is_match(self, *, target: str, text: str) -> bool:
         """

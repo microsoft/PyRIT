@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import quote
 
 import pytest
 from sqlalchemy import select
@@ -65,6 +66,7 @@ from pyrit.models import (
     ConversationType,
     Message,
     MessagePiece,
+    PromptDataType,
     PromptResponseError,
     Score,
     TargetIdentifier,
@@ -884,8 +886,8 @@ class TestCreateAttack:
 
             assert result.conversation_id is not None
             assert result.created_at is not None
-            mock_memory.add_attack_results_to_memory_async.assert_called_once()
-            stored_attack = mock_memory.add_attack_results_to_memory_async.call_args.kwargs["attack_results"][0]
+            mock_memory.add_conversation_branches_to_attack_async.assert_called_once()
+            stored_attack = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_attack.metadata["target_registry_name"] == "target-1"
             assert stored_attack.operator == "alice"
             assert stored_attack.operation == "nightly"
@@ -915,9 +917,8 @@ class TestCreateAttack:
             )
 
             assert result.conversation_id is not None
-            # Both attack result and prepended message pieces should be stored
-            mock_memory.add_attack_results_to_memory_async.assert_called_once()
-            mock_memory.add_message_pieces_to_memory_async.assert_called()
+            mock_memory.add_conversation_branches_to_attack_async.assert_called_once()
+            assert len(mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]) == 1
 
     async def test_create_attack_rejects_prepended_media_outside_results_before_writing(
         self, attack_service, mock_memory, tmp_path: Path
@@ -939,17 +940,23 @@ class TestCreateAttack:
         ):
             mock_target_service = MagicMock()
             mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
             mock_get_target_service.return_value = mock_target_service
             await attack_service.create_attack_async(
                 request=CreateAttackRequest(target_registry_name="target-1", prepended_conversation=prepended)
             )
 
+        mock_memory.add_conversation_branches_to_attack_async.assert_not_called()
         mock_memory.add_attack_results_to_memory_async.assert_not_called()
         mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
     async def test_create_attack_persists_prepended_base64_media(self, attack_service, mock_memory) -> None:
         """Prepended base64 media is written to result storage and stored as a file path."""
-        serializer = MagicMock(value="/results/prompt-memory-entries/images/prepended.png")
+        stored_path = "/results/prompt-memory-entries/images/prepended.png"
+        serializer = MagicMock(value=stored_path)
+        serializer.get_data_filename_async = AsyncMock(return_value=stored_path)
         serializer.save_b64_image_async = AsyncMock()
         prepended = [
             PrependedMessageRequest(
@@ -961,6 +968,7 @@ class TestCreateAttack:
         with (
             patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service,
             patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer) as factory,
+            patch("pyrit.backend.services.attack_service.set_message_piece_sha256_async", new_callable=AsyncMock),
         ):
             mock_target_service = MagicMock()
             mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
@@ -973,8 +981,8 @@ class TestCreateAttack:
             )
 
         assert factory.call_args.kwargs["category"] == "prompt-memory-entries"
-        stored_piece = mock_memory.add_message_pieces_to_memory_async.call_args.kwargs["message_pieces"][0]
-        assert stored_piece.original_value == "/results/prompt-memory-entries/images/prepended.png"
+        stored_piece = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"][0]
+        assert stored_piece.original_value == stored_path
 
     async def test_create_attack_lowers_system_prompt_to_system_message(self, attack_service, mock_memory) -> None:
         """Test that system_prompt is lowered to a single system-role message at sequence 0."""
@@ -992,9 +1000,9 @@ class TestCreateAttack:
                 request=CreateAttackRequest(target_registry_name="target-1", system_prompt="You are Bob.")
             )
 
-            calls = mock_memory.add_message_pieces_to_memory_async.call_args_list
-            assert len(calls) == 1
-            piece = calls[0][1]["message_pieces"][0]
+            pieces = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]
+            assert len(pieces) == 1
+            piece = pieces[0]
             assert piece.api_role == "system"
             assert piece.sequence == 0
             assert piece.original_value == "You are Bob."
@@ -1015,7 +1023,7 @@ class TestCreateAttack:
                 request=CreateAttackRequest(target_registry_name="target-1", system_prompt="")
             )
 
-            mock_memory.add_message_pieces_to_memory_async.assert_not_called()
+            assert mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"] == []
 
     async def test_create_attack_system_prompt_prepends_before_prepended_conversation(
         self, attack_service, mock_memory
@@ -1043,10 +1051,10 @@ class TestCreateAttack:
                 )
             )
 
-            calls = mock_memory.add_message_pieces_to_memory_async.call_args_list
-            assert len(calls) == 2
-            roles = [call[1]["message_pieces"][0].api_role for call in calls]
-            sequences = [call[1]["message_pieces"][0].sequence for call in calls]
+            pieces = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]
+            assert len(pieces) == 2
+            roles = [piece.api_role for piece in pieces]
+            sequences = [piece.sequence for piece in pieces]
             assert roles == ["system", "user"]
             assert sequences == [0, 1]
 
@@ -1070,8 +1078,7 @@ class TestCreateAttack:
                 )
             )
 
-            call_args = mock_memory.add_attack_results_to_memory_async.call_args
-            stored_ar = call_args[1]["attack_results"][0]
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert "labels" not in stored_ar.metadata
 
     async def test_create_attack_stores_labels_on_attack_result(self, attack_service, mock_memory) -> None:
@@ -1093,7 +1100,7 @@ class TestCreateAttack:
                 )
             )
 
-            stored_ar = mock_memory.add_attack_results_to_memory_async.call_args[1]["attack_results"][0]
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.labels == {"env": "prod", "source": "gui"}
 
     async def test_create_attack_prepended_messages_have_incrementing_sequences(
@@ -1142,19 +1149,17 @@ class TestCreateAttack:
                 request=CreateAttackRequest(target_registry_name="target-1", prepended_conversation=prepended)
             )
 
-            # Each message stored separately with incrementing sequence
-            calls = mock_memory.add_message_pieces_to_memory_async.call_args_list
-            assert len(calls) == 3
-            sequences = [call[1]["message_pieces"][0].sequence for call in calls]
+            stored_pieces = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]
+            assert len(stored_pieces) == 3
+            sequences = [piece.sequence for piece in stored_pieces]
             assert sequences == [0, 1, 2]
 
-            roles = [call[1]["message_pieces"][0].api_role for call in calls]
+            roles = [piece.api_role for piece in stored_pieces]
             assert roles == ["system", "user", "assistant"]
 
             # original_prompt_id preserved for lineage tracking
             import uuid
 
-            stored_pieces = [call[1]["message_pieces"][0] for call in calls]
             assert stored_pieces[0].original_prompt_id == uuid.UUID(original_id_1)
             assert stored_pieces[1].original_prompt_id == uuid.UUID(original_id_2)
             assert stored_pieces[2].original_prompt_id == uuid.UUID(original_id_3)
@@ -1182,7 +1187,7 @@ class TestCreateAttack:
                 )
             )
 
-            stored_ar = mock_memory.add_attack_results_to_memory_async.call_args[1]["attack_results"][0]
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.labels["source"] == "api-test"
 
     async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
@@ -1199,8 +1204,7 @@ class TestCreateAttack:
 
             await attack_service.create_attack_async(request=CreateAttackRequest(target_registry_name="target-1"))
 
-            call_args = mock_memory.add_attack_results_to_memory_async.call_args
-            stored_ar = call_args[1]["attack_results"][0]
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
             assert "objective_is_placeholder" not in stored_ar.metadata
@@ -1221,7 +1225,7 @@ class TestCreateAttack:
                 request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
             )
 
-            stored_ar = mock_memory.add_attack_results_to_memory_async.call_args[1]["attack_results"][0]
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.objective == "Extract the secret"
             assert "objective_is_placeholder" not in stored_ar.metadata
 
@@ -1310,19 +1314,19 @@ class TestUpdateAttack:
             request=UpdateAttackRequest(objective="Extract the system prompt"),
         )
 
-        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
         assert update_fields["objective"] == "Extract the system prompt"
         assert update_fields["objective_sha256"] == to_sha256("Extract the system prompt")
 
-    async def test_update_attack_rejects_replacing_objective(self, attack_service, mock_memory) -> None:
-        """Test that an existing objective cannot be replaced."""
+    async def test_update_attack_rejects_stale_objective(self, attack_service, mock_memory) -> None:
+        """Test that a stale editor cannot replace a newer shared objective."""
         ar = make_attack_result(conversation_id="test-id", objective="Existing objective")
         mock_memory.get_attack_results_async.return_value = [ar]
 
-        with pytest.raises(AttackObjectiveConflictError, match="already has an objective"):
+        with pytest.raises(AttackObjectiveConflictError, match="objective changed"):
             await attack_service.update_attack_async(
                 attack_result_id="test-id",
-                request=UpdateAttackRequest(objective="Replacement objective"),
+                request=UpdateAttackRequest(objective="Replacement objective", expected_objective="Older objective"),
             )
 
         mock_memory.update_attack_result_by_id_async.assert_not_called()
@@ -1464,7 +1468,9 @@ class TestAddMessage:
         sender = MessageSendService(scheduler=scheduler)
         service, peer = AttackService(message_send_service=sender), AttackService(message_send_service=sender)
         started, release = asyncio.Event(), asyncio.Event()
-        read = getattr(service, read_method)
+        read = (
+            service.get_attack_async if read_method == "get_attack_async" else service.get_conversation_messages_async
+        )
 
         async def pause_after_read_async(**kwargs: Any) -> AttackSummary | ConversationMessagesResponse | None:
             result = await read(**kwargs)
@@ -1554,7 +1560,9 @@ class TestAddMessage:
             assert not sender._scheduler._conversations
             await sender.add_message_async(attack_result_id="attack", request=request)
 
-    @pytest.mark.parametrize("role", ["system", "user", "assistant", "simulated_assistant", "tool", "developer"])
+    @pytest.mark.parametrize(
+        "role", ["system", "user", "assistant", "simulated_assistant", "tool", "simulated_tool", "developer"]
+    )
     async def test_add_message_send_false_without_registry_name_succeeds(
         self, *, attack_service: AttackService, mock_memory: MagicMock, role: ChatMessageRole
     ) -> None:
@@ -1595,7 +1603,8 @@ class TestAddMessage:
         ]
         assert [piece.original_value for piece in pieces] == ["Hello", "World"]
         assert [piece.converted_value for piece in pieces] == ["Hello", "converted"]
-        assert all(piece.role == role and piece.sequence == 4 for piece in pieces)
+        expected_role = {"assistant": "simulated_assistant", "tool": "simulated_tool"}.get(role, role)
+        assert all(piece.role == expected_role and piece.sequence == 4 for piece in pieces)
         assert pieces[0].original_prompt_id == original_id
         assert mock_memory.add_conversation_to_memory_async.call_args.kwargs["conversation"].target_identifier == target
 
@@ -2078,6 +2087,507 @@ class TestAttackServiceSingleton:
             service1 = get_attack_service()
             service2 = get_attack_service()
             assert service1 is service2
+
+
+# ============================================================================
+# Persist Base64 Pieces Tests
+# ============================================================================
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestPersistBase64Pieces:
+    """Tests for _persist_base64_pieces_async helper."""
+
+    @pytest.mark.parametrize(
+        ("original_type", "original_value", "converted_type", "converted_value", "expected_types", "extensions"),
+        [
+            (
+                "text",
+                "source",
+                "image_path",
+                "data:image/png;base64,cHJldmlldw==",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "text",
+                "Exact description",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "audio_path",
+                "data:audio/wav;base64,cHJldmlldw==",
+                ["image_path", "audio_path"],
+                [".png", ".wav"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "image_path",
+                "data:image/jpeg;base64,cHJldmlldw==",
+                ["image_path", "image_path"],
+                [".png", ".jpg"],
+            ),
+        ],
+    )
+    async def test_persists_original_and_converted_media_independently_async(
+        self,
+        *,
+        original_type: PromptDataType,
+        original_value: str,
+        converted_type: PromptDataType,
+        converted_value: str,
+        expected_types: list[PromptDataType],
+        extensions: list[str],
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type=original_type,
+                    original_value=original_value,
+                    converted_value=converted_value,
+                    converted_value_data_type=converted_type,
+                    mime_type="image/png" if original_type == "image_path" else "text/plain",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializers = [MagicMock(value=f"saved-{index}{extension}") for index, extension in enumerate(extensions)]
+        for serializer in serializers:
+            serializer.save_b64_image_async = AsyncMock()
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", side_effect=serializers) as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert [call.kwargs["data_type"] for call in factory.call_args_list] == expected_types
+        assert [call.kwargs["extension"] for call in factory.call_args_list] == extensions
+        piece = request.pieces[0]
+        assert piece.data_type == original_type
+        assert piece.converted_value_data_type == converted_type
+        assert piece.original_value == (serializers[0].value if original_type == "image_path" else original_value)
+        assert piece.converted_value == (converted_value if converted_type == "text" else serializers[-1].value)
+        for serializer in serializers:
+            serializer.save_b64_image_async.assert_awaited_once()
+
+    @pytest.mark.parametrize("reference", ["media_reference", "stored_file", "results_blob"])
+    async def test_converted_media_references_are_not_repersisted_async(
+        self, *, attack_service, mock_memory: MagicMock, tmp_path: Path, reference: str
+    ) -> None:
+        stored_path = (tmp_path / "prompt-memory-entries" / "preview.png").resolve()
+        mock_memory.results_path = str(tmp_path)
+        if reference == "media_reference":
+            converted_value, expected_value = f"/api/media?path={stored_path}", str(stored_path)
+        elif reference == "stored_file":
+            stored_path.parent.mkdir(parents=True)
+            stored_path.write_bytes(b"PNG")
+            converted_value, expected_value = str(stored_path), str(stored_path)
+        else:
+            mock_memory.results_path = "https://account.blob.core.windows.net/results"
+            expected_value = f"{mock_memory.results_path}/prompt-memory-entries/preview.png"
+            converted_value = f"{expected_value}?sv=1"
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value="source",
+                    converted_value=converted_value,
+                    converted_value_data_type="image_path",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "source"
+        assert request.pieces[0].converted_value == expected_value
+        factory.assert_not_called()
+
+    async def test_identical_original_and_converted_media_saved_once_async(self) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="data:image/png;base64,c291cmNl",
+                    converted_value="data:image/png;base64,c291cmNl",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializer = MagicMock(value="saved.png")
+        serializer.save_b64_image_async = AsyncMock()
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        serializer.save_b64_image_async.assert_awaited_once()
+        assert request.pieces[0].original_value == "saved.png"
+        assert request.pieces[0].converted_value == "saved.png"
+
+    async def test_converted_media_failure_preserves_both_request_values_async(self) -> None:
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value="data:image/png;base64,c291cmNl",
+            converted_value="data:image/png;base64,cHJldmlldw==",
+        )
+        request = AddMessageRequest(pieces=[piece], send=False, target_conversation_id="test-id")
+        before = piece.model_dump()
+        original_serializer = MagicMock(value="source.png")
+        original_serializer.save_b64_image_async = AsyncMock()
+        converted_serializer = MagicMock()
+        converted_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("preview save failed"))
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                side_effect=[original_serializer, converted_serializer],
+            ),
+            pytest.raises(OSError, match="preview save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert piece.model_dump() == before
+
+    async def test_text_pieces_are_unchanged(self, attack_service) -> None:
+        """Text pieces should not be modified."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(data_type="text", original_value="hello")],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+        assert request.pieces[0].original_value == "hello"
+
+    async def test_image_piece_is_saved_to_file(self, attack_service) -> None:
+        """Base64 image data should be saved to disk and value replaced with file path."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="aW1hZ2VkYXRh",  # base64 for "imagedata"
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
+        mock_serializer.value = "/saved/image.png"
+
+        with patch(
+            "pyrit.backend.services.attack_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ) as factory_mock:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        factory_mock.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="image_path",
+            extension=".png",
+        )
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        assert request.pieces[0].original_value == "/saved/image.png"
+
+    async def test_mixed_pieces_only_persists_non_text(self, attack_service) -> None:
+        """Only non-text pieces should be persisted; text pieces stay untouched."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(data_type="text", original_value="describe this"),
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="base64data",
+                    mime_type="image/jpeg",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
+        mock_serializer.value = "/saved/photo.jpg"
+
+        with patch(
+            "pyrit.backend.services.attack_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "describe this"
+        assert request.pieces[1].original_value == "/saved/photo.jpg"
+
+    async def test_unknown_mime_type_uses_bin_extension(self, attack_service) -> None:
+        """When mime_type is missing, .bin should be used as fallback extension."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="binary_path",
+                    original_value="base64data",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
+        mock_serializer.value = "/saved/file.bin"
+
+        with patch(
+            "pyrit.backend.services.attack_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ) as factory_mock:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        factory_mock.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="binary_path",
+            extension=".bin",
+        )
+
+    async def test_data_uri_prefix_is_stripped_before_saving(self, attack_service) -> None:
+        """Data URIs (data:<mime>;base64,...) should be stripped to raw base64 before saving."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="data:image/png;base64,aW1hZ2VkYXRh",
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
+        mock_serializer.value = "/saved/image.png"
+
+        with patch(
+            "pyrit.backend.services.attack_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        # Should receive only the base64 payload, not the data URI prefix
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        assert request.pieces[0].original_value == "/saved/image.png"
+
+    async def test_data_uri_mime_type_supplies_extension_when_mime_type_missing(self, attack_service) -> None:
+        """Data URI media type should prevent image uploads from falling back to blocked .bin files."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="data:image/png;base64,aW1hZ2VkYXRh",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
+        mock_serializer.value = "/saved/image.png"
+
+        with patch(
+            "pyrit.backend.services.attack_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ) as factory_mock:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        factory_mock.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="image_path",
+            extension=".png",
+        )
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
+        assert request.pieces[0].original_value == "/saved/image.png"
+
+    async def test_path_data_type_supplies_extension_when_mime_type_missing(self, attack_service) -> None:
+        """Raw image base64 without MIME metadata should still use a media-serving extension."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="aW1hZ2VkYXRh",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock()
+        mock_serializer.value = "/saved/image.png"
+
+        with patch(
+            "pyrit.backend.services.attack_service.data_serializer_factory",
+            return_value=mock_serializer,
+        ) as factory_mock:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        factory_mock.assert_called_once_with(
+            category="prompt-memory-entries",
+            data_type="image_path",
+            extension=".png",
+        )
+        assert request.pieces[0].original_value == "/saved/image.png"
+
+    async def test_http_url_is_kept_as_is(self, attack_service, mock_memory: MagicMock) -> None:
+        """HTTPS blob URLs inside the results container are kept as references, without their query string."""
+        mock_memory.results_path = "https://myblob.blob.core.windows.net/results"
+        blob_url = "https://myblob.blob.core.windows.net/results/prompt-memory-entries/images/photo.png"
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value=f"{blob_url}?sv=2024",
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == blob_url
+        assert request.pieces[0].converted_value == request.pieces[0].original_value
+
+    async def test_media_reference_is_resolved_without_persistence(
+        self, attack_service, mock_memory: MagicMock, tmp_path: Path
+    ) -> None:
+        """Local media URLs are converted back to their canonical file paths."""
+        mock_memory.results_path = str(tmp_path)
+        stored_path = (tmp_path / "prompt-memory-entries" / "image.png").resolve()
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value=f"/api/media?path={quote(str(stored_path), safe='')}",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == str(stored_path)
+        assert request.pieces[0].converted_value == str(stored_path)
+        factory.assert_not_called()
+
+    async def test_existing_file_is_kept_without_persistence(
+        self, attack_service, mock_memory: MagicMock, tmp_path: Path
+    ) -> None:
+        """An existing stored file remains the canonical original and converted value."""
+        mock_memory.results_path = str(tmp_path)
+        media_path = (tmp_path / "prompt-memory-entries" / "images" / "image.png").resolve()
+        media_path.parent.mkdir(parents=True)
+        media_path.write_bytes(b"image")
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == str(media_path)
+        assert request.pieces[0].converted_value == str(media_path)
+        factory.assert_not_called()
+
+    async def test_non_path_data_types_are_skipped(self, attack_service) -> None:
+        """Non *_path types like reasoning, url, function_call should not be decoded."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(data_type="reasoning", original_value="thinking step"),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "thinking step"
+
+    async def test_long_base64_audio_does_not_crash(self, attack_service) -> None:
+        """Base64 audio data longer than OS path limits should be saved, not crash with OSError."""
+        # Simulate a base64-encoded WAV file (>4096 chars, exceeds Linux filename limit of 255)
+        long_b64 = "UklGRiQ" + "A" * 5000  # fake WAV header + padding
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="audio_path",
+                    original_value=long_b64,
+                    mime_type="audio/wav",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as mock_factory:
+            mock_serializer = AsyncMock()
+            mock_serializer.value = "/tmp/saved_audio.wav"
+            mock_factory.return_value = mock_serializer
+
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+            mock_factory.assert_called_once()
+            mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
+            assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
+
+    async def test_persistence_failure_does_not_partially_mutate_piece(self, attack_service) -> None:
+        """A failed save leaves both request values unchanged."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="aW1hZ2VkYXRh",
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("save failed"))
+
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                return_value=mock_serializer,
+            ),
+            pytest.raises(OSError, match="save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "aW1hZ2VkYXRh"
+        assert request.pieces[0].converted_value is None
 
 
 # ============================================================================
@@ -2828,66 +3338,29 @@ class TestAttackServiceAdditionalCoverage:
         mock_memory.add_conversation_to_memory_async.assert_not_called()
         mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
-    async def test_duplicate_conversation_up_to_adds_pieces_when_present(self, attack_service, mock_memory):
-        """Should duplicate up to cutoff and persist duplicated pieces only when returned."""
-        source_messages = [
-            make_mock_piece(conversation_id="attack-1", sequence=0),
-            make_mock_piece(conversation_id="attack-1", sequence=1),
-            make_mock_piece(conversation_id="attack-1", sequence=2),
-        ]
-        mock_memory.get_conversation_messages_async.return_value = source_messages
-        duplicated_piece = make_mock_piece(conversation_id="branch-1", sequence=0)
-        mock_memory.duplicate_messages_async.return_value = ("branch-1", [duplicated_piece])
-
-        new_id = await attack_service._duplicate_conversation_up_to_async(
-            source_conversation_id="attack-1", cutoff_index=1
+    async def test_prepare_empty_messages_does_not_write_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        pieces = await attack_service._prepare_message_pieces_async(
+            conversation_id="conv-1", messages=[], persisted_paths=[]
         )
-
-        assert new_id == "branch-1"
-        passed_messages = mock_memory.duplicate_messages_async.call_args[1]["messages"]
-        assert [m.sequence for m in passed_messages] == [0, 1]
-        mock_memory.add_message_pieces_to_memory_async.assert_called_once()
-
-    async def test_duplicate_conversation_up_to_skips_persist_when_no_duplicated_pieces(
-        self, attack_service, mock_memory
-    ):
-        "Should not write to memory when duplicate_messages_async returns no pieces."
-        mock_memory.get_conversation_messages_async.return_value = [
-            make_mock_piece(conversation_id="attack-1", sequence=0)
-        ]
-        mock_memory.duplicate_messages_async.return_value = ("branch-empty", [])
-
-        new_id = await attack_service._duplicate_conversation_up_to_async(
-            source_conversation_id="attack-1", cutoff_index=10
-        )
-
-        assert new_id == "branch-empty"
+        assert pieces == []
         mock_memory.add_conversation_to_memory_async.assert_not_called()
         mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
     @pytest.mark.parametrize(("role", "expected"), [("assistant", "simulated_assistant"), ("tool", "simulated_tool")])
-    async def test_duplicate_conversation_remaps_assistant_to_simulated(
-        self, attack_service, mock_memory, role, expected
-    ):
-        """Copied response pieces retain synthetic provenance."""
-        source = make_mock_piece(conversation_id="attack-1", role="assistant", sequence=0)
-        mock_memory.get_conversation_messages_async.return_value = [source]
-        dup_piece = MessagePiece(conversation_id="branch-1", role=role, sequence=0, original_value="copied")
-        mock_memory.duplicate_messages_async.return_value = ("branch-1", [dup_piece])
+    async def test_prepare_conversation_remaps_response_roles_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, role: ChatMessageRole, expected: ChatMessageRole
+    ) -> None:
+        piece = MessagePiece(conversation_id="branch-1", role=role, sequence=0, original_value="copied")
+        mock_memory.duplicate_messages_async.return_value = ("branch-1", [piece])
 
-        (
-            await attack_service._duplicate_conversation_up_to_async(
-                source_conversation_id="attack-1", cutoff_index=0, remap_assistant_to_simulated=True
-            )
+        _, copies = await attack_service._prepare_conversation_up_to_async(
+            source_conversation_id="attack-1", cutoff_index=0
         )
 
-        assert dup_piece.role == expected
-        assert dup_piece.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY]
-
-    async def test_store_prepended_messages_noop_when_empty(self, attack_service, mock_memory):
-        """Empty prepended list should be a no-op: no conversation row and no piece writes."""
-        await attack_service._store_prepended_messages_async(conversation_id="conv-1", prepended=[])
-
+        assert copies[0].role == expected
+        assert copies[0].prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY]
         mock_memory.add_conversation_to_memory_async.assert_not_called()
         mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 

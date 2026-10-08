@@ -3,6 +3,8 @@
 
 """Shared route helpers."""
 
+from pyrit.backend.models.common import validate_label_filter
+
 
 def parse_label_query_params(label_params: list[str] | None) -> dict[str, list[str]] | None:
     """
@@ -10,11 +12,12 @@ def parse_label_query_params(label_params: list[str] | None) -> dict[str, list[s
 
     Returns:
         dict[str, list[str]] | None: Labels grouped with OR-within-key semantics.
+
+    Raises:
+        ValueError: If a label filter has no ``:`` separator or a part is too long.
     """
     labels: dict[str, list[str]] = {}
     for param in label_params or []:
-        if ":" not in param:
-            continue
-        key, value = (part.strip() for part in param.split(":", 1))
-        labels.setdefault(key, []).append(value)
+        key, _, value = validate_label_filter(param).partition(":")
+        labels.setdefault(key.strip(), []).append(value.strip())
     return labels or None

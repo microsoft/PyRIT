@@ -13,7 +13,7 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import AuthenticatedUser, require_admin
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr, ProblemDetail
 from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
     EnvironmentFileContent,
@@ -27,6 +27,7 @@ from pyrit.backend.services.configuration_file_service import (
     ConfigurationFileService,
 )
 from pyrit.backend.services.environment_file_service import EnvironmentFileConflictError, EnvironmentFileService
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.exceptions import KeyVaultInitializationException
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -110,7 +111,7 @@ def _storage_unavailable() -> HTTPException:
 def _live_reinitialization_enabled(content: str) -> bool:
     """Return the explicit saved opt-in without executing configuration code."""
     try:
-        value = yaml.safe_load(content)
+        value = safe_load_yaml(content)
         return isinstance(value, dict) and ConfigurationLoader.from_dict(value).enable_live_reinitialization
     except (TypeError, ValueError, yaml.YAMLError):
         return False
@@ -278,7 +279,7 @@ async def list_environment_files(  # pyrit-async-suffix-exempt
     },
 )
 async def get_environment_file(  # pyrit-async-suffix-exempt
-    file_id: str,
+    file_id: IdentifierStr,
     request: Request,
 ) -> EnvironmentFileContent:
     """
@@ -311,7 +312,7 @@ async def get_environment_file(  # pyrit-async-suffix-exempt
     responses={404: {"model": ProblemDetail, "description": "Environment file not found"}},
 )
 async def update_environment_file(  # pyrit-async-suffix-exempt
-    file_id: str,
+    file_id: IdentifierStr,
     body: UpdateEnvironmentFileRequest,
     request: Request,
 ) -> EnvironmentFileContent:

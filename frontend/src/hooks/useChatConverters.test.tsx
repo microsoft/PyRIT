@@ -50,6 +50,31 @@ function makePreviewResponse() {
 }
 
 describe('useChatConverters across runtime generation changes', () => {
+  it('restores repeat pipelines and exact applied values without retaining unrelated selections', () => {
+    const { result } = renderHook(() => useChatConverters('original text', NO_ATTACHMENTS))
+    const pipelines = {
+      text: [
+        { id: 'stage-1', converterId: 'first' },
+        { id: 'stage-2', converterId: 'second' },
+        { id: 'stage-3', converterId: 'first' },
+      ],
+    }
+    const conversions = {
+      text: {
+        pieceId: 'text', pieceType: 'text', originalValue: 'original text', convertedValue: 'exact edited preview',
+        convertedDataType: 'text', converterInstanceIds: ['first', 'second', 'first'],
+      },
+    }
+    act(() => {
+      result.current.addConverter('image', 'unrelated')
+      result.current.restore('original text', NO_ATTACHMENTS, conversions, pipelines)
+    })
+    expect(result.current.pipelines.text).toEqual(pipelines.text)
+    expect(result.current.pipelines.image).toEqual([])
+    expect(result.current.applied).toEqual(conversions)
+    expect(mockedPreview).not.toHaveBeenCalled()
+  })
+
   it('keeps user-authored working text when only the generation changes', () => {
     const { result, rerender } = renderHook(
       ({ text }: { text: string }) => useChatConverters(text, NO_ATTACHMENTS),

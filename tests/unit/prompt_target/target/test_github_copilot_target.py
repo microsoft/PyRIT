@@ -63,6 +63,20 @@ def client(sdk: Any) -> Iterator[NonCallableMagicMock]:
         yield client
 
 
+@pytest.fixture
+def mock_copilot_startup_io(*, sdk: Any, sqlite_instance: MemoryInterface) -> Iterator[None]:
+    async def construct_client_async(constructor: Callable[..., Any], **kwargs: Any) -> Any:
+        assert constructor is sdk.CopilotClient
+        return constructor(**kwargs)
+
+    # Cleanup timing must not depend on database I/O or dispatching a mock constructor to a worker.
+    with (
+        patch.object(asyncio, "to_thread", side_effect=construct_client_async),
+        patch.object(sqlite_instance, "get_conversation_messages_async", AsyncMock(return_value=[])),
+    ):
+        yield
+
+
 def _assistant_reply(text: str) -> SessionEvent:
     from copilot.generated.session_events import AssistantMessageData, SessionEvent, SessionEventType
 
@@ -1926,6 +1940,7 @@ async def test_normalizer_reports_partial_creation_cleanup_retry_failure_async(
 async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after_allocation_async(
     *,
     client: NonCallableMagicMock,
+    sqlite_instance: MemoryInterface,
     first_delete_failure: str,
 ) -> None:
     session = client.create_session.return_value
@@ -1959,20 +1974,30 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
     _mock_session_storage(client=client, sessions=sessions)
     client.delete_session.side_effect = delete_session_async
     target = GitHubCopilotTarget(model_name="gpt-5-mini")
-    request_task = asyncio.create_task(
-        _send_normalized_async(
-            target=target,
-            original_value="Reply exactly HELLO.",
-            conversation_id=conversation_id,
+    # Database I/O and client construction are not part of the cancellation window.
+    await target._get_or_start_client_async()
+    with (
+        patch.object(sqlite_instance, "add_conversation_to_memory_async", new_callable=AsyncMock) as add_conversation,
+        patch.object(sqlite_instance, "get_conversation_messages_async", AsyncMock(return_value=[])),
+        patch.object(sqlite_instance, "add_message_to_memory_async", new_callable=AsyncMock) as add_message,
+    ):
+        request_task = asyncio.create_task(
+            _send_normalized_async(
+                target=target,
+                original_value="Reply exactly HELLO.",
+                conversation_id=conversation_id,
+            )
         )
-    )
-    try:
-        await asyncio.wait_for(allocated.wait(), timeout=2.0)
-        request_task.cancel(cancellation_message)
-        with pytest.raises(asyncio.CancelledError) as cancellation_error:
-            await asyncio.wait_for(request_task, timeout=2.0)
-    finally:
-        await _cancel_tasks_async(request_task)
+        try:
+            await asyncio.wait_for(allocated.wait(), timeout=2.0)
+            request_task.cancel(cancellation_message)
+            with pytest.raises(asyncio.CancelledError) as cancellation_error:
+                await asyncio.wait_for(request_task, timeout=2.0)
+        finally:
+            await _cancel_tasks_async(request_task)
+
+        add_conversation.assert_awaited_once()
+        add_message.assert_not_awaited()
 
     assert request_task.done()
     assert request_task.cancelled()
@@ -2006,7 +2031,7 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
     assert sessions == {"unrelated-session-id"}
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 @pytest.mark.parametrize("failure_stage", ["start", "status"])
 @pytest.mark.parametrize("stop_failure", ["caller-cancel", "runtime-error", "sdk-cancel"])
 async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(

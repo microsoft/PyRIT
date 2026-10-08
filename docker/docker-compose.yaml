@@ -48,7 +48,7 @@ services:
     image: pyrit:latest
     container_name: pyrit-gui
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ../assets:/app/assets
       - ~/.pyrit/.env:/home/vscode/.pyrit/.env:ro

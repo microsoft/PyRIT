@@ -72,6 +72,8 @@ a message.
 without waiting for media preparation, conversion, or target I/O. It sends exactly
 one message to one conversation. `send=false` remains available only on `/messages`.
 Both APIs use the same sending core and share the existing admission and execution budgets.
+An attack saved without a target is bound before its first send through either API.
+Binding validates every saved conversation and rejects history changes during validation.
 An asynchronous operation retains its reservation through finalization or cancellation cleanup;
 subsequent transcript and attack-detail reads are independent of that reservation.
 
@@ -122,6 +124,16 @@ and `E2E_FRONTEND_PORT=31213`, then run `npx playwright test chat-recovery --pro
 from `frontend`. Set `PYRIT_PYTHON` to this worktree's Python interpreter if Vite cannot
 find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
+
+### Request Limits
+
+The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
+cursors, configuration files, and initializer scripts also have length or item limits,
+listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
+pieces, system prompts, and converter preview input) and free-form values (prompt
+metadata, scenario and initializer arguments, and target and converter parameter values)
+are limited only by the body size, so long prompts and base64 media keep working.
 
 ## Strict Lockstep Compatibility
 

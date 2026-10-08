@@ -9,7 +9,7 @@ import asyncio
 import base64
 import binascii
 import mimetypes
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -227,6 +227,30 @@ def _resolve_extension(
     return extension or DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
 
 
+async def _write_owned_media_async(
+    *,
+    serializer: Any,
+    created_paths: list[str] | None,
+    write: Callable[[], Coroutine[Any, Any, None]],
+) -> None:
+    """
+    Write one media file, first recording it in ``created_paths`` when given.
+
+    Ownership is recorded before writing so partial writes can also be removed, and a
+    cancelled request still waits for the write to finish.
+    """
+    if created_paths is None:
+        await write()
+        return
+    created_paths.append(str(await serializer.get_data_filename_async()))
+    write_task = asyncio.create_task(write())
+    try:
+        await asyncio.shield(write_task)
+    except asyncio.CancelledError:
+        await write_task
+        raise
+
+
 def _downloaded_data_type(*, content_type: str | None) -> PromptDataType:
     """
     Return the path data type for downloaded ``url`` content.
@@ -246,6 +270,7 @@ async def _import_media_url_async(
     url: str,
     data_type: PromptDataType,
     serializer_factory: SerializerFactory,
+    created_paths: list[str] | None,
 ) -> MediaPersistenceResult:
     """
     Download a media URL once and store the bytes in managed media storage.
@@ -272,7 +297,11 @@ async def _import_media_url_async(
         data_type=resolved_type,
         extension=extension,
     )
-    await serializer.save_data_async(download.content)
+    await _write_owned_media_async(
+        serializer=serializer,
+        created_paths=created_paths,
+        write=lambda: serializer.save_data_async(download.content),
+    )
     return MediaPersistenceResult(
         value=str(serializer.value),
         origin=MediaOrigin.REMOTE_URL,
@@ -292,6 +321,7 @@ async def persist_media_value_async(
     use_data_uri_mime_type: bool = True,
     require_valid_base64_after_path_error: bool = False,
     serializer_factory: SerializerFactory = data_serializer_factory,
+    created_paths: list[str] | None = None,
 ) -> MediaPersistenceResult:
     """
     Classify and, when needed, persist one path-typed or ``url`` media value.
@@ -324,7 +354,9 @@ async def persist_media_value_async(
                 mime_type=mime_type,
                 data_type=_downloaded_data_type(content_type=blob_type) if data_type == "url" else data_type,
             )
-        return await _import_media_url_async(url=value, data_type=data_type, serializer_factory=serializer_factory)
+        return await _import_media_url_async(
+            url=value, data_type=data_type, serializer_factory=serializer_factory, created_paths=created_paths
+        )
     if data_type == "url":
         raise ValueError("URL pieces must use an http or https URL.")
 
@@ -373,7 +405,11 @@ async def persist_media_value_async(
         data_type=data_type,
         extension=extension,
     )
-    await serializer.save_b64_image_async(data=payload)
+    await _write_owned_media_async(
+        serializer=serializer,
+        created_paths=created_paths,
+        write=lambda: serializer.save_b64_image_async(data=payload),
+    )
     return MediaPersistenceResult(
         value=str(serializer.value),
         origin=origin,
@@ -387,6 +423,7 @@ async def persist_media_value_async(
 async def persist_message_pieces_async(
     *,
     pieces: Sequence[MessagePieceRequest],
+    persisted_paths: list[str] | None = None,
     serializer_factory: SerializerFactory = data_serializer_factory,
 ) -> None:
     """
@@ -403,6 +440,8 @@ async def persist_message_pieces_async(
 
     Args:
         pieces (Sequence[MessagePieceRequest]): Request pieces to resolve in place.
+        persisted_paths (list[str] | None): When given, receives the path of every file
+            written for these pieces, so a failed request can remove them.
         serializer_factory (SerializerFactory): Factory used to write new media files.
     """
     for piece in pieces:
@@ -420,6 +459,7 @@ async def persist_message_pieces_async(
                 data_type=original_type,
                 mime_type=piece.mime_type,
                 serializer_factory=serializer_factory,
+                created_paths=persisted_paths,
             )
             if result.resolved:
                 original_resolved = True
@@ -438,6 +478,7 @@ async def persist_message_pieces_async(
                 value=converted_value,
                 data_type=converted_type,
                 serializer_factory=serializer_factory,
+                created_paths=persisted_paths,
             )
             if result.resolved:
                 converted_value = result.value

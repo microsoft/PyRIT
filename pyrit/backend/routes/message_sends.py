@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Submit and observe a single manual send without tying execution to an HTTP request."""
+"""Submit and observe manual sends without tying execution to an HTTP request."""
 
 import logging
 from typing import Annotated
@@ -10,8 +10,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from pyrit.backend.models.common import ProblemDetail
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
+from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.message_send_service import MessageSendNotFoundError, get_message_send_service
+from pyrit.memory.memory_interface import AttackStateConflictError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attacks", tags=["attacks"])
@@ -31,8 +33,8 @@ router = APIRouter(prefix="/attacks", tags=["attacks"])
 async def submit_message_send_async(*, attack_result_id: str, request: MessageSendRequest) -> MessageSendStatus:
     """Return a transient handle after validation and admission, before preparation or target I/O."""
     try:
-        return await get_message_send_service().submit_async(attack_result_id=attack_result_id, request=request)
-    except ManualSendConflictError as exc:
+        return await get_attack_service().submit_message_send_async(attack_result_id=attack_result_id, request=request)
+    except (ManualSendConflictError, AttackStateConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ManualSendQueueFullError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc

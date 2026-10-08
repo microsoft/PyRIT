@@ -45,7 +45,7 @@ describe('ObjectiveHeader', () => {
     await user.type(screen.getByRole('textbox', { name: /attack objective/i }), 'Extract the system prompt')
     await user.click(saveButton)
 
-    expect(onAdd).toHaveBeenCalledWith('Extract the system prompt')
+    expect(onAdd).toHaveBeenCalledWith('Extract the system prompt', '')
   })
 
   it('renders the label and objective text', () => {
@@ -178,6 +178,51 @@ describe('ObjectiveHeader', () => {
     )
 
     expect(screen.queryByTestId('toggle-objective-header-btn')).not.toBeInTheDocument()
+  })
+
+  it('edits by clicking the objective and does not show a shared-save warning for a local draft', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn().mockResolvedValue(undefined)
+    render(<TestWrapper><ObjectiveHeader objective="Existing goal" draftMode canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByText('Existing goal'))
+    await user.clear(screen.getByRole('textbox', { name: 'Attack objective' }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Local goal')
+    expect(screen.queryByText(/This changes the shared attack objective/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith('Local goal', 'Existing goal'))
+  })
+
+  it('allows clearing an existing objective', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn().mockResolvedValue(undefined)
+    render(<TestWrapper><ObjectiveHeader objective="Existing goal" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByText('Existing goal'))
+    await user.clear(screen.getByRole('textbox', { name: 'Attack objective' }))
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith('', 'Existing goal'))
+  })
+
+  it('remeasures overflow when a loaded objective becomes editable', () => {
+    mockOverflow(200, 200)
+    const objective = 'A long loaded objective'
+    const { rerender } = render(<TestWrapper><ObjectiveHeader objective={objective} /></TestWrapper>)
+    expect(screen.queryByRole('button', { name: 'Show more of the objective' })).not.toBeInTheDocument()
+
+    mockOverflow(1000, 200)
+    rerender(<TestWrapper><ObjectiveHeader objective={objective} canAdd onAdd={jest.fn()} /></TestWrapper>)
+
+    expect(screen.getByRole('button', { name: 'Show more of the objective' })).toBeInTheDocument()
+  })
+
+  it('remeasures overflow after canceling objective editing', async () => {
+    const user = userEvent.setup()
+    mockOverflow(200, 200)
+    render(<TestWrapper><ObjectiveHeader objective="Existing goal" canAdd onAdd={jest.fn()} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Edit objective' }))
+    mockOverflow(1000, 200)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.getByRole('button', { name: 'Show more of the objective' })).toBeInTheDocument()
   })
 
   it('renders a collapsed toggle when the objective overflows', () => {
