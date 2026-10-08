@@ -32,7 +32,7 @@ class NonReplayableObservationError(ValueError):
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Generator, Sequence
 
 
 _ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload
@@ -154,7 +154,7 @@ _CURRENT_SCORING_MESSAGE: ContextVar[Message | None] = ContextVar(
 
 
 @contextmanager
-def _scoring_collection() -> Iterator[_ScoringCollector]:
+def _scoring_collection() -> Generator[_ScoringCollector, None, None]:
     """
     Collect observations and intermediate results for one public scoring call.
 
@@ -202,7 +202,7 @@ def _has_observation_collection() -> bool:
 
 
 @contextmanager
-def _suppress_observation_collection() -> Iterator[None]:
+def _suppress_observation_collection() -> Generator[None, None, None]:
     """Temporarily disable observation capture for derived evidence that cannot replay."""
     token = _CURRENT_OBSERVATION_COLLECTOR.set(None)
     try:
@@ -214,7 +214,7 @@ def _suppress_observation_collection() -> Iterator[None]:
 @contextmanager
 def _scoring_expectation_context(
     expectation: ScoringExpectation | None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Make the effective expectation available to request-bound scoring helpers."""
     token = _CURRENT_SCORING_EXPECTATION.set(expectation)
     try:
@@ -234,7 +234,7 @@ def _get_current_scoring_expectation() -> ScoringExpectation | None:
 
 
 @contextmanager
-def _scoring_scorable_context(scorable: Scorable | None) -> Iterator[None]:
+def _scoring_scorable_context(scorable: Scorable | None) -> Generator[None, None, None]:
     """Make the active scorable available to request-bound scoring helpers."""
     token = _CURRENT_SCORABLE.set(scorable)
     try:
@@ -254,7 +254,7 @@ def _get_current_scorable() -> Scorable | None:
 
 
 @contextmanager
-def _scoring_message_context(message: Message) -> Iterator[None]:
+def _scoring_message_context(message: Message) -> Generator[None, None, None]:
     """Make the exact prepared message available to request-bound scoring helpers."""
     token = _CURRENT_SCORING_MESSAGE.set(message)
     try:

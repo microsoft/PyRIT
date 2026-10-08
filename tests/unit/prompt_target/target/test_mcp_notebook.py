@@ -4,7 +4,7 @@
 import ast
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, chdir
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -74,7 +74,7 @@ async def test_notebook_mcp_session_is_closed_after_execution_async(fail_after_c
     lifecycle: list[str] = []
 
     @asynccontextmanager
-    async def create_session_async() -> AsyncIterator[ClientSession]:
+    async def create_session_async() -> AsyncGenerator[ClientSession, None]:
         lifecycle.append("enter")
         try:
             yield session
