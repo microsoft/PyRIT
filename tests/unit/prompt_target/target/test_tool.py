@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -312,7 +312,7 @@ async def test_single_response_advertises_tools_without_executing_calls(patch_ce
     provider.get_tools_async = AsyncMock(return_value=[add])
 
     @asynccontextmanager
-    async def scope_async() -> AsyncIterator[None]:
+    async def scope_async() -> AsyncGenerator[None, None]:
         lifecycle.append("enter")
         try:
             yield

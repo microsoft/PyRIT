@@ -18,7 +18,14 @@ from pyrit.executor.attack.compound import (
 from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation, SeedObjective
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    AttackResultRole,
+    AttackSeedGroup,
+    ScoringExpectation,
+    SeedObjective,
+)
 
 
 def _make_strategy(*, outcomes: list[AttackOutcome], name: str = "attack") -> MagicMock:
@@ -534,7 +541,8 @@ class TestExecutorForwarding:
     async def test_executor_receives_context_attribution(self, target, seed_group):
         """When the compound's context carries attribution (e.g. nested under
         a Scenario), it must be forwarded to the executor so the inner
-        ``AttackResult`` rows can be attributed to the parent."""
+        ``AttackResult`` rows can be attributed to the parent, with the
+        child's 1-based position added."""
         from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
@@ -559,7 +567,46 @@ class TestExecutorForwarding:
         ):
             await compound._perform_async(context=context)
 
-        assert executor_call_kwargs["attribution"] is attribution
+        assert executor_call_kwargs["attribution"] == AttackResultAttribution(
+            parent_id="scenario-1", parent_collection="scenario_results", attempt_index=1
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestResultRoles:
+    def test_sequential_attack_is_orchestration_and_children_are_target_facing(self) -> None:
+        assert SequentialAttack.RESULT_ROLE is AttackResultRole.ORCHESTRATION
+        assert PromptSendingAttack.RESULT_ROLE is AttackResultRole.TARGET_FACING
+
+    async def test_each_child_receives_its_position_and_the_parent_attribution(self, target, seed_group):
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
+        b = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="b")
+        c = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="c")
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[SequentialChildAttack(strategy=s, seed_group=seed_group) for s in (a, b, c)],
+        )
+        parent = AttackResultAttribution(
+            parent_id="scenario-1", parent_collection="adaptive_x", parent_eval_hash="eval", seed_group_id="seed"
+        )
+        context = _make_context()
+        context._attribution = parent
+
+        patcher, calls = _patch_run_child_attack(strategies_by_id={id(a): a, id(b): b, id(c): c})
+        with patcher:
+            await compound._perform_async(context=context)
+
+        assert [call["attribution"].attempt_index for call in calls] == [1, 2, 3]
+        for call in calls:
+            assert call["attribution"].parent_id == parent.parent_id
+            assert call["attribution"].parent_collection == parent.parent_collection
+            assert call["attribution"].parent_eval_hash == parent.parent_eval_hash
+            assert call["attribution"].seed_group_id == parent.seed_group_id
+        # The parent's own attribution is unchanged, so its row carries no position.
+        assert context._attribution is parent
+        assert parent.attempt_index is None
 
 
 @pytest.mark.usefixtures("patch_central_database")

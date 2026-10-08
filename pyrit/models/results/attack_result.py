@@ -95,6 +95,27 @@ class AttackOutcome(str, Enum):
     UNDETERMINED = "undetermined"
 
 
+class AttackResultRole(str, Enum):
+    """
+    What a persisted attack result represents, recorded by the strategy that produced it.
+
+    The role says which kind of record this is, not what happened. A target-facing result
+    can still end before any request reaches the objective target (for example, a preparation
+    failure), so the role is not proof that the target was called.
+    """
+
+    #: Produced by a strategy that sends its own requests to the objective target.
+    TARGET_FACING = "target_facing"
+
+    #: Produced by a strategy that only coordinates other attacks and has no target
+    #: conversation of its own, such as ``SequentialAttack``.
+    ORCHESTRATION = "orchestration"
+
+    #: Read-side value for records that carry no recognized role, such as rows persisted
+    #: before roles were recorded. Producers never write it.
+    UNKNOWN = "unknown"
+
+
 class AttackResult(StrategyResult):
     """Base class for all attack results."""
 
@@ -171,11 +192,8 @@ class AttackResult(StrategyResult):
     retry_events: list[RetryEvent] = Field(default_factory=list)
     total_retries: int = 0
 
-    # Attribution / parent linkage (infrastructure-managed). Set by the attack
-    # persistence path when an AttackResultAttribution is present on the
-    # AttackContext. User code should not set these directly; ad-hoc
-    # AttackResults created outside an orchestrator leave both fields as None
-    # and the corresponding DB columns remain NULL.
+    # Infrastructure-managed parent linkage and producer metadata. Strategies
+    # record their role even without an orchestrator; the parent ID stays None.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
 

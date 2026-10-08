@@ -103,7 +103,10 @@ export interface ChatConverterController {
   clear: (pieceId: string) => void
   clearAll: () => void
   editConvertedValue: (pieceId: string, value: string) => void
-  restore: (text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>) => void
+  restore: (
+    text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>,
+    pipelines?: Record<string, ConverterPipelineStage[]>,
+  ) => void
 }
 
 export interface MessageTextDisplayPiece {
@@ -421,6 +424,12 @@ export interface Parameter {
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
   reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  /** Whether parameter controls must obscure the entered value. */
+  sensitive?: boolean
+  /** Whether parameter controls must preserve line breaks in the entered value. */
+  multiline?: boolean
+  /** Whether the value must be omitted when identity-based authentication is selected. */
+  identity_conflicting?: boolean
   description?: string | null
 }
 
@@ -740,20 +749,34 @@ export interface AddMessageResponse {
   messages: ConversationMessagesResponse
 }
 
+export type RepeatConversionMode = 'shared' | 'per_branch'
+
 export interface MessageSendRequest extends AddMessageRequest {
   send: true
   target_registry_name: string
   submission_id: string
+  count?: number
+  request_converter_mode?: RepeatConversionMode
 }
 
-export interface MessageSendStatus {
-  send_id: string
-  attack_result_id: string
+export interface MultiSendOptions {
+  count: number
+  requestConverterMode: RepeatConversionMode
+}
+
+export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+}
+
+export interface MessageSendStatus extends MessageSendConversation {
+  send_id: string
+  attack_result_id: string
+  count?: number
+  conversations?: MessageSendConversation[]
 }
 
 export interface AttackListResponse {
