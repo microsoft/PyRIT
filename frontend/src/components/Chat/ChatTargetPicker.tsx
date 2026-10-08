@@ -15,10 +15,11 @@ interface ChatTargetPickerProps {
   error: string | null
   disabled: boolean
   onSelect: (target: TargetInstance | null) => void
+  disabledReason?: (target: TargetInstance) => string | undefined
 }
 
 export default function ChatTargetPicker({
-  target, targets, loading, error, disabled, onSelect,
+  target, targets, loading, error, disabled, onSelect, disabledReason,
 }: ChatTargetPickerProps) {
   const styles = useChatTargetPickerStyles()
   const placeholder = loading ? 'Loading targets...'
@@ -38,8 +39,10 @@ export default function ChatTargetPicker({
       >
         <option value="">{placeholder}</option>
         {targets.map((item: TargetInstance) => (
-          <option key={item.target_registry_name} value={item.target_registry_name}>
+          <option key={item.target_registry_name} value={item.target_registry_name}
+            disabled={Boolean(disabledReason?.(item))} title={disabledReason?.(item)}>
             {item.target_registry_name}{targetModelName(item) ? ` (${targetModelName(item)})` : ''}
+            {disabledReason?.(item) ? ` - ${disabledReason(item)}` : ''}
           </option>
         ))}
       </select>

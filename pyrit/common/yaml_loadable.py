@@ -8,6 +8,7 @@ from typing import TypeVar
 import yaml
 
 from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
 
 T = TypeVar("T", bound="YamlLoadable")
 
@@ -34,7 +35,7 @@ class YamlLoadable(abc.ABC):  # noqa: B024
         """
         file = verify_and_resolve_path(file)
         try:
-            yaml_data = yaml.safe_load(file.read_text("utf-8"))
+            yaml_data = safe_load_yaml(file.read_text("utf-8"))
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
 

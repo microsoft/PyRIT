@@ -231,7 +231,7 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
         ),
         patch("pathlib.Path.exists", return_value=True),
         patch("builtins.open", mock_open()),
-        patch("yaml.safe_load", return_value=duplicate_yaml),
+        patch("pyrit.converter.image_prompt_style_converter.safe_load_yaml", return_value=duplicate_yaml),
     ):
         converter = ImagePromptStyleConverter(
             converter_target=mock_target,

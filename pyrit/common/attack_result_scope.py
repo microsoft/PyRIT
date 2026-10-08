@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 _current_attack_result_id: ContextVar[str | None] = ContextVar("pyrit_attack_result_id", default=None)
 
@@ -30,7 +30,7 @@ def get_current_attack_result_id() -> str | None:
 
 
 @contextmanager
-def attack_result_id_scope(*, attack_result_id: str) -> Iterator[None]:
+def attack_result_id_scope(*, attack_result_id: str) -> Generator[None, None, None]:
     """
     Make ``attack_result_id`` the current attack result ID within this scope.
 
