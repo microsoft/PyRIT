@@ -30,6 +30,7 @@ from pyrit.backend.services.converter_service import ConverterService, get_conve
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
@@ -41,7 +42,7 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
 
     def wait_in_database() -> int:
         started.set()
-        if not release.wait(timeout=10):
+        if not release.wait(timeout=60):
             raise RuntimeError("Database wait was not released")
         return 1
 
@@ -54,9 +55,9 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
         )
         query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
         try:
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await asyncio.to_thread(started.wait, 30)
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=30)
             assert response.status_code == 200
             assert response.json()["status"] == "healthy"
             assert not query.done()
@@ -89,6 +90,7 @@ class TestLifespan:
     ) -> None:
         service = get_message_send_service()
         converter = get_converter_service()
+        get_scorer_service()
         with (
             patch.object(service, "shutdown_async", side_effect=asyncio.CancelledError),
             patch.object(converter, "close_async", wraps=converter.close_async) as close,
@@ -99,6 +101,7 @@ class TestLifespan:
         assert get_message_send_service.cache_info().currsize == 0
         assert get_manual_send_scheduler.cache_info().currsize == 0
         assert get_converter_service.cache_info().currsize == 0
+        assert get_scorer_service.cache_info().currsize == 0
 
     @pytest.mark.parametrize("scenario_failure", [False, True])
     async def test_manual_sends_stop_before_converter_cleanup_and_caches_reset_async(

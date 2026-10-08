@@ -12,8 +12,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PIPELINES = REPO_ROOT / "infra" / "pipelines"
 SUBSCRIPTION = "11111111-1111-1111-1111-111111111111"
@@ -140,40 +138,61 @@ class TestLocalDockerBuild(unittest.TestCase):
 
 @unittest.skipIf(BASH is None, "Native Bash is not installed")
 class TestPypiBuild(unittest.TestCase):
-    def test_pypi_images_require_an_explicit_coordinated_version(self) -> None:
-        pipeline = yaml.safe_load((REPO_ROOT / ".github/workflows/docker_build.yml").read_text(encoding="utf-8"))
-        steps = pipeline["jobs"]["build-production-pypi"]["steps"]
-        selection = next(step for step in steps if step.get("id") == "pypi-version")
-        assert selection["env"]["PYRIT_PYPI_VERSION"] == "${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}"
-        assert "pip index" not in selection["run"]
-        assert "0.10.0" not in selection["run"]
-        assert BASH is not None
+    def test_pypi_builds_preserve_installed_package_provenance_and_remove_local_sources(self) -> None:
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        pypi_build = dockerfile.split('if [ "$PYRIT_SOURCE" = "pypi" ]; then', 1)[1].split(
+            'elif [ "$PYRIT_SOURCE" = "local" ]; then', 1
+        )[0]
+        assert "==$PYRIT_VERSION" in pypi_build
+        assert "rm -rf /app/pyrit /app/frontend /app/build_scripts" in pypi_build
+        assert "stamp" not in pypi_build
+        assert "prepare_package" not in pypi_build
 
-        for version, valid in (
-            ("1.2.0", True),
-            ("1.2.0.dev0", True),
-            ("1.2.0rc1", True),
-            ("", False),
-            ("latest", False),
-            ("1.2.0\nGIT_MODIFIED=false", False),
-            ("1.2.0 --extra-index-url=https://example.com", False),
-        ):
-            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
-                output = Path(directory) / "github-output"
+    def test_pypi_compatibility_validation_fails_closed_with_a_release_diagnostic(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        validation = dockerfile.split("    cd /tmp && \\\n", 1)[1].split('    echo "Creating build info..."', 1)[0]
+        validation = validation.replace("/opt/venv/bin/python", shlex.quote(Path(sys.executable).as_posix()))
+        version = "9.9.9"
+        identity = f"{version}+g{'a' * 40}"
+
+        for state in ("legacy", "missing-stamp", "malformed-stamp", "stamped"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                package = root / "pyrit"
+                package.mkdir()
+                (package / "__init__.py").write_text("from ._version import __version__\n", encoding="utf-8")
+                (package / "_version.py").write_text(f"__version__ = {version!r}\n", encoding="utf-8")
+                if state != "legacy":
+                    shutil.copyfile(REPO_ROOT / "pyrit/_compatibility.py", package / "_compatibility.py")
+                if state in ("malformed-stamp", "stamped"):
+                    stamp = {
+                        "version": version if state == "stamped" else "9.9.8",
+                        "commit": "a" * 40,
+                        "compatibility_id": identity,
+                        "dirty": False,
+                    }
+                    (package / "_compatibility.json").write_text(json.dumps(stamp), encoding="utf-8")
+                environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
                 result = subprocess.run(
                     [BASH, "--noprofile", "--norc", "-s"],
-                    input=selection["run"],
+                    input="set -eu\n" + validation + "true\n",
+                    cwd=root,
                     text=True,
                     capture_output=True,
                     check=False,
                     timeout=30,
-                    env={**os.environ, "PYRIT_PYPI_VERSION": version, "GITHUB_OUTPUT": output.as_posix()},
+                    env={**environment, "PYRIT_SOURCE": "pypi", "PYRIT_VERSION": version},
                 )
-                assert (result.returncode == 0) == valid, result.stdout + result.stderr
-                if valid:
-                    assert output.read_text().strip() == f"version={version}"
+                if state == "stamped":
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    assert result.stdout.strip() == identity
+                    assert result.stderr == ""
                 else:
-                    assert not output.exists()
+                    assert result.returncode != 0
+                    assert f"Selected PyPI release {version} lacks valid compatibility metadata" in result.stderr
+                    assert "Wheels published before compatibility stamping are unsupported" in result.stderr
+                    assert "matching Python and frontend stamps is required" in result.stderr
 
 
 @unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")

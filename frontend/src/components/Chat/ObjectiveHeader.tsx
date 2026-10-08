@@ -30,6 +30,7 @@ import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 
 interface ObjectiveHeaderProps {
   objective: string
+  draftMode?: boolean
   outcome?: AttackOutcome
   automatedScore?: BackendScore | null
   humanScore?: BackendScore | null
@@ -38,7 +39,7 @@ interface ObjectiveHeaderProps {
   onUpdateHumanScore?: (value: boolean, rationale: string) => Promise<void>
   onRemoveHumanScore?: () => Promise<void>
   canAdd?: boolean
-  onAdd?: (objective: string) => Promise<void>
+  onAdd?: (objective: string, expectedObjective: string) => Promise<void>
 }
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
@@ -53,6 +54,7 @@ function scoreLabel(score?: BackendScore | null): string {
 
 export default function ObjectiveHeader({
   objective,
+  draftMode = false,
   outcome,
   automatedScore,
   humanScore,
@@ -68,6 +70,7 @@ export default function ObjectiveHeader({
   const [overflowing, setOverflowing] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [initialObjective, setInitialObjective] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState('')
   const initialVerdict = scoreVerdict(humanScore ?? automatedScore)
@@ -83,6 +86,7 @@ export default function ObjectiveHeader({
   const contentRef = useRef<HTMLElement>(null)
   const humanScoreDisabledReasonId = useId()
   const missingObjective = !objective.trim()
+  const ObjectiveContent = canAdd && onAdd ? 'button' : 'span'
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -97,16 +101,23 @@ export default function ObjectiveHeader({
     const observer = new ResizeObserver(measure)
     observer.observe(content)
     return () => observer.disconnect()
-  }, [objective, expanded])
+  }, [objective, expanded, isEditing, ObjectiveContent])
+
+  const beginEditing = (): void => {
+    setDraft(objective)
+    setInitialObjective(objective)
+    setError('')
+    setIsEditing(true)
+  }
 
   const handleSave = async (): Promise<void> => {
     const trimmedObjective = draft.trim()
-    if (!trimmedObjective || !onAdd) return
+    if ((!trimmedObjective && missingObjective) || !onAdd) return
 
     setIsSaving(true)
     setError('')
     try {
-      await onAdd(trimmedObjective)
+      await onAdd(trimmedObjective, initialObjective)
       setIsEditing(false)
       setDraft('')
     } catch {
@@ -271,7 +282,7 @@ export default function ObjectiveHeader({
     </div>
   )
 
-  if (!objective) {
+  if (!objective || isEditing) {
     const canShowObjective = (canAdd || isEditing) && Boolean(onAdd)
     if (!canShowObjective && !outcome) return null
     return (
@@ -291,16 +302,17 @@ export default function ObjectiveHeader({
                   aria-label="Attack objective"
                   autoFocus
                 />
-                <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={!draft.trim() || isSaving}>
+                <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={(!draft.trim() && missingObjective) || isSaving}>
                   {isSaving ? 'Saving...' : 'Save'}
                 </Button>
+                {objective && !draftMode && <Text>This changes the shared attack objective and resets the outcome. Old scores stay in history.</Text>}
                 <Button appearance="subtle" size="small" className={styles.editorAction} onClick={() => setIsEditing(false)} disabled={isSaving}>
                   Cancel
                 </Button>
                 {error && <Text role="alert">{error}</Text>}
               </>
             ) : (
-              <Button appearance="subtle" size="small" icon={<AddRegular />} onClick={() => setIsEditing(true)} className={styles.addButton}>
+              <Button appearance="subtle" size="small" icon={<AddRegular />} onClick={beginEditing} className={styles.addButton}>
                 Add objective
               </Button>
             )}
@@ -319,13 +331,16 @@ export default function ObjectiveHeader({
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
           Objective
         </Badge>
-        <Text
-          ref={contentRef}
-          className={mergeClasses(styles.content, expanded ? styles.contentExpanded : styles.contentCollapsed)}
+        <ObjectiveContent
+          type={canAdd && onAdd ? 'button' : undefined}
+          aria-label={canAdd && onAdd ? 'Edit objective' : undefined}
+          onClick={canAdd && onAdd ? beginEditing : undefined}
+          ref={(element: HTMLButtonElement | HTMLSpanElement | null) => { contentRef.current = element }}
+          className={mergeClasses(styles.content, canAdd && onAdd && styles.editableContent, expanded ? styles.contentExpanded : styles.contentCollapsed)}
           data-testid="objective-header-content"
         >
           {objective}
-        </Text>
+        </ObjectiveContent>
         {showToggle && (
           <Button
             appearance="transparent"

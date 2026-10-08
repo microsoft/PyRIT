@@ -23,6 +23,7 @@ skip_files = {
     "10_1_playwright_target.py",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.py",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.py",  # requires manual token pasting
+    "github_copilot_target.py",  # requires GitHub Copilot SDK credentials and model access
     "hack_a_prompt_target.py",  # requires a signed-in HackAPrompt session
     "app.py",  # Flask app for playwright demo, not a notebook
     # executor
