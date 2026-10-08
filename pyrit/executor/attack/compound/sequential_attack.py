@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -33,7 +33,7 @@ from pydantic import Field
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation
+from pyrit.models import AttackOutcome, AttackResult, AttackResultRole, AttackSeedGroup, ScoringExpectation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -191,6 +191,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
     DELEGATES_SCORING: ClassVar[bool] = True
 
+    RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""
 
@@ -249,12 +251,14 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> SequentialAttackResult:
         results: list[AttackResult] = []
 
-        for child_attack in self._child_attacks:
+        for attempt_index, child_attack in enumerate(self._child_attacks, start=1):
             labels = {**context.memory_labels, **dict(child_attack.memory_labels)}
+            # Each child shares the parent's attribution plus its own position.
+            attribution = replace(context._attribution, attempt_index=attempt_index) if context._attribution else None
             result = await self._run_child_attack_async(
                 child_attack=child_attack,
                 memory_labels=labels,
-                attribution=context._attribution,
+                attribution=attribution,
                 expectation=context.params.expectation,
             )
             results.append(result)

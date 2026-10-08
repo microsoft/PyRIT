@@ -5,7 +5,7 @@
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -160,12 +160,12 @@ async def test_manual_send_exposes_and_persists_ownership_async(
 
 
 @contextmanager
-def _observe_operation(scheduler: ManualSendScheduler) -> Iterator[asyncio.Event]:
+def _observe_operation(scheduler: ManualSendScheduler) -> Generator[asyncio.Event, None, None]:
     waiting = asyncio.Event()
     operation = scheduler.operation_async
 
     @asynccontextmanager
-    async def observe_async() -> AsyncIterator[None]:
+    async def observe_async() -> AsyncGenerator[None, None]:
         waiting.set()
         async with operation():
             yield
@@ -1890,7 +1890,7 @@ class TestConcurrentMessages:
             return await convert(prompt=prompt, input_type=input_type)
 
         @asynccontextmanager
-        async def observe_guard_async(converter: Converter) -> AsyncIterator[None]:
+        async def observe_guard_async(converter: Converter) -> AsyncGenerator[None, None]:
             nonlocal attempts
             if converter is shared:
                 attempts += 1
@@ -2136,7 +2136,7 @@ class TestConcurrentMessages:
             return await send(normalized_conversation=normalized_conversation)
 
         @asynccontextmanager
-        async def observe_metadata_async(*, attack_result_id: str) -> AsyncIterator[None]:
+        async def observe_metadata_async(*, attack_result_id: str) -> AsyncGenerator[None, None]:
             nonlocal attempts
             attempts += 1
             if attempts == 2:
