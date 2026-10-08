@@ -11,6 +11,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { TechniqueInstance } from '@/types'
+import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import CreateTechniqueDialog from './CreateTechniqueDialog'
 import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
@@ -42,8 +43,12 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
     setLoading(true)
     setError(null)
     try {
-      const response = await techniquesApi.listTechniques()
-      if (mounted.current && epoch === listEpoch.current) setItems(response.items)
+      const entries = await fetchAllPages(
+        (cursor: string | undefined) => techniquesApi.listTechniques(200, cursor),
+        undefined,
+        (item: TechniqueInstance) => item.name,
+      )
+      if (mounted.current && epoch === listEpoch.current) setItems(entries)
     } catch (err) {
       if (mounted.current && epoch === listEpoch.current) setError(toApiError(err).detail)
     } finally {

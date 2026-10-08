@@ -36,10 +36,14 @@ The API will be available at `http://localhost:8000`
 
 | Endpoint | Result |
 | --- | --- |
-| `GET /api/techniques` | All active registered technique factories |
+| `GET /api/techniques` | A page of active registered technique factories |
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
 | `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
+
+The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
+registry name). Results use registry-name order. Follow `pagination.next_cursor`
+while `pagination.has_more` is true. The GUI loads all pages for search and filters.
 
 Use a class name from `AttackRegistry` as `type`, with `name` and constructor
 `params`. Optional fields are `description`, `tags`, ordered

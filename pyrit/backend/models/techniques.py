@@ -7,6 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import Parameter
 from pyrit.models.request_limits import MAX_ITEMS
 
@@ -26,9 +27,10 @@ class TechniqueInstance(BaseModel):
 
 
 class TechniqueListResponse(BaseModel):
-    """The active runtime catalog, without loading additional techniques."""
+    """A page of the active runtime catalog, without loading additional techniques."""
 
     items: list[TechniqueInstance]
+    pagination: PaginationInfo
 
 
 class TechniqueTypeEntry(BaseModel):

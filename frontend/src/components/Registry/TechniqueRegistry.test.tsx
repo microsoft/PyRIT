@@ -4,7 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { TechniqueInstance, TechniqueTypeResponse } from '@/types'
+import type { TechniqueInstance, TechniqueListResponse, TechniqueTypeResponse } from '@/types'
 
 import TechniqueRegistry from './TechniqueRegistry'
 
@@ -24,6 +24,10 @@ function technique(name: string, attackType = 'PromptSendingAttack', tags = ['ba
   return { name, attack_type: attackType, tags, description: `${name} description`,
     uses_adversarial: false, uses_default_adversarial_target: false,
     creation_statement: `AttackTechniqueFactory(\n    name="${name}",\n    attack_class=${attackType},\n)` }
+}
+
+function techniquePage(items: TechniqueInstance[]): TechniqueListResponse {
+  return { items, pagination: { limit: 200, has_more: false } }
 }
 
 const metadata: TechniqueTypeResponse = {
@@ -63,7 +67,7 @@ describe('TechniqueRegistry', () => {
       ...Object.values(converters),
     ]) method.mockReset()
     mockRuntime = { generation: 1, ready: true }
-    techniques.listTechniques.mockResolvedValue({ items: [technique('first'), technique('second', 'RedTeamingAttack', ['advanced'])] })
+    techniques.listTechniques.mockResolvedValue(techniquePage([technique('first'), technique('second', 'RedTeamingAttack', ['advanced'])]))
     techniques.listTypes.mockResolvedValue(metadata)
     techniques.createTechnique.mockResolvedValue(technique('created'))
     targets.listTargets.mockResolvedValue({
@@ -105,7 +109,7 @@ describe('TechniqueRegistry', () => {
   it('shows helper construction without identifiers or expanded conversation data', async () => {
     const item = technique('simulated')
     item.creation_statement = 'AttackTechniqueFactory.with_simulated_conversation(\n    name="simulated",\n    num_turns=2,\n)'
-    techniques.listTechniques.mockResolvedValue({ items: [item] })
+    techniques.listTechniques.mockResolvedValue(techniquePage([item]))
     const user = userEvent.setup()
     render(tree())
     await user.click(await screen.findByRole('button', { name: 'Details for simulated' }))
@@ -115,7 +119,7 @@ describe('TechniqueRegistry', () => {
   })
 
   it('shows empty and no-match states', async () => {
-    techniques.listTechniques.mockResolvedValueOnce({ items: [] })
+    techniques.listTechniques.mockResolvedValueOnce(techniquePage([]))
     const user = userEvent.setup()
     render(tree())
     await screen.findByText(/No techniques registered/)
@@ -132,6 +136,41 @@ describe('TechniqueRegistry', () => {
     await screen.findByText('List unavailable')
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     await screen.findByRole('table')
+  })
+
+  it('loads all pages so later techniques remain searchable and filterable', async () => {
+    techniques.listTechniques
+      .mockResolvedValueOnce({
+        items: [technique('first')],
+        pagination: { limit: 200, has_more: true, next_cursor: 'first' },
+      })
+      .mockResolvedValueOnce(techniquePage([technique('later', 'RedTeamingAttack', ['later_tag'])]))
+    const user = userEvent.setup()
+    render(tree())
+    await screen.findByText('later description')
+    expect(techniques.listTechniques.mock.calls).toEqual([[200, undefined], [200, 'first']])
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by tag' }), 'later_tag')
+    expect(screen.queryByText('first description')).not.toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: 'Search techniques' }), 'later')
+    await user.click(screen.getByRole('button', { name: 'Details for later' }))
+    expect(within(screen.getByRole('dialog')).getByLabelText('Technique creation call').textContent)
+      .toBe(technique('later', 'RedTeamingAttack', ['later_tag']).creation_statement)
+  })
+
+  it('reports a later page failure instead of showing an incomplete catalog', async () => {
+    techniques.listTechniques
+      .mockResolvedValueOnce({
+        items: [technique('first')],
+        pagination: { limit: 200, has_more: true, next_cursor: 'first' },
+      })
+      .mockRejectedValueOnce(new Error('Next page unavailable'))
+    const user = userEvent.setup()
+    render(tree())
+    await screen.findByText('Next page unavailable')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await screen.findByRole('table')
+    expect(techniques.listTechniques).toHaveBeenLastCalledWith(200, undefined)
   })
 
   it('creates a metadata-driven configuration with false, zero, and ordered duplicate references', async () => {
@@ -241,14 +280,14 @@ describe('TechniqueRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     await act(async () => { completeCreate?.(technique('later')) })
     expect(techniques.listTechniques).toHaveBeenCalledTimes(1)
-    let completeList: ((value: { items: TechniqueInstance[] }) => void) | undefined
+    let completeList: ((value: TechniqueListResponse) => void) | undefined
     techniques.listTechniques.mockReturnValueOnce(new Promise((resolve) => { completeList = resolve }))
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
     mockRuntime = { generation: 2, ready: true }
     rerender(tree())
     await waitFor(() => expect(screen.getByText('New technique', { selector: 'button' })).toHaveFocus())
     await screen.findByRole('table')
-    await act(async () => { completeList?.({ items: [technique('obsolete')] }) })
+    await act(async () => { completeList?.(techniquePage([technique('obsolete')])) })
     expect(screen.queryByText('obsolete description')).not.toBeInTheDocument()
   })
 

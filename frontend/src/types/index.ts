@@ -382,6 +382,11 @@ export interface TechniqueTypeEntry {
   supports_converters: boolean
 }
 
+export interface TechniqueListResponse {
+  items: TechniqueInstance[]
+  pagination: PaginationInfo
+}
+
 export interface TechniqueTypeResponse {
   items: TechniqueTypeEntry[]
 }

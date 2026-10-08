@@ -82,6 +82,89 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
     assert created.attack_type == "PromptSendingAttack"
 
 
+@pytest.mark.parametrize("limit", [1, 3, 200])
+async def test_list_paginates_and_only_projects_requested_factories_async(
+    *, registry: AttackTechniqueRegistry, limit: int
+) -> None:
+    names = registry.instances.get_names()
+    service = TechniqueService()
+    with patch(
+        "pyrit.backend.services.technique_service.technique_to_instance", wraps=technique_to_instance
+    ) as project:
+        first = await service.list_async(limit=limit)
+    assert [item.name for item in first.items] == names[:limit]
+    assert project.call_count == min(limit, len(names))
+    assert first.pagination.limit == limit
+    assert first.pagination.has_more is (len(names) > limit)
+    assert first.pagination.next_cursor == (names[limit - 1] if len(names) > limit else None)
+    assert first.pagination.prev_cursor is None
+    if first.pagination.next_cursor is not None:
+        second = await service.list_async(limit=limit, cursor=first.pagination.next_cursor)
+        assert [item.name for item in second.items] == names[limit : limit * 2]
+        assert second.pagination.prev_cursor == first.pagination.next_cursor
+        assert second.pagination.has_more is (len(names) > limit * 2)
+
+
+async def test_list_empty_and_terminal_pages_async(registry: AttackTechniqueRegistry) -> None:
+    service = TechniqueService()
+    cursor = registry.instances.get_names()[-1]
+    terminal = await service.list_async(limit=3, cursor=cursor)
+    assert terminal.items == []
+    assert terminal.pagination.model_dump() == {
+        "limit": 3,
+        "has_more": False,
+        "next_cursor": None,
+        "prev_cursor": cursor,
+    }
+    with patch.object(registry.instances, "get_all_instances", return_value=[]):
+        empty = await service.list_async()
+    assert empty.items == []
+    assert not empty.pagination.has_more
+    assert empty.pagination.next_cursor is None
+
+
+async def test_list_unknown_cursor_starts_at_first_page_like_targets_async(registry: AttackTechniqueRegistry) -> None:
+    page = await TechniqueService().list_async(limit=3, cursor="missing")
+    assert [item.name for item in page.items] == registry.instances.get_names()[:3]
+    assert page.pagination.prev_cursor == "missing"
+
+
+def test_rest_list_follows_all_pages_with_default_limit(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    for index in range(51):
+        registry.instances.register_runtime(
+            AttackTechniqueFactory(name=f"page_{index:03}", attack_class=PromptSendingAttack)
+        )
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques")
+    assert response.status_code == 200, response.text
+    first = response.json()
+    assert len(first["items"]) == 50
+    assert first["pagination"] == {
+        "limit": 50,
+        "has_more": True,
+        "next_cursor": first["items"][-1]["name"],
+        "prev_cursor": None,
+    }
+    response = client.get("/api/techniques", params={"cursor": first["pagination"]["next_cursor"]})
+    assert response.status_code == 200, response.text
+    last = response.json()
+    assert not last["pagination"]["has_more"]
+    assert last["pagination"]["next_cursor"] is None
+    assert [item["name"] for item in first["items"] + last["items"]] == registry.instances.get_names()
+
+
+@pytest.mark.parametrize(
+    "params", [{"limit": 0}, {"limit": 201}, {"limit": -1}, {"limit": "bad"}, {"cursor": "x" * 1025}]
+)
+def test_rest_list_rejects_invalid_pagination(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], params: dict[str, Any]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    assert client.get("/api/techniques", params=params).status_code == 422
+
+
 @pytest.mark.parametrize("name", ["tap", "crescendo_simulated", "role_play_video_game"])
 def test_factory_creation_statement_uses_supplied_inputs_without_creating_attacks(
     *, registry: AttackTechniqueRegistry, name: str

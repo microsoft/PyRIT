@@ -10,6 +10,7 @@ from typing import Any, get_args
 from pydantic import TypeAdapter
 
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
+from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueInstance,
@@ -29,21 +30,28 @@ class TechniqueService:
         """Bind to the runtime registry; service lifecycle clears this binding on reset."""
         self._registry = AttackTechniqueRegistry.get_registry_singleton()
 
-    async def list_async(self) -> TechniqueListResponse:
+    async def list_async(self, *, limit: int = 50, cursor: str | None = None) -> TechniqueListResponse:
         """
-        List all factories, including advanced programmatic definitions.
+        List factories in registry-name order, including advanced programmatic definitions.
 
         Returns:
-            TechniqueListResponse: The active factory catalog.
+            TechniqueListResponse: A page and its pagination metadata.
         """
-        return await asyncio.to_thread(self._list)
+        return await asyncio.to_thread(self._list, limit=limit, cursor=cursor)
 
-    def _list(self) -> TechniqueListResponse:
+    def _list(self, *, limit: int, cursor: str | None) -> TechniqueListResponse:
+        entries = self._registry.instances.get_all_instances()
+        start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
+        page = entries[start : start + limit]
+        has_more = len(entries) > start + limit
         return TechniqueListResponse(
-            items=[
-                technique_to_instance(name=entry.name, factory=entry.instance)
-                for entry in self._registry.instances.get_all_instances()
-            ]
+            items=[technique_to_instance(name=entry.name, factory=entry.instance) for entry in page],
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=page[-1].name if page and has_more else None,
+                prev_cursor=cursor,
+            ),
         )
 
     async def get_async(self, name: str) -> TechniqueInstance | None:

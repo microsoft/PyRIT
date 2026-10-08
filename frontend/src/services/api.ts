@@ -16,6 +16,7 @@ import type {
   CreateConverterRequest,
   CreateTechniqueRequest,
   TechniqueInstance,
+  TechniqueListResponse,
   TechniqueTypeResponse,
   CreateTargetRequest,
   InitializerSettingsResponse,
@@ -259,8 +260,11 @@ export const targetsApi = {
 }
 
 export const techniquesApi = {
-  listTechniques: async (): Promise<{ items: TechniqueInstance[] }> =>
-    (await apiClient.get('/techniques')).data,
+  listTechniques: async (limit = 50, cursor?: string): Promise<TechniqueListResponse> => {
+    const params: Record<string, string | number> = { limit }
+    if (cursor) params.cursor = cursor
+    return (await apiClient.get('/techniques', { params })).data
+  },
   listTypes: async (): Promise<TechniqueTypeResponse> =>
     (await apiClient.get('/techniques/types')).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>

@@ -3,9 +3,9 @@
 
 """Runtime technique catalog routes, guarded by shared authentication and admission."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueInstance,
@@ -18,14 +18,18 @@ router = APIRouter(prefix="/techniques", tags=["techniques"])
 
 
 @router.get("", response_model=TechniqueListResponse)
-async def list_techniques_async() -> TechniqueListResponse:
+async def list_techniques_async(
+    *,
+    limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
+    cursor: CursorStr | None = Query(None, description="Pagination cursor (technique registry name)"),
+) -> TechniqueListResponse:
     """
-    List factories from the active catalog.
+    List factories from the active catalog with pagination.
 
     Returns:
-        TechniqueListResponse: Registered factories.
+        TechniqueListResponse: A page of registered factories.
     """
-    return await get_technique_service().list_async()
+    return await get_technique_service().list_async(limit=limit, cursor=cursor)
 
 
 @router.get("/types", response_model=TechniqueTypeResponse)
