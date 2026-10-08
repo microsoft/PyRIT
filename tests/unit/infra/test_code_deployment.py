@@ -391,7 +391,7 @@ done
 preview_deployment() { echo "preview $1"; }
 az() { echo "az $1 $2 $3"; }
 revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
-template_file=t deployment_name=d parameters=()
+template_file=t deployment_name=d parameters=(appName=test)
 main
 """,
         )
@@ -505,7 +505,9 @@ echo stopped
 for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode; do
   eval "$step() { :; }"
 done
-build_app_parameters() { template_file=t deployment_name=d parameters=(); immutable_image=i; deployment_tags='{}'; }
+build_app_parameters() {
+  template_file=t deployment_name=d parameters=(appName=test); immutable_image=i; deployment_tags='{}'
+}
 preview_deployment() {
   if [[ "$1" == job && "$PYRIT_TEST_PREPARATION_FAILURE" == preview ]]; then
     deployment_error "Job preparation failed"

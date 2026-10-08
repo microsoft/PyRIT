@@ -52,7 +52,7 @@ async def _migrate_async(*, config_file: str, expected_server: str, expected_dat
         connection_string=connection_string, expected_server=expected_server, expected_database=expected_database
     )
     memory = cast(
-        AzureSQLMemory,
+        "AzureSQLMemory",
         AzureSQLMemory(
             connection_string=connection_string, _defer_initialization=True, skip_schema_migration=True, silent=True
         ),
