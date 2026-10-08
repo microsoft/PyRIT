@@ -283,9 +283,10 @@ class Parameter(BaseModel):
         """
         Whether REST, CLI, and GUI callers may supply this parameter.
 
-        True for registry references, declared structured inputs, scalars, flat
-        ``list`` / ``Collection`` / ``Sequence`` of non-path scalars, and unions with one
-        of those as an alternative and no path alternative. External callers supply that
+        True for registry references, declared structured inputs, scalars (``Path`` and
+        ``Path | str`` included), flat ``list`` / ``Collection`` / ``Sequence`` of non-path
+        scalars, and other unions with one of those as an alternative and no path
+        alternative. External callers supply that
         alternative, as for ``api_key: str | Callable[...]`` or
         ``font_size: int | tuple[int, int]``; the other alternatives are for in-process
         callers. Other parameters take Python objects from in-process callers only.

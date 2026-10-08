@@ -305,8 +305,9 @@ class TestListTargetTypes:
         }
 
         for entry in result.items:
-            registry_names = iter(parameter.name for parameter in metadata_by_name[entry.target_type].parameters)
-            assert all(parameter.name in registry_names for parameter in entry.parameters)
+            entry_names = [parameter.name for parameter in entry.parameters]
+            registry_names = [parameter.name for parameter in metadata_by_name[entry.target_type].parameters]
+            assert entry_names == [name for name in registry_names if name in entry_names]
 
         registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
         assert registry_openai["endpoint"].required is False

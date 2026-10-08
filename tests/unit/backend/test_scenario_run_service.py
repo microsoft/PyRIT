@@ -665,9 +665,8 @@ class TestScenarioRunServiceStartRun:
 
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._technique_class = _JailbreakTechnique
-        mock_all_registries["scenario_registry"].get_class.return_value.supported_parameters.return_value = (
-            Jailbreak.supported_parameters()
-        )
+        mock_sr = mock_all_registries["scenario_registry"]
+        mock_sr.get_class.return_value.supported_parameters.return_value = Jailbreak.supported_parameters()
         objective_target = mock_all_registries["target_registry"].instances.get.return_value
         scenario_params = {"num_jailbreaks": 2, "num_jailbreak_attempts": 1}
 
