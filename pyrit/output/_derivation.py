@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from pyrit.models import AttackOutcome
+from pyrit.analytics.scenario_statistics import combine_execution_counts, compute_scenario_statistics
 
 if TYPE_CHECKING:
     from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
@@ -54,21 +54,60 @@ def resolve_target_info(target_id: ComponentIdentifier | None) -> TargetInfo:
     )
 
 
-def group_success_rate(attacks: list[AttackResult]) -> int:
+class GroupStatistics(NamedTuple):
+    """Effective-unit statistics for one display group, alongside its raw attempt count."""
+
+    name: str
+    objective_executions: int
+    attempts: int
+    success_rate: int
+
+
+class ScenarioOverview(NamedTuple):
+    """Overall and per-display-group statistics for a scenario report."""
+
+    objective_executions: int
+    attempts: int
+    success_rate: int
+    groups: list[GroupStatistics]
+
+
+def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     """
-    Return the percentage of *attacks* whose outcome is SUCCESS (0 when empty).
+    Summarize a scenario result for the reports, using ``pyrit.analytics.compute_scenario_statistics``.
+
+    ``objective_executions`` (one objective run with one attack configuration) is the success-rate
+    denominator; ``attempts`` counts every persisted attempt, retries included.
 
     Args:
-        attacks (list[AttackResult]): The attacks to score.
+        result (ScenarioResult): The scenario result to summarize.
 
     Returns:
-        int: The success rate as an integer percent.
+        ScenarioOverview: The overall and per-group statistics.
     """
-    total = len(attacks)
-    if not total:
-        return 0
-    successful = sum(1 for attack in attacks if attack.outcome == AttackOutcome.SUCCESS)
-    return int((successful / total) * 100)
+    statistics = compute_scenario_statistics(result)
+    groups: list[GroupStatistics] = []
+    for group_name, group_results in result.get_display_groups().items():
+        atomic_attack_names = [
+            name for name in result.attack_results if result.display_group_map.get(name, name) == group_name
+        ]
+        counts = combine_execution_counts(
+            statistics.atomic_attacks[name] for name in atomic_attack_names if name in statistics.atomic_attacks
+        )
+        groups.append(
+            GroupStatistics(
+                name=group_name,
+                objective_executions=counts.completed,
+                attempts=len(group_results),
+                success_rate=counts.success_percentage or 0,
+            )
+        )
+    return ScenarioOverview(
+        objective_executions=statistics.overall.completed,
+        attempts=statistics.attempts,
+        success_rate=statistics.overall.success_percentage or 0,
+        groups=groups,
+    )
 
 
 def attack_score_display(attack: AttackResult, *, none_value: str | None = None) -> str | None:
