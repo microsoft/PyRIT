@@ -70,7 +70,7 @@ interface CreateConverterDialogProps {
 
 interface ParameterInputProps {
   parameter: Parameter
-  referenceOptions: Array<{ name: string; type: string }>
+  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean }>
   value: string
   showError: boolean
   onChange: (value: string) => void
@@ -152,7 +152,7 @@ function ParameterInput({
       <Field
         label={label}
         hint={parameter.reference_type === 'target'
-          ? 'The default adversarial target is selected when available. You can select a different target.'
+          ? `${parameter.name} is the target used by the converter to convert or rewrite the prompt. It uses the default adversarial target when available. You can select a different target.`
           : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
@@ -160,7 +160,7 @@ function ParameterInput({
           <option value="">Select a registered {parameter.reference_type}</option>
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
-              {option.name} ({option.type})
+              {option.name} ({option.type}){option.isDefault ? ' (default)' : ''}
             </option>
           ))}
         </Select>
@@ -334,11 +334,12 @@ export default function CreateConverterDialog({
       }))
   }, [converterTypes])
 
-  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string }> => {
+  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string; isDefault?: boolean }> => {
     if (parameter.reference_type === 'target') {
       return targets.map((target) => ({
         name: target.target_registry_name,
         type: target.identifier.class_name,
+        isDefault: target.target_registry_name === adversarialTarget?.target_registry_name,
       }))
     }
     if (parameter.reference_type === 'converter') {

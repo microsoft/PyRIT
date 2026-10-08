@@ -386,6 +386,11 @@ describe('CreateConverterDialog', () => {
 
     await selectConverterType('PersuasionConverter')
     expect(screen.getByRole('combobox', { name: /converter_target/i })).toHaveValue(expectedName)
+    expect(screen.getByText(/^converter_target is the target used by the converter/)).toBeInTheDocument()
+    expect(screen.getByRole('option', {
+      name: new RegExp(`^${expectedName} .*\\(default\\)$`), selected: true,
+    })).toBeInTheDocument()
+    expect(screen.getAllByRole('option', { name: /\(default\)$/ })).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
 
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
@@ -408,6 +413,10 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
 
     await user.selectOptions(targetSelect, 'rewrite-target')
+    expect(screen.getByRole('option', {
+      name: /^adversarial_chat .*\(default\)$/, selected: false,
+    })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /^rewrite-target / })).not.toHaveTextContent('(default)')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'PersuasionConverter',
@@ -444,6 +453,7 @@ describe('CreateConverterDialog', () => {
     await selectConverterType('PersuasionConverter')
 
     expect(screen.getByRole('combobox', { name: /converter_target/i })).toHaveValue('')
+    expect(screen.queryByRole('option', { name: /\(default\)$/ })).not.toBeInTheDocument()
   })
 
   it('selects a registered target for a target reference parameter', async () => {
