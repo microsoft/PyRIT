@@ -84,6 +84,8 @@ await output_attack_async(result)
 # It uses this kernel's Python interpreter and an absolute asset path, so it
 # also works when the notebook runs from its own directory. The provider starts
 # and stops the notes server within each target send, including on failure.
+# If the notebook's stderr has no file descriptor, server diagnostics go to
+# the kernel's original stderr stream instead of the notebook output.
 
 # %%
 import os
