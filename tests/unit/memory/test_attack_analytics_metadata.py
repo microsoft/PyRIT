@@ -80,8 +80,12 @@ def _result(
     )
 
 
+# Only a guard against hangs: loaded CI runners have taken over 30s for these queries.
+_QUERY_BUDGET_SECONDS = 120
+
+
 def _control() -> QueryControl:
-    return QueryControl(deadline=time.monotonic() + 30)
+    return QueryControl(deadline=time.monotonic() + _QUERY_BUDGET_SECONDS)
 
 
 def _filters(*, values: list[tuple[AttackAnalyticsDimension, str]]) -> AttackAnalyticsFilters:

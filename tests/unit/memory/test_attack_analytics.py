@@ -99,8 +99,12 @@ def make_result(
     )
 
 
+# Only a guard against hangs: loaded CI runners have taken over 30s for these queries.
+_QUERY_BUDGET_SECONDS = 120
+
+
 def control() -> QueryControl:
-    return QueryControl(deadline=time.monotonic() + 10)
+    return QueryControl(deadline=time.monotonic() + _QUERY_BUDGET_SECONDS)
 
 
 def predicate(*, name: str, values: list[str | None], **options: Any) -> dict[str, Any]:

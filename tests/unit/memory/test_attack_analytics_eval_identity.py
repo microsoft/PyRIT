@@ -76,8 +76,12 @@ def _result(*, index: int, target: TargetIdentifier, outcome: AttackOutcome, ope
     )
 
 
+# Only a guard against hangs: loaded CI runners have taken over 30s for these queries.
+_QUERY_BUDGET_SECONDS = 120
+
+
 def _control() -> QueryControl:
-    return QueryControl(deadline=time.monotonic() + 20)
+    return QueryControl(deadline=time.monotonic() + _QUERY_BUDGET_SECONDS)
 
 
 def test_target_evaluation_v1_is_frozen_to_the_current_marker_rules() -> None:
