@@ -5,7 +5,7 @@
 
 import asyncio
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -40,6 +40,14 @@ class _ServiceScorer(Scorer):
 
     def get_scorer_metrics(self):
         return None
+
+
+class _ObjectConfiguredScorer(_ServiceScorer):
+    """A scorer with one external parameter and one that takes a Python object."""
+
+    def __init__(self, *, label: str = "service", tokenizer: Callable[[str], list[str]] | None = None) -> None:
+        super().__init__(label=label)
+        self.tokenizer = tokenizer
 
 
 @pytest.fixture(autouse=True)
@@ -159,3 +167,32 @@ async def test_close_services_clears_scorer_cache_before_registry_replacement() 
     await new_service.create_scorer_async(request=CreateScorerRequest(name="created", type="_ServiceScorer"))
     assert new_registry.instances.get("created") is not None
     assert old_registry.instances.get("created") is None
+
+
+async def test_create_scorer_accepts_only_external_inputs() -> None:
+    ScorerRegistry.get_registry_singleton().register_class(_ObjectConfiguredScorer)
+    service = ScorerService()
+
+    with pytest.raises(ValueError, match="'tokenizer' of '_ObjectConfiguredScorer' cannot be set through the API"):
+        await service.create_scorer_async(
+            request=CreateScorerRequest(name="tokenized", type="_ObjectConfiguredScorer", params={"tokenizer": "x"})
+        )
+    created = await service.create_scorer_async(
+        request=CreateScorerRequest(name="labeled", type="_ObjectConfiguredScorer", params={"label": "custom"})
+    )
+
+    assert created.scorer_registry_name == "labeled"
+    assert ScorerRegistry.get_registry_singleton().instances.get("tokenized") is None
+
+
+async def test_types_list_only_external_inputs() -> None:
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.register_class(_ObjectConfiguredScorer)
+
+    types = await ScorerService().list_scorer_types_async()
+
+    entry = next(item for item in types.items if item.scorer_type == "_ObjectConfiguredScorer")
+    assert [parameter.name for parameter in entry.parameters] == ["label"]
+    metadata = registry.get_registered_class_metadata("_ObjectConfiguredScorer")
+    assert metadata is not None
+    assert {parameter.name for parameter in metadata.parameters} == {"label", "tokenizer"}

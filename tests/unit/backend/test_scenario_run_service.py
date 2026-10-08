@@ -65,6 +65,7 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
 )
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
@@ -170,26 +171,37 @@ def _make_request(
         ({"max_concurrency": 2}, None),
     ],
 )
-async def test_start_run_accepts_only_external_scenario_params(
+async def test_start_run_checks_scenario_params_in_the_preparation_worker(
     patch_central_database: MagicMock, scenario_params: dict[str, Any], rejected: str | None
 ) -> None:
+    loop_thread = threading.current_thread()
+    lookup_threads: list[threading.Thread] = []
+
+    def get_class(name: str) -> type[Scenario]:
+        lookup_threads.append(threading.current_thread())
+        return Scam
+
     registry = MagicMock(spec=ScenarioRegistry)
-    registry.__contains__.return_value = True
-    registry.get_class.return_value = Scam
+    registry.get_class.side_effect = get_class
     service = ScenarioRunService()
     request = _make_request(scenario_name="airt.scam", scenario_params=scenario_params)
 
     with (
         patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=registry),
-        patch.object(service, "_start_run_locked_async", new_callable=AsyncMock) as start,
+        patch.object(
+            service,
+            "_run_initializers_async",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("initializers reached"),
+        ) as run_initializers,
+        pytest.raises(ValueError if rejected else RuntimeError, match=rejected or "initializers reached"),
     ):
-        if rejected:
-            with pytest.raises(ValueError, match=rejected):
-                await service.start_run_async(request=request)
-        else:
-            await service.start_run_async(request=request)
+        await service.start_run_async(request=request)
 
-    assert start.await_count == (0 if rejected else 1)
+    assert lookup_threads
+    assert loop_thread not in lookup_threads
+    assert run_initializers.await_count == (0 if rejected else 1)
+    await service.close_async()
 
 
 def _make_db_scenario_result(
@@ -653,6 +665,9 @@ class TestScenarioRunServiceStartRun:
 
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._technique_class = _JailbreakTechnique
+        mock_all_registries["scenario_registry"].get_class.return_value.supported_parameters.return_value = (
+            Jailbreak.supported_parameters()
+        )
         objective_target = mock_all_registries["target_registry"].instances.get.return_value
         scenario_params = {"num_jailbreaks": 2, "num_jailbreak_attempts": 1}
 
@@ -695,6 +710,7 @@ class TestScenarioRunServiceStartRun:
 
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
+        mock_sr.get_class.return_value.supported_parameters.return_value = Jailbreak.supported_parameters()
         mock_memory = mock_all_registries["memory"]
         mock_all_registries["scenario_instance"]._technique_class = _JailbreakTechnique
         records: dict[str, MagicMock] = {}

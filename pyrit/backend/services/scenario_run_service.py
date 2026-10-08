@@ -244,13 +244,6 @@ class ScenarioRunService:
         Returns:
             ScenarioRunSummary: Current scheduled run state.
         """
-        registry = ScenarioRegistry.get_registry_singleton()
-        if request.scenario_params and request.scenario_name in registry:
-            reject_non_external_params(
-                params=request.scenario_params,
-                declared=registry.get_class(request.scenario_name).supported_parameters(),
-                owner=request.scenario_name,
-            )
         async with self._reserve_resume_request_async(request.scenario_result_id), self._launch_lock:
             await self._validate_resume_admission_async(scenario_result_id=request.scenario_result_id)
             return await self._start_run_locked_async(request=request)
@@ -633,6 +626,12 @@ class ScenarioRunService:
             ValueError: If scenario, target, initializer, or technique cannot be found.
         """
         scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
+        if request.scenario_params:
+            reject_non_external_params(
+                params=request.scenario_params,
+                declared=scenario_class.supported_parameters(),
+                owner=request.scenario_name,
+            )
         await self._run_initializers_async(request=request)
         objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
         adversarial_target = self._configuration_resolver.resolve_adversarial_target(

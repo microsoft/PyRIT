@@ -3,7 +3,7 @@
 
 """Unit tests for the unified Parameter model and its coercion methods."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Union
@@ -557,9 +557,17 @@ class TestIsExternalInput:
             _Speed,
             list[str],
             list[_Speed] | None,
+            Sequence[str],
+            Collection[str] | None,
+            Sequence[_Speed],
             str | list[str],
             str | Callable[[], str] | None,
             _Speed | str,
+            int | tuple[int, int],
+            int | Literal["4", "8"],
+            str | dict[str, str],
+            str | _Unsupported,
+            Collection[str] | _Unsupported,
         ],
     )
     def test_supported_external_types(self, param_type: object) -> None:
@@ -575,17 +583,18 @@ class TestIsExternalInput:
             Callable[[], str],
             tuple[int, int],
             dict[str, str],
-            Sequence[str],
+            set[str],
             list[Path],
             list[Path | str],
-            int | tuple[int, int],
+            Collection[Path],
+            Sequence[Path | str] | None,
             _Speed | Path,
             str | Path | int,
-            str | dict[str, str],
-            str | _Unsupported,
             str | list[Path],
+            _Unsupported | Path,
             list[list[str]],
-            int | Literal["4", "8"],
+            Sequence[list[str]],
+            tuple[int, int] | _Unsupported,
         ],
     )
     def test_other_types_take_python_objects_only(self, param_type: object) -> None:

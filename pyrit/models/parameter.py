@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -283,11 +283,12 @@ class Parameter(BaseModel):
         """
         Whether REST, CLI, and GUI callers may supply this parameter.
 
-        True for registry references, declared structured inputs, scalars, lists of
-        non-path scalars, and unions of ``str`` with those or with callables (external
-        callers send the string, as for ``api_key: str | Callable[...]``; callables are
-        for in-process callers). Other parameters take Python objects from in-process
-        callers only.
+        True for registry references, declared structured inputs, scalars, flat
+        ``list`` / ``Collection`` / ``Sequence`` of non-path scalars, and unions with one
+        of those as an alternative and no path alternative. External callers supply that
+        alternative, as for ``api_key: str | Callable[...]`` or
+        ``font_size: int | tuple[int, int]``; the other alternatives are for in-process
+        callers. Other parameters take Python objects from in-process callers only.
 
         Returns:
             bool: True when external callers may supply this parameter.
@@ -301,8 +302,8 @@ class Parameter(BaseModel):
             return True
         if get_origin(param_type) in (Union, types.UnionType):
             members = [member for member in get_args(param_type) if member is not type(None)]
-            return str in members and all(
-                _is_non_path_json_type(member) or get_origin(member) is Callable for member in members
+            return not any(_mentions_path(member) for member in members) and any(
+                _is_non_path_json_type(member) for member in members
             )
         return _is_non_path_json_type(param_type)
 
@@ -442,15 +443,28 @@ def _is_scalar_param_type(annotation: Any) -> bool:
 
 def _is_non_path_json_type(annotation: Any) -> bool:
     """
-    Return whether the annotation is a non-path scalar or a ``list`` of non-path scalars.
+    Return whether the annotation is a non-path scalar or a flat collection of one.
+
+    A flat collection is a ``list``, ``Collection``, or ``Sequence`` of a single non-path
+    scalar; external callers send it as a JSON array, which reaches the constructor as a list.
 
     Returns:
-        bool: True for ``str``/``int``/``float``/``bool``/``Literal``/``Enum`` or a ``list`` of them.
+        bool: True for ``str``/``int``/``float``/``bool``/``Literal``/``Enum`` or a flat collection of them.
     """
-    if get_origin(annotation) is list:
+    if get_origin(annotation) in (list, Collection, Sequence):
         type_args = get_args(annotation)
         annotation = type_args[0] if len(type_args) == 1 else None
     return _is_scalar_param_type(annotation) and annotation is not Path and not _is_path_or_str(annotation)
+
+
+def _mentions_path(annotation: Any) -> bool:
+    """
+    Return whether the annotation is ``Path`` or has ``Path`` among its type arguments.
+
+    Returns:
+        bool: True when a value of this type may be a local file path.
+    """
+    return annotation is Path or any(_mentions_path(argument) for argument in get_args(annotation))
 
 
 def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) -> Any:

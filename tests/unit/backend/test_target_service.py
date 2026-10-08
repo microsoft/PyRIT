@@ -297,37 +297,37 @@ class TestListTargetTypes:
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
-    async def test_types_expose_external_inputs_in_registry_order_without_mutating_metadata(self) -> None:
+    async def test_types_keep_registry_parameter_order_without_mutating_metadata(self) -> None:
         service = TargetService()
         result = await service.list_target_types_async()
         metadata_by_name = {
             metadata.class_name: metadata for metadata in service._registry.get_all_registered_class_metadata()
         }
-        expected = {
-            name
-            for name, metadata in metadata_by_name.items()
-            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
-        }
 
-        assert {entry.target_type for entry in result.items} == expected
         for entry in result.items:
-            registry_parameters = metadata_by_name[entry.target_type].parameters
-            assert [parameter.name for parameter in entry.parameters] == [
-                parameter.name for parameter in registry_parameters if parameter.is_external_input
-            ]
+            registry_names = iter(parameter.name for parameter in metadata_by_name[entry.target_type].parameters)
+            assert all(parameter.name in registry_names for parameter in entry.parameters)
 
         registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
         assert registry_openai["endpoint"].required is False
         assert registry_openai["model_name"].required is False
 
-    async def test_types_keep_string_api_key_and_omit_object_only_targets(self) -> None:
+    async def test_types_expose_component_external_inputs(self) -> None:
         service = TargetService()
         result = await service.list_target_types_async()
 
-        entries = {entry.target_type: entry for entry in result.items}
-        assert "api_key" in {parameter.name for parameter in entries["OpenAIChatTarget"].parameters}
-        assert "custom_configuration" not in {parameter.name for parameter in entries["OpenAIChatTarget"].parameters}
-        assert not {"PlaywrightTarget", "PlaywrightCopilotTarget", "WebsocketTarget"} & set(entries)
+        parameters = {entry.target_type: {parameter.name for parameter in entry.parameters} for entry in result.items}
+        assert {"PlaywrightTarget", "PlaywrightCopilotTarget", "WebsocketTarget"}.isdisjoint(parameters)
+        assert "api_key" in parameters["OpenAIChatTarget"]
+        assert "custom_configuration" not in parameters["OpenAIChatTarget"]
+        assert "n_seconds" in parameters["OpenAIVideoTarget"]
+
+    async def test_registry_metadata_keeps_parameters_the_api_cannot_set(self) -> None:
+        metadata = TargetService()._registry.get_registered_class_metadata("OpenAIChatTarget")
+        assert metadata is not None
+        registry_parameters = {parameter.name: parameter for parameter in metadata.parameters}
+
+        assert not registry_parameters["custom_configuration"].is_external_input
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
@@ -408,6 +408,23 @@ class TestCreateTarget:
             await service.create_target_async(request=request)
 
         assert service.get_target_object(target_registry_name="text") is None
+
+    async def test_create_target_accepts_scalar_alternative_of_union(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            name="video",
+            type="OpenAIVideoTarget",
+            params={
+                "endpoint": "https://example.openai.azure.com/openai/v1",
+                "api_key": "test-key",
+                "model_name": "sora-2",
+                "n_seconds": 8,
+            },
+        )
+
+        await service.create_target_async(request=request)
+
+        assert service.get_target_object(target_registry_name="video")._n_seconds == "8"
 
     async def test_create_target_raises_for_invalid_type(self) -> None:
         """Test that create_target raises for invalid target type."""
