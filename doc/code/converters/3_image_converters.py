@@ -44,7 +44,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 prompt = "harmful objective"
 # This directory contains example innocuous images used for the grid composite converter.
-images = list(CONVERTER_SEED_PROMPT_PATH.glob("grid_composite/*.png"))
+images = list(CONVERTER_SEED_PROMPT_PATH.glob("innocuous_images/*.png"))
 
 # Defaults to a 2 x 2 grid
 gc_converter = GridCompositeConverter(innocuous_images=images)

@@ -36,7 +36,7 @@ from pathlib import Path
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.adaptive import TextAdaptive
+from pyrit.scenario.adaptive import ImageTechniqueAdaptive, TextAdaptive
 from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type: ignore
@@ -59,6 +59,41 @@ scenario_result = await scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(scenario_result)
+
+# %% [markdown]
+# ## ImageTechniqueAdaptive
+#
+# `ImageTechniqueAdaptive` is the image sibling of `TextAdaptive`. It renders each text objective
+# into an image (blank canvas, QR code, grid composite, comic panel, ...) and sends it to a
+# vision-capable target, then scores the text response. The objective target must accept **both text
+# and image input** (so the direct-text baseline stays a valid comparison) and return text — use a
+# multimodal target such as `openai_chat` (e.g. gpt-4o). See the
+# [Adaptive Scenarios programming guide](../code/scenarios/3_adaptive_scenarios.ipynb) for a full
+# walkthrough.
+#
+# ```bash
+# pyrit_scan run adaptive.image_technique_adaptive \
+#   --initializers target \
+#   --target openai_chat
+# ```
+
+# %%
+image_dataset_config = DatasetAttackConfiguration(dataset_names=["airt_hate"], max_dataset_size=1)
+
+image_scenario = ImageTechniqueAdaptive()
+image_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "dataset_config": image_dataset_config,
+        "max_attempts_per_objective": 1,
+    }
+)
+await image_scenario.initialize_async()  # type: ignore
+
+image_scenario_result = await image_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(image_scenario_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

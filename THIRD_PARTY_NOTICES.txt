@@ -72,3 +72,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ---------------------------------------------------------
+
+ComicJailbreak comic template image - MIT
+https://github.com/Social-AI-Studio/ComicJailbreak
+
+Copyright (c) 2026 Social AI Studio
+
+PyRIT bundles the ``article`` comic template image from ComicJailbreak
+(pyrit/datasets/converters/comic_panel/article.png) as the carrier for the
+``comic_panel`` image-rendering technique. The image is redistributed unmodified.
+
+The ComicJailbreak-derived asset is licensed under the MIT License.
+A copy of the license is provided in LICENSES/ComicJailbreak-MIT.txt.
+
+Reference: Tan, Hu, and Lee, "Structured Visual Narratives Undermine Safety
+Alignment in Multimodal Large Language Models", arXiv:2603.21697.
+
+---------------------------------------------------------
