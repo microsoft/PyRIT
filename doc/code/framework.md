@@ -292,9 +292,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   scorers own prompts and verdict conversion, handlers own parsing, and the normalizer owns
   transport and retries. The message-scoring boundary captures evidence explicitly in a
   `JudgmentRequest`; the request and exchange do not read ambient scoring context.
-  Conversation scoring applies the same blocked-judge policy to direct and message-triggered
-  calls, retaining the acquired snapshot when the result is undetermined. The local SDK exporter
-  supports caller-owned, in-process capture, not a remote collector or durable store.
+  When the judge's response is blocked, conversation scoring handles direct and message-triggered
+  calls the same way. If it returns an undetermined score, it retains the evidence snapshot.
+- The local SDK exporter supports caller-owned, in-process capture, not a remote collector or
+  durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
 - Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets

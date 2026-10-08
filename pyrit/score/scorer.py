@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import logging
 import uuid
 from abc import abstractmethod
@@ -13,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -537,6 +537,8 @@ class Scorer(Identifiable, abc.ABC):
         Each root receives the original scorable and complete expectation through its public
         ``score_async`` method. Each root is validated independently before any scorer runs.
         This does not apply message-specific evidence policies.
+        If a root fails or is cancelled, unfinished roots are cancelled and drained before
+        the error propagates. Scores persisted by already-completed roots are retained.
 
         Args:
             scorable (Scorable): The evidence each scorer acquires.
@@ -558,13 +560,11 @@ class Scorer(Identifiable, abc.ABC):
         if len(roles) != len(roots):
             raise ValueError("scorer_roles must have one entry per scorer.")
         Scorer.validate_expectation_for_scorers(scorers=roots, expectation=expectation)
-        return await asyncio.gather(
-            *(
-                Scorer._score_with_context_async(
-                    scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
-                )
-                for scorer, role in zip(roots, roles, strict=True)
+        return await gather_with_cleanup_async(
+            Scorer._score_with_context_async(
+                scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
             )
+            for scorer, role in zip(roots, roles, strict=True)
         )
 
     @staticmethod

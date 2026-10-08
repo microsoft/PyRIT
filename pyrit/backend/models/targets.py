@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN, PaginationInfo
+from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter
 from pyrit.models.catalog.target import TargetInstance
 
@@ -67,8 +67,10 @@ class CreateTargetRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name; omitted only for legacy UI compatibility",
     )
-    type: str = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
-    params: dict[str, JSONValue] = Field(default_factory=dict, description="Target constructor parameters")
+    type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
+    )
     auth_mode: Literal["api_key", "identity"] = Field(
         "api_key",
         description=(

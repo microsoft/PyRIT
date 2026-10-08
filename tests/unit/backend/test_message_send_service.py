@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
 from pyrit.backend.models.attacks import (
@@ -2169,6 +2170,98 @@ class TestConcurrentMessages:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestNormalizerPersistence:
+    async def test_obscure_markers_preserve_common_reply_syntax_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        start_token, end_token = "<|pyrit_start_8f3a|>", "<|pyrit_end_8f3a|>"
+        request_value = f"Decode: {start_token}{start_token}test{end_token}{end_token}"
+        reply_value = f"echo x >> log\n>>> print('hello')\nSelected: {start_token}test{end_token}"
+        request = AddMessageRequest(
+            target_conversation_id=attack.conversation_id,
+            target_registry_name="target",
+            pieces=[MessagePieceRequest(original_value=request_value)],
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["base64"])],
+            response_converter_configurations=[ConverterConfigurationRequest(converter_ids=["base64"])],
+            start_token=start_token,
+            end_token=end_token,
+        )
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value=reply_value,
+                    conversation_id=normalized_conversation[-1].get_piece().conversation_id,
+                ).to_message()
+            ]
+
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async):
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+        assert len(messages) == 2
+        assert messages[0].get_piece().original_value == request_value
+        assert messages[0].get_value() == f"Decode: {start_token}dGVzdA=={end_token}"
+        assert messages[1].get_piece().original_value == reply_value
+        assert messages[1].get_value() == "echo x >> log\n>>> print('hello')\nSelected: dGVzdA=="
+
+    async def test_custom_markers_request_response_and_preconverted_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        original = "keep ⟪literal⟫ <<<<test>>>> / <<<<test2>>>>"
+        request = AddMessageRequest(
+            target_conversation_id=attack.conversation_id,
+            target_registry_name="target",
+            pieces=[
+                MessagePieceRequest(original_value="original", converted_value="literal <<already converted>>"),
+                MessagePieceRequest(original_value=original),
+            ],
+            request_converter_configurations=[ConverterConfigurationRequest(converter_ids=["base64"])],
+            response_converter_configurations=[ConverterConfigurationRequest(converter_ids=["base64"])],
+            start_token="<<",
+            end_token=">>",
+        )
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value="reply <<test>>",
+                    conversation_id=normalized_conversation[-1].get_piece().conversation_id,
+                ).to_message()
+            ]
+
+        with (
+            patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async),
+            patch.object(target, "send_prompt_async", wraps=target.send_prompt_async) as send,
+        ):
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+        sent = send.call_args.kwargs["message"]
+        assert [piece.converted_value for piece in sent.message_pieces] == [
+            "literal <<already converted>>",
+            "keep ⟪literal⟫ <<dGVzdA==>> / <<dGVzdDI=>>",
+        ]
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id=attack.conversation_id)
+        assert messages[0].message_pieces[1].original_value == original
+        assert messages[1].get_value() == "reply dGVzdA=="
+
+    @pytest.mark.parametrize("field", ["start_token", "end_token"])
+    def test_add_message_rejects_empty_markers(self, *, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="test")],
+                target_conversation_id="main",
+                **{field: ""},
+            )
+
     async def test_multipart_preconverted_lineage_and_response_conversion_async(
         self,
         *,
@@ -2827,7 +2920,9 @@ class TestAsyncMessageSend:
         mock_memory.add_message_to_memory_async.assert_not_awaited()
         mock_memory.update_attack_result_by_id_async.assert_not_awaited()
 
-    @pytest.mark.parametrize("ordered_field", ["pieces", "request", "response", "applied", "pipelines"])
+    @pytest.mark.parametrize(
+        "ordered_field", ["pieces", "request", "response", "applied", "pipelines", "start-token", "end-token"]
+    )
     async def test_retained_submission_deduplication_preserves_order_async(
         self,
         *,
@@ -2858,6 +2953,10 @@ class TestAsyncMessageSend:
             changed.response_converter_configurations[0].converter_ids.reverse()
         elif ordered_field == "pipelines":
             changed.request_converter_configurations.reverse()
+        elif ordered_field == "start-token":
+            changed.start_token = "<<"
+        elif ordered_field == "end-token":
+            changed.end_token = ">>"
         else:
             changed.pieces[0].applied_converter_ids.reverse()
         with pytest.raises(ManualSendConflictError, match="different message request"):

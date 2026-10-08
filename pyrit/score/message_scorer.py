@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import inspect
 import logging
@@ -14,6 +13,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import (
     ComponentRole,
     PyritException,
@@ -55,7 +55,7 @@ from pyrit.score.observation.execution import (
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Sequence
+    from collections.abc import Sequence
 
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
@@ -66,29 +66,6 @@ logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped batch API is removed, two minor releases out.
 MESSAGE_BATCH_REMOVED_IN = "1.3.0"
-
-
-async def _gather_score_tasks_cancel_on_error_async(
-    tasks: Sequence[Awaitable[list[Score]]],
-) -> list[list[Score]]:
-    scheduled_tasks = [asyncio.ensure_future(task) for task in tasks]
-    try:
-        return await asyncio.gather(*scheduled_tasks)
-    except BaseException:  # noqa: BLE001 - cancellation must cancel and drain every child task
-        for task in scheduled_tasks:
-            if not task.done():
-                task.cancel()
-        drain = asyncio.gather(*scheduled_tasks, return_exceptions=True)
-        outer_cancellation: asyncio.CancelledError | None = None
-        while not drain.done():
-            try:
-                await asyncio.shield(drain)
-            except asyncio.CancelledError as cancellation:
-                outer_cancellation = cancellation
-        drain.result()
-        if outer_cancellation:
-            raise outer_cancellation from None
-        raise
 
 
 def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInterface) -> str:
@@ -766,7 +743,7 @@ class MessageScorer(Scorer):
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
-            aux_scores, obj_scores = await _gather_score_tasks_cancel_on_error_async([aux_task, obj_task])
+            aux_scores, obj_scores = await gather_with_cleanup_async([aux_task, obj_task])
             result["auxiliary_scores"] = aux_scores
             result["objective_scores"] = obj_scores
         else:
@@ -794,7 +771,7 @@ class MessageScorer(Scorer):
         Returns:
             list[Score]: The roots' scores, in input order.
         """
-        results = await _gather_score_tasks_cancel_on_error_async(
+        results = await gather_with_cleanup_async(
             [
                 MessageScorer._score_response_with_scorer_async(
                     scorer=scorer,
@@ -1317,7 +1294,7 @@ class MessageScorer(Scorer):
             return []
 
         # Run all piece-level scorings concurrently
-        piece_score_lists = await asyncio.gather(*tasks)
+        piece_score_lists = await gather_with_cleanup_async(tasks)
 
         # Flatten list[list[Score]] -> list[Score]
         return [score for sublist in piece_score_lists for score in sublist]

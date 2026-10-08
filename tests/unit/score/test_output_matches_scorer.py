@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 from pydantic import ValidationError
-from unit.mocks import MockPromptTarget
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import MemoryInterface
@@ -20,6 +20,9 @@ from pyrit.models import (
     ContentScorable,
     Equals,
     MatchesObjective,
+    Message,
+    MessagePiece,
+    MessageScorable,
     OutputMatches,
     Regex,
     ScoringExpectation,
@@ -55,6 +58,40 @@ def test_matching_semantics(*, matcher: TextMatcher, text: str, expected: bool) 
 def test_regex_rejects_invalid_pattern() -> None:
     with pytest.raises(ValidationError, match="Invalid regular expression"):
         Regex(value="[")
+
+
+@pytest.mark.parametrize("value", ["", " ", "\t", "\n", " \t\n"])
+def test_regex_rejects_blank_pattern(value: str) -> None:
+    with pytest.raises(ValidationError, match="Regex pattern must not be blank"):
+        Regex(value=value)
+    with pytest.raises(ValidationError, match="Regex pattern must not be blank"):
+        OutputMatches.model_validate({"matcher": {"matcher_type": "regex", "value": value}})
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        (["no match", "answer"], True),
+        (["ans", "wer"], False),
+        (["no match", "still no match"], False),
+    ],
+)
+async def test_output_match_scores_pieces_independently_async(
+    patch_central_database: MagicMock, values: list[str], expected: bool
+) -> None:
+    message = await store_message_async(
+        Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value=value, original_value_data_type="text")
+                for value in values
+            ]
+        )
+    )
+    [score] = await OutputMatchesScorer().score_async(
+        scorable=MessageScorable.from_message(message),
+        expectation=ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="answer")),)),
+    )
+    assert score.get_value() is expected
 
 
 def test_output_condition_round_trip() -> None:

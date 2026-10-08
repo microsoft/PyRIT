@@ -81,7 +81,12 @@ class PromptNormalizer:
 
         start_token and end_token are used to delineate which part of a prompt is converted.
         ``converter_guard`` optionally coordinates shared converter instances during conversion only.
+
+        Raises:
+            ValueError: If either token is empty.
         """
+        if not start_token or not end_token:
+            raise ValueError("Start and end tokens must be non-empty.")
         self._memory = CentralMemory.get_memory_instance()
         self._start_token = start_token
         self._end_token = end_token

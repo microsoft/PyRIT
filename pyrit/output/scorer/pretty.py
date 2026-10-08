@@ -70,6 +70,16 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
             return str(Fore.RED)
         return str(Fore.CYAN)
 
+    def _render_scored_responses(self, *, metrics: Any) -> str:
+        if not metrics.num_input_responses:
+            return ""
+        coverage = metrics.num_responses / metrics.num_input_responses
+        return self._format_colored(
+            f"{self._indent * 3}• Scored Responses: {metrics.num_responses}/{metrics.num_input_responses}"
+            f" ({coverage:.1%} coverage)",
+            Fore.CYAN,
+        )
+
     def _render_scorer_info(
         self,
         scorer_identifier: ComponentIdentifier,
@@ -167,6 +177,8 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
         )
         lines.append(self._format_colored(f"{self._indent * 3}• Accuracy: {metrics.accuracy:.2%}", accuracy_color))
 
+        lines.append(self._render_scored_responses(metrics=metrics))
+
         if metrics.accuracy_standard_error is not None:
             lines.append(
                 self._format_colored(
@@ -240,6 +252,8 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
                 f"{self._indent * 3}• Mean Absolute Error: {metrics.mean_absolute_error:.4f}", mae_color
             )
         )
+
+        lines.append(self._render_scored_responses(metrics=metrics))
 
         if metrics.mae_standard_error is not None:
             lines.append(

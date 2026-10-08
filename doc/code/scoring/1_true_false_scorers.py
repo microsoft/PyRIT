@@ -52,7 +52,10 @@ print(f"[output match] {scores[0].get_value()}")
 # searches the candidate text. For literal equality, use
 # `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
 # `Contains` returns false for empty candidate text; `Equals` can match two empty values.
-# Invalid regex patterns fail before scoring.
+# Blank or invalid regex patterns fail before scoring.
+#
+# By default, `OutputMatchesScorer` matches each supported text piece independently and returns
+# True if any piece matches. It does not combine text across pieces before matching.
 #
 # Existing `SubStringScorer` and `DecodingScorer` behavior is unchanged. Decoding infers candidate
 # text from the paired request; `OutputMatchesScorer` is the explicit expected-output path.

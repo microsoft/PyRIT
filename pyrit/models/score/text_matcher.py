@@ -44,8 +44,10 @@ class Regex(_TextMatcher):
             str: The unchanged pattern.
 
         Raises:
-            ValueError: If the pattern is invalid.
+            ValueError: If the pattern is blank or invalid.
         """
+        if not value.strip():
+            raise ValueError("Regex pattern must not be blank.")
         try:
             re.compile(value)
         except re.error as error:

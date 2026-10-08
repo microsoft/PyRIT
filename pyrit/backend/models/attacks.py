@@ -15,7 +15,13 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.common import (
+    MAX_ITEMS,
+    IdentifierStr,
+    LabelDict,
+    PaginationInfo,
+    TextStr,
+)
 from pyrit.models import (
     AttackResult,
     ChatMessageRole,
@@ -231,6 +237,12 @@ class AttackSummary(AttackResult):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def target_unbound(self) -> bool:
+        """Whether this manual attack was deliberately saved without a target."""
+        return self.metadata.get("target_unbound") is True
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def last_score(self) -> ScoreView | None:
         """The human score when present, otherwise the automated score."""
         return self.human_score or self.automated_score
@@ -366,20 +378,25 @@ class MessagePieceRequest(BaseModel):
         None,
         description="Final converted value's data type. Defaults to data_type; requires converted_value.",
     )
-    applied_converter_ids: list[str] | None = Field(
+    applied_converter_ids: list[IdentifierStr] | None = Field(
         None,
+        max_length=MAX_ITEMS,
         description="Registry IDs of converters already applied, in execution order, including duplicates. "
         "Requires converted_value. Use an empty list for manual edits.",
     )
-    mime_type: str | None = Field(None, description="MIME type for media content")
-    prompt_metadata: dict[str, Any] | None = Field(
+    mime_type: IdentifierStr | None = Field(None, description="MIME type for media content")
+    prompt_metadata: dict[IdentifierStr, Any] | None = Field(
         None,
+        max_length=MAX_ITEMS,
         description="Metadata to attach to the piece (e.g., {'video_id': '...'} for remix mode).",
     )
-    original_prompt_id: str | None = Field(
+    original_prompt_id: IdentifierStr | None = Field(
         None,
         description="ID of the source piece when prepending from an existing conversation. "
         "Preserves lineage so the new piece traces back to the original.",
+    )
+    source_piece_id: uuid.UUID | None = Field(
+        None, description="Source piece for a complete conversation save; verified against its source conversation."
     )
 
     @model_validator(mode="after")
@@ -400,11 +417,16 @@ class MessagePieceRequest(BaseModel):
         return self
 
 
-class PrependedMessageRequest(BaseModel):
-    """A message to prepend to the attack (for system prompt/branching)."""
+class MessageRequest(BaseModel):
+    """An ordered message input shared by conversation creation and editing."""
 
     role: ChatMessageRole = Field(..., description="Message role")
-    pieces: list[MessagePieceRequest] = Field(..., description="Message pieces (supports multimodal)", max_length=50)
+    pieces: list[MessagePieceRequest] = Field(
+        ..., description="Message pieces (supports multimodal)", min_length=1, max_length=50
+    )
+
+
+PrependedMessageRequest = MessageRequest
 
 
 class _AttackAttributionInput(BaseModel):
@@ -412,7 +434,7 @@ class _AttackAttributionInput(BaseModel):
 
     operator: str | None = Field(None, max_length=128, description="Operator responsible for the attack")
     operation: str | None = Field(None, max_length=128, description="Operation associated with the attack")
-    labels: dict[str, str] | None = Field(None, description="Arbitrary user-defined labels for filtering")
+    labels: LabelDict | None = Field(None, description="Arbitrary user-defined labels for filtering")
 
     @model_validator(mode="before")
     @classmethod
@@ -458,18 +480,22 @@ class CreateAttackRequest(_AttackAttributionInput):
     supplied in ``labels`` (typically the current operator's labels).
     """
 
-    name: str | None = Field(None, description="Attack name/label")
-    target_registry_name: str = Field(..., description="Target registry name to attack")
-    source_conversation_id: str | None = Field(
+    name: TextStr | None = Field(None, description="Attack name/label")
+    target_registry_name: IdentifierStr | None = Field(
+        None, description="Target registry name, or None for a saved unbound attack"
+    )
+    source_conversation_id: IdentifierStr | None = Field(
         None, description="Conversation to branch from (clone messages into the new attack)"
     )
-    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    cutoff_index: int | None = Field(
+        None, ge=0, description="Include messages up to and including this turn index (0-based)"
+    )
     system_prompt: str | None = Field(
         None,
         description="System prompt lowered to a single system-role message at the front of the conversation. "
         "Composes with prepended_conversation (the system message is inserted first).",
     )
-    prepended_conversation: list[PrependedMessageRequest] | None = Field(
+    prepended_conversation: list[MessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
 
@@ -494,7 +520,10 @@ class UpdateAttackRequest(BaseModel):
         default=None,
         description="Updated attack outcome",
     )
-    objective: str | None = Field(default=None, description="Shared objective for all conversations in the attack")
+    objective: TextStr | None = Field(default=None, description="Shared objective for all conversations in the attack")
+    expected_objective: str | None = Field(
+        default=None, description="Objective read before editing, for conflict detection"
+    )
 
     @model_validator(mode="after")
     def _validate_update(self) -> "UpdateAttackRequest":
@@ -508,8 +537,6 @@ class UpdateAttackRequest(BaseModel):
             raise ValueError("At least one mutable attack field must be supplied")
         if self.objective is not None:
             self.objective = self.objective.strip()
-            if not self.objective:
-                raise ValueError("objective must not be empty")
         return self
 
 
@@ -546,8 +573,10 @@ class CreateConversationRequest(BaseModel):
     the cutoff turn, preserving tracking relationships (original_prompt_id).
     """
 
-    source_conversation_id: str | None = Field(None, description="Conversation to branch from")
-    cutoff_index: int | None = Field(None, description="Include messages up to and including this turn index (0-based)")
+    source_conversation_id: IdentifierStr | None = Field(None, description="Conversation to branch from")
+    cutoff_index: int | None = Field(
+        None, ge=0, description="Include messages up to and including this turn index (0-based)"
+    )
 
 
 class CreateConversationResponse(BaseModel):
@@ -557,10 +586,47 @@ class CreateConversationResponse(BaseModel):
     created_at: datetime = Field(..., description="Conversation creation timestamp")
 
 
+ConversationPieceRequest = MessagePieceRequest
+ConversationMessageRequest = MessageRequest
+
+
+class SaveConversationRequest(_AttackAttributionInput):
+    """Save a complete draft as a new conversation, without sending it."""
+
+    save_id: uuid.UUID
+    destination: Literal["same_attack", "new_attack"]
+    attack_result_id: uuid.UUID | None = None
+    source_attack_result_id: uuid.UUID | None = None
+    source_conversation_id: uuid.UUID | None = None
+    expected_objective: str | None = None
+    objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
+    target_registry_name: str | None = None
+    messages: list[MessageRequest] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_destination(self) -> "SaveConversationRequest":
+        """
+        Validate source and destination references.
+
+        Returns:
+            The validated save request.
+        """
+        if (self.destination == "same_attack") != (self.attack_result_id is not None):
+            raise ValueError("Same attack requires attack_result_id; New attack must not supply it")
+        if (self.source_attack_result_id is None) != (self.source_conversation_id is None):
+            raise ValueError("Both source attack and source conversation are required together")
+        if self.objective is not None:
+            self.objective = self.objective.strip()
+        for message in self.messages:
+            if message.role not in ("system", "user", "simulated_assistant", "simulated_tool", "developer"):
+                raise ValueError("Draft replies must use simulated_assistant or simulated_tool roles")
+        return self
+
+
 class UpdateMainConversationRequest(BaseModel):
     """Request to update the main conversation of an attack result."""
 
-    conversation_id: str = Field(..., description="The conversation to promote to main")
+    conversation_id: IdentifierStr = Field(..., description="The conversation to promote to main")
 
 
 class UpdateMainConversationResponse(BaseModel):
@@ -579,24 +645,27 @@ class UpdateMainConversationResponse(BaseModel):
 class ConverterConfigurationRequest(BaseModel):
     """Registry-backed converter configuration for one ordered pipeline."""
 
-    converter_ids: list[str] = Field(
+    converter_ids: list[IdentifierStr] = Field(
         ...,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Converter instance IDs to apply in order.",
     )
     indexes_to_apply: list[Annotated[int, Field(ge=0)]] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Zero-based message piece indexes to which this pipeline applies. Defaults to all indexes.",
     )
     prompt_data_types_to_apply: list[PromptDataType] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Prompt data types to which this pipeline applies. Defaults to all data types.",
     )
 
 
-class AddMessageRequest(BaseModel):
+class AddMessageRequest(MessageRequest):
     """
     Request to add a message to an attack.
 
@@ -606,30 +675,38 @@ class AddMessageRequest(BaseModel):
     """
 
     role: ChatMessageRole = Field(default="user", description="Message role")
-    pieces: list[MessagePieceRequest] = Field(..., description="Message pieces", max_length=50)
     send: bool = Field(
         default=True,
         description="If True, send to target and wait for response. If False, just store in memory.",
     )
-    target_registry_name: str | None = Field(
+    target_registry_name: IdentifierStr | None = Field(
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    converter_ids: list[str] | None = Field(
+    converter_ids: list[IdentifierStr] | None = Field(
         None,
+        max_length=MAX_ITEMS,
         description="Deprecated global request converter pipeline. Use request_converter_configurations instead.",
     )
     request_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Ordered registry-backed converter pipelines to apply to the request.",
     )
     response_converter_configurations: list[ConverterConfigurationRequest] | None = Field(
         None,
         min_length=1,
+        max_length=MAX_ITEMS,
         description="Ordered registry-backed converter pipelines to apply to the response.",
     )
-    target_conversation_id: str = Field(
+    start_token: str = Field(
+        default="⟪", min_length=1, description="Opening marker for request and response converter pipelines"
+    )
+    end_token: str = Field(
+        default="⟫", min_length=1, description="Closing marker for request and response converter pipelines"
+    )
+    target_conversation_id: IdentifierStr = Field(
         ...,
         description="The conversation_id to store and send messages under. "
         "Usually the attack's main conversation, but can be a related conversation.",
@@ -646,6 +723,8 @@ class AddMessageRequest(BaseModel):
         Raises:
             ValueError: If converter fields conflict, cannot run, or contain an out-of-range request index.
         """
+        if any(piece.source_piece_id is not None for piece in self.pieces):
+            raise ValueError("source_piece_id requires a complete conversation save")
         if self.converter_ids and self.request_converter_configurations:
             raise ValueError("converter_ids and request_converter_configurations cannot both be provided")
 

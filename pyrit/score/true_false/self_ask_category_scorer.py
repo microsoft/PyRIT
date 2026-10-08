@@ -8,11 +8,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_CONTENT_CLASSIFIERS_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import (
     ComponentIdentifier,
@@ -96,7 +96,7 @@ class ContentClassifier(BaseModel):
             ValueError: If the YAML does not contain a mapping or fails model validation.
         """
         resolved_path = verify_and_resolve_path(path)
-        loaded = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+        loaded = safe_load_yaml(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, Mapping):
             raise ValueError(f"Content classifier YAML file '{resolved_path}' must contain a mapping.")
         return cls.model_validate(loaded)

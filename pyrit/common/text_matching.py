@@ -95,10 +95,13 @@ class ApproximateTextMatching(TextMatching):
             case_sensitive (bool): Whether to perform case-sensitive matching. Defaults to False.
 
         Raises:
-            ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0].
+            ValueError: If ``threshold`` is not finite or is outside [0.0, 1.0], or if ``n`` is
+                not a positive integer.
         """
         if not math.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
             raise ValueError(f"threshold must be finite and between 0.0 and 1.0, got {threshold}")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValueError(f"n must be a positive integer, got {n!r}")
         self._threshold = threshold
         self._n = n
         self._case_sensitive = case_sensitive
