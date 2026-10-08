@@ -101,6 +101,23 @@ class PromptTarget(Identifiable):
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
+    @classmethod
+    def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
+        """
+        Translate request-level authentication intent into constructor parameters.
+
+        Targets that must retain explicit auth intent override this hook. Most
+        targets infer authentication from their credential parameters and need no
+        additional constructor input.
+
+        Args:
+            auth_mode (AuthMode): Authentication mode selected by the caller.
+
+        Returns:
+            dict[str, object]: Additional constructor parameters.
+        """
+        return {}
+
     def __init__(
         self,
         *,

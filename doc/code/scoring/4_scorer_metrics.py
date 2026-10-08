@@ -29,6 +29,11 @@
 #
 # This means changing *any* of these values creates a new scorer identity. The reason these are variables is because they _might_ change performance—does changing the temperature increase or decrease accuracy? Metrics let you experiment and find out.
 #
+# If any scoring trial returns no verdict for a response, the evaluator excludes that response from
+# accuracy and error calculations. `num_responses` counts rows used; `num_input_responses` counts
+# rows supplied. Compare them before interpreting the metrics. Older saved results may have no
+# input count, so their coverage cannot be recovered from the metrics alone.
+#
 # Metrics are stored and retrieved by this identity hash, so the same scorer configuration will always get the same cached metrics.
 
 # %%

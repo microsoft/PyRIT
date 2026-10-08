@@ -257,6 +257,31 @@ class TestListTargetTypes:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    @pytest.mark.parametrize(
+        ("target_type", "parameter_names"),
+        [
+            ("OpenAIChatTarget", {"endpoint", "model_name"}),
+            ("AzureBlobStorageTarget", {"container_url"}),
+            ("HackAPromptTarget", {"cookie", "session_id"}),
+            ("HuggingFaceChatTarget", {"hf_access_token"}),
+            ("PromptShieldTarget", {"endpoint"}),
+            ("AzureMLChatTarget", {"endpoint"}),
+        ],
+    )
+    async def test_types_mark_env_backed_parameters_required(
+        self,
+        target_type: str,
+        parameter_names: set[str],
+    ) -> None:
+        """Environment-backed values enforced by targets are required metadata."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == target_type)
+        parameters = {parameter.name: parameter for parameter in entry.parameters}
+        assert all(parameters[name].required for name in parameter_names)
+
     async def test_types_include_structured_parameters(self) -> None:
         service = TargetService()
 
@@ -272,7 +297,7 @@ class TestListTargetTypes:
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
-    async def test_types_preserve_all_registry_parameters(self) -> None:
+    async def test_types_preserve_registry_parameter_order_without_mutating_metadata(self) -> None:
         service = TargetService()
         result = await service.list_target_types_async()
         metadata_by_name = {
@@ -281,7 +306,14 @@ class TestListTargetTypes:
 
         assert {entry.target_type for entry in result.items} == set(metadata_by_name)
         for entry in result.items:
-            assert entry.parameters == list(metadata_by_name[entry.target_type].parameters)
+            registry_parameters = metadata_by_name[entry.target_type].parameters
+            assert [parameter.name for parameter in entry.parameters] == [
+                parameter.name for parameter in registry_parameters
+            ]
+
+        registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
+        assert registry_openai["endpoint"].required is False
+        assert registry_openai["model_name"].required is False
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
@@ -651,6 +683,37 @@ class TestCreateTargetEntraAuth:
                 assert target_obj._api_key_provider is _test_token_provider  # type: ignore[attr-defined]
                 assert target_obj._api_key == ""  # type: ignore[attr-defined]
 
+    async def test_create_azure_blob_target_with_identity_preserves_auth_intent(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureBlobStorageTarget",
+            params={"container_url": "https://test.blob.core.windows.net/test"},
+            auth_mode="identity",
+        )
+
+        result = await service.create_target_async(request=request)
+
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
+
+    async def test_create_azure_blob_target_with_identity_discards_sas_token(self, sqlite_instance) -> None:
+        """A caller-supplied sas_token must not silently override identity-based auth."""
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureBlobStorageTarget",
+            params={
+                "container_url": "https://test.blob.core.windows.net/test",
+                "sas_token": "attacker-supplied-token",
+            },
+            auth_mode="identity",
+        )
+
+        result = await service.create_target_async(request=request)
+
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._sas_token is None  # type: ignore[attr-defined]
+        assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
+
     async def test_create_openai_target_with_identity_non_azure_endpoint_raises(self, sqlite_instance) -> None:
         """The target (not the service) rejects an unrecognized endpoint under identity auth."""
 
@@ -800,4 +863,57 @@ class TestFrontendBackendCompatibilitySync:
             f"TARGET_EVAL_PARAM_FALLBACKS changed to {TARGET_EVAL_PARAM_FALLBACKS}. "
             f"Update effectiveUnderlyingModel() in CreateTargetDialog.tsx to match, "
             f"then update this test's expected dict."
+        )
+
+    def test_required_target_parameters_match_frontend_form_capabilities(self) -> None:
+        """
+        Guard the dynamic target form against new required Python-only inputs.
+
+        Scalar, choice, simple-list, and dictionary parameters are rendered from
+        metadata. Connection/auth parameters and RoundRobin inputs have dedicated
+        controls. The remaining targets require live Python objects and must stay
+        excluded until the frontend gains an explicit policy for them.
+        """
+        connection_parameters = {
+            "api_key",
+            "endpoint",
+            "model_name",
+            "underlying_model",
+            "underlying_model_name",
+        }
+        scalar_types = {"bool", "float", "int", "str"}
+        simple_list_types = {"list[bool]", "list[float]", "list[int]", "list[str]"}
+        unsupported_required: dict[str, list[str]] = {}
+
+        registry = TargetRegistry.get_registry_singleton()
+        for metadata in registry.get_all_registered_class_metadata():
+            unsupported_names: list[str] = []
+            for parameter in metadata.parameters:
+                if not parameter.required:
+                    continue
+                if parameter.name in connection_parameters:
+                    continue
+                if metadata.class_name == "RoundRobinTarget" and parameter.name in {"targets", "weights"}:
+                    continue
+                if parameter.reference_type or parameter.variants:
+                    unsupported_names.append(parameter.name)
+                    continue
+                if parameter.choices:
+                    continue
+                if parameter.type_name in scalar_types or parameter.type_name in simple_list_types:
+                    continue
+                if parameter.type_name == "dict" or parameter.type_name.startswith("dict["):
+                    continue
+                unsupported_names.append(parameter.name)
+            if unsupported_names:
+                unsupported_required[metadata.class_name] = sorted(unsupported_names)
+
+        assert unsupported_required == {
+            "PlaywrightCopilotTarget": ["page"],
+            "PlaywrightTarget": ["interaction_func", "page"],
+            "WebsocketTarget": ["initialization_strings", "message_builder", "response_parser"],
+        }, (
+            "The target registry's required parameters changed. Update "
+            "frontend/src/components/Config/targetParameterPolicy.ts with a renderable or "
+            "explicitly unsupported policy, then update this expected catalog."
         )
