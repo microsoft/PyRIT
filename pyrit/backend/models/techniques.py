@@ -3,11 +3,11 @@
 
 """Technique catalog responses and runtime construction requests."""
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from pyrit.models import ComponentIdentifier, Parameter
+from pyrit.models import Parameter
 from pyrit.models.request_limits import MAX_ITEMS
 
 TechniqueSelector = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
@@ -22,10 +22,7 @@ class TechniqueInstance(BaseModel):
     tags: list[str] = Field(default_factory=list)
     uses_adversarial: bool
     uses_default_adversarial_target: bool
-    configuration: dict[str, Any]
-    evaluation_identifier: ComponentIdentifier = Field(
-        description="Registered factory identity with its evaluation hash, not a final attack or scenario run identity."
-    )
+    creation_statement: str
 
 
 class TechniqueListResponse(BaseModel):

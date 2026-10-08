@@ -20,12 +20,9 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
-from dataclasses import fields, is_dataclass
-from enum import Enum
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-from pydantic import BaseModel
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
@@ -53,6 +50,8 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
     from pyrit.prompt_normalizer import ConverterConfiguration
@@ -60,35 +59,56 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
-def _safe_configuration_value(value: Any) -> Any:
+
+def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
     """
-    Project settings without exposing target credentials or deserializing live objects.
+    Capture supplied factory arguments before a helper expands them into runtime settings.
 
     Returns:
-        Any: Safe JSON-compatible display data.
+        Callable[_P, _R]: The original callable with creation-input capture.
     """
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, Identifiable):
-        identifier = value.get_identifier()
-        return {"class_name": identifier.class_name, "hash": identifier.hash}
-    if isinstance(value, BaseModel):
-        return {name: _safe_configuration_value(getattr(value, name)) for name in type(value).model_fields}
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            "type": type(value).__name__,
-            "parameters": {
-                field.name: _safe_configuration_value(getattr(value, field.name)) for field in fields(value)
-            },
-        }
+    signature = inspect.signature(method)
+
+    @wraps(method)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        name = wrapped.__name__
+        arguments = signature.bind(*args, **kwargs).arguments
+        owner = arguments.pop(next(iter(signature.parameters)))
+        calls = []
+        if name == "__init__":
+            call = type(owner).__name__
+        elif isinstance(owner, AttackTechniqueFactory):
+            calls = owner.get_creation_calls()
+            call = name
+        else:
+            call = f"{owner.__name__}.{name}"
+        result = method(*args, **kwargs)
+        factory = result if isinstance(result, AttackTechniqueFactory) else owner
+        if not isinstance(factory, AttackTechniqueFactory):
+            raise TypeError("Creation capture requires an AttackTechniqueFactory constructor or copy method")
+        factory._creation_calls = [*calls, (call, _copy_creation_value(arguments))]
+        return result
+
+    return wrapped
+
+
+def _copy_creation_value(value: Any) -> Any:
+    """
+    Copy input containers without copying live components.
+
+    Returns:
+        Any: Independent containers with live values retained by reference.
+    """
     if isinstance(value, dict):
-        return {str(name): _safe_configuration_value(item) for name, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_safe_configuration_value(item) for item in value]
-    return {"type": type(value).__name__, "python_only": True}
+        return {key: _copy_creation_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_creation_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_creation_value(item) for item in value)
+    return value
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -104,6 +124,9 @@ class AttackTechniqueFactory(Identifiable):
     construction time, catching typos and incompatible parameter names early.
     """
 
+    _creation_calls: list[tuple[str, dict[str, Any]]]
+
+    @_capture_creation
     def __init__(
         self,
         *,
@@ -222,6 +245,7 @@ class AttackTechniqueFactory(Identifiable):
         self._validate_score_feedback_override()
 
     @classmethod
+    @_capture_creation
     def with_simulated_conversation(
         cls,
         *,
@@ -499,24 +523,13 @@ class AttackTechniqueFactory(Identifiable):
         """The registry name for this technique."""
         return self._name
 
-    def get_configuration(self) -> dict[str, Any]:
-        """Return safe display settings, not an identity hash or a reconstruction recipe."""
-        return {
-            "attack_args": _safe_configuration_value(self._attack_kwargs),
-            "factory_options": {
-                "adversarial_chat": _safe_configuration_value(self._adversarial_chat),
-                "adversarial_system_prompt": _safe_configuration_value(self._adversarial_system_prompt),
-                "adversarial_seed_prompt": _safe_configuration_value(self._adversarial_seed_prompt),
-                "adversarial_prompt_template": _safe_configuration_value(self._adversarial_prompt_template),
-                "adversarial_system_prompt_prefix": self._adversarial_system_prompt_prefix,
-                "uses_adversarial": self._uses_adversarial,
-                "uses_default_adversarial_target": self.uses_default_adversarial_target,
-                "supports_additional_request_converters": self._supports_additional_request_converters,
-                "scorer_override_policy": self._scorer_override_policy.value,
-                "use_score_as_feedback": self._use_score_as_feedback,
-            },
-            "seed_technique": _safe_configuration_value(self._seed_technique),
-        }
+    def get_creation_kwargs(self) -> dict[str, Any]:
+        """Return a copy of the supplied factory arguments, without adding defaults."""
+        return _copy_creation_value(self._creation_calls[-1][1])
+
+    def get_creation_calls(self) -> list[tuple[str, dict[str, Any]]]:
+        """Return the supplied constructor and copy-method inputs, without resolved defaults."""
+        return [(call, _copy_creation_value(arguments)) for call, arguments in self._creation_calls]
 
     @property
     def description(self) -> str | None:
@@ -645,6 +658,7 @@ class AttackTechniqueFactory(Identifiable):
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters
 
+    @_capture_creation
     def with_attack_kwargs(self, *, attack_kwargs: dict[str, Any]) -> AttackTechniqueFactory:
         """
         Return a copy with the supplied attack constructor arguments merged in.
@@ -680,6 +694,7 @@ class AttackTechniqueFactory(Identifiable):
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._compatibility_helper.scoring_config_type
 
+    @_capture_creation
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
         """
         Return a copy of this factory with static guidance layered onto its adversarial prompt.

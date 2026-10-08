@@ -62,8 +62,10 @@ disclosing target credentials.
 Scenario-local factories take precedence over registered factories of the same name.
 `AttackTechniqueRegistry.cache_scenario_technique_class` refreshes scenario selection
 enums when registered factories change; it does not create attacks.
-Responses also include `evaluation_identifier`: the registered factory's identity
-with its evaluation hash, not the final attack or scenario run identity.
+Responses include `creation_statement`, a Python-style display of the factory's
+supplied arguments. Helper constructors retain their original call form.
+Live components without captured inputs use `...`; this display is not executable
+or lossless source. Responses do not include identifier or expanded seed JSON.
 
 ### Manual Messages
 

@@ -3,8 +3,8 @@
 
 """Real factory projections, REST shapes, and revision-aware scenario caches."""
 
+import ast
 import asyncio
-import json
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -22,10 +22,11 @@ from pyrit.backend.services.technique_service import TechniqueService, get_techn
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
-    EvaluationIdentifier,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
     SeedObjective,
+    SeedPrompt,
+    SeedSimulatedConversation,
 )
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry
@@ -63,8 +64,7 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
         "tags",
         "uses_adversarial",
         "uses_default_adversarial_target",
-        "configuration",
-        "evaluation_identifier",
+        "creation_statement",
     }
     assert await service.get_async("missing") is None
     AttackRegistry.get_registry_singleton().register_class(PromptSendingAttack, name="alias")
@@ -82,37 +82,66 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
     assert created.attack_type == "PromptSendingAttack"
 
 
-@pytest.mark.parametrize("name", ["red_teaming", "crescendo_journalist_interview"])
-def test_factory_evaluation_identifier_uses_real_identity_without_creating_attacks(
+@pytest.mark.parametrize("name", ["tap", "crescendo_simulated", "role_play_video_game"])
+def test_factory_creation_statement_uses_supplied_inputs_without_creating_attacks(
     *, registry: AttackTechniqueRegistry, name: str
 ) -> None:
     factory = registry.get_factories_or_raise()[name]
     identifier = factory.get_identifier()
-    with patch.object(factory, "create", side_effect=AssertionError("Listing must not construct an attack")):
+    with (
+        patch.object(factory, "create", side_effect=AssertionError("Listing must not construct an attack")),
+        patch.object(factory, "get_identifier", side_effect=AssertionError("Listing does not need identity")),
+    ):
         item = technique_to_instance(name=name, factory=factory)
 
-    assert item.evaluation_identifier == identifier.with_eval_hash(EvaluationIdentifier(identifier).eval_hash)
-    assert item.evaluation_identifier.hash == identifier.hash
-    assert item.evaluation_identifier.eval_hash == identifier.hash
-    assert factory.get_identifier().eval_hash is None
-    assert item.evaluation_identifier.params["name"] == name
-    if name == "crescendo_journalist_interview":
-        seed = item.configuration["seed_technique"]["seeds"][0]
-        prompt = seed["adversarial_chat_system_prompt"]["value"]
-        assert json.loads(seed["value"])["adversarial_chat_system_prompt"]["value"] == prompt
-        seed_identifier = item.evaluation_identifier.get_child_list("technique_seeds")[0]
-        assert json.loads(seed_identifier.params["value"])["adversarial_chat_system_prompt"]["value"] == prompt
-        assert "adversarial_chat_system_prompt" not in seed_identifier.params
+    assert factory.get_identifier() == identifier
+    assert item.creation_statement.startswith(factory.get_creation_calls()[0][0] + "(")
+    call = ast.parse(item.creation_statement, mode="eval").body
+    assert isinstance(call, ast.Call)
+    arguments = {keyword.arg for keyword in call.keywords}
+    assert {"name", "description", "technique_tags"} <= arguments
+    assert not {"seed_technique", "uses_adversarial", "scorer_override_policy"} & arguments
+    if name == "tap":
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == "AttackTechniqueFactory"
+        assert arguments == {"name", "attack_class", "description", "technique_tags"}
+    else:
+        assert isinstance(call.func, ast.Attribute)
+        assert call.func.attr == "with_simulated_conversation"
+    if name == "crescendo_simulated":
+        assert arguments == {"name", "description", "technique_tags"}
+    if name == "role_play_video_game":
+        assert factory.seed_technique is not None
+        seed = factory.seed_technique.seeds[0]
+        assert isinstance(seed, SeedSimulatedConversation)
+        assert isinstance(seed.adversarial_chat_system_prompt, SeedPrompt)
+        assert isinstance(seed.next_message_system_prompt, SeedPrompt)
+        assert item.creation_statement.count(repr(seed.adversarial_chat_system_prompt.value)) == 1
+        assert item.creation_statement.count(repr(seed.next_message_system_prompt.value)) == 1
 
 
-def test_factory_evaluation_identifier_does_not_expose_target_credentials(
+def test_factory_creation_statement_does_not_expose_target_credentials(
     registry: AttackTechniqueRegistry,
 ) -> None:
     target = OpenAIChatTarget(endpoint="https://local.invalid/v1", model_name="local", api_key="private-test-key")
     factory = registry.create_factory(name="private_target", attack_type="RedTeamingAttack", adversarial_chat=target)
     item = technique_to_instance(name=factory.name, factory=factory)
-    assert item.evaluation_identifier.params["adversarial_chat"] == target.get_identifier().hash
+    assert "adversarial_chat=OpenAIChatTarget(...)" in item.creation_statement
     assert "private-test-key" not in item.model_dump_json()
+
+
+def test_factory_creation_display_does_not_call_unknown_object_repr(registry: AttackTechniqueRegistry) -> None:
+    class PrivateSettings:
+        def __repr__(self) -> str:
+            raise AssertionError("Display must not inspect private object contents")
+
+    factory = AttackTechniqueFactory(
+        name="private",
+        attack_class=PromptSendingAttack,
+        attack_kwargs={"max_attempts_on_failure": PrivateSettings()},
+    )
+    item = technique_to_instance(name=factory.name, factory=factory)
+    assert "'max_attempts_on_failure': PrivateSettings(...)" in item.creation_statement
 
 
 def test_rest_create_detail_types_and_errors(
@@ -131,8 +160,7 @@ def test_rest_create_detail_types_and_errors(
         },
     )
     assert created.status_code == 201, created.text
-    assert created.json()["configuration"]["attack_args"]["max_attempts_on_failure"] == 0
-    assert created.json()["evaluation_identifier"]["eval_hash"] == created.json()["evaluation_identifier"]["hash"]
+    assert "'max_attempts_on_failure': 0" in created.json()["creation_statement"]
     assert client.get("/api/techniques/rest_example").json() == created.json()
     assert client.get("/api/techniques/missing").status_code == 404
     assert (

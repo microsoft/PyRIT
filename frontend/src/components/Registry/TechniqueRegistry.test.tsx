@@ -22,11 +22,8 @@ const converters = jest.mocked(convertersApi)
 
 function technique(name: string, attackType = 'PromptSendingAttack', tags = ['basic']): TechniqueInstance {
   return { name, attack_type: attackType, tags, description: `${name} description`,
-    uses_adversarial: false, uses_default_adversarial_target: false, configuration: {
-      attack_args: { attempts: 0, unset: null, nested: { enabled: false, optional: null, empty: [] } },
-    },
-    evaluation_identifier: { class_name: 'AttackTechniqueFactory', class_module: 'pyrit.scenario.core.attack_technique_factory',
-      hash: `${name}-hash`, eval_hash: `${name}-eval-hash`, name, optional: null } }
+    uses_adversarial: false, uses_default_adversarial_target: false,
+    creation_statement: `AttackTechniqueFactory(\n    name="${name}",\n    attack_class=${attackType},\n)` }
 }
 
 const metadata: TechniqueTypeResponse = {
@@ -91,24 +88,28 @@ describe('TechniqueRegistry', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by tag' }), 'basic')
     await user.click(screen.getByRole('button', { name: 'Details for first' }))
     const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByRole('heading', { name: 'Configuration' })).toBeInTheDocument()
-    expect(dialog.getByLabelText('Technique configuration')).toHaveTextContent('"attempts": 0')
-    expect(dialog.getByLabelText('Factory evaluation identifier')).toHaveTextContent('"hash": "first-hash"')
-    expect(dialog.getByLabelText('Factory evaluation identifier')).toHaveTextContent('"eval_hash": "first-eval-hash"')
-    expect(dialog.getByLabelText('Factory evaluation identifier')).toHaveTextContent('"name": "first"')
+    expect(dialog.getByLabelText('Technique creation call').textContent).toBe(technique('first').creation_statement)
+    expect(dialog.queryByRole('heading', { name: 'Configuration' })).not.toBeInTheDocument()
     expect(dialog.queryByText(/safe display settings|This identifies the registered factory/)).not.toBeInTheDocument()
-    expect(dialog.queryByRole('heading', { name: 'Factory evaluation identifier' })).not.toBeInTheDocument()
-    expect(JSON.parse(dialog.getByLabelText('Technique configuration').textContent ?? '')).toEqual({
-      attack_args: { attempts: 0, nested: { enabled: false, empty: [] } },
-    })
-    expect(dialog.getByLabelText('Factory evaluation identifier')).not.toHaveTextContent('"optional"')
-    const response = await techniques.listTechniques.mock.results[0].value
-    expect(response.items[0].configuration.attack_args).toHaveProperty('unset', null)
+    expect(dialog.queryByLabelText('Technique configuration')).not.toBeInTheDocument()
+    expect(dialog.queryByLabelText('Factory evaluation identifier')).not.toBeInTheDocument()
     expect(techniques.getTechnique).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Filter by tag' }), '')
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
     await waitFor(() => expect(techniques.listTechniques).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows helper construction without identifiers or expanded conversation data', async () => {
+    const item = technique('simulated')
+    item.creation_statement = 'AttackTechniqueFactory.with_simulated_conversation(\n    name="simulated",\n    num_turns=2,\n)'
+    techniques.listTechniques.mockResolvedValue({ items: [item] })
+    const user = userEvent.setup()
+    render(tree())
+    await user.click(await screen.findByRole('button', { name: 'Details for simulated' }))
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByLabelText('Technique creation call').textContent).toBe(item.creation_statement)
+    expect(dialog.queryByText(/eval_hash|value_sha256|seed_technique|Configuration/)).not.toBeInTheDocument()
   })
 
   it('shows empty and no-match states', async () => {

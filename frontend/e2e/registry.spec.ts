@@ -47,6 +47,23 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.goto("/registry/techniques");
   await expect(page.getByRole("tab", { name: "Techniques" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
+  const builtinCalls = {
+    crescendo_simulated: "AttackTechniqueFactory.with_simulated_conversation(\n" +
+      "    name='crescendo_simulated',\n" +
+      "    description='Escalates gradually over a simulated conversation toward the objective.',\n" +
+      "    technique_tags=['single_turn'],\n)",
+    tap: "AttackTechniqueFactory(\n" +
+      "    name='tap',\n" +
+      "    attack_class=TreeOfAttacksWithPruningAttack,\n" +
+      "    description='Explores a tree of adversarial prompts, pruning weak branches to refine the attack.',\n" +
+      "    technique_tags=['multi_turn'],\n)",
+  };
+  for (const [builtinName, statement] of Object.entries(builtinCalls)) {
+    await page.getByRole("button", { name: `Details for ${builtinName}` }).click();
+    await expect(page.getByLabel("Technique creation call", { exact: true })).toHaveText(statement);
+    await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+  }
   await page.getByRole("button", { name: "New technique" }).click();
   await page.getByRole("textbox", { name: "Registry name" }).fill(name);
   await page.getByRole("textbox", { name: "Description" }).fill("Local browser technique");
@@ -72,16 +89,13 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
   await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
   await page.getByRole("button", { name: `Details for ${name}` }).click();
-  await expect(page.getByLabel("Technique configuration", { exact: true })).toBeVisible();
-  const evaluationIdentifier = page.getByLabel("Factory evaluation identifier", { exact: true });
-  await expect(evaluationIdentifier).toContainText(createdTechnique.evaluation_identifier.eval_hash);
-  const displayedIdentity = JSON.parse(await evaluationIdentifier.innerText());
-  expect(displayedIdentity.hash).toEqual(createdTechnique.evaluation_identifier.hash);
-  expect(displayedIdentity.eval_hash).toEqual(createdTechnique.evaluation_identifier.eval_hash);
-  expect(displayedIdentity.name).toEqual(name);
-  expect(await page.getByLabel("Technique configuration", { exact: true }).innerText()).not.toContain(': null');
-  expect(await evaluationIdentifier.innerText()).not.toContain(': null');
-  await expect(page.getByText("These are safe display settings, not a reconstruction recipe.")).toHaveCount(0);
+  const creationCall = page.getByLabel("Technique creation call", { exact: true });
+  await expect(creationCall).toHaveText(createdTechnique.creation_statement);
+  await expect(creationCall).toContainText("AttackTechniqueFactory(");
+  await expect(creationCall).toContainText("'max_attempts_on_failure': 0");
+  expect(createdTechnique).not.toHaveProperty("evaluation_identifier");
+  expect(createdTechnique).not.toHaveProperty("configuration");
+  await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("button", { name: `Details for ${name}` })).toBeFocused();
   expect(detailRequests).toEqual([]);

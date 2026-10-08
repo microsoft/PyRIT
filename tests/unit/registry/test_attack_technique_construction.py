@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.converter import Base64Converter, ROT13Converter
-from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt, StructuredParameterValue
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
@@ -55,12 +55,13 @@ def test_converter_references_preserve_order_duplicates_and_zero(registry: Attac
             response_converters=[],
         )
     assert registry.instances.get_names() == []
-    config = factory.get_configuration()["attack_args"]
+    config = factory.get_creation_kwargs()["attack_kwargs"]
     assert config["max_attempts_on_failure"] == 0
-    converter_config = config["attack_converter_config"]["parameters"]
-    assert converter_config["response_converters"] == []
-    request = converter_config["request_converters"]
-    assert [entry["parameters"]["converters"][0]["class_name"] for entry in request] == [
+    converter_config = config["attack_converter_config"]
+    assert isinstance(converter_config, AttackConverterConfig)
+    assert converter_config.response_converters == []
+    request = converter_config.request_converters
+    assert [type(entry.converters[0]).__name__ for entry in request] == [
         "Base64Converter",
         "ROT13Converter",
         "Base64Converter",
@@ -83,6 +84,9 @@ def test_custom_variant_uses_existing_resolver_and_creates_fresh_attacks(registr
     assert isinstance(first.attack, CustomAttack)
     assert first.attack is not second.attack
     assert first.attack.settings == CustomSettings(enabled=False, limit=0, labels=[])
+    assert factory.get_creation_kwargs()["attack_kwargs"]["settings"] == CustomSettings(
+        enabled=False, limit=0, labels=[]
+    )
     assert target.prompt_sent == []
 
 
@@ -92,9 +96,9 @@ def test_omission_null_and_empty_converter_list_remain_distinct(registry: Attack
         name="explicit", attack_type="PromptSendingAttack", params={"attack_converter_config": None}
     )
     empty = registry.create_factory(name="empty", attack_type="PromptSendingAttack", request_converters=[])
-    assert "attack_converter_config" not in omitted.get_configuration()["attack_args"]
-    assert explicit.get_configuration()["attack_args"] == {"attack_converter_config": None}
-    assert empty.get_configuration()["attack_args"]["attack_converter_config"]["parameters"]["request_converters"] == []
+    assert "attack_converter_config" not in omitted.get_creation_kwargs()["attack_kwargs"]
+    assert explicit.get_creation_kwargs()["attack_kwargs"] == {"attack_converter_config": None}
+    assert empty.get_creation_kwargs()["attack_kwargs"]["attack_converter_config"].request_converters == []
 
 
 def test_adversarial_target_and_inline_prompts_stay_deferred(registry: AttackTechniqueRegistry) -> None:
@@ -111,9 +115,9 @@ def test_adversarial_target_and_inline_prompts_stay_deferred(registry: AttackTec
     assert factory.adversarial_chat is TargetRegistry.get_registry_singleton().instances.get("local")
     assert factory.uses_adversarial and not factory.uses_default_adversarial_target
     assert default.uses_default_adversarial_target
-    options = factory.get_configuration()["factory_options"]
+    options = factory.get_creation_kwargs()
     assert options["adversarial_system_prompt"] == ""
-    assert set(options["adversarial_chat"]) == {"class_name", "hash"}
+    assert options["adversarial_chat"] is factory.adversarial_chat
 
 
 def test_advanced_programmatic_factories_remain_supported(registry: AttackTechniqueRegistry) -> None:
@@ -134,7 +138,7 @@ def test_factory_keeps_existing_constructor_coercion(registry: AttackTechniqueRe
     factory = registry.create_factory(
         name="coerced", attack_type="PromptSendingAttack", params={"max_attempts_on_failure": "2"}
     )
-    assert factory.get_configuration()["attack_args"]["max_attempts_on_failure"] == 2
+    assert factory.get_creation_kwargs()["attack_kwargs"]["max_attempts_on_failure"] == 2
 
 
 @pytest.mark.parametrize(
