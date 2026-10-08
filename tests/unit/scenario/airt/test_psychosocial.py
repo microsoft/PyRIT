@@ -3,6 +3,9 @@
 
 """Tests for the Psychosocial scenario (per-sub-harm simulated crescendo swept across converters)."""
 
+import asyncio
+import threading
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,6 +27,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
@@ -119,6 +123,48 @@ def register_default_targets():
 
 
 FIXTURES = ["patch_central_database"]
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+async def test_crescendo_construction_keeps_initialization_responsive_async(
+    mock_objective_target: PromptTarget,
+) -> None:
+    scenario = _scenario_with_mock_scorers()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": mock_objective_target,
+            "scenario_techniques": [PsychosocialTechnique.Crescendo],
+            "sub_harm": "imminent_crisis",
+            "include_baseline": False,
+        }
+    )
+    loop = asyncio.get_running_loop()
+    backend_thread = threading.get_ident()
+    entered = asyncio.Event()
+    release = threading.Event()
+    original_build = scenario._build_crescendo_technique
+
+    def build(**kwargs: Any) -> AttackTechnique:
+        loop.call_soon_threadsafe(entered.set)
+        assert threading.get_ident() != backend_thread
+        if not release.wait(5):
+            raise TimeoutError("Crescendo construction was not released.")
+        return original_build(**kwargs)
+
+    with (
+        _patch_base_seed_groups(_make_seed_groups()),
+        patch.object(scenario, "_build_crescendo_technique", side_effect=build),
+    ):
+        initialize = asyncio.create_task(scenario.initialize_async())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert not initialize.done()
+            release.set()
+            await asyncio.wait_for(initialize, 5)
+        finally:
+            release.set()
+            await asyncio.gather(initialize, return_exceptions=True)
+    assert [attack.atomic_attack_name for attack in scenario._atomic_attacks] == ["imminent_crisis_crescendo"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)

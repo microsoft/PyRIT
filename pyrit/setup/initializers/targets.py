@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any
 
 from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models.identifiers import TARGET_EVAL_PARAM_FALLBACKS, TARGET_EVAL_PARAMS
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import (
@@ -625,6 +626,10 @@ class TargetInitializer(PyRITInitializer):
         and target class are automatically grouped into ``RoundRobinTarget``
         instances for rate-limit distribution and fault tolerance.
         """
+        await run_legacy_sync_async(self._register_targets)
+
+    def _register_targets(self) -> None:
+        """Construct and register targets without blocking the caller's event loop."""
         tags = self.params.get("tags", ["default"])
         if TargetInitializerTags.ALL in tags:
             tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]

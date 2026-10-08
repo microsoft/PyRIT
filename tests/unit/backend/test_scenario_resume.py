@@ -20,7 +20,7 @@ from pyrit.backend.services.scenario_run_service import (
 )
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
@@ -171,6 +171,48 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
     return result
 
 
+async def test_preparation_and_execution_share_sqlite_loop_resources_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget], sqlite_instance: SQLiteMemory
+) -> None:
+    service, _ = resume_environment
+    loop = asyncio.get_running_loop()
+    original_initialize = _OfflineResumeScenario.initialize_async
+    original_run = _OfflineResumeScenario.run_async
+    engines: list[object] = []
+
+    async def initialize_async(self: _OfflineResumeScenario) -> None:
+        assert asyncio.get_running_loop() is loop
+        await original_initialize(self)
+        engines.append(sqlite_instance._get_async_engine())
+
+    async def run_async(self: _OfflineResumeScenario) -> None:
+        assert asyncio.get_running_loop() is loop
+        engines.append(sqlite_instance._get_async_engine())
+        await original_run(self)
+
+    with (
+        patch.object(_OfflineResumeScenario, "initialize_async", initialize_async),
+        patch.object(_OfflineResumeScenario, "run_async", run_async),
+        patch.object(
+            sqlite_instance, "dispose_loop_resources_async", wraps=sqlite_instance.dispose_loop_resources_async
+        ) as dispose,
+    ):
+        response = await service.start_run_async(
+            request=RunScenarioRequest(
+                scenario_name=_SCENARIO_NAME,
+                target_name=_TARGET_NAME,
+                max_concurrency=1,
+                include_baseline=False,
+            )
+        )
+        await _wait_for_idle_async(service)
+        dispose.assert_not_awaited()
+        assert len(engines) == 2 and engines[0] is engines[1]
+        assert sqlite_instance._get_async_engine() is engines[0]
+        stored = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=response.scenario_result_id)
+        assert stored is not None and stored.scenario_run_state == ScenarioRunState.COMPLETED
+
+
 async def test_resume_preserves_completed_objectives_and_original_id_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
@@ -242,7 +284,7 @@ async def test_resume_without_launch_metadata_is_rejected_without_initialization
     stored = await _create_failed_run_async(target=target, legacy=True)
     run_id = str(stored.id)
     target.prompt_sent.clear()
-    with patch.object(service, "_prepare_run_blocking") as prepare:
+    with patch.object(service, "_prepare_run_async") as prepare:
         with pytest.raises(ScenarioRunConflictError, match="older run.*cannot be resumed through the GUI"):
             await service.resume_run_async(scenario_result_id=run_id)
         prepare.assert_not_called()
@@ -304,7 +346,7 @@ async def test_resume_rejects_ineligible_state_before_initializing_async(
             scenario_result_id=str(stored.id), scenario_run_state=state
         )
     )
-    with patch.object(service, "_prepare_run_blocking") as prepare:
+    with patch.object(service, "_prepare_run_async") as prepare:
         with pytest.raises(ScenarioRunConflictError, match="cannot resume"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         prepare.assert_not_called()
@@ -428,7 +470,7 @@ async def test_resumed_run_uses_existing_fifo_scheduler_async(
         assert resumed.active_scenario_result_id == active.scenario_result_id
         assert resumed.completed_at is None
         assert resumed.started_at is None
-        with patch.object(service, "_prepare_run_blocking") as prepare:
+        with patch.object(service, "_prepare_run_async") as prepare:
             with pytest.raises(ScenarioRunConflictError, match="already scheduled"):
                 await service.resume_run_async(scenario_result_id=run_id)
             prepare.assert_not_called()
@@ -460,7 +502,7 @@ async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
             scenario_result_id=str(stored.id), metadata=stored.metadata
         )
     )
-    with patch.object(service, "_prepare_run_blocking") as prepare:
+    with patch.object(service, "_prepare_run_async") as prepare:
         with pytest.raises(ScenarioRunConflictError, match="incomplete"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         prepare.assert_not_called()
@@ -522,7 +564,7 @@ async def test_resume_invalid_saved_configuration_is_rejected_before_initializat
     stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][field] = value
     with (
         patch.object(service._memory, "get_scenario_result_header_async", return_value=stored),
-        patch.object(service, "_prepare_run_blocking") as prepare,
+        patch.object(service, "_prepare_run_async") as prepare,
     ):
         with pytest.raises(ScenarioRunConflictError, match="incomplete|invalid|empty"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
@@ -538,7 +580,7 @@ async def test_resume_missing_canonical_selection_never_uses_current_defaults_as
     stored.scenario_identifier = stored.scenario_identifier.model_copy(update={missing: None})
     with (
         patch.object(service._memory, "get_scenario_result_header_async", return_value=stored),
-        patch.object(service, "_prepare_run_blocking") as prepare,
+        patch.object(service, "_prepare_run_async") as prepare,
     ):
         with pytest.raises(ScenarioRunConflictError, match="missing techniques or datasets"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
@@ -617,7 +659,7 @@ async def test_original_start_route_also_guards_resume_admission_async(
             scenario_result_id=str(stored.id), scenario_run_state=state
         )
     )
-    with patch.object(service, "_prepare_run_blocking") as prepare:
+    with patch.object(service, "_prepare_run_async") as prepare:
         with pytest.raises(ScenarioRunConflictError):
             await service.start_run_async(
                 request=RunScenarioRequest(
@@ -659,7 +701,7 @@ async def test_resume_never_schedules_replacement_result_id_async(
     stored = await _create_failed_run_async(target=target, legacy=False)
     replacement = _OfflineResumeScenario(scenario_result_id="different-result-id")
     with (
-        patch.object(service, "_prepare_run_blocking", return_value=_PreparedRun(scenario=replacement)),
+        patch.object(service, "_prepare_run_async", return_value=_PreparedRun(scenario=replacement)),
         patch.object(service, "_enqueue_run_async") as enqueue,
     ):
         with pytest.raises(ValueError, match="changed the saved result ID"):

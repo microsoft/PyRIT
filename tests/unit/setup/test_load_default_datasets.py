@@ -6,6 +6,7 @@ Unit tests for LoadDefaultDatasets initializer.
 """
 
 from dataclasses import dataclass, field
+from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -63,8 +64,13 @@ class TestLoadDefaultDatasets:
     async def test_initialize_async_no_scenarios(self) -> None:
         """Test initialization when no scenarios are registered."""
         initializer = LoadDefaultDatasets()
+        backend_thread = get_ident()
 
-        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", return_value=[]):
+        def get_metadata() -> list[_FakeMetadata]:
+            assert get_ident() != backend_thread
+            return []
+
+        with patch.object(ScenarioRegistry, "get_all_registered_class_metadata", side_effect=get_metadata):
             with patch.object(SeedDatasetProvider, "fetch_datasets_async", new_callable=AsyncMock) as mock_fetch:
                 with patch.object(CentralMemory, "get_memory_instance") as mock_memory:
                     mock_memory_instance = MagicMock()

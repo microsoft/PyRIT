@@ -640,7 +640,8 @@ class Psychosocial(Scenario):
 
             for technique in techniques:
                 if technique is PsychosocialTechnique.Crescendo:
-                    attack_technique = self._build_crescendo_technique(
+                    attack_technique = await asyncio.to_thread(
+                        self._build_crescendo_technique,
                         harm=harm,
                         objective_target=context.objective_target,
                         adversarial_chat=adversarial_chat,
