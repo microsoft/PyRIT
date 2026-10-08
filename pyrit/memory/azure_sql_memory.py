@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import os
 import struct
 import uuid
 from collections.abc import Mapping, Sequence
@@ -137,6 +138,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._initialized = not _defer_initialization
 
     def _initialize_schema(self) -> None:
+        if os.environ.get("PYRIT_REQUIRE_CURRENT_SCHEMA") == "true":
+            self._check_schema_migration()
+            return
         prod_connection_string = default_values.get_non_required_value(
             env_var_name=self.AZURE_SQL_DB_CONNECTION_STRING_PROD
         )
