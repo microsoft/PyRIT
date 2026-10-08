@@ -263,8 +263,6 @@ export const techniquesApi = {
     (await apiClient.get('/techniques')).data,
   listTypes: async (): Promise<TechniqueTypeResponse> =>
     (await apiClient.get('/techniques/types')).data,
-  getTechnique: async (name: string): Promise<TechniqueInstance> =>
-    (await apiClient.get(`/techniques/${encodeURIComponent(name)}`)).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
 }

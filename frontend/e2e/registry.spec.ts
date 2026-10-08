@@ -46,6 +46,8 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   });
   await page.goto("/registry/techniques");
   await expect(page.getByRole("tab", { name: "Techniques" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText("Named configurations of existing attack techniques", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Runtime only|No attack runs when you add a technique/)).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
   const builtinCalls = {
     crescendo_simulated: "AttackTechniqueFactory.with_simulated_conversation(\n" +
@@ -69,6 +71,7 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("textbox", { name: "Description" }).fill("Local browser technique");
   await page.getByRole("textbox", { name: "Tags" }).fill("browser_test");
   await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  await expect(page.getByRole("dialog")).not.toContainText(/Implementation of|This form shows|Runtime only|prompt_normalizer/);
   await page.getByLabel("max_attempts_on_failure").fill("0");
   await page.getByRole("combobox", { name: "Request converters", exact: true }).selectOption(converterName);
   await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();

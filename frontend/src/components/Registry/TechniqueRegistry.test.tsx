@@ -11,7 +11,7 @@ import TechniqueRegistry from './TechniqueRegistry'
 let mockRuntime = { generation: 1, ready: true }
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: () => mockRuntime }))
 jest.mock('@/services/api', () => ({
-  techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), getTechnique: jest.fn(), createTechnique: jest.fn() },
+  techniquesApi: { listTechniques: jest.fn(), listTypes: jest.fn(), createTechnique: jest.fn() },
   targetsApi: { listTargets: jest.fn() },
   convertersApi: { listConverters: jest.fn() },
 }))
@@ -28,11 +28,13 @@ function technique(name: string, attackType = 'PromptSendingAttack', tags = ['ba
 
 const metadata: TechniqueTypeResponse = {
   items: [
-    { attack_type: 'PromptSendingAttack', description: 'Sends a prompt', supports_converters: true, supports_adversarial: false,
+    { attack_type: 'PromptSendingAttack', description: 'Implementation of a prompt-sending attack.', supports_converters: true, supports_adversarial: false,
       parameters: [{ name: 'max_attempts_on_failure', type_name: 'int', required: false },
+        { name: 'prompt_normalizer', type_name: 'PromptNormalizer', required: false },
         { name: 'settings', type_name: 'Settings', required: false, variants: { basic: [
           { name: 'enabled', type_name: 'bool', required: false },
           { name: 'limit', type_name: 'int', required: true },
+          { name: 'prompt_normalizer', type_name: 'PromptNormalizer', required: false },
         ] } }] },
     { attack_type: 'RedTeamingAttack', description: 'Uses an adversarial target', parameters: [],
       supports_adversarial: true, supports_converters: true },
@@ -73,10 +75,11 @@ describe('TechniqueRegistry', () => {
     ] })
   })
 
-  it('loads, filters, inspects safe settings, and refreshes the list', async () => {
-    techniques.getTechnique.mockRejectedValue(new Error('Detail unavailable'))
+  it('loads, filters, inspects creation calls, and refreshes the list', async () => {
     const user = userEvent.setup()
     render(tree())
+    expect(screen.getByText('Named configurations of existing attack techniques')).toBeInTheDocument()
+    expect(screen.queryByText(/Runtime only|No attack runs when you add/)).not.toBeInTheDocument()
     expect(screen.getByText('Loading techniques...')).toBeInTheDocument()
     await screen.findByRole('table', { name: 'Registered techniques' })
     await user.type(screen.getByRole('textbox', { name: 'Search techniques' }), 'first')
@@ -93,7 +96,6 @@ describe('TechniqueRegistry', () => {
     expect(dialog.queryByText(/safe display settings|This identifies the registered factory/)).not.toBeInTheDocument()
     expect(dialog.queryByLabelText('Technique configuration')).not.toBeInTheDocument()
     expect(dialog.queryByLabelText('Factory evaluation identifier')).not.toBeInTheDocument()
-    expect(techniques.getTechnique).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Filter by tag' }), '')
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
@@ -158,6 +160,7 @@ describe('TechniqueRegistry', () => {
       max_attempts_on_failure: 0, settings: { type: 'basic', parameters: { enabled: false, limit: 0 } },
     }, request_converters: ['b64', 'rot13', 'b64'], response_converters: ['rot13'] })
     expect(request.params).not.toHaveProperty('objective_target')
+    expect(request.params).not.toHaveProperty('prompt_normalizer')
     await waitFor(() => expect(screen.getByRole('button', { name: 'New technique' })).toHaveFocus())
     expect(techniques.listTechniques).toHaveBeenCalledTimes(2)
   })
@@ -167,7 +170,7 @@ describe('TechniqueRegistry', () => {
     const user = await openCreate()
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'adversarial')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'RedTeamingAttack')
-    expect(screen.getByText(/resolve the default adversarial target at execution/)).toBeInTheDocument()
+    expect(screen.queryByText(/resolve the default adversarial target at execution/)).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Adversarial target' }), 'local')
     await user.type(screen.getByRole('textbox', { name: 'Adversarial system prompt' }), 'system')
     await user.type(screen.getByRole('textbox', { name: 'Adversarial seed prompt' }), 'seed')
@@ -179,12 +182,24 @@ describe('TechniqueRegistry', () => {
     })
   })
 
-  it('blocks unsupported required inputs and invalid selectors', async () => {
+  it('shows only configurable inputs without implementation notes', async () => {
+    render(tree())
+    const user = await openCreate()
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.queryByRole('option', { name: 'ComplexAttack' })).not.toBeInTheDocument()
+    await user.selectOptions(dialog.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    expect(dialog.getByLabelText('max_attempts_on_failure')).toBeInTheDocument()
+    expect(dialog.queryByText(/Implementation of|This form shows|Runtime only|prompt_normalizer|Use Python/)).not.toBeInTheDocument()
+    await user.selectOptions(dialog.getByLabelText('settings'), 'basic')
+    expect(dialog.getByLabelText('limit *')).toBeInTheDocument()
+    expect(dialog.queryByText(/prompt_normalizer/)).not.toBeInTheDocument()
+  })
+
+  it('does not offer attacks with unsupported required inputs and reports invalid selectors', async () => {
     techniques.createTechnique.mockRejectedValueOnce(new Error('Do not use all, default, or types.'))
     render(tree())
     const user = await openCreate()
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'ComplexAttack')
-    expect(screen.getByText(/callback: Required input cannot be set here/)).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'ComplexAttack' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Add technique' })).toBeDisabled()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
     await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'all')

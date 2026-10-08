@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Field, Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
+  Field, Input, MessageBar, MessageBarBody, Select, Spinner, Textarea,
 } from '@fluentui/react-components'
 
 import ParameterField from '@/components/Parameters/ParameterField'
@@ -50,6 +50,10 @@ function guiParameters(parameters: Parameter[]): Parameter[] {
       .filter(([, nested]) => nested.every((entry) => !entry.required || canConfigure(entry)))
       .map(([name, nested]) => [name, guiParameters(nested)])),
   } : parameter)
+}
+
+function getAttackParameters(type?: TechniqueTypeEntry): Parameter[] {
+  return type?.parameters.filter((parameter) => parameter.name !== 'attack_converter_config') ?? []
 }
 
 interface CreateTechniqueDialogProps {
@@ -100,7 +104,8 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
           convertersApi.listConverters(),
         ])
         if (ignore) return
-        setTypes(metadata.items)
+        setTypes(metadata.items.filter((entry) =>
+          getAttackParameters(entry).every((parameter) => !parameter.required || canConfigure(parameter))))
         setTargetOptions(targets.map((entry) => ({ name: entry.target_registry_name, type: entry.identifier.class_name })))
         setConverterOptions(converters.items.map((entry) => ({ name: entry.converter_id, type: entry.identifier.class_name })))
       } catch (err) {
@@ -117,15 +122,13 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
   }, [error, submitError])
 
   const selected = types.find((entry) => entry.attack_type === selectedType)
-  const attackParameters = selected?.parameters.filter((parameter) => parameter.name !== 'attack_converter_config') ?? []
-  const unsupportedRequired = attackParameters.filter((parameter) => parameter.required && !canConfigure(parameter))
-  const parameters = guiParameters(attackParameters)
+  const parameters = guiParameters(getAttackParameters(selected))
 
   const submit = async (): Promise<void> => {
     const fail = (message: string): void => { setError(message); setSubmitError(true) }
     const parsedTags = tags.split(',').map((tag) => tag.trim()).filter(Boolean)
-    if (!selected || unsupportedRequired.length) {
-      fail('This attack needs inputs that cannot be set in this form. Use a Python initializer.')
+    if (!selected) {
+      fail('Select an attack type.')
       return
     }
     const result = buildParametersFromForm(parameters, values)
@@ -164,7 +167,6 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
           <DialogTitle>New technique</DialogTitle>
           <DialogContent className={styles.content}>
             <div className={styles.form}>
-              <Text>Runtime only. Restart or reinitialize PyRIT to remove runtime additions.</Text>
               {loading && <Spinner label="Loading technique types..." />}
               {error && <MessageBar intent="error" ref={errorRef} tabIndex={-1}><MessageBarBody>{error}</MessageBarBody></MessageBar>}
               {!loading && types.length === 0 && <Button onClick={() => setRetry(retry + 1)}>Retry metadata</Button>}
@@ -174,23 +176,21 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
                     <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
                   </Field>
                   <Field label="Description"><Textarea value={description} disabled={submitting} onChange={(_, data) => setDescription(data.value)} /></Field>
-                  <Field label="Tags" hint="Comma-separated tags. No default, core, or light tag is added automatically.">
+                  <Field label="Tags" hint="Comma-separated tags.">
                     <Input value={tags} disabled={submitting} onChange={(_, data) => setTags(data.value)} />
                   </Field>
                   <Field label="Attack type" required>
-                    <Select value={selectedType} disabled={submitting} onChange={(_, data) => {
+                    <Select className={styles.select} value={selectedType} disabled={submitting} onChange={(_, data) => {
                       setSelectedType(data.value)
-                      setValues(getInitialFormValues(types.find((entry) => entry.attack_type === data.value)?.parameters ?? [], null, { prefillDefaults: false }))
+                      setValues(getInitialFormValues(
+                        guiParameters(getAttackParameters(types.find((entry) => entry.attack_type === data.value))),
+                        null, { prefillDefaults: false },
+                      ))
                     }}>
                       <option value="">Select an attack</option>
                       {types.map((entry) => <option key={entry.attack_type} value={entry.attack_type}>{entry.attack_type}</option>)}
                     </Select>
                   </Field>
-                  {selected && <Text>{selected.description}</Text>}
-                  {selected && <Text>This form shows supported basic inputs. Seeds, conversations, and advanced configurations need a Python initializer.</Text>}
-                  {attackParameters.filter((parameter) => !canConfigure(parameter)).map((parameter) => (
-                    <Text key={parameter.name}>{parameter.name}: {parameter.required ? 'Required input' : 'Optional input'} cannot be set here. Use Python.</Text>
-                  ))}
                   {parameters.map((parameter) => (
                     <ParameterField key={parameter.name} parameter={parameter} value={values[parameter.name] ?? ''}
                       disabled={submitting} allowEmptyList
@@ -207,7 +207,6 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
                   {selected?.supports_adversarial && (
                     <>
                       <ReferenceField label="Adversarial target" options={targetOptions} value={adversarialTarget} disabled={submitting}
-                        hint="Not set: resolve the default adversarial target at execution. The objective target is selected when you run a scenario."
                         onChange={(next) => { if (typeof next === 'string') setAdversarialTarget(next) }} />
                       <Field label="Adversarial system prompt"><Textarea value={systemPrompt} disabled={submitting} onChange={(_, data) => setSystemPrompt(data.value)} /></Field>
                       <Field label="Adversarial seed prompt"><Textarea value={seedPrompt} disabled={submitting} onChange={(_, data) => setSeedPrompt(data.value)} /></Field>
@@ -220,7 +219,7 @@ export default function CreateTechniqueDialog({ onClose, onCreated }: CreateTech
           </DialogContent>
           <DialogActions>
             <Button className={styles.action} onClick={onClose}>Cancel</Button>
-            <Button className={styles.action} appearance="primary" disabled={loading || submitting || !name.trim() || !selected || unsupportedRequired.length > 0}
+            <Button className={styles.action} appearance="primary" disabled={loading || submitting || !name.trim() || !selected}
               onClick={() => { void submit() }}>{submitting ? 'Adding...' : 'Add technique'}</Button>
           </DialogActions>
         </DialogBody>

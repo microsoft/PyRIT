@@ -5,6 +5,7 @@ import {
   DialogTitle, DialogTrigger, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text,
 } from '@fluentui/react-components'
+import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import { useRuntime } from '@/hooks/useRuntime'
 import { techniquesApi } from '@/services/api'
@@ -92,16 +93,18 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
   return (
     <div className={styles.root} ref={pageRoot} tabIndex={-1}>
       <div className={styles.header}>
-        <Text as="h1" size={600} weight="semibold">Technique Registry</Text>
-        <Text>Inspect named configurations of existing attacks. No attack runs when you add a technique.</Text>
-        <Text>Runtime only. Additions are lost when PyRIT restarts or is reinitialized.</Text>
+        <div className={styles.headerText}>
+          <Text as="h1" size={600} weight="semibold">Technique Registry</Text>
+          <Text size={300} className={styles.subtitle}>Named configurations of existing attack techniques</Text>
+        </div>
+        <div className={styles.headerActions}>
+          <Button className={styles.headerAction} appearance="subtle" icon={<ArrowSyncRegular />}
+            disabled={loading || !ready} onClick={() => { void load() }}>Refresh</Button>
+          <Button className={styles.headerAction} ref={newButton} appearance="primary" icon={<AddRegular />} disabled={!ready}
+            onClick={() => setCreateOpen(true)}>New technique</Button>
+        </div>
       </div>
-      <div className={styles.row}>
-        <Button className={styles.action} disabled={loading || !ready} onClick={() => { void load() }}>Refresh</Button>
-        <Button className={styles.action} ref={newButton} appearance="primary" disabled={!ready}
-          onClick={() => setCreateOpen(true)}>New technique</Button>
-      </div>
-      <div className={styles.row}>
+      <div className={styles.filters}>
         <Field label="Search techniques"><Input value={search} onChange={(_, data) => setSearch(data.value)} /></Field>
         <Field label="Filter by attack type"><Select value={typeFilter} onChange={(_, data) => setTypeFilter(data.value)}>
           <option value="">All attack types</option>
@@ -118,15 +121,15 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
       {!loading && !error && items.length > 0 && visible.length === 0 && <Text>No techniques match these filters.</Text>}
       {!loading && !error && visible.length > 0 && (
         <div className={styles.table}>
-          <Table aria-label="Registered techniques">
-            <TableHeader><TableRow>
+          <Table className={styles.tableContent} aria-label="Registered techniques">
+            <TableHeader className={styles.tableHeader}><TableRow>
               <TableHeaderCell>Name</TableHeaderCell><TableHeaderCell>Description</TableHeaderCell>
               <TableHeaderCell>Attack type</TableHeaderCell><TableHeaderCell>Tags</TableHeaderCell><TableHeaderCell>Details</TableHeaderCell>
             </TableRow></TableHeader>
             <TableBody>{visible.map((item) => (
               <TableRow key={item.name}>
-                <TableCell>{item.name}</TableCell><TableCell>{item.description ?? 'No description'}</TableCell>
-                <TableCell>{item.attack_type}</TableCell>
+                <TableCell className={styles.nameCell}>{item.name}</TableCell><TableCell>{item.description ?? 'No description'}</TableCell>
+                <TableCell className={styles.nameCell}>{item.attack_type}</TableCell>
                 <TableCell><div className={styles.tags}>{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></TableCell>
                 <TableCell>
                   <Dialog open={detail?.name === item.name} onOpenChange={(_, data) => {
@@ -139,7 +142,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
                       <DialogBody>
                         <DialogTitle>{item.name}</DialogTitle>
                         <DialogContent className={styles.content}>
-                          {detail && <pre className={styles.configuration} aria-label="Technique creation call">{detail.creation_statement}</pre>}
+                          {detail && <pre className={styles.creationCall} aria-label="Technique creation call">{detail.creation_statement}</pre>}
                         </DialogContent>
                         <DialogActions><DialogTrigger disableButtonEnhancement><Button>Close</Button></DialogTrigger></DialogActions>
                       </DialogBody>
