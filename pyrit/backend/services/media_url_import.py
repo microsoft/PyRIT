@@ -9,6 +9,7 @@ import asyncio
 import logging
 import mimetypes
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
@@ -29,6 +30,7 @@ _GENERIC_CONTENT_TYPES = frozenset({"application/octet-stream", "binary/octet-st
 _URL_SUFFIX_PATTERN = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
 
 _url_import_enabled = True
+_redact_request_log: ContextVar[bool] = ContextVar("redact_media_url_request_log", default=False)
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,18 @@ def redact_url(url: str) -> str:
     if parsed.port:
         host = f"{host}:{parsed.port}"
     return f"{parsed.scheme}://{host}{parsed.path}"
+
+
+class _RedactRequestLog(logging.Filter):
+    """Redact the URLs httpx logs for each request while a media URL is downloading."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if _redact_request_log.get() and isinstance(record.args, tuple):
+            record.args = tuple(redact_url(str(arg)) if isinstance(arg, httpx.URL) else arg for arg in record.args)
+        return True
+
+
+logging.getLogger("httpx").addFilter(_RedactRequestLog())
 
 
 def media_content_type(download: MediaDownload) -> str | None:
@@ -155,6 +169,7 @@ async def download_media_url_async(*, url: str) -> MediaDownload:
         raise ValueError("Media URLs must not include credentials.")
 
     shown = redact_url(url)
+    redacting_request_log = _redact_request_log.set(True)
     try:
         async with asyncio.timeout(_DEADLINE_SECONDS), _create_client() as client:
             request = client.build_request("GET", url)
@@ -182,6 +197,8 @@ async def download_media_url_async(*, url: str) -> MediaDownload:
         reason = _failure_reason(exc)
         _log_download_failure(shown=shown, reason=reason, exc=exc)
         raise ValueError(f"Media URL {shown} could not be downloaded: {reason}.") from None
+    finally:
+        _redact_request_log.reset(redacting_request_log)
 
 
 def _failure_reason(exc: BaseException) -> str:

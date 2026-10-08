@@ -4,6 +4,7 @@
 """Tests for the shared synchronous manual-message owner."""
 
 import asyncio
+import logging
 import traceback
 import uuid
 from collections.abc import AsyncGenerator, Generator, Iterator, Sequence
@@ -3219,6 +3220,7 @@ class TestAsyncMessageSend:
         count: int,
     ) -> None:
         service, ar, _, _ = real_send_context
+        caplog.set_level(logging.INFO)
         request = MessageSendRequest(
             pieces=[
                 MessagePieceRequest(

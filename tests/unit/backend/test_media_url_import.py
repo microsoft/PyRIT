@@ -142,6 +142,7 @@ async def test_error_status_is_rejected_without_query_string(
 
     with (
         caplog.at_level(logging.WARNING, logger=media_url_import.__name__),
+        caplog.at_level(logging.INFO, logger="httpx"),
         pytest.raises(ValueError, match="returned HTTP 404") as error,
     ):
         await download_media_url_async(url="https://user.example.test/cat.png?sv=1&sig=secret#frag")
@@ -150,7 +151,23 @@ async def test_error_status_is_rejected_without_query_string(
     assert error.value.__suppress_context__
     assert "https://user.example.test/cat.png" in str(error.value)
     assert "HTTP 404 (HTTPStatusError)" in caplog.text
+    assert "HTTP Request: GET https://user.example.test/cat.png " in caplog.text
     assert "secret" not in caplog.text
+
+
+async def test_request_log_omits_query_string_only_while_downloading(
+    transport: Callable[[Handler], list[httpx.Request]], caplog: pytest.LogCaptureFixture
+) -> None:
+    transport(lambda request: httpx.Response(200, content=b"PNG", headers={"content-type": "image/png"}))
+
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        await download_media_url_async(url="https://example.test/cat.png?sig=secret")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:
+            await client.get("https://other.test/page?keep=1")
+
+    assert "HTTP Request: GET https://example.test/cat.png " in caplog.text
+    assert "secret" not in caplog.text
+    assert "HTTP Request: GET https://other.test/page?keep=1 " in caplog.text
 
 
 _SIGNED_DETAIL = "failed for https://example.test/slow.png?sig=secret"
