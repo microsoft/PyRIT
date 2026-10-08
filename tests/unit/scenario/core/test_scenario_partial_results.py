@@ -19,6 +19,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
     SeedObjective,
     config_hash,
@@ -80,6 +81,7 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     mock_attack_strategy.get_attack_scoring_config.return_value = MagicMock()
 
     attack = MagicMock(spec=AtomicAttack)
+    attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
     attack.atomic_attack_name = name
     attack.display_group = name
     attack.technique_eval_hash = config_hash({"name": name, "objectives": objectives})

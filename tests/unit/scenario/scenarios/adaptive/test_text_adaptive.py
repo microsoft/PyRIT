@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackSeedGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -698,3 +698,29 @@ class TestTextAdaptiveBaselinePolicy:
             assert scenario._atomic_attacks[0].atomic_attack_name == "baseline", (
                 f"baseline must be prepended at index 0; got {[a.atomic_attack_name for a in scenario._atomic_attacks]}"
             )
+
+    async def test_run_plan_records_baseline_and_adaptive_group_kinds(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        groups = {
+            "violence": [
+                _make_seed_group(value="obj-1", harm_categories=["violence"]),
+                _make_seed_group(value="obj-2", harm_categories=["violence"]),
+            ]
+        }
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
+            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+            await scenario.initialize_async()
+
+        kinds = [group.kind for group in scenario._build_run_plan().atomic_groups]
+        assert kinds == [
+            ScenarioRunPlanGroupKind.BASELINE,
+            ScenarioRunPlanGroupKind.ADAPTIVE,
+            ScenarioRunPlanGroupKind.ADAPTIVE,
+        ]
