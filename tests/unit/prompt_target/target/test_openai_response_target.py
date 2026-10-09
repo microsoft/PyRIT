@@ -1676,6 +1676,92 @@ async def test_construct_message_truncated_skips_partial_tool_call(
     assert any(p.original_value_data_type == "text" and p.response_error == "empty" for p in result.message_pieces)
 
 
+def _make_unreadable_section() -> MagicMock:
+    """A completed section PyRIT does not model, e.g. the ``image_generation_call`` item the
+    Responses API returns once a run enables the built-in image_generation tool."""
+    section = MagicMock()
+    section.type = "image_generation_call"
+    return section
+
+
+def _make_completed_response(output: list | None) -> MagicMock:
+    response = MagicMock()
+    response.error = None
+    response.status = "completed"
+    response.incomplete_details = None
+    response.output = output
+    return response
+
+
+async def test_construct_message_completed_without_readable_output_returns_empty_marker(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A completed response with nothing PyRIT can read degrades to an empty marker piece."""
+    response = _make_completed_response(output=[_make_reasoning_section(), _make_unreadable_section()])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    # Nothing raises here, so @pyrit_target_retry does not re-send a deterministic
+    # outcome; the empty marker is first and the reasoning piece is retained.
+    assert result.message_pieces[0].original_value == ""
+    assert result.message_pieces[0].response_error == "empty"
+    assert result.message_pieces[0].original_value_data_type == "text"
+    reasoning_pieces = [p for p in result.message_pieces if p.original_value_data_type == "reasoning"]
+    assert len(reasoning_pieces) == 1
+
+
+async def test_construct_message_completed_reasoning_only_returns_empty_marker(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """Real regression shape: the model answered with reasoning only, no visible text."""
+    response = _make_completed_response(output=[_make_reasoning_section()])
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert result.message_pieces[0].original_value == ""
+    assert result.message_pieces[0].response_error == "empty"
+    reasoning_pieces = [p for p in result.message_pieces if p.original_value_data_type == "reasoning"]
+    assert len(reasoning_pieces) == 1
+
+
+async def test_construct_message_completed_keeps_readable_output_next_to_unreadable(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
+):
+    """A readable section alongside an unmodelled one is still returned."""
+    response = _make_completed_response(
+        output=[_make_reasoning_section(), _make_unreadable_section(), _make_message_section("An answer")]
+    )
+
+    result = await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    text_pieces = [p for p in result.message_pieces if p.original_value_data_type == "text"]
+    assert [p.original_value for p in text_pieces] == ["An answer"]
+
+
+async def test_construct_message_completed_without_readable_output_warns(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """A completed response degrades silently, so the warning is the operator's only signal."""
+    response = _make_completed_response(output=[_make_reasoning_section()])
+
+    with caplog.at_level(logging.WARNING):
+        await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert "completed with no readable section" in caplog.text
+
+
+async def test_construct_message_truncated_without_readable_output_does_not_warn(
+    target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece, caplog: pytest.LogCaptureFixture
+):
+    """Hitting the token cap is an expected outcome, so the same fallback stays quiet."""
+    response = _make_truncated_response(output=[_make_reasoning_section()])
+
+    with caplog.at_level(logging.WARNING):
+        await target._construct_message_from_response_async(response, dummy_text_message_piece)
+
+    assert "no readable section" not in caplog.text
+
+
 async def test_construct_message_from_response(target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece):
     """Test _construct_message_from_response parses output sections."""
     mock_response = MagicMock()
