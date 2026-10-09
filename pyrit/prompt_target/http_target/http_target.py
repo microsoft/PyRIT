@@ -196,8 +196,11 @@ class HTTPTarget(PromptTarget):
         header_dict, http_body, url, http_method, http_version = self.parse_raw_http_request(http_request_w_prompt)
         self._validate_destination(url)
 
-        if "Content-Length" in header_dict:
-            header_dict["Content-Length"] = str(len(http_body))
+        # Calculate and set content-length manually so it is available for request tracing
+        if isinstance(http_body, str) and http_body:
+            header_dict["content-length"] = str(len(http_body.encode("utf-8")))
+        elif isinstance(http_body, (bytes, bytearray)) and http_body:
+            header_dict["content-length"] = str(len(http_body))
 
         http2_version = False
         if http_version and "HTTP/2" in http_version:
