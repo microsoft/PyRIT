@@ -63,6 +63,47 @@ def test_http_target_sets_endpoint_and_rate_limit(mock_callback_function, sqlite
     assert target._max_requests_per_minute == 25
 
 
+@pytest.mark.parametrize(
+    ("request_line", "endpoint"),
+    [
+        (
+            "POST https://user:pw-123@example.com/api?code=fn-secret&api-version=1 HTTP/1.1",
+            "https://***@example.com/api?code=***&api-version=1",
+        ),
+        ("POST /api?sig=sig-secret HTTP/1.1", "https://example.com/api?sig=***"),
+        ("POST /api?cOde=fn-secret&has_secret=true HTTP/1.1", "https://example.com/api?cOde=***&has_secret=true"),
+        ("POST /api?XAPIKEY=k-secret HTTP/1.1", "https://example.com/api?XAPIKEY=***"),
+        ("POST HTTPS://user:pw-123@example.com/api HTTP/1.1", "https://example.comHTTPS://***@example.com/api"),
+        ("POST //user:pw-123@example.com/api HTTP/1.1", "https://example.com//***@example.com/api"),
+        ("POST //alice@example.com:pw-123@evil.test/api HTTP/1.1", "https://example.com//***@evil.test/api"),
+        ("POST //user:pw/123@evil.test/api HTTP/1.1", "https://example.com//***@evil.test/api"),
+        ("POST /api?code=prefix#tail-123 HTTP/1.1", "https://example.com/api?code=***#***"),
+        ("POST /api?code=prefix#tail-123&state=x HTTP/1.1", "https://example.com/api?code=***#***&state=x"),
+        ("POST /api?code=prefix#tail-123==&state=x HTTP/1.1", "https://example.com/api?code=***#***&state=x"),
+        (
+            "POST /api?upstream=https://user:pw-123@up.test/v1 HTTP/1.1",
+            "https://example.com/api?upstream=https://***@up.test/v1",
+        ),
+        ("POST //alice@example.com:pw/123@evil.test/api HTTP/1.1", "https://example.com//***@evil.test/api"),
+        (
+            "POST /users//alice@example.com/messages HTTP/1.1",
+            "https://example.com/users//alice@example.com/messages",
+        ),
+    ],
+)
+def test_http_target_identifier_masks_credentials_in_the_request_url(
+    mock_callback_function, sqlite_instance, request_line: str, endpoint: str
+):
+    sample_request = f'{request_line}\nHost: example.com\nContent-Type: application/json\n\n{{"prompt": "{{P}}"}}'
+
+    target = HTTPTarget(
+        http_request=sample_request, prompt_regex_string="{P}", callback_function=mock_callback_function
+    )
+
+    assert target.get_identifier().params["endpoint"] == endpoint
+    assert target.http_request == sample_request
+
+
 @patch("httpx.AsyncClient.request")
 async def test_send_prompt_async(mock_request, mock_http_target, mock_http_response):
     message = MagicMock()

@@ -25,10 +25,11 @@ import { AddRegular, ArrowSyncRegular, DeleteRegular } from '@fluentui/react-ico
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConverterIdentifier, ConverterInstance } from '@/types'
+import type { ConverterIdentifier, ConverterInstance, UnrestorableInstance } from '@/types'
 
 import CreateConverterDialog from './CreateConverterDialog'
 import { useConverterRegistryStyles } from './Registry.styles'
+import UnrestorableInstances from './UnrestorableInstances'
 
 const IDENTIFIER_FIELDS = new Set([
   'class_name',
@@ -65,6 +66,13 @@ interface FocusRestore {
   trigger: HTMLElement | null
 }
 
+// A converter to remove. Saved converters, including ones that could not be
+// restored, also carry the version they were read at.
+interface ConverterRemoval {
+  name: string
+  version: string | null
+}
+
 interface DataTypeBadgesProps {
   dataTypes: string[] | null | undefined
 }
@@ -85,10 +93,12 @@ export default function ConverterRegistry() {
   const { generation } = useRuntime()
   const styles = useConverterRegistryStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
+  const [unrestorable, setUnrestorable] = useState<UnrestorableInstance[]>([])
+  const [restoreError, setRestoreError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
-  const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
+  const [converterToRemove, setConverterToRemove] = useState<ConverterRemoval | null>(null)
   const [removing, setRemoving] = useState(false)
   const [focusRestore, setFocusRestore] = useState<FocusRestore | null>(null)
   // Both dialogs open from state rather than from a DialogTrigger, so mark the
@@ -146,6 +156,8 @@ export default function ConverterRegistry() {
     try {
       const response = await convertersApi.listConverters()
       setConverters(response.items)
+      setUnrestorable(response.unrestorable ?? [])
+      setRestoreError(response.restore_error ?? null)
     } catch (err) {
       setError(toApiError(err).detail)
     } finally {
@@ -170,7 +182,7 @@ export default function ConverterRegistry() {
     restoreFocus(createTriggerRef.current)
   }
 
-  const openRemoveDialog = (event: MouseEvent<HTMLButtonElement>, converter: ConverterInstance) => {
+  const openRemoveDialog = (event: MouseEvent<HTMLButtonElement>, converter: ConverterRemoval) => {
     removeTriggerRef.current = event.currentTarget
     openDialog('remove')
     setConverterToRemove(converter)
@@ -187,7 +199,7 @@ export default function ConverterRegistry() {
     setRemoving(true)
     setError(null)
     try {
-      await convertersApi.deleteConverter(converterToRemove.converter_id)
+      await convertersApi.deleteConverter(converterToRemove.name, converterToRemove.version)
       // The row that opened the dialog is about to unmount, so this restores to
       // New Converter. Doing it before the refresh keeps focus off <body> while
       // the list reloads. No token check is needed: Cancel is disabled and the
@@ -242,6 +254,14 @@ export default function ConverterRegistry() {
           <Text>Error: {error}</Text>
         </div>
       )}
+      {!loading && !error && (
+        <UnrestorableInstances
+          noun="converter"
+          instances={unrestorable}
+          restoreError={restoreError}
+          onDelete={(event, instance) => openRemoveDialog(event, { name: instance.name, version: instance.version ?? null })}
+        />
+      )}
       {!loading && !error && converters.length === 0 && (
         <div className={styles.state}>
           <Text size={500} weight="semibold">No Converters Registered</Text>
@@ -293,7 +313,10 @@ export default function ConverterRegistry() {
                       appearance="subtle"
                       icon={<DeleteRegular />}
                       aria-label={`Remove ${converter.converter_id}`}
-                      onClick={(event) => openRemoveDialog(event, converter)}
+                      onClick={(event) => openRemoveDialog(
+                        event,
+                        { name: converter.converter_id, version: converter.version ?? null },
+                      )}
                     >
                       Remove
                     </Button>
@@ -328,7 +351,9 @@ export default function ConverterRegistry() {
             <DialogTitle>Remove converter?</DialogTitle>
             <DialogContent>
               {converterToRemove
-                ? `Remove "${converterToRemove.converter_id}" from the converter registry?`
+                ? `Remove "${converterToRemove.name}" from the converter registry?${
+                  converterToRemove.version ? ' It is also deleted from saved converters and not restored on restart.' : ''
+                }`
                 : ''}
             </DialogContent>
             <DialogActions>

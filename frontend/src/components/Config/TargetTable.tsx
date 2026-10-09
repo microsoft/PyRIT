@@ -13,6 +13,7 @@ import {
   Tooltip,
   Checkbox,
   mergeClasses,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import {
   CheckmarkCircleFilled,
@@ -29,6 +30,7 @@ import {
   ArrowHookUpLeftRegular,
   ChevronRightRegular,
   ChevronDownRegular,
+  DeleteRegular,
   EyeOffRegular,
   EyeRegular,
 } from '@fluentui/react-icons'
@@ -64,6 +66,8 @@ interface TargetTableProps {
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  /** Offered only for saved targets, which carry a version. */
+  onDeleteTarget?: (target: TargetInstance) => void
 }
 
 /** Format target_specific_params into a short human-readable string. */
@@ -247,8 +251,10 @@ export default function TargetTable({
   defaultAdversarialTarget,
   onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
+  onDeleteTarget,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
+  const restoreFocusTarget = useRestoreFocusTarget()
   const { preferences, updatePreferences } = useUserPreferences()
   const hiddenTargetRegistryNames = useMemo(
     () => new Set(preferences.hiddenTargetRegistryNames),
@@ -428,17 +434,33 @@ export default function TargetTable({
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
                   <TableCell className={styles.actionCell}>
-                    <Button
-                      className={styles.rowAction}
-                      appearance="subtle"
-                      size="small"
-                      icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
-                      onClick={() => setTargetHidden(target, !hidden)}
-                      aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
-                      data-testid={`toggle-target-visibility-${target.target_registry_name}`}
-                    >
-                      {hidden ? 'Show' : 'Hide'}
-                    </Button>
+                    <div className={styles.actionButtons}>
+                      <Button
+                        className={styles.rowAction}
+                        appearance="subtle"
+                        size="small"
+                        icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                        onClick={() => setTargetHidden(target, !hidden)}
+                        aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                        data-testid={`toggle-target-visibility-${target.target_registry_name}`}
+                      >
+                        {hidden ? 'Show' : 'Hide'}
+                      </Button>
+                      {target.version && onDeleteTarget && (
+                        <Button
+                          {...restoreFocusTarget}
+                          className={styles.rowAction}
+                          appearance="subtle"
+                          size="small"
+                          icon={<DeleteRegular />}
+                          onClick={() => onDeleteTarget(target)}
+                          aria-label={`Delete ${target.target_registry_name}`}
+                          data-testid={`delete-target-${target.target_registry_name}`}
+                        >
+                          Delete
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className={styles.registryNameCell}>
                     <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>

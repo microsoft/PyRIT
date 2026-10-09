@@ -29,8 +29,16 @@ The API will be available at `http://localhost:8000`
 - `GET /api/version` - Version information
 
 ### Targets
-- `GET /api/targets` - List available prompt targets
+- `GET /api/targets` - List available prompt targets, and saved targets that could not be restored
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets` - Create and save a target
+- `PUT /api/targets/{id}` - Replace a saved target (requires the `version` that was read)
+- `DELETE /api/targets/{id}?version=` - Delete a saved target
+
+Targets, converters, and scorers created through the API are saved to `instance_recipes_source` and rebuilt when the
+backend starts or reinitializes. Credential parameters are referenced by environment variable name instead of being
+saved, and values that carry a credential in a way the checks recognize are rejected. See the
+[registry API migration notes](../../doc/gui/0_gui.md#registry-api-migration-notes) for the full contract.
 
 ### Manual Messages
 
@@ -116,8 +124,9 @@ The chat preserves failed drafts across replacement, but requires converter choi
 to be reviewed again rather than restoring outputs tied to the previous registry.
 
 The offline browser fixture `frontend.e2e.fixtures.manual_send_backend:app` uses the real
-backend lifecycle with isolated in-memory SQLite, no environment files, and no default
-providers. The recovery tests register deterministic loopback targets. For example, start
+backend lifecycle with isolated in-memory SQLite, a temporary saved-instance store, no
+environment files, and no default providers. The recovery tests register deterministic
+loopback targets, which read a placeholder `OPENAI_CHAT_KEY`. For example, start
 it with `uv run python -m uvicorn frontend.e2e.fixtures.manual_send_backend:app --host 127.0.0.1 --port 18213`
 (set `PYTHONUTF8=1` on Windows). In another shell, set `PYRIT_BACKEND_URL=http://127.0.0.1:18213`
 and `E2E_FRONTEND_PORT=31213`, then run `npx playwright test chat-recovery --project seeded --workers 1`

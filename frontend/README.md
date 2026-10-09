@@ -193,6 +193,13 @@ that are already running. Setting `E2E_FRONTEND_PORT` locally instead starts
 only a dedicated Vite server, expects the backend to already be running, and
 disables server reuse.
 
+Local runs use that backend and its configuration, so the targets and converters
+the tests create are saved in its `instance_recipes_source` (by default
+`~/.pyrit/instance_recipes`) and come back after a restart. Delete them in the GUI
+or through the API, or point `instance_recipes_source` at a scratch directory while
+testing. The CI seeded backend saves them under the repository's ignored
+`dbdata/e2e/instance_recipes` directory instead.
+
 In CI with `E2E_SEEDED_MODE=true`, Playwright starts its own backend and Vite
 servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 

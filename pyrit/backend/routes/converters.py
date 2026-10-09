@@ -6,10 +6,12 @@ Converters API routes.
 
 Provides endpoints for managing converter instances and previewing conversions.
 Converter types are set at app startup - you cannot add new types at runtime.
+Converters created here are saved and restored when the backend restarts.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.models.common import IdentifierStr, ProblemDetail
 from pyrit.backend.models.converters import (
     ConverterInstance,
@@ -18,7 +20,9 @@ from pyrit.backend.models.converters import (
     ConverterPreviewResponse,
     ConverterTypeResponse,
     CreateConverterRequest,
+    UpdateConverterRequest,
 )
+from pyrit.backend.routes.common import SAVED_INSTANCE_ERROR_RESPONSES, translate_saved_instance_errors
 from pyrit.backend.services.converter_service import get_converter_service
 
 router = APIRouter(prefix="/converters", tags=["converters"])
@@ -60,41 +64,31 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
     "",
     response_model=ConverterInstance,
     status_code=status.HTTP_201_CREATED,
-    responses={
-        400: {"model": ProblemDetail, "description": "Invalid converter type or parameters"},
-    },
+    responses=SAVED_INSTANCE_ERROR_RESPONSES,
 )
-async def create_converter(request: CreateConverterRequest) -> ConverterInstance:  # pyrit-async-suffix-exempt
+async def create_converter(
+    body: CreateConverterRequest, request: Request
+) -> ConverterInstance:  # pyrit-async-suffix-exempt
     """
-    Create a new converter instance.
+    Create and save a new converter instance.
 
-    Instantiates a converter with the given type and parameters.
-    Supports nested converters via converter_id references in params.
+    Instantiates a converter with the given type and parameters and saves it, so it is
+    restored when the backend restarts. Supports nested converters via converter_id
+    references in params.
 
     Returns:
-        ConverterInstance: The created converter instance details.
+        ConverterInstance: The created converter instance details and saved version.
     """
     service = get_converter_service()
-
-    try:
-        return await service.create_converter_async(request=request)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create converter: {str(e)}",
-        ) from e
+    with translate_saved_instance_errors(action="create converter"):
+        return await service.create_converter_async(request=body, is_admin=has_admin_access(request))
 
 
 @router.get(
     "/{converter_id}",
     response_model=ConverterInstance,
     responses={
-        404: {"model": ProblemDetail, "description": "Converter not found"},
+        404: {"model": ProblemDetail, "description": "Converter not found, or saved but not restored"},
     },
 )
 async def get_converter(converter_id: IdentifierStr) -> ConverterInstance:  # pyrit-async-suffix-exempt
@@ -110,23 +104,61 @@ async def get_converter(converter_id: IdentifierStr) -> ConverterInstance:  # py
     if not converter:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Converter '{converter_id}' not found",
+            detail=service.describe_missing_converter(converter_id=converter_id),
         )
 
     return converter
+
+
+@router.put(
+    "/{converter_id}",
+    response_model=ConverterInstance,
+    responses={
+        **SAVED_INSTANCE_ERROR_RESPONSES,
+        404: {"model": ProblemDetail, "description": "No saved converter has this name"},
+    },
+)
+async def update_converter(
+    converter_id: IdentifierStr, body: UpdateConverterRequest, request: Request
+) -> ConverterInstance:  # pyrit-async-suffix-exempt
+    """
+    Replace a saved converter.
+
+    The request replaces the whole configuration: parameters and credentials it omits are removed.
+
+    Returns:
+        ConverterInstance: The replacement converter and its new saved version.
+    """
+    service = get_converter_service()
+    with translate_saved_instance_errors(action="update converter"):
+        return await service.update_converter_async(
+            converter_id=converter_id, request=body, is_admin=has_admin_access(request)
+        )
 
 
 @router.delete(
     "/{converter_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
+        **SAVED_INSTANCE_ERROR_RESPONSES,
         404: {"model": ProblemDetail, "description": "Converter not found"},
+        428: {"model": ProblemDetail, "description": "Version required to delete a saved converter"},
     },
 )
-async def delete_converter(converter_id: IdentifierStr) -> None:  # pyrit-async-suffix-exempt
-    """Delete a converter instance by registry name."""
+async def delete_converter(
+    converter_id: IdentifierStr,
+    request: Request,
+    version: IdentifierStr | None = Query(
+        None, description="Version returned when the converter was read; required for saved converters"
+    ),
+) -> None:  # pyrit-async-suffix-exempt
+    """Delete a converter instance by registry name, and its saved recipe if it is saved."""
     service = get_converter_service()
-    if not await service.delete_converter_async(converter_id=converter_id):
+    with translate_saved_instance_errors(action="delete converter"):
+        deleted = await service.delete_converter_async(
+            converter_id=converter_id, expected_version=version, is_admin=has_admin_access(request)
+        )
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Converter '{converter_id}' not found",

@@ -61,3 +61,6 @@ class TargetInstance(BaseModel):
         None,
         description="Inner targets for composite targets like RoundRobinTarget (full instances, not just identifiers)",
     )
+    version: str | None = Field(
+        None, description="Version of the saved target, required to change or delete it; None if not saved"
+    )

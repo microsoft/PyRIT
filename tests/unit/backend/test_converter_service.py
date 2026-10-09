@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from starlette.requests import Request
 
 from pyrit import converter
 from pyrit.backend.models.converters import (
@@ -85,6 +86,11 @@ def _make_data_uri(*, mime_type: str, content: bytes) -> str:
     return f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
 
 
+def _unauthenticated_request() -> Request:
+    """Build the request a route receives from a caller without administrator access."""
+    return Request({"type": "http", "headers": [], "app": None})
+
+
 @pytest.fixture(autouse=True)
 def reset_registry():
     """Reset the converter registry before each test."""
@@ -117,7 +123,8 @@ async def test_converter_input_errors_return_400_async(
     with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
         with pytest.raises(HTTPException) as exc:
             await converter_routes.create_converter(
-                CreateConverterRequest(name="invalid_binary", type="BinaryConverter", params=params)
+                CreateConverterRequest(name="invalid_binary", type="BinaryConverter", params=params),
+                _unauthenticated_request(),
             )
     assert exc.value.status_code == 400
     assert next(iter(params)) in exc.value.detail
@@ -136,7 +143,8 @@ async def test_binary_creation_from_metadata_and_selection_async(upload_service:
                     "bits_per_char": bits["default"],
                     "word_selection_strategy": {"type": "indices", "parameters": {"indices": [1]}},
                 },
-            )
+            ),
+            _unauthenticated_request(),
         )
     instance = upload_service.get_converter_object(converter_id=result.converter_id)
     converted = await instance.convert_async(prompt="a b")
@@ -151,7 +159,9 @@ async def test_unexpected_constructor_type_error_returns_500_async(upload_servic
     upload_service._registry.register_class(BrokenBinary)
     with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
         with pytest.raises(HTTPException) as exc:
-            await converter_routes.create_converter(CreateConverterRequest(name="broken_binary", type="BrokenBinary"))
+            await converter_routes.create_converter(
+                CreateConverterRequest(name="broken_binary", type="BrokenBinary"), _unauthenticated_request()
+            )
     assert exc.value.status_code == 500
     assert "constructor bug" in exc.value.detail
 
@@ -537,13 +547,13 @@ class TestDeleteConverter:
         data_uri = _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")
         request = CreateConverterRequest(name="pdf", type="PDFConverter", params={"existing_pdf": data_uri})
 
-        await service.create_converter_async(request=request)
+        response = await service.create_converter_async(request=request)
         entry = service._registry.instances.get_entry("pdf")
         assert entry is not None
         owned_path = Path(entry.metadata["owned_artifact_paths"][0])
         assert owned_path.is_file()
 
-        assert await service.delete_converter_async(converter_id="pdf") is True
+        assert await service.delete_converter_async(converter_id="pdf", expected_version=response.version) is True
 
         assert not owned_path.exists()
         assert service._upload_path.is_dir()
@@ -596,7 +606,9 @@ class TestPersistDataUriParams:
         assert path.suffix == extension
         assert path.read_bytes() == content
         assert entry.metadata["owned_artifact_paths"] == [str(path)]
-        assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+        assert await upload_service.delete_converter_async(
+            converter_id=response.converter_id, expected_version=response.version
+        )
         assert not path.exists()
 
     @pytest.mark.parametrize(
@@ -616,7 +628,9 @@ class TestPersistDataUriParams:
         assert entry.instance.get_identifier().params[parameter_name] == url
         assert entry.metadata["owned_artifact_paths"] == []
         assert list(upload_service._upload_path.iterdir()) == []
-        assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+        assert await upload_service.delete_converter_async(
+            converter_id=response.converter_id, expected_version=response.version
+        )
 
     @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
     async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
@@ -810,12 +824,15 @@ class TestPersistDataUriParams:
         assert upload_service._registry.instances.get("unmapped-pdf") is None
         assert list(upload_service._upload_path.iterdir()) == []
 
-    async def test_create_converter_rechecks_name_after_upload(self, upload_service: ConverterService) -> None:
+    async def test_create_converter_keeps_name_taken_during_upload(
+        self, upload_service: ConverterService, isolated_instance_recipes: Path
+    ) -> None:
         persist_async = upload_service._persist_data_uri_params_async
+        taken = Base64Converter()
 
         async def persist_then_take_name_async(**kwargs: object) -> object:
             result = await persist_async(**kwargs)
-            upload_service._registry.instances.register(Base64Converter(), name="taken")
+            upload_service._registry.instances.register(taken, name="taken")
             return result
 
         request = CreateConverterRequest(
@@ -825,13 +842,13 @@ class TestPersistDataUriParams:
         )
         with (
             patch.object(upload_service, "_persist_data_uri_params_async", side_effect=persist_then_take_name_async),
-            patch.object(upload_service._registry, "create_instance") as create_instance,
             pytest.raises(ValueError, match="already exists"),
         ):
             await upload_service.create_converter_async(request=request)
 
-        create_instance.assert_not_called()
+        assert upload_service._registry.instances.get("taken") is taken
         assert list(upload_service._upload_path.iterdir()) == []
+        assert list(isolated_instance_recipes.glob("*.json")) == []
 
     async def test_create_converter_removes_upload_when_registration_fails(
         self, upload_service: ConverterService

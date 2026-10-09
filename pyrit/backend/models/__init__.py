@@ -57,6 +57,7 @@ if TYPE_CHECKING:
         ConverterTypeResponse,
         CreateConverterRequest,
         PreviewStep,
+        UpdateConverterRequest,
     )
     from pyrit.backend.models.datasets import DatasetInfo, DatasetListResponse
     from pyrit.backend.models.initializers import (
@@ -69,8 +70,9 @@ if TYPE_CHECKING:
         ScorerListResponse,
         ScorerTypeEntry,
         ScorerTypeResponse,
+        UpdateScorerRequest,
     )
-    from pyrit.backend.models.targets import CreateTargetRequest, TargetListResponse
+    from pyrit.backend.models.targets import CreateTargetRequest, TargetListResponse, UpdateTargetRequest
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DEFAULT_MEDIA_EXTENSIONS": "pyrit.backend.models._media",
@@ -112,6 +114,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConverterTypeResponse": "pyrit.backend.models.converters",
     "CreateConverterRequest": "pyrit.backend.models.converters",
     "PreviewStep": "pyrit.backend.models.converters",
+    "UpdateConverterRequest": "pyrit.backend.models.converters",
     "DatasetInfo": "pyrit.backend.models.datasets",
     "DatasetListResponse": "pyrit.backend.models.datasets",
     "ListRegisteredScenariosResponse": "pyrit.backend.models.scenarios",
@@ -119,11 +122,13 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScorerListResponse": "pyrit.backend.models.scorers",
     "ScorerTypeEntry": "pyrit.backend.models.scorers",
     "ScorerTypeResponse": "pyrit.backend.models.scorers",
+    "UpdateScorerRequest": "pyrit.backend.models.scorers",
     "ScenarioRunListResponse": "pyrit.backend.models.scenarios",
     "ListRegisteredInitializersResponse": "pyrit.backend.models.initializers",
     "RegisterInitializerRequest": "pyrit.backend.models.initializers",
     "CreateTargetRequest": "pyrit.backend.models.targets",
     "TargetListResponse": "pyrit.backend.models.targets",
+    "UpdateTargetRequest": "pyrit.backend.models.targets",
 }
 
 __all__ = list(_LAZY_EXPORTS)

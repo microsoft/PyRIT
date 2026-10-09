@@ -31,12 +31,16 @@ import {
   isStructuredParameterFormValue,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
+import { environmentVariableError } from '@/utils/credentialReference'
 
 import { useCreateConverterDialogStyles } from './Registry.styles'
 
 const EDITABLE_PARAMETER_TYPES = new Set([
   'str', 'int', 'float', 'bool', 'Path', 'list[str]', 'list[int]', 'list[float]', 'list[bool]',
 ])
+const SENSITIVE_PARAMETER_HINT = 'Name of a server environment variable that holds this credential. '
+  + 'Only the name is saved, never the value. Leave blank to use the converter default. '
+  + 'Naming a variable requires administrator access.'
 
 function formatDataType(dataType: string): string {
   const value = dataType.replace('_path', '').replace(/_/g, ' ')
@@ -145,6 +149,19 @@ function ParameterInput({
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
+
+  if (parameter.sensitive) {
+    const variableError = environmentVariableError(value.trim())
+    return (
+      <Field
+        label={`${parameter.name} environment variable${parameter.required ? ' *' : ''}`}
+        hint={SENSITIVE_PARAMETER_HINT}
+        validationMessage={variableError ?? (showError ? 'Required' : undefined)}
+      >
+        <Input value={value} onChange={(_, data) => onChange(data.value)} />
+      </Field>
+    )
+  }
 
   if (parameter.reference_type) {
     return (
@@ -397,19 +414,32 @@ export default function CreateConverterDialog({
   }
 
   const submit = async () => {
-    const missingParameters = (selectedConverterType?.parameters ?? []).some(
+    const parameters = selectedConverterType?.parameters ?? []
+    const missingParameters = parameters.some(
       (parameter) => parameter.required
         && !parameter.default
         && !formValueIsSet(parameterValues[parameter.name]),
     )
-    if (!selectedType || !registryName.trim() || missingParameters) {
+    const sensitiveNames = parameters.filter((parameter) => parameter.sensitive).map((parameter) => parameter.name)
+    const invalidVariable = sensitiveNames.some(
+      (name) => environmentVariableError(stringFormValue(parameterValues[name]).trim()) !== null,
+    )
+    if (!selectedType || !registryName.trim() || missingParameters || invalidVariable) {
       setShowValidation(true)
       return
     }
 
-    const parameters = selectedConverterType?.parameters ?? []
     const params = Object.fromEntries(
-      Object.entries(parameterValues).filter(([, value]) => !isStructuredParameterFormValue(value)),
+      Object.entries(parameterValues).filter(
+        ([name, value]) => !sensitiveNames.includes(name) && !isStructuredParameterFormValue(value),
+      ),
+    )
+    // Credentials are sent as the names of server environment variables, never as values.
+    const credentials = Object.fromEntries(
+      sensitiveNames
+        .map((name) => [name, stringFormValue(parameterValues[name]).trim()] as const)
+        .filter(([, variable]) => variable)
+        .map(([name, variable]) => [name, { env_var: variable }]),
     )
     const structured = buildParametersFromForm(
       parameters.filter((parameter) => parameter.variants),
@@ -433,6 +463,7 @@ export default function CreateConverterDialog({
         name: registryName.trim(),
         type: selectedType,
         params,
+        ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
       })
       // Only the opening this request was submitted from is cleared: a response
       // that outlived its opening must not wipe the form the user is filling in

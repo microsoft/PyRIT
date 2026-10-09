@@ -140,6 +140,13 @@ allow_custom_initializers: false
 # ~/.pyrit/custom_initializers.
 # custom_initializers_source: https://account.blob.core.windows.net/container/custom_initializers
 
+# Optional storage for targets, converters, and scorers created through the
+# backend API or GUI, so the backend rebuilds them when it restarts. This may be a
+# local directory or an Azure Blob container URI with an optional blob prefix.
+# Saved instances name the environment variables that hold their credentials
+# instead of storing them. Defaults to ~/.pyrit/instance_recipes.
+# instance_recipes_source: https://account.blob.core.windows.net/container/instance_recipes
+
 # Local Backend Server
 # --------------------
 # Client settings used by pyrit_scan when connecting to or launching a backend.

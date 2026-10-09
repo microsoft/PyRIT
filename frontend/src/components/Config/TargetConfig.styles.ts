@@ -64,6 +64,11 @@ export const useTargetConfigStyles = makeStyles({
   touchTarget: {
     ...mobileTouchTarget,
   },
+  deleteDialogContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+  },
   emptyState: {
     display: 'flex',
     flexDirection: 'column',

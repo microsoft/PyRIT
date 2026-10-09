@@ -11,9 +11,10 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, Field
 
+from pyrit.models.catalog.instance_recipe import INSTANCE_NAME_PATTERN
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 
-REGISTRY_INSTANCE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+REGISTRY_INSTANCE_NAME_PATTERN = INSTANCE_NAME_PATTERN
 
 # Request limits. Identifier, list, and label limits are shared with ``pyrit.models``. Prompt
 # content (message pieces, system prompts, preview input) and free-form values (metadata and

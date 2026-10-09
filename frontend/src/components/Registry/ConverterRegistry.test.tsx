@@ -169,8 +169,64 @@ describe('ConverterRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
     await user.click(screen.getByRole('button', { name: 'Remove' }))
 
-    expect(mockedConvertersApi.deleteConverter).toHaveBeenCalledWith('base64-default')
+    expect(mockedConvertersApi.deleteConverter).toHaveBeenCalledWith('base64-default', null)
     expect(await screen.findByText('No Converters Registered')).toBeInTheDocument()
+  })
+
+  it('should remove a saved converter with the version it was read at', async () => {
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [{ ...converter, version: 'v1' }] })
+      .mockResolvedValueOnce({ items: [] })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByText('base64-default')
+
+    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    expect(screen.getByRole('dialog')).toHaveTextContent(/not restored on restart/)
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(mockedConvertersApi.deleteConverter).toHaveBeenCalledWith('base64-default', 'v1')
+  })
+
+  it('should explain saved converters that were not restored and let them be removed', async () => {
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({
+        items: [converter],
+        unrestorable: [{
+          kind: 'converter',
+          name: 'translator',
+          type: 'TranslationConverter',
+          reason: "It depends on target 'chat', which could not be restored.",
+          version: 'v2',
+        }],
+      })
+      .mockResolvedValueOnce({ items: [converter] })
+    const user = userEvent.setup()
+    renderRegistry()
+
+    const list = await screen.findByRole('list', { name: 'Saved converters that were not restored' })
+    expect(within(list).getByText('translator')).toBeInTheDocument()
+    expect(within(list).getByText(/depends on target 'chat'/)).toBeInTheDocument()
+
+    await user.click(within(list).getByRole('button', { name: 'Delete saved converter translator' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }))
+
+    expect(mockedConvertersApi.deleteConverter).toHaveBeenCalledWith('translator', 'v2')
+    await waitFor(() => {
+      expect(screen.queryByRole('list', { name: 'Saved converters that were not restored' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('should report a saved converter store that could not be read', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [converter],
+      restore_error: 'The saved instance store is unavailable: timed out',
+    })
+    renderRegistry()
+
+    expect(await screen.findByText('Saved converters could not be loaded')).toBeInTheDocument()
+    expect(screen.getByText(/store is unavailable: timed out/)).toBeInTheDocument()
+    expect(screen.getByText('base64-default')).toBeInTheDocument()
   })
 
   it('should restore focus to New Converter after the add dialog is dismissed', async () => {

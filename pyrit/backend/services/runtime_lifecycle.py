@@ -14,6 +14,10 @@ from fastapi import FastAPI
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.instance_persistence_service import (
+    get_instance_persistence_service,
+    restore_saved_instances_async,
+)
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.service_lifecycle import (
     close_services_async,
@@ -103,6 +107,7 @@ class RuntimeLifecycle:
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
+        get_instance_persistence_service().configure_source(config.instance_recipes_source)
 
     def _publish(self, config: ConfigurationLoader) -> None:
         self.app.state.configured_initializers = [
@@ -130,6 +135,7 @@ class RuntimeLifecycle:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
                 await asyncio.to_thread(registry.register_stored_initializers, strict=True)
             await config.initialize_pyrit_async(raise_on_initializer_error=True)
+            await restore_saved_instances_async()
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             self._publish(config)
@@ -213,6 +219,7 @@ class RuntimeLifecycle:
                 await close_services_async()
                 await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
+                await restore_saved_instances_async()
                 self.version = current_version
                 self._publish(config)
             except Exception:

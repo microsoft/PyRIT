@@ -2,6 +2,11 @@
 # Uses in-memory SQLite to avoid polluting persistent databases.
 memory_db_type: in_memory
 
+# Targets, converters, and scorers created through the API during these runs are saved under
+# the repository's ignored dbdata/ directory instead of ~/.pyrit/instance_recipes, so they never
+# reach a developer's own backend. Delete the directory to start from an empty store.
+instance_recipes_source: dbdata/e2e/instance_recipes
+
 # The catalog endpoint (GET /api/scenarios/catalog[/<name>]) instantiates every
 # scenario class to build metadata. Most scenarios rely on the
 # AttackTechniqueRegistry (e.g. airt.cyber via _build_cyber_technique, airt.leakage

@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from pyrit.common.url_credentials import UrlCredentials
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -83,9 +84,10 @@ class HTTPTarget(PromptTarget):
         _, _, endpoint, _, _ = self.parse_raw_http_request(http_request)
         self._destination_origin = self._get_destination_origin(endpoint)
 
+        # The endpoint identifies the target; a key in the request URL must not become part of that identity.
         super().__init__(
             max_requests_per_minute=max_requests_per_minute,
-            endpoint=endpoint,
+            endpoint=UrlCredentials.mask(endpoint),
             model_name=model_name,
             custom_configuration=custom_configuration,
             trace_config=trace_config,

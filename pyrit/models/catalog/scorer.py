@@ -14,3 +14,6 @@ class ScorerInstance(BaseModel):
     scorer_registry_name: str = Field(..., description="Scorer instance registry key")
     identifier: ScorerIdentifier = Field(..., description="Complete scorer configuration and child identities")
     description: str | None = Field(None, description="Short description of the scorer type")
+    version: str | None = Field(
+        None, description="Version of the saved scorer, required to change or delete it; None if not saved"
+    )

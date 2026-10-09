@@ -13,16 +13,19 @@ from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
+from pyrit.models.catalog.instance_recipe import CredentialReference, UnrestorableInstance
 
 __all__ = [
     "ConverterInstance",
     "ConverterInstanceListResponse",
+    "ConverterSettings",
     "ConverterTypeEntry",
     "ConverterTypeResponse",
     "CreateConverterRequest",
     "ConverterPreviewRequest",
     "ConverterPreviewResponse",
     "PreviewStep",
+    "UpdateConverterRequest",
 ]
 
 
@@ -72,15 +75,43 @@ class ConverterInstance(BaseModel):
     identifier: ConverterIdentifier = Field(..., description="The converter's identity/configuration projection")
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
     description: str | None = Field(None, description="Short description of the converter type")
+    version: str | None = Field(
+        None, description="Version of the saved converter, required to change or delete it; None if not saved"
+    )
 
 
 class ConverterInstanceListResponse(BaseModel):
     """Response for listing converter instances."""
 
     items: list[ConverterInstance] = Field(..., description="List of converter instances")
+    unrestorable: list[UnrestorableInstance] = Field(
+        default_factory=list, description="Saved converters the last restore could not rebuild, with the reasons"
+    )
+    restore_error: str | None = Field(
+        None, description="Why the last restore could not read the saved instance store, if it could not"
+    )
 
 
-class CreateConverterRequest(BaseModel):
+class ConverterSettings(BaseModel):
+    """The type, parameters, and credentials a converter is built from."""
+
+    type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
+    params: dict[IdentifierStr, Any] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description="Converter constructor parameters",
+    )
+    credentials: dict[IdentifierStr, CredentialReference] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description=(
+            "Credential parameters read from server environment variables. Only the variable name is saved. "
+            "Requires administrator access."
+        ),
+    )
+
+
+class CreateConverterRequest(ConverterSettings):
     """Request to create a new converter instance."""
 
     name: str = Field(
@@ -89,12 +120,12 @@ class CreateConverterRequest(BaseModel):
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
         description="Unique registry name for the converter instance",
     )
-    type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
-    params: dict[IdentifierStr, Any] = Field(
-        default_factory=dict,
-        max_length=MAX_ITEMS,
-        description="Converter constructor parameters",
-    )
+
+
+class UpdateConverterRequest(ConverterSettings):
+    """Request to replace a saved converter; parameters and credentials it omits are removed."""
+
+    version: IdentifierStr = Field(..., description="Version returned when the converter was read")
 
 
 # ============================================================================

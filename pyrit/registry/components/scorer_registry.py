@@ -81,7 +81,10 @@ class ScorerRegistry(InstanceHoldingRegistry["Scorer", ScorerMetadata]):
             lazy_discovery (bool): If True, class discovery is deferred until first
                 access. If False, discovery runs immediately.
         """
-        super().__init__(lazy_discovery=lazy_discovery)
+        super().__init__(
+            lazy_discovery=lazy_discovery,
+            reserved_instance_names={"types"},
+        )
 
     def _base_type(self) -> type[Scorer]:
         """Return the ``Scorer`` base class, imported lazily."""

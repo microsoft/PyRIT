@@ -184,6 +184,10 @@ class TestScorerRegistryRegisterInstance:
 
         assert registry.instances.get("same_name") is first
 
+    def test_register_instance_rejects_name_of_types_route(self, registry: ScorerRegistry):
+        with pytest.raises(ValueError, match="reserved"):
+            registry.instances.register(MockTrueFalseScorer(), name="types")
+
     def test_create_named_instance_builds_and_stores_scorer(self, registry: ScorerRegistry):
         registry.instances.register(MockTrueFalseScorer(), name="inner")
 

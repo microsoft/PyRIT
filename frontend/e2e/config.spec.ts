@@ -407,7 +407,7 @@ test.describe("Create Target Dialog", () => {
       if (route.request().method() === "POST") {
         const body = JSON.parse(route.request().postData() ?? "{}");
         createdTarget = {
-          target_registry_name: "new-target-1",
+          target_registry_name: body.name,
           target_type: body.type,
           endpoint: body.params?.endpoint,
           model_name: body.params?.model_name,
@@ -447,12 +447,16 @@ test.describe("Create Target Dialog", () => {
     // Fill model name
     await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("gpt-4o-test");
 
+    // Name the target; it is saved under this name
+    await dialog.getByPlaceholder("e.g. team-gpt-4o").fill("new-target-1");
+
     // Click Create Target
     await dialog.getByRole("button", { name: "Create Target" }).click();
 
     // Dialog should close and target should appear in the list
     await expect(page.getByText("Create New Target")).not.toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("gpt-4o-test", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("target-row-new-target-1")).toBeVisible();
     await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
   });
 
@@ -499,11 +503,13 @@ test.describe("Create Target Dialog", () => {
       "OpenAIChatTarget"
     );
 
-    // Every rendered endpoint field is required.
+    // Every rendered endpoint field is required, and so is a name.
     await expect(createBtn).toBeDisabled();
     await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
       "https://api.openai.com"
     );
+    await expect(createBtn).toBeDisabled();
+    await dialog.getByPlaceholder("e.g. team-gpt-4o").fill("test-target");
     await expect(createBtn).toBeEnabled();
 
     // Identity authentication additionally requires a recognized Azure host.

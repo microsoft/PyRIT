@@ -280,16 +280,36 @@ export interface TargetInstance {
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
   inner_targets?: TargetInstance[] | null
+  /** Version of the saved target, required to delete it; absent for targets that are not saved. */
+  version?: string | null
+}
+
+/** Names the server environment variable that holds a credential; the value itself is never sent or saved. */
+export interface CredentialReference {
+  env_var: string
+}
+
+/** A saved target, converter, or scorer the backend could not rebuild at its last start. */
+export interface UnrestorableInstance {
+  kind: 'target' | 'converter' | 'scorer'
+  name: string
+  type?: string | null
+  reason: string
+  version?: string | null
 }
 
 export interface TargetListResponse {
   items: TargetInstance[]
   pagination: PaginationInfo
+  unrestorable?: UnrestorableInstance[]
+  restore_error?: string | null
 }
 
 export interface CreateTargetRequest {
+  name?: string
   type: string
   params: Record<string, unknown>
+  credentials?: Record<string, CredentialReference>
   auth_mode?: 'api_key' | 'identity'
 }
 
@@ -354,16 +374,21 @@ export interface ConverterInstance {
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
+  /** Version of the saved converter, required to remove it; absent for converters that are not saved. */
+  version?: string | null
 }
 
 export interface ConverterListResponse {
   items: ConverterInstance[]
+  unrestorable?: UnrestorableInstance[]
+  restore_error?: string | null
 }
 
 export interface CreateConverterRequest {
   name: string
   type: string
   params?: Record<string, unknown>
+  credentials?: Record<string, CredentialReference>
 }
 
 export interface Parameter {
@@ -377,7 +402,7 @@ export interface Parameter {
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
   reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
-  /** Whether parameter controls must obscure the entered value. */
+  /** Whether the value is a credential, supplied by naming a server environment variable rather than sent. */
   sensitive?: boolean
   /** Whether parameter controls must preserve line breaks in the entered value. */
   multiline?: boolean

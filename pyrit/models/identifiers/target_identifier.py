@@ -81,4 +81,4 @@ class TargetIdentifier(ComponentIdentifier):
         Returns:
             frozenset[str]: Identity-conflicting target constructor parameter names.
         """
-        return super().get_identity_conflicting_parameter_names() | frozenset({"sas_token"})
+        return super().get_identity_conflicting_parameter_names() | frozenset({"headers", "sas_token"})

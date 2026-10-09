@@ -20,6 +20,12 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.models.catalog.initializer import RegisteredInitializer
+    from pyrit.models.catalog.instance_recipe import (
+        CredentialReference,
+        InstanceRecipe,
+        StoredInstanceRecipe,
+        UnrestorableInstance,
+    )
     from pyrit.models.catalog.scenario import (
         AttackErrorSummary,
         AttackRetrySummary,
@@ -44,6 +50,8 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str] = {
     "AttackErrorSummary": "pyrit.models.catalog.scenario",
     "AttackRetrySummary": "pyrit.models.catalog.scenario",
+    "CredentialReference": "pyrit.models.catalog.instance_recipe",
+    "InstanceRecipe": "pyrit.models.catalog.instance_recipe",
     "RegisteredInitializer": "pyrit.models.catalog.initializer",
     "ScorerInstance": "pyrit.models.catalog.scorer",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
@@ -60,7 +68,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunSizeFactor": "pyrit.models.catalog.scenario",
     "ScenarioRunSummary": "pyrit.models.catalog.scenario",
     "ScenarioTechniqueSummary": "pyrit.models.catalog.scenario",
+    "StoredInstanceRecipe": "pyrit.models.catalog.instance_recipe",
     "TargetInstance": "pyrit.models.catalog.target",
+    "UnrestorableInstance": "pyrit.models.catalog.instance_recipe",
 }
 
 __all__ = list(_LAZY_EXPORTS)

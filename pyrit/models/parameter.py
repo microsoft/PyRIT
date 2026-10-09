@@ -127,7 +127,10 @@ class Parameter(BaseModel):
     )
     sensitive: bool = Field(
         default=False,
-        description="Whether user interfaces must obscure this parameter's value.",
+        description=(
+            "Whether the value is a credential: user interfaces must obscure it, and saved instances "
+            "read it from a server environment variable instead of storing it."
+        ),
     )
     multiline: bool = Field(
         default=False,

@@ -4,11 +4,12 @@
 """
 Converter service for managing converter instances.
 
-Handles creation, retrieval, and preview of converters.
-Uses ConverterRegistry as the source of truth for instances.
+Handles creation, replacement, deletion, retrieval, and preview of converters.
+Uses ConverterRegistry as the source of truth for live instances.
 
 Converters can be:
-- Created via API request (instantiated from request params, then registered)
+- Created via API request (built from request params, saved as a recipe, then registered)
+- Restored from saved recipes when the backend starts or reinitializes
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
@@ -21,7 +22,7 @@ from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, ClassVar
 
 import aiofiles
 import aiofiles.os
@@ -36,25 +37,37 @@ from pyrit.backend.models.converters import (
     ConverterTypeResponse,
     CreateConverterRequest,
     PreviewStep,
+    UpdateConverterRequest,
+)
+from pyrit.backend.services.instance_persistence_service import (
+    BuiltInstance,
+    InstanceKindHandler,
+    get_instance_persistence_service,
 )
 from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
-from pyrit.models import MessagePiece, PromptDataType
+from pyrit.models import ComponentType, MessagePiece, PromptDataType
+from pyrit.models.catalog.instance_recipe import InstanceRecipe
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
+from pyrit.registry.instance_registry import RegistryEntry
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
 _DEFAULT_UPLOAD_EXTENSION = ".bin"
 
 
-class ConverterService:
+class ConverterService(InstanceKindHandler[ConverterInstance]):
     """
     Service for managing converter instances.
 
     Uses ConverterRegistry as the sole source of truth.
-    API metadata is derived from the converter objects.
+    API metadata is derived from the converter objects. Converters created
+    through the API are saved by the instance persistence service, which calls
+    back into this service to build and map them.
     """
+
+    kind: ClassVar[ComponentType] = ComponentType.CONVERTER
 
     def __init__(self) -> None:
         """Initialize the converter service."""
@@ -62,7 +75,9 @@ class ConverterService:
         self._upload_directory = TemporaryDirectory(prefix="pyrit-registry-uploads-")
         self._upload_path = Path(self._upload_directory.name).resolve()
 
-    def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
+    def _build_instance_from_object(
+        self, *, converter_id: str, converter_obj: Any, version: str | None = None
+    ) -> ConverterInstance:
         """
         Build a ConverterInstance from a registry object.
 
@@ -73,12 +88,23 @@ class ConverterService:
         """
         metadata = self._registry.get_registered_class_metadata(converter_obj.__class__.__name__)
         description = metadata.class_description or None if metadata else None
-        return converter_object_to_instance(
+        converter = converter_object_to_instance(
             converter_id=converter_id,
             converter_obj=converter_obj,
             is_llm_based=metadata.is_llm_based if metadata else False,
             description=description,
         )
+        return converter.model_copy(update={"version": version})
+
+    def _build_instance_from_entry(self, entry: RegistryEntry[Any]) -> ConverterInstance:
+        """
+        Build a ConverterInstance, with its saved version, from a registry entry.
+
+        Returns:
+            ConverterInstance with metadata derived from the entry's object.
+        """
+        version = get_instance_persistence_service().get_version(entry)
+        return self._build_instance_from_object(converter_id=entry.name, converter_obj=entry.instance, version=version)
 
     # ========================================================================
     # Public API Methods
@@ -100,13 +126,16 @@ class ConverterService:
         List all converter instances.
 
         Returns:
-            ConverterInstanceListResponse containing all registered converters.
+            ConverterInstanceListResponse containing all registered converters and the
+            saved converters that could not be restored.
         """
-        items = [
-            self._build_instance_from_object(converter_id=entry.name, converter_obj=entry.instance)
-            for entry in self._registry.instances.get_all_instances()
-        ]
-        return ConverterInstanceListResponse(items=items)
+        items = [self._build_instance_from_entry(entry) for entry in self._registry.instances.get_all_instances()]
+        persistence = get_instance_persistence_service()
+        return ConverterInstanceListResponse(
+            items=items,
+            unrestorable=persistence.get_unrestorable(self.kind),
+            restore_error=persistence.restore_error,
+        )
 
     async def list_converter_types_async(self) -> ConverterTypeResponse:
         """
@@ -140,10 +169,19 @@ class ConverterService:
         Returns:
             ConverterInstance if found, None otherwise.
         """
-        obj = self._registry.instances.get(converter_id)
-        if obj is None:
+        entry = self._registry.instances.get_entry(converter_id)
+        if entry is None:
             return None
-        return self._build_instance_from_object(converter_id=converter_id, converter_obj=obj)
+        return self._build_instance_from_entry(entry)
+
+    def describe_missing_converter(self, *, converter_id: str) -> str:
+        """
+        Explain why no converter is registered under a name.
+
+        Returns:
+            str: Why a saved converter was not restored, or that the name was not found.
+        """
+        return get_instance_persistence_service().describe_missing(kind=self.kind, name=converter_id)
 
     def get_converter_object(self, *, converter_id: str) -> Any | None:
         """
@@ -154,61 +192,130 @@ class ConverterService:
         """
         return self._registry.instances.get(converter_id)
 
-    async def delete_converter_async(self, *, converter_id: str) -> bool:
+    async def delete_converter_async(
+        self, *, converter_id: str, expected_version: str | None = None, is_admin: bool = False
+    ) -> bool:
         """
         Delete a converter instance by registry name.
+
+        A saved converter is deleted together with its saved recipe and requires the
+        version it was read with. A converter that is not saved is only unregistered.
 
         Returns:
             bool: True when an instance was removed, otherwise False.
         """
-        entry = self._registry.instances.get_entry(converter_id)
-        if entry is None:
-            return False
+        return await self.delete_saved_async(name=converter_id, expected_version=expected_version, is_admin=is_admin)
 
-        owned_paths = self._get_owned_artifact_paths(entry.metadata)
-        await self._remove_owned_artifacts_async(paths=owned_paths)
-        return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
-
-    async def create_converter_async(self, *, request: CreateConverterRequest) -> ConverterInstance:
+    async def create_converter_async(
+        self, *, request: CreateConverterRequest, is_admin: bool = False
+    ) -> ConverterInstance:
         """
-        Create a new converter instance from API request.
+        Create, save, and register a new converter instance from an API request.
 
-        Instantiates the converter with the given type and params and builds the
-        response before registering it, so a request that fails at any step leaves
-        no registered converter and removes its uploaded files.
+        Instantiates the converter with the given type and params, saves its recipe,
+        and only then registers it, so a request that fails at any step leaves no saved
+        or registered converter and removes its uploaded files.
 
         Args:
-            request: The create converter request with type and params.
+            request: The create converter request with name, type, params, and credentials.
+            is_admin: Whether the caller may reference server environment variables as credentials.
 
         Returns:
-            ConverterInstance with the new converter's details.
+            ConverterInstance with the new converter's details and saved version.
 
         Raises:
             ValueError: If the converter type is not found or the registry name is
                 unavailable.
         """
-        if request.type not in self._registry:
-            raise ValueError(f"Converter type '{request.type}' not found")
-        self._registry.instances.validate_name_available(request.name)
-        params, owned_paths = await self._persist_data_uri_params_async(
-            converter_type=request.type,
+        recipe = InstanceRecipe(
+            kind=self.kind,
+            name=request.name,
+            type=request.type,
             params=request.params,
+            credentials=request.credentials,
+        )
+        return await self.create_saved_async(recipe=recipe, is_admin=is_admin)
+
+    async def update_converter_async(
+        self, *, converter_id: str, request: UpdateConverterRequest, is_admin: bool = False
+    ) -> ConverterInstance:
+        """
+        Replace a saved converter with a new configuration.
+
+        Returns:
+            ConverterInstance: The replacement and its new saved version.
+        """
+        recipe = InstanceRecipe(
+            kind=self.kind,
+            name=converter_id,
+            type=request.type,
+            params=request.params,
+            credentials=request.credentials,
+        )
+        return await self.update_saved_async(recipe=recipe, expected_version=request.version, is_admin=is_admin)
+
+    def normalize_recipe(self, recipe: InstanceRecipe) -> InstanceRecipe:
+        """
+        Check that the converter type exists.
+
+        Returns:
+            InstanceRecipe: The recipe, unchanged.
+
+        Raises:
+            ValueError: If the converter type is not registered.
+        """
+        if recipe.type not in self._registry:
+            raise ValueError(f"Converter type '{recipe.type}' not found")
+        return recipe
+
+    async def build_async(self, *, recipe: InstanceRecipe, credentials: dict[str, object]) -> BuiltInstance:
+        """
+        Store the recipe's uploads and construct a converter without registering it.
+
+        Returns:
+            BuiltInstance: The constructed converter, the uploads it owns, and how to remove them.
+        """
+        params, owned_paths = await self._persist_data_uri_params_async(
+            converter_type=recipe.type, params=recipe.params
         )
         try:
-            # Uploads may have yielded to another request that took the name.
-            self._registry.instances.validate_name_available(request.name)
-            converter_obj = self._registry.create_instance(request.type, **params)
-            converter = self._build_instance_from_object(converter_id=request.name, converter_obj=converter_obj)
-            self._registry.instances.register(
-                converter_obj,
-                name=request.name,
-                metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
-            )
+            converter = self._registry.create_instance(recipe.type, **{**params, **credentials})
         except (Exception, asyncio.CancelledError):
             await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
+        return BuiltInstance(
+            instance=converter,
+            metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
+            release=lambda: self._remove_owned_artifacts_async(paths=owned_paths),
+        )
 
-        return converter
+    def to_response(self, *, name: str, instance: Any) -> ConverterInstance:
+        """
+        Map a constructed converter to its API response.
+
+        Returns:
+            ConverterInstance: The response, without a version.
+        """
+        return self._build_instance_from_object(converter_id=name, converter_obj=instance)
+
+    async def release_entry_async(self, entry: RegistryEntry[Any]) -> None:
+        """Remove the uploads a replaced or deleted registry entry owns."""
+        await self._remove_owned_artifacts_async(paths=self._get_owned_artifact_paths(entry.metadata))
+
+    async def delete_unsaved_async(self, *, name: str) -> bool:
+        """
+        Unregister a converter that is not saved and remove the uploads it owns.
+
+        Returns:
+            bool: True when an instance was removed, otherwise False.
+        """
+        entry = self._registry.instances.get_entry(name)
+        if entry is None:
+            return False
+
+        owned_paths = self._get_owned_artifact_paths(entry.metadata)
+        await self._remove_owned_artifacts_async(paths=owned_paths)
+        return self._registry.instances.unregister(name, expected_entry=entry) is not None
 
     async def preview_conversion_async(self, *, request: ConverterPreviewRequest) -> ConverterPreviewResponse:
         """

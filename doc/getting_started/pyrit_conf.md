@@ -164,6 +164,16 @@ custom_initializers_source: https://account.blob.core.windows.net/pyrit-storage/
 
 With this configuration, PyRIT reads and writes scripts directly under the `custom-initializers/` prefix in the `pyrit-storage` container. A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/custom_initializers`.
 
+### `instance_recipes_source`
+
+Saves the targets, converters, and scorers created through the backend API or the GUI, so the backend rebuilds them when it restarts or reinitializes. It accepts a local directory or an Azure Blob container URI with an optional blob-name prefix, like `custom_initializers_source`:
+
+```yaml
+instance_recipes_source: https://account.blob.core.windows.net/pyrit-storage/instance-recipes
+```
+
+The default is `~/.pyrit/instance_recipes`. Each saved instance is one JSON document with its type, its constructor parameters, and the names of the environment variables that hold its credentials. Credential parameters such as `api_key` are never saved as values, and a parameter value that carries a credential in a way the checks recognize, such as a URL with a password or key, is rejected rather than saved. The checks catch the common ways a credential is written, not every one, so keep credentials out of other values. Saved instances do not depend on the memory database: they are restored even with `memory_db_type: in_memory`, and changing `memory_db_type` keeps them.
+
 ### `initialization_scripts`
 
 Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.

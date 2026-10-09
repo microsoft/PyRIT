@@ -265,6 +265,21 @@ def test_list_stored_initializer_sources_includes_display_paths(lazy_registry: I
     )
 
 
+def test_list_stored_initializer_sources_tolerates_unaddressable_files(
+    lazy_registry: InitializerRegistry, tmp_path: Path
+) -> None:
+    """Test that a stray file in the source directory does not fail the whole listing."""
+    (tmp_path / "good_one.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    (tmp_path / "__init__.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    (tmp_path / "My-Script.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    lazy_registry.configure_custom_scripts_source(str(tmp_path))
+
+    source, items = lazy_registry.list_stored_initializer_sources()
+
+    assert source == str(tmp_path)
+    assert [name for name, _, _ in items] == ["good_one"]
+
+
 def test_unregister_and_cleanup_rejects_builtin(lazy_registry):
     """Test that unregister_and_cleanup raises ValueError for built-in initializers."""
 

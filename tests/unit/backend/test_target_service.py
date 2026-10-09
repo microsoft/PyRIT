@@ -502,12 +502,13 @@ class TestCreateTarget:
             type="AzureBlobStorageTarget",
             params={
                 "container_url": "https://test.blob.core.windows.net/test",
-                "sas_token": "valid_sas_token",
                 "blob_content_type": "text/html",
             },
+            credentials={"sas_token": {"env_var": "TEST_BLOB_SAS_TOKEN"}},
         )
 
-        result = await service.create_target_async(request=request)
+        with patch.dict(os.environ, {"TEST_BLOB_SAS_TOKEN": "valid_sas_token"}):
+            result = await service.create_target_async(request=request, is_admin=True)
 
         target = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target._blob_content_type == "text/html"
@@ -529,7 +530,7 @@ class TestCreateTarget:
 
     async def test_create_target_model_name_not_overridden_by_env_var(self, sqlite_instance) -> None:
         """Test that explicit model_name is not overridden by underlying_model env var."""
-        with patch.dict(os.environ, {"OPENAI_CHAT_UNDERLYING_MODEL": "gpt-4o"}):
+        with patch.dict(os.environ, {"OPENAI_CHAT_UNDERLYING_MODEL": "gpt-4o", "TEST_OPENAI_KEY": "test-key"}):
             service = TargetService()
 
             request = CreateTargetRequest(
@@ -537,11 +538,11 @@ class TestCreateTarget:
                 params={
                     "model_name": "claude-sonnet-4-6",
                     "endpoint": "https://test.openai.azure.com/",
-                    "api_key": "test-key",
                 },
+                credentials={"api_key": {"env_var": "TEST_OPENAI_KEY"}},
             )
 
-            result = await service.create_target_async(request=request)
+            result = await service.create_target_async(request=request, is_admin=True)
 
             assert result.identifier.model_name == "claude-sonnet-4-6"
             # underlying_model_name is empty since no underlying_model was passed
@@ -556,12 +557,13 @@ class TestCreateTarget:
             params={
                 "model_name": "my-gpt4o-deployment",
                 "endpoint": "https://test.openai.azure.com/",
-                "api_key": "test-key",
                 "underlying_model": "gpt-4o",
             },
+            credentials={"api_key": {"env_var": "TEST_OPENAI_KEY"}},
         )
 
-        result = await service.create_target_async(request=request)
+        with patch.dict(os.environ, {"TEST_OPENAI_KEY": "test-key"}):
+            result = await service.create_target_async(request=request, is_admin=True)
 
         assert result.identifier.model_name == "my-gpt4o-deployment"
         assert result.identifier.underlying_model_name == "gpt-4o"
@@ -696,7 +698,7 @@ class TestCreateTargetEntraAuth:
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
 
-    async def test_create_azure_blob_target_with_identity_discards_sas_token(self, sqlite_instance) -> None:
+    async def test_create_azure_blob_target_with_identity_refuses_sas_token(self, sqlite_instance) -> None:
         """A caller-supplied sas_token must not silently override identity-based auth."""
         service = TargetService()
         request = CreateTargetRequest(
@@ -708,11 +710,8 @@ class TestCreateTargetEntraAuth:
             auth_mode="identity",
         )
 
-        result = await service.create_target_async(request=request)
-
-        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
-        assert target_obj._sas_token is None  # type: ignore[attr-defined]
-        assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
+        with pytest.raises(ValueError, match="Identity authentication does not use sas_token"):
+            await service.create_target_async(request=request)
 
     async def test_create_openai_target_with_identity_non_azure_endpoint_raises(self, sqlite_instance) -> None:
         """The target (not the service) rejects an unrecognized endpoint under identity auth."""

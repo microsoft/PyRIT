@@ -87,7 +87,9 @@ export default defineConfig({
             `cd .. && uv run --no-sync python -m pyrit.backend.pyrit_backend ` +
             `--host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
             "--config-file tests/end_to_end/test_config.yaml",
-          env: { PYRIT_DEV_MODE: "true" },
+          // Requests never carry keys, so the loopback OpenAI provider in
+          // chat-recovery.spec.ts reads this placeholder from the target's default variable.
+          env: { PYRIT_DEV_MODE: "true", OPENAI_CHAT_KEY: "e2e-placeholder-key" },
           url: `${E2E_BACKEND_URL}/api/health`,
           reuseExistingServer: false,
           timeout: 120_000,

@@ -5,8 +5,9 @@
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN, PaginationInfo
+from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter
+from pyrit.models.catalog.instance_recipe import CredentialReference, UnrestorableInstance
 from pyrit.models.catalog.scorer import ScorerInstance
 
 
@@ -30,11 +31,37 @@ class ScorerListResponse(BaseModel):
 
     items: list[ScorerInstance]
     pagination: PaginationInfo
+    unrestorable: list[UnrestorableInstance] = Field(
+        default_factory=list,
+        description="Saved scorers the last restore could not rebuild, with the reasons (not paginated)",
+    )
+    restore_error: str | None = Field(
+        None, description="Why the last restore could not read the saved instance store, if it could not"
+    )
 
 
-class CreateScorerRequest(BaseModel):
+class ScorerSettings(BaseModel):
+    """The type, parameters, and credentials a scorer is built from."""
+
+    type: str = Field(..., description="Scorer class name")
+    params: dict[str, JSONValue] = Field(default_factory=dict, description="Scorer constructor parameters")
+    credentials: dict[IdentifierStr, CredentialReference] = Field(
+        default_factory=dict,
+        max_length=MAX_ITEMS,
+        description=(
+            "Credential parameters read from server environment variables. Only the variable name is saved. "
+            "Requires administrator access."
+        ),
+    )
+
+
+class CreateScorerRequest(ScorerSettings):
     """Request to construct and register a named scorer."""
 
     name: str = Field(..., min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name")
-    type: str = Field(..., description="Scorer class name")
-    params: dict[str, JSONValue] = Field(default_factory=dict, description="Scorer constructor parameters")
+
+
+class UpdateScorerRequest(ScorerSettings):
+    """Request to replace a saved scorer; parameters and credentials it omits are removed."""
+
+    version: IdentifierStr = Field(..., description="Version returned when the scorer was read")
