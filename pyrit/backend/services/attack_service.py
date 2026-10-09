@@ -54,7 +54,7 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
-from pyrit.backend.services.media_persistence import persist_message_pieces_async
+from pyrit.backend.services.media_persistence import media_source_entries, persist_message_pieces_async
 from pyrit.backend.services.message_send_service import (
     MessageSendService,
     get_message_send_service,
@@ -787,6 +787,7 @@ class AttackService:
             saved.original_value = request_piece.original_value
             converted_value = request_piece.converted_value
             saved.converted_value = converted_value if converted_value is not None else saved.original_value
+            saved.prompt_metadata.update(media_source_entries(request_piece.prompt_metadata))
             await set_message_piece_sha256_async(saved)
         return [saved for saved, _ in prepared_pieces]
 

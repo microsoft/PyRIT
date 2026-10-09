@@ -134,6 +134,22 @@ enable_live_reinitialization: false
 # Default: false
 allow_custom_initializers: false
 
+# When true, the backend downloads http(s) media URLs that API callers ask it to
+# import (`import_url` on message pieces and converter previews, and URLs given for
+# converter file parameters) once into managed storage, with time, size, and redirect
+# limits, and passes only the stored copy on. Media URLs that are not imported stay
+# references. When false, import requests are rejected and media must be uploaded.
+#
+# Default: true
+allow_media_url_import: true
+
+# Directory that targets created through the backend API may upload local files from
+# (HTTPXAPITarget). The server passes it to the target; API callers cannot choose it.
+# When unset, such targets cannot be created through the API.
+#
+# Default: unset
+# target_upload_directory: /path/to/upload/files
+
 # Optional storage for custom initializer Python scripts. This may be a local
 # directory or an Azure Blob container URI with an optional blob prefix.
 # Container URIs may include a SAS; otherwise DefaultAzureCredential is used. Defaults to

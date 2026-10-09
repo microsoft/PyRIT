@@ -37,8 +37,13 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
     PreviewStep,
 )
-from pyrit.backend.services.media_persistence import persist_media_value_async
-from pyrit.common.azure_storage import is_azure_blob_uri
+from pyrit.backend.services.media_persistence import (
+    is_managed_blob_url,
+    media_source_metadata,
+    persist_media_value_async,
+)
+from pyrit.backend.services.media_url_import import download_media_url_async, media_extension
+from pyrit.common.azure_storage import redact_url_credentials
 from pyrit.memory import data_serializer_factory
 from pyrit.models import MessagePiece, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -216,15 +221,18 @@ class ConverterService:
 
         For non-text data types (image_path, audio_path, etc.), persists base64 data
         to a temporary file so converters can operate on file paths. Marked text
-        regions use the request's delimiter settings for every stage.
+        regions use the request's delimiter settings for every stage. When the
+        request imports an http(s) URL, the response returns the stored copy and
+        its source metadata, so a later send can reuse the same bytes.
 
         Returns:
             ConverterPreviewResponse with step-by-step conversion results.
         """
         original_value = request.original_value
         data_type = request.original_value_data_type
+        source_metadata: dict[str, str] = {}
 
-        # For path-based data types, resolve references or persist base64/data URIs.
+        # For path-based data types, resolve references, import URLs on request, or persist base64/data URIs.
         if str(data_type).endswith("_path"):
             result = await persist_media_value_async(
                 value=original_value,
@@ -234,9 +242,11 @@ class ConverterService:
                 # explicit/data-URI MIME metadata.
                 use_data_uri_mime_type=False,
                 require_valid_base64_after_path_error=True,
+                import_url=request.import_url,
                 serializer_factory=data_serializer_factory,
             )
             original_value = result.value
+            source_metadata = media_source_metadata(result)
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
         steps, final_value, final_type = await self._apply_converters_async(
@@ -248,11 +258,12 @@ class ConverterService:
         )
 
         return ConverterPreviewResponse(
-            original_value=request.original_value,
+            original_value=original_value if source_metadata else request.original_value,
             original_value_data_type=request.original_value_data_type,
             converted_value=final_value,
             converted_value_data_type=final_type,
             steps=steps,
+            prompt_metadata=source_metadata,
         )
 
     def get_converter_objects_for_ids(self, *, converter_ids: list[str]) -> list[Any]:
@@ -289,8 +300,9 @@ class ConverterService:
         directory this service owns, and the client never names a server path. Every
         ``Path`` parameter is handled the same way, so a converter opts in simply by
         declaring the type; there is no per-converter or per-parameter table.
-        ``Path | str`` parameters also accept Azure Blob URLs, which pass through
-        unchanged. Their data-URI uploads use the same local storage.
+        An http(s) URL is downloaded once into the same local storage. ``Path | str``
+        parameters also accept Azure Blob URLs inside this server's result storage,
+        which pass through unchanged.
 
         Inputs remain local until converter deletion or backend shutdown, even with
         Azure-backed memory. Converter outputs still use the configured result storage.
@@ -308,7 +320,8 @@ class ConverterService:
                 set of request-created files owned by the future registry entry.
 
         Raises:
-            ValueError: If a ``Path`` value is not a valid data URI.
+            ValueError: If a ``Path`` value is not a data URI or an http(s) URL, or a URL
+                cannot be downloaded.
         """
         metadata = self._registry.get_registered_class_metadata(converter_type)
         path_params = (
@@ -330,13 +343,19 @@ class ConverterService:
                 if value is None:
                     continue
                 parameter = path_params[name]
-                if not isinstance(value, str) or not value.startswith("data:"):
-                    if parameter.is_path_or_str and isinstance(value, str) and is_azure_blob_uri(value):
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    if parameter.is_path_or_str and is_managed_blob_url(value):
+                        result[name] = redact_url_credentials(value)
                         continue
-                    alternative = " or supplied as an Azure Blob URL" if parameter.is_path_or_str else ""
-                    raise ValueError(f"Path parameter '{name}' must be uploaded as a data URI{alternative}")
+                    download = await download_media_url_async(url=value)
+                    content, extension = download.content, media_extension(download, default="")
+                elif isinstance(value, str) and value.startswith("data:"):
+                    content, extension = self._decode_data_uri(parameter_name=name, data_uri=value)
+                else:
+                    raise ValueError(
+                        f"Path parameter '{name}' must be uploaded as a data URI or given as an http(s) URL"
+                    )
 
-                content, extension = self._decode_data_uri(parameter_name=name, data_uri=value)
                 file_path = self._upload_path / f"{uuid.uuid4().hex}{extension}"
                 async with aiofiles.open(file_path, "xb") as file:
                     owned_paths.append(file_path)

@@ -118,6 +118,11 @@ class ConfigurationLoader(YamlLoadable):
         operation: Name for the current operation.
         enable_live_reinitialization: Whether administrators may replace the live
             single-process backend runtime from the GUI.
+        allow_media_url_import: Whether the backend downloads http(s) media URLs that API
+            callers ask it to import. When False, import requests are rejected.
+        target_upload_directory: Directory that targets created through the backend API may
+            upload local files from (``HTTPXAPITarget``). When unset, such targets cannot be
+            created through the API.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -162,6 +167,8 @@ class ConfigurationLoader(YamlLoadable):
     max_concurrent_scenario_runs: int = 3
     enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
+    allow_media_url_import: bool = True
+    target_upload_directory: str | None = None
     custom_initializers_source: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -184,6 +191,12 @@ class ConfigurationLoader(YamlLoadable):
         validate_env_akv_strict(env_akv_strict=self.env_akv_strict)
         if not isinstance(self.enable_live_reinitialization, bool):
             raise TypeError("enable_live_reinitialization must be a bool.")
+        if not isinstance(self.allow_media_url_import, bool):
+            raise TypeError("allow_media_url_import must be a bool.")
+        if self.target_upload_directory is not None and not isinstance(self.target_upload_directory, str):
+            raise TypeError("target_upload_directory must be a string path.")
+        if self.target_upload_directory is not None and not is_non_empty_string(self.target_upload_directory):
+            raise ValueError("target_upload_directory must be a non-empty path.")
         self._validate_allow_custom_initializers()
         self._normalize_memory_db_type()
         self._normalize_initializers()

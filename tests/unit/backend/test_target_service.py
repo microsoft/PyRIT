@@ -6,10 +6,12 @@ Tests for backend target service.
 """
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import pyrit.backend.services.target_service as target_service_module
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
@@ -263,7 +265,6 @@ class TestListTargetTypes:
             ("OpenAIChatTarget", {"endpoint", "model_name"}),
             ("AzureBlobStorageTarget", {"container_url"}),
             ("HackAPromptTarget", {"cookie", "session_id"}),
-            ("HuggingFaceChatTarget", {"hf_access_token"}),
             ("PromptShieldTarget", {"endpoint"}),
             ("AzureMLChatTarget", {"endpoint"}),
         ],
@@ -299,21 +300,39 @@ class TestListTargetTypes:
 
     async def test_types_preserve_registry_parameter_order_without_mutating_metadata(self) -> None:
         service = TargetService()
-        result = await service.list_target_types_async()
+        with patch.object(target_service_module, "_target_upload_directory", None):
+            result = await service.list_target_types_async()
         metadata_by_name = {
             metadata.class_name: metadata for metadata in service._registry.get_all_registered_class_metadata()
         }
 
-        assert {entry.target_type for entry in result.items} == set(metadata_by_name)
+        assert {entry.target_type for entry in result.items} == set(metadata_by_name) - {
+            "HuggingFaceChatTarget",
+            "HTTPXAPITarget",
+        }
         for entry in result.items:
             registry_parameters = metadata_by_name[entry.target_type].parameters
             assert [parameter.name for parameter in entry.parameters] == [
-                parameter.name for parameter in registry_parameters
+                parameter.name for parameter in registry_parameters if parameter.name != "working_directory"
             ]
 
         registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
         assert registry_openai["endpoint"].required is False
         assert registry_openai["model_name"].required is False
+        registry_copilot = {parameter.name for parameter in metadata_by_name["GitHubCopilotTarget"].parameters}
+        assert "working_directory" in registry_copilot
+
+    async def test_types_list_the_upload_target_without_its_directory_once_configured(self, tmp_path: Path) -> None:
+        service = TargetService()
+
+        with patch.object(target_service_module, "_target_upload_directory", str(tmp_path)):
+            result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "HTTPXAPITarget")
+        names = [parameter.name for parameter in entry.parameters]
+        assert "file_path" in names
+        assert "allowed_upload_directory" not in names
+        assert "HuggingFaceChatTarget" not in {item.target_type for item in result.items}
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
@@ -404,6 +423,59 @@ class TestCreateTarget:
 
         with pytest.raises(ValueError, match="not found"):
             await service.create_target_async(request=request)
+
+    @pytest.mark.parametrize(
+        ("target_type", "params", "upload_directory", "error"),
+        [
+            ("HuggingFaceChatTarget", {"model_id": "example/model"}, None, "loads model code"),
+            ("HTTPXAPITarget", {"http_url": "http://localhost:8080/upload"}, None, "target_upload_directory"),
+            (
+                "HTTPXAPITarget",
+                {"http_url": "http://localhost:8080/upload", "allowed_upload_directory": "/"},
+                "configured",
+                "'allowed_upload_directory' of 'HTTPXAPITarget' names a path on this server",
+            ),
+            (
+                "GitHubCopilotTarget",
+                {"model_name": "gpt-5", "working_directory": "/"},
+                None,
+                "'working_directory' of 'GitHubCopilotTarget' names a path on this server",
+            ),
+        ],
+    )
+    async def test_create_target_rejects_server_resources(
+        self,
+        sqlite_instance,
+        tmp_path: Path,
+        target_type: str,
+        params: dict[str, str],
+        upload_directory: str | None,
+        error: str,
+    ) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="host-target", type=target_type, params=params)
+        configured_directory = str(tmp_path) if upload_directory else None
+
+        with (
+            patch.object(target_service_module, "_target_upload_directory", configured_directory),
+            patch.object(service._registry, "create_instance") as create,
+            pytest.raises(ValueError, match=error),
+        ):
+            await service.create_target_async(request=request)
+
+        create.assert_not_called()
+
+    async def test_create_upload_target_uses_the_configured_directory(self, sqlite_instance, tmp_path: Path) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            name="uploader", type="HTTPXAPITarget", params={"http_url": "http://localhost:8080/upload"}
+        )
+
+        with patch.object(target_service_module, "_target_upload_directory", str(tmp_path)):
+            await service.create_target_async(request=request)
+
+        target = service.get_target_object(target_registry_name="uploader")
+        assert target.allowed_upload_directory == tmp_path.resolve()
 
     async def test_create_target_success(self, sqlite_instance) -> None:
         """Test successful target creation."""

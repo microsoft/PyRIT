@@ -6,7 +6,7 @@ import json
 import logging
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import default_values
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
@@ -35,6 +35,9 @@ class HuggingFaceChatTarget(PromptTarget):
             supports_system_prompt=True,
         )
     )
+
+    # Loads models, and optionally their code, on the local machine.
+    loads_local_code: ClassVar[bool] = True
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None

@@ -200,3 +200,49 @@ Environment variables:
 - `PYRIT_API_HOST` - Host to bind to (default: localhost)
 - `PYRIT_API_PORT` - Port to listen on (default: 8000)
 - `PYRIT_API_RELOAD` - Enable auto-reload (default: false)
+
+## Input Validation
+
+The backend is the part of PyRIT that accepts requests from other machines, so it checks
+request values before using them:
+
+- Media values in messages, previews, and prepended conversations, and file parameters of
+  converters, must be uploaded content, a media URL, or a reference into this server's media
+  storage: the `prompt-memory-entries` and `seed-prompt-entries` folders under the memory
+  results path. Other file paths are rejected.
+- Media URLs are kept as references by default, and `url` pieces always pass through
+  unchanged. Azure Blob URLs outside the configured results container are rejected as media
+  references, because the storage layer would read them from this server's own container;
+  blob URLs inside it are kept without their query string.
+- A caller imports a media URL by setting `import_url` on a message piece or a converter
+  preview with an `image_path`, `audio_path`, `video_path`, or `binary_path` type. The server
+  downloads it once into managed storage (10 second connect, 30 second read, and 60 second
+  total limits, 100 MiB limit, at most 3 redirects, no request credentials forwarded) and
+  stores it under the declared type without format conversion. The format extension comes
+  from the response MIME type, the caller MIME type if the response is missing or generic,
+  or the URL suffix. Unknown formats use `.bin`, not a modality default such as `.wav`.
+  Converters and targets then see only the stored copy,
+  and the piece's prompt metadata records the source URL, without credentials or query
+  string, and the resolved content type. A preview that imports returns the stored copy and
+  that metadata, so sending them reuses the same bytes. Set `allow_media_url_import: false`
+  in `.pyrit_conf` to turn imports off. Converter file parameters given a URL are downloaded
+  the same way.
+- Target types that load model code (`HuggingFaceChatTarget`) cannot be created through the
+  API, and target parameters that name server paths cannot be set through it; the target type
+  catalog leaves both out. Targets that upload local files (`HTTPXAPITarget`) can be created
+  through the API only when `target_upload_directory` is set in `.pyrit_conf`; the server passes
+  that directory to the target, which uploads files only from inside it. Register such targets
+  in Python or with an initializer for other settings.
+
+Intentional exceptions:
+
+- Target endpoints, raw HTTP requests, media URLs, and their redirects are chosen by the
+  operator and are not restricted to particular hosts. Limit outbound network access in the
+  deployment instead.
+- Prompt content is not filtered. It is adversarial test data by design.
+- Any file type can be stored as a payload. `GET /api/media` only renders known image,
+  audio, and video types inline; everything else downloads as a file.
+- `GET /api/media` does not require authentication so the browser can load media. It only
+  serves files from the media folders above.
+- Custom initializer scripts are trusted Python. Uploading them requires an administrator
+  and `allow_custom_initializers: true`.

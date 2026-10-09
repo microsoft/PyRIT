@@ -76,6 +76,30 @@ class TestConfigurationLoader:
         with pytest.raises(TypeError, match=r"allow_custom_initializers must be a bool"):
             ConfigurationLoader(allow_custom_initializers=invalid_value)  # type: ignore[arg-type]
 
+    def test_media_url_import_is_enabled_by_default_and_can_be_disabled(self) -> None:
+        assert ConfigurationLoader().allow_media_url_import is True
+        assert ConfigurationLoader.from_dict({"allow_media_url_import": False}).allow_media_url_import is False
+
+    @pytest.mark.parametrize("invalid_value", ["false", 0, 1, [], {}])
+    def test_rejects_non_boolean_allow_media_url_import(self, invalid_value: object) -> None:
+        with pytest.raises(TypeError, match=r"allow_media_url_import must be a bool"):
+            ConfigurationLoader(allow_media_url_import=invalid_value)  # type: ignore[arg-type]
+
+    def test_target_upload_directory_is_unset_by_default(self) -> None:
+        assert ConfigurationLoader().target_upload_directory is None
+        config = ConfigurationLoader.from_dict({"target_upload_directory": "/srv/uploads"})
+        assert config.target_upload_directory == "/srv/uploads"
+
+    @pytest.mark.parametrize("invalid_value", [1, True, [], {}])
+    def test_rejects_non_string_target_upload_directory(self, invalid_value: object) -> None:
+        with pytest.raises(TypeError, match=r"target_upload_directory must be a string path"):
+            ConfigurationLoader(target_upload_directory=invalid_value)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("blank_value", ["", "   "])
+    def test_rejects_blank_target_upload_directory(self, blank_value: str) -> None:
+        with pytest.raises(ValueError, match=r"target_upload_directory must be a non-empty path"):
+            ConfigurationLoader(target_upload_directory=blank_value)
+
     def test_valid_memory_db_types_snake_case(self):
         """Test all valid memory database types in snake_case."""
         for db_type in ["in_memory", "sqlite", "azure_sql"]:

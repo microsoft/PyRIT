@@ -264,6 +264,20 @@ class TestAttackRoutes:
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_create_attack_invalid_media_returns_bad_request(self, client: TestClient) -> None:
+        """Validation errors that are not lookups return 400."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_attack_async = AsyncMock(
+                side_effect=ValueError("Media path is outside the allowed results directory.")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/attacks", json={"target_registry_name": "target"})
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "outside the allowed results directory" in response.json()["detail"]
+
     def test_get_attack_success(self, client: TestClient) -> None:
         """Test getting an attack by ID."""
         now = datetime.now(UTC)
