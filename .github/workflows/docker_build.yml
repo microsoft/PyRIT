@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       pypiVersion:
-        description: 'Exact stamped PyPI release (overrides PYRIT_PYPI_VERSION)'
+        description: 'Exact published PyPI version (defaults to the latest stable release)'
         required: false
         type: string
 
@@ -31,6 +31,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate-compose-bindings:
+    name: Validate Compose Bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Require loopback-only published ports
+        working-directory: docker
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PYRIT_SOURCE_COMMIT = git rev-parse --verify HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cannot determine source commit."
+          }
+          $sourceStatus = git status --porcelain
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cannot determine source dirty state."
+          }
+          $env:PYRIT_SOURCE_DIRTY = if ($sourceStatus) { 'true' } else { 'false' }
+          $json = docker compose --file docker-compose.yaml --profile gui --profile jupyter config --format json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker Compose configuration resolution failed."
+          }
+          $services = ($json | ConvertFrom-Json).services
+          $expectedPorts = @{ 'pyrit-gui' = 8000; 'pyrit-jupyter' = 8888 }
+          foreach ($service in $expectedPorts.Keys) {
+            $port = $expectedPorts[$service]
+            $bindings = @($services.$service.ports)
+            if ($bindings.Count -ne 1 -or
+                $bindings[0].host_ip -ne '127.0.0.1' -or
+                $bindings[0].published -ne "$port" -or
+                $bindings[0].target -ne $port -or
+                $bindings[0].protocol -ne 'tcp') {
+              throw "Expected only 127.0.0.1:${port}:${port}/tcp for ${service}; got $($bindings | ConvertTo-Json -Compress)."
+            }
+            Write-Output "${service}: verified 127.0.0.1:${port}:${port}/tcp"
+          }
+
   build-and-test-local:
     name: Build and test (local)
     runs-on: ubuntu-latest
@@ -108,7 +147,8 @@ jobs:
   build-and-test-pypi:
     name: Build and test (PyPI)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # Restore main-push checks after validating 1.2.0: https://github.com/microsoft/PyRIT/issues/3007
+    if: github.event_name == 'workflow_dispatch'
     outputs:
       production: ${{ steps.production.outcome }}
       import: ${{ steps.import.outcome }}
@@ -117,20 +157,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Select coordinated PyPI release
+      - name: Select PyPI release
         id: pypi-version
+        timeout-minutes: 5
         env:
-          PYRIT_PYPI_VERSION: ${{ inputs.pypiVersion || vars.PYRIT_PYPI_VERSION }}
+          PYRIT_PYPI_VERSION: ${{ inputs.pypiVersion }}
         shell: bash
         run: |
           set -euo pipefail
-          version_pattern='^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$'
-          if [[ ! "${PYRIT_PYPI_VERSION:-}" =~ $version_pattern ]]; then
-            echo "::error::Set pypiVersion or repository variable PYRIT_PYPI_VERSION to an exact coordinated PyPI release."
-            exit 1
-          fi
-          echo "version=$PYRIT_PYPI_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Testing coordinated PyPI release: $PYRIT_PYPI_VERSION"
+          version=$(python3 build_scripts/select_pypi_version.py --version "${PYRIT_PYPI_VERSION:-}")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Testing published PyPI release: $version"
 
       - name: Set up cached devcontainer builder
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -219,7 +256,7 @@ jobs:
   pypi-production-check:
     name: Build Production (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results
@@ -237,7 +274,7 @@ jobs:
   pypi-import-check:
     name: Test Import (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results
@@ -255,7 +292,7 @@ jobs:
   pypi-gui-check:
     name: Test GUI (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results
@@ -273,7 +310,7 @@ jobs:
   pypi-jupyter-check:
     name: Test Jupyter (PyPI)
     needs: build-and-test-pypi
-    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Check execution and stage results

@@ -50,7 +50,7 @@ from pyrit.models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Callable, Generator, Sequence
 
     from pyrit.memory import MemoryInterface
 
@@ -65,7 +65,7 @@ _AUTO_FETCH_ALLOWED: ContextVar[bool] = ContextVar("dataset_auto_fetch_allowed",
 
 
 @contextmanager
-def read_only_dataset_resolution() -> Iterator[None]:
+def read_only_dataset_resolution() -> Generator[None, None, None]:
     """Disable dataset auto-fetch persistence within the current async context."""
     token = _AUTO_FETCH_ALLOWED.set(False)
     try:

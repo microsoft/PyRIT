@@ -829,7 +829,7 @@ for (const variant of TARGET_VARIANTS) {
       );
 
       if (variant.multiTurn) {
-        // Multi-turn: branch via the UI button
+        // Multi-turn: branch via the copy menu.
         await openAttackInHistory(page, attackResultId);
 
         const expText = variant.expectAssistantSeeded.text;
@@ -841,9 +841,8 @@ for (const variant of TARGET_VARIANTS) {
           await page.waitForTimeout(3_000);
         }
 
-        const branchBtn = page.getByTestId("branch-conv-btn-1");
-        await expect(branchBtn).toBeVisible({ timeout: 5_000 });
-        await branchBtn.click();
+        await page.getByTestId("copy-to-input-btn-1").click();
+        await page.getByRole("menuitem", { name: "New conversation", exact: true }).click();
       } else {
         // Single-turn targets disable branch buttons in the UI.
         // Branch via the API instead to test the backend operation.
@@ -875,7 +874,14 @@ for (const variant of TARGET_VARIANTS) {
         (c: { conversation_id: string }) => c.conversation_id !== convData.main_conversation_id,
       );
       expect(branchConv).toBeDefined();
-      expect(branchConv.message_count).toBeGreaterThanOrEqual(2);
+      expect(branchConv.message_count).toBe(2);
+      const messagesResponse = await request.get(
+        `/api/attacks/${encodeURIComponent(attackResultId)}/messages?conversation_id=${encodeURIComponent(branchConv.conversation_id)}`,
+        { headers: compatibilityHeaders() },
+      );
+      expect(messagesResponse.ok()).toBeTruthy();
+      expect((await messagesResponse.json()).messages.map((message: { role: string }) => message.role))
+        .toEqual(["user", "simulated_assistant"]);
     });
 
     test("should show correct message counts @seeded", async ({

@@ -11,6 +11,11 @@ project:
     - format: pdf
       template: plain_latex_book
       output: exports/book.pdf
+  # MyST copies these to the site root, preserving the videos directory.
+  static_files:
+    - assets/videos
+    - scanner-demo.png
+    - copyrit-demo.png
   # See https://mystmd.org/guide for error_rules schema.
   # Rule IDs come from https://github.com/jupyter-book/mystmd
   # (packages/myst-common/src/ruleids.ts).
@@ -134,6 +139,7 @@ project:
             - file: code/targets/11_message_normalizer.ipynb
             - file: code/targets/hack_a_prompt_target.ipynb
             - file: code/targets/open_ai_completions.ipynb
+            - file: code/targets/github_copilot_target.ipynb
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb

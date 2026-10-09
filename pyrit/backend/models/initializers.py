@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.common import MAX_FILE_CONTENT_LENGTH, PaginationInfo
 from pyrit.models import REGISTRY_NAME_PATTERN
 from pyrit.models.catalog.initializer import RegisteredInitializer
 
@@ -42,7 +42,11 @@ class RegisterInitializerRequest(BaseModel):
         pattern=REGISTRY_NAME_PATTERN,
         description="Registry name for the initializer (e.g., 'my_custom')",
     )
-    script_content: str = Field(..., description="Python source code containing a PyRITInitializer subclass")
+    script_content: str = Field(
+        ...,
+        max_length=MAX_FILE_CONTENT_LENGTH,
+        description="Python source code containing a PyRITInitializer subclass",
+    )
 
 
 class CustomInitializerResponse(BaseModel):

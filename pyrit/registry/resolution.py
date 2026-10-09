@@ -21,6 +21,8 @@ responsibilities:
   constructor-ready keyword arguments — coercing simple string values via
   ``Parameter.coerce_value`` and resolving registry-reference parameters by name
   from the owning domain's registry. Defaults are left to the constructor.
+  Callers building from external input (REST, CLI) select the external path,
+  which accepts only parameters with ``Parameter.is_external_input``.
 - **Resolve from a declared list** (``resolve_declared_params``): the sibling for
   a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
   ``supported_parameters()``). It has no references, coerces every supplied
@@ -57,7 +59,7 @@ from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 from pyrit.models.parameter import display_choices as display_choices
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 
@@ -261,6 +263,9 @@ def _parameters_from_signature(
     owner: type,
     signature: inspect.Signature,
     reference_overrides: dict[str, ComponentType],
+    sensitive_parameter_names: frozenset[str],
+    multiline_parameter_names: frozenset[str],
+    identity_conflicting_parameter_names: frozenset[str],
 ) -> list[Parameter]:
     """
     Build parameters declared by one constructor signature.
@@ -270,6 +275,12 @@ def _parameters_from_signature(
         signature (inspect.Signature): The constructor signature.
         reference_overrides (dict[str, ComponentType]): Identifier-declared
             registry references keyed by constructor parameter name.
+        sensitive_parameter_names (frozenset[str]): Identifier-declared names
+            whose values must be obscured in user interfaces.
+        multiline_parameter_names (frozenset[str]): Identifier-declared names
+            whose values require multiline controls.
+        identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
+            names that must be omitted for identity-based authentication.
 
     Returns:
         list[Parameter]: Parameters declared by the constructor.
@@ -303,6 +314,9 @@ def _parameters_from_signature(
                 default=_default_for(param),
                 param_type=param_type,
                 variants=_structured_variant_parameters(param_type),
+                sensitive=name in sensitive_parameter_names,
+                multiline=name in multiline_parameter_names,
+                identity_conflicting=name in identity_conflicting_parameter_names,
             )
         )
     return parameters
@@ -333,6 +347,15 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
         ValueError: If the constructor signature cannot be inspected.
     """
     reference_overrides = identifier_type.get_reference_component_types() if identifier_type is not None else {}
+    sensitive_parameter_names = (
+        identifier_type.get_sensitive_parameter_names() if identifier_type is not None else frozenset[str]()
+    )
+    multiline_parameter_names = (
+        identifier_type.get_multiline_parameter_names() if identifier_type is not None else frozenset[str]()
+    )
+    identity_conflicting_parameter_names = (
+        identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
+    )
     parameters: list[Parameter] = []
     seen: set[str] = set()
     for owner, signature in _constructor_sources(cls):
@@ -340,6 +363,9 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             owner=owner,
             signature=signature,
             reference_overrides=reference_overrides,
+            sensitive_parameter_names=sensitive_parameter_names,
+            multiline_parameter_names=multiline_parameter_names,
+            identity_conflicting_parameter_names=identity_conflicting_parameter_names,
         ):
             if parameter.name in seen:
                 continue
@@ -535,6 +561,7 @@ def resolve_constructor_args(
     cls: type,
     raw_args: dict[str, Any],
     identifier_type: type[ComponentIdentifier] | None = None,
+    external_input: bool = False,
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -550,15 +577,22 @@ def resolve_constructor_args(
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
             whose ``Param.*`` markers declare which parameters are registry
             references. When None, no parameter is treated as a reference.
+        external_input (bool): Whether ``raw_args`` come from an external caller (REST, CLI).
+            External callers may set only parameters with ``Parameter.is_external_input``
+            and must name registry references. Defaults to False (in-process callers, which
+            may pass any Python object).
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
 
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
-            reference cannot be resolved, or a simple value cannot be coerced.
+            reference cannot be resolved, a simple value cannot be coerced, or
+            external input sets a parameter that is not an external input.
     """
     by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
+    if external_input:
+        reject_non_external_params(params=raw_args, declared=list(by_name.values()), owner=cls.__name__)
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():
@@ -596,6 +630,50 @@ def resolve_constructor_args(
             resolved[name] = value
 
     return resolved
+
+
+def reject_non_external_params(*, params: Mapping[str, Any], declared: Sequence[Parameter], owner: str) -> None:
+    """
+    Reject external input that is not an explicitly supported external input.
+
+    Every name must be declared and have ``Parameter.is_external_input``, and registry
+    references must be given by name. Values are otherwise left to the component.
+
+    Args:
+        params (Mapping[str, Any]): The parameter values supplied by an external caller.
+        declared (Sequence[Parameter]): The parameters the component declares.
+        owner (str): The owning class or scenario name, for error messages.
+
+    Raises:
+        ValueError: If ``params`` sets an undeclared parameter or one that is not an external
+            input, or gives a registry reference as anything but a name.
+    """
+    declared_by_name = {parameter.name: parameter for parameter in declared}
+    for name, value in params.items():
+        parameter = declared_by_name.get(name)
+        if parameter is None:
+            external_names = sorted(
+                known for known, candidate in declared_by_name.items() if candidate.is_external_input
+            )
+            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {external_names}")
+        if not parameter.is_external_input:
+            raise ValueError(
+                f"Parameter '{name}' of '{owner}' cannot be set through the API; pass it from Python instead."
+            )
+        if parameter.reference is not None:
+            _require_reference_names(value=value, owner=owner, name=name)
+
+
+def _require_reference_names(*, value: Any, owner: str, name: str) -> None:
+    """
+    Require external input for a registry reference to be a registry name or a list of names.
+
+    Raises:
+        ValueError: If the value is neither null, a name, nor a list of names.
+    """
+    names = value if isinstance(value, list) else [value]
+    if value is not None and not all(isinstance(item, str) for item in names):
+        raise ValueError(f"{owner}.{name}: expected a registry name, but got {type(value).__name__}.")
 
 
 def _resolve_structured_input(*, parameter: Parameter, value: Any) -> Any:

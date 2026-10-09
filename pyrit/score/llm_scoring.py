@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from string import Formatter
 from typing import TYPE_CHECKING, cast
@@ -13,6 +15,7 @@ from pyrit.exceptions import (
     EmptyResponseException,
     InvalidJsonException,
     ScorerLLMResponseBlockedException,
+    pyrit_json_retry,
 )
 from pyrit.models import (
     Acquisition,
@@ -31,9 +34,6 @@ from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_observation,
-    _get_current_scorable,
-    _get_current_scored_message_piece,
-    _get_current_scoring_expectation,
     _has_observation_collection,
     _ObservationEvidence,
     _scored_evidence_digest_async,
@@ -44,11 +44,13 @@ if TYPE_CHECKING:
 
     from pyrit.models import (
         ComponentIdentifier,
-        PromptDataType,
         UnvalidatedScore,
     )
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.observation.target_judge import JudgmentRequest
     from pyrit.score.response_handler import ResponseHandler
+
+logger = logging.getLogger(__name__)
 
 
 def _format_string_references_message_piece(template: str | None) -> bool:
@@ -73,19 +75,10 @@ def _format_string_references_message_piece(template: str | None) -> bool:
 async def _run_llm_scoring_async(
     *,
     chat_target: PromptTarget,
-    system_prompt: str | None,
+    request: JudgmentRequest,
     response_handler: ResponseHandler,
-    value: str,
-    data_type: PromptDataType,
-    scored_prompt_id: str | uuid.UUID,
-    scorer_identifier: ComponentIdentifier,
-    prepended_text: str | None = None,
-    category: Sequence[str] | str | None = None,
-    objective: str | None = None,
     normalizer: PromptNormalizer | None = None,
-    observation_metadata: Mapping[str, str] | None = None,
-    requires_message_piece_evidence: bool = False,
-    judgment_replay_identifier: Mapping[str, object] | None = None,
+    fresh_conversation_per_attempt: bool = False,
 ) -> UnvalidatedScore:
     """
     Perform a single scoring round-trip against an LLM target and delegate parsing.
@@ -93,48 +86,31 @@ async def _run_llm_scoring_async(
     This is the shared LLM evaluation mechanism: it optionally sets a system prompt on the target, sends
     the value to be scored (forwarding ``response_handler.json_response_config`` so targets that
     support structured output can enforce it), and delegates parsing and validation to
-    ``response_handler``. The round-trip is routed through a ``PromptNormalizer`` via
-    ``send_json_with_retry_async`` so the scorer's question and the target's answer are persisted
-    to memory (a full audit trail, and a real conversation an attack can link as a SCORE-type
-    related conversation) and so JSON retries roll memory back to a clean baseline between attempts
-    instead of replaying the target's own malformed reply. It is intentionally stateless and
-    independent of any particular ``Scorer`` so that scorers can compose it without inheriting LLM
-    machinery.
+    ``response_handler``. The round-trip uses a ``PromptNormalizer`` so the scorer's question and
+    the target's answer are persisted to memory (a full audit trail, and a real conversation an
+    attack can link as a SCORE-type related conversation). The default editable-history path rolls
+    memory back between JSON attempts; ``fresh_conversation_per_attempt`` keeps malformed judge
+    exchanges in separate conversations instead of replaying native history. It is intentionally
+    stateless and independent of any particular ``Scorer`` so scorers can compose it without
+    inheriting LLM machinery.
 
     The round-trip owns only the transport; the ``ResponseHandler`` owns the response contract —
     the optional response schema and turning raw text into a validated ``UnvalidatedScore``.
 
     This function is intentionally module-internal (underscore-prefixed): it is a composition
-    primitive with no public-API stability or deprecation contract. Scorers in this package call
-    it directly; external callers should compose scorers rather than this helper.
+    primitive with no public-API stability or deprecation contract. ``TargetJudge`` delegates
+    to it; external callers should compose scorers rather than this helper.
 
     Args:
         chat_target (PromptTarget): The target LLM to send the message to.
-        system_prompt (str | None): The system-level prompt that guides the target LLM. When None,
-            the request is sent without configuring a system prompt.
+        request (JudgmentRequest): Prepared prompt, explicit criteria, and scored evidence.
         response_handler (ResponseHandler): Owns the response contract: supplies the optional
             response schema and turns the target's raw text into an ``UnvalidatedScore``.
-        value (str): The content to be scored (e.g. text, image path, audio path).
-        data_type (PromptDataType): The data type of ``value`` (e.g. "text", "image_path").
-        scored_prompt_id (str | uuid.UUID): The ID of the message piece being scored.
-        scorer_identifier (ComponentIdentifier): Identifier of the calling scorer, stored on
-            the resulting score.
-        prepended_text (str | None): Text context to prepend before ``value`` as a separate
-            piece. Useful for adding objective/context when scoring non-text content.
-            Defaults to None.
-        category (Sequence[str] | str | None): The category of the score. May instead be parsed
-            from the response; supplying both is an error. Defaults to None.
-        objective (str | None): Transitional objective context for direct helper callers.
-            Defaults to None.
         normalizer (PromptNormalizer | None): Normalizer used to send the scoring round-trip
-            and whose memory is rolled back between JSON retries. Injectable for testing;
-            defaults to a fresh ``PromptNormalizer()`` when not supplied.
-        observation_metadata (Mapping[str, str] | None): Scorer-specific state required to
-            reconstruct the response parser during replay. Defaults to None.
-        requires_message_piece_evidence (bool): Whether the rendered request reads fields that a
-            content-only observation cannot retain. Defaults to False.
-        judgment_replay_identifier (Mapping[str, object] | None): Explicit contract for the
-            scorer's shared pure judgment logic. None retains audit evidence without enabling replay.
+            and resolve scorer evidence. Injectable for testing; defaults to a fresh
+            ``PromptNormalizer()`` when not supplied.
+        fresh_conversation_per_attempt (bool): Opt into fresh conversations for JSON retries when
+            target history cannot be rolled back. Defaults to False.
 
     Returns:
         UnvalidatedScore: The parsed score, whose ``raw_score_value`` still needs to be
@@ -157,46 +133,44 @@ async def _run_llm_scoring_async(
         Exception: For other unexpected errors during scoring.
     """
     conversation_id = str(uuid.uuid4())
-    expectation = _get_current_scoring_expectation()
-    if expectation is None and objective is not None:
-        expectation = ScoringExpectation(objective=objective)
+    expectation = request.expectation
+    use_fresh_conversation_per_attempt = (
+        fresh_conversation_per_attempt and not chat_target.capabilities.supports_editable_history
+    )
     expectation_fingerprint = scoring_expectation_fingerprint(expectation or ScoringExpectation())
     replay_contract_fingerprint = _replay_contract_fingerprint(
         response_handler=response_handler,
-        category=category,
-        judgment_replay_identifier=judgment_replay_identifier,
+        category=request.category,
+        judgment_replay_identifier=request.judgment_replay_identifier,
     )
-    active_scorable = _get_current_scorable()
+    active_scorable = request.scorable
     if active_scorable is not None and not isinstance(active_scorable, SCORABLE_TYPES):
         raise TypeError(f"{type(active_scorable).__name__} cannot anchor a judgment observation.")
     observation_scorable = cast("ScorableUnion | None", active_scorable)
     resolved_normalizer = normalizer or PromptNormalizer()
-    scored_piece_id = uuid.UUID(str(scored_prompt_id)) if observation_scorable is not None else None
-    scored_message_piece = (
-        _get_current_scored_message_piece(scored_piece_id=cast("uuid.UUID", scored_piece_id))
-        if isinstance(observation_scorable, MessageScorable)
-        else None
-    )
+    scored_piece_id = uuid.UUID(str(request.scored_prompt_id)) if observation_scorable is not None else None
     scored_evidence_digest = (
-        (
-            await _scored_evidence_digest_async(
-                scorable=observation_scorable,
-                scored_piece_id=cast("uuid.UUID", scored_piece_id),
-                memory=resolved_normalizer.memory,
-                scored_message_piece=scored_message_piece,
-            )
+        await _scored_evidence_digest_async(
+            scorable=observation_scorable,
+            scored_piece_id=cast("uuid.UUID", scored_piece_id),
+            memory=resolved_normalizer.memory,
+            scored_message_piece=request.scored_message_piece,
         )
         if observation_scorable is not None
-        and (not isinstance(observation_scorable, MessageScorable) or scored_message_piece is not None)
         else None
     )
-    has_required_evidence = not requires_message_piece_evidence or isinstance(observation_scorable, MessageScorable)
+    has_required_evidence = not request.requires_message_piece_evidence or isinstance(
+        observation_scorable, MessageScorable
+    )
     can_collect_observation = (
         observation_scorable is not None and scored_evidence_digest is not None and has_required_evidence
     )
 
-    if system_prompt is not None:
-        (await chat_target.set_system_prompt_async(system_prompt=system_prompt, conversation_id=conversation_id))
+    if request.system_prompt is not None and not use_fresh_conversation_per_attempt:
+        await chat_target.set_system_prompt_async(
+            system_prompt=request.system_prompt,
+            conversation_id=conversation_id,
+        )
     # Forward the JSON-response request (format and any schema together) via the handler's
     # canonical config; the target's normalization pipeline omits the schema when it cannot
     # natively enforce one.
@@ -206,11 +180,11 @@ async def _run_llm_scoring_async(
     message_pieces: list[MessagePiece] = []
 
     # Add prepended text context piece if provided (e.g., objective context for non-text scoring)
-    if prepended_text:
+    if request.prepended_text:
         message_pieces.append(
             MessagePiece(
                 role="user",
-                original_value=prepended_text,
+                original_value=request.prepended_text,
                 original_value_data_type="text",
                 converted_value_data_type="text",
                 conversation_id=conversation_id,
@@ -222,9 +196,9 @@ async def _run_llm_scoring_async(
     message_pieces.append(
         MessagePiece(
             role="user",
-            original_value=value,
-            original_value_data_type=data_type,
-            converted_value_data_type=data_type,
+            original_value=request.value,
+            original_value_data_type=request.data_type,
+            converted_value_data_type=request.data_type,
             conversation_id=conversation_id,
             prompt_metadata=prompt_metadata,
         )
@@ -254,48 +228,97 @@ async def _run_llm_scoring_async(
                 raise ScorerLLMResponseBlockedException(
                     message=(
                         f"The scorer's LLM response was blocked by content filtering while scoring "
-                        f"prompt ID: {scored_prompt_id}. Consider using a scorer endpoint with "
+                        f"prompt ID: {request.scored_prompt_id}. Consider using a scorer endpoint with "
                         f"content filtering disabled for red-teaming workflows."
                     )
                 )
             raise EmptyResponseException(
                 message=(
-                    f"The scorer's LLM response contained no text to parse while scoring prompt ID: {scored_prompt_id}."
+                    "The scorer's LLM response contained no text to parse while scoring "
+                    f"prompt ID: {request.scored_prompt_id}."
                 )
             )
 
         return response_handler.parse(
             response_text=text_piece.converted_value,
-            scorer_identifier=scorer_identifier,
-            scored_prompt_id=scored_prompt_id,
-            category=category,
+            scorer_identifier=request.scorer_identifier,
+            scored_prompt_id=request.scored_prompt_id,
+            category=request.category,
             objective=expectation.objective if expectation else None,
         )
 
-    # Route the round-trip through the normalizer so the scorer Q&A is persisted and JSON retries
-    # replay on a clean history.
+    # Editable targets retry on a rolled-back conversation; non-editable judges opt into fresh sessions.
     try:
-        unvalidated_score = await send_json_with_retry_async(
-            normalizer=resolved_normalizer,
-            target=chat_target,
-            message=scorer_llm_request,
-            conversation_id=conversation_id,
-            parse=_parse,
-            on_response=_capture_response,
-        )
+        if use_fresh_conversation_per_attempt:
+            first_attempt = True
+
+            @pyrit_json_retry
+            async def _fresh_attempt_async() -> UnvalidatedScore:
+                nonlocal first_attempt
+                attempt_conversation_id = conversation_id if first_attempt else str(uuid.uuid4())
+                attempt_message = scorer_llm_request if first_attempt else scorer_llm_request.duplicate()
+                first_attempt = False
+                attempt_cancellation: asyncio.CancelledError | None = None
+                try:
+                    if request.system_prompt is not None:
+                        await chat_target.set_system_prompt_async(
+                            system_prompt=request.system_prompt,
+                            conversation_id=attempt_conversation_id,
+                        )
+                    response = await resolved_normalizer.send_prompt_async(
+                        message=attempt_message,
+                        conversation_id=attempt_conversation_id,
+                        target=chat_target,
+                    )
+                    if not response:
+                        raise ValueError(f"No response received for conversation ID: {attempt_conversation_id}")
+                    _capture_response(response)
+                    return _parse(response)
+                except asyncio.CancelledError as error:
+                    attempt_cancellation = error
+                    raise
+                finally:
+                    try:
+                        await chat_target.reset_conversation_async(conversation_id=attempt_conversation_id)
+                    except asyncio.CancelledError as cleanup_error:
+                        if attempt_cancellation is not None:
+                            raise attempt_cancellation from cleanup_error
+                        raise
+                    except (Exception, BaseExceptionGroup) as cleanup_error:
+                        if attempt_cancellation is not None:
+                            raise attempt_cancellation from cleanup_error
+                        current_task = asyncio.current_task()
+                        if current_task is not None and current_task.cancelling():
+                            raise asyncio.CancelledError from cleanup_error
+                        logger.warning(
+                            "Could not release fresh judge session %s.",
+                            attempt_conversation_id,
+                            exc_info=cleanup_error,
+                        )
+
+            unvalidated_score: UnvalidatedScore = await _fresh_attempt_async()
+        else:
+            unvalidated_score = await send_json_with_retry_async(
+                normalizer=resolved_normalizer,
+                target=chat_target,
+                message=scorer_llm_request,
+                conversation_id=conversation_id,
+                parse=_parse,
+                on_response=_capture_response,
+            )
     except ScorerLLMResponseBlockedException as error:
         if terminal_response is not None and can_collect_observation and _has_observation_collection():
             observation = _build_judgment_observation(
                 acquisition=Acquisition.ERROR,
                 response=terminal_response,
                 scorable=observation_scorable,
-                scorer_identifier=scorer_identifier,
+                scorer_identifier=request.scorer_identifier,
                 scored_piece_id=cast("uuid.UUID", scored_piece_id),
                 scored_evidence_digest=scored_evidence_digest,
                 expectation_fingerprint=expectation_fingerprint,
                 replay_contract_fingerprint=replay_contract_fingerprint,
                 metadata={
-                    **dict(observation_metadata or {}),
+                    **dict(request.observation_metadata or {}),
                     "reason": "scorer_response_blocked",
                 },
             )
@@ -307,7 +330,7 @@ async def _run_llm_scoring_async(
         # its own policy (fall back, raise, or -- for invalid JSON -- surface the retry exhaustion).
         raise
     except Exception as ex:
-        raise Exception(f"Error scoring prompt with original prompt ID: {scored_prompt_id}") from ex
+        raise Exception(f"Error scoring prompt with original prompt ID: {request.scored_prompt_id}") from ex
 
     if terminal_response is None:
         raise RuntimeError("The LLM scoring transport returned no terminal response.")
@@ -318,12 +341,12 @@ async def _run_llm_scoring_async(
             acquisition=Acquisition.COMPLETE,
             response=terminal_response,
             scorable=observation_scorable,
-            scorer_identifier=scorer_identifier,
+            scorer_identifier=request.scorer_identifier,
             scored_piece_id=cast("uuid.UUID", scored_piece_id),
             scored_evidence_digest=scored_evidence_digest,
             expectation_fingerprint=expectation_fingerprint,
             replay_contract_fingerprint=replay_contract_fingerprint,
-            metadata=dict(observation_metadata or {}),
+            metadata=dict(request.observation_metadata or {}),
         )
         _collect_observation(observation)
         unvalidated_score.scorable = observation_scorable
@@ -420,9 +443,11 @@ def _parse_judgment_observation(
         category=category,
         judgment_replay_identifier=judgment_replay_identifier,
     )
-    if observation.payload.replay_contract_fingerprint is None:
+    if replay_contract_fingerprint is None or observation.payload.replay_contract_fingerprint is None:
+        # A current handler that opts out of replay is never overridden by a legacy contract.
         raise NonReplayableObservationError("The scorer or response handler does not declare a stable replay contract.")
-    if replay_contract_fingerprint != observation.payload.replay_contract_fingerprint:
+    contract_matches = replay_contract_fingerprint == observation.payload.replay_contract_fingerprint
+    if not contract_matches and not isinstance(evidence, Message):
         raise NonReplayableObservationError(
             "The judgment configuration, response handler or category differs from the acquisition contract."
         )
@@ -432,6 +457,19 @@ def _parse_judgment_observation(
         (piece for piece in evidence.message_pieces if piece.converted_value_data_type == "text"),
         None,
     )
+    if not contract_matches and not (
+        text_piece is not None
+        and observation.payload.replay_contract_fingerprint
+        in _legacy_replay_contract_fingerprints(
+            response_handler=response_handler,
+            response_text=text_piece.converted_value,
+            category=category,
+            judgment_replay_identifier=judgment_replay_identifier,
+        )
+    ):
+        raise NonReplayableObservationError(
+            "The judgment configuration, response handler or category differs from the acquisition contract."
+        )
     if text_piece is None:
         raise NonReplayableObservationError(f"Observation {observation.id} contains no text judgment.")
     anchor_id = observation.payload.scored_piece_id
@@ -461,7 +499,49 @@ def _replay_contract_fingerprint(
     Returns:
         str | None: The replay contract digest, or None when the handler is not stable.
     """
-    handler_identifier = response_handler._get_replay_identifier()
+    return _contract_fingerprint(
+        handler_identifier=response_handler._get_replay_identifier(),
+        category=category,
+        judgment_replay_identifier=judgment_replay_identifier,
+    )
+
+
+def _legacy_replay_contract_fingerprints(
+    *,
+    response_handler: ResponseHandler,
+    response_text: str,
+    category: Sequence[str] | str | None,
+    judgment_replay_identifier: Mapping[str, object] | None,
+) -> set[str]:
+    """
+    Fingerprints of older handler contracts that parse this stored response the same way.
+
+    Returns:
+        set[str]: The digests an observation acquired under an older contract may carry.
+    """
+    fingerprints = {
+        _contract_fingerprint(
+            handler_identifier=legacy,
+            category=category,
+            judgment_replay_identifier=judgment_replay_identifier,
+        )
+        for legacy in response_handler._legacy_replay_identifiers(response_text=response_text, category=category)
+    }
+    return {fingerprint for fingerprint in fingerprints if fingerprint is not None}
+
+
+def _contract_fingerprint(
+    *,
+    handler_identifier: Mapping[str, object] | None,
+    category: Sequence[str] | str | None,
+    judgment_replay_identifier: Mapping[str, object] | None,
+) -> str | None:
+    """
+    Digest one handler contract together with the category and judgment identity.
+
+    Returns:
+        str | None: The digest, or None when the contract is not stable.
+    """
     if handler_identifier is None or judgment_replay_identifier is None:
         return None
     normalized_category = [category] if isinstance(category, str) else list(category) if category else None

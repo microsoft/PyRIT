@@ -4,7 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message_async
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -19,6 +19,8 @@ from pyrit.models import (
     UnvalidatedScore,
 )
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     MessageScorable,
     NonReplayableObservationError,
@@ -60,7 +62,7 @@ async def test_score_async_returns_score_from_unvalidated(mock_chat_target):
     message = MessagePiece(role="assistant", original_value="4").to_message()
     with patch.object(scorer._memory, "add_scores_to_memory_async", new=AsyncMock()):
         with patch(
-            "pyrit.score.true_false.self_ask_question_answer_scorer._run_llm_scoring_async",
+            "pyrit.score.observation.target_judge._run_llm_scoring_async",
             new=AsyncMock(return_value=unvalidated),
         ):
             scores = await scorer.score_async(
@@ -72,6 +74,21 @@ async def test_score_async_returns_score_from_unvalidated(mock_chat_target):
     assert isinstance(scores[0], Score)
     assert scores[0].score_type == "true_false"
     assert scores[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_question_answer_scorer_keeps_editable_history_requirement() -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_system_prompt=True,
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="supports_editable_history"):
+        SelfAskQuestionAnswerScorer(chat_target=target)
 
 
 @pytest.mark.parametrize("objective", [None, "What is the capital of France?"])
@@ -96,14 +113,14 @@ async def test_typed_answer_supplies_judge_ground_truth_async(
         message_piece_id=None,
     )
     with patch(
-        "pyrit.score.true_false.self_ask_question_answer_scorer._run_llm_scoring_async",
+        "pyrit.score.observation.target_judge._run_llm_scoring_async",
         new_callable=AsyncMock,
         return_value=unvalidated,
     ) as judge:
         scores = await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
 
-    assert '"B: Paris"' in judge.call_args.kwargs["value"]
-    assert "Evaluate against this correct answer." in judge.call_args.kwargs["value"]
+    assert '"B: Paris"' in judge.call_args.kwargs["request"].value
+    assert "Evaluate against this correct answer." in judge.call_args.kwargs["request"].value
     assert scores[0].scored_expectation == expectation
     assert scores[0].get_value() is True
 
@@ -121,9 +138,7 @@ async def test_llm_question_answer_requires_answer_condition_async(
     mock_chat_target: MagicMock, expectation: ScoringExpectation | None
 ) -> None:
     scorer = SelfAskQuestionAnswerScorer(chat_target=mock_chat_target)
-    with patch(
-        "pyrit.score.true_false.self_ask_question_answer_scorer._run_llm_scoring_async", new_callable=AsyncMock
-    ) as judge:
+    with patch("pyrit.score.observation.target_judge._run_llm_scoring_async", new_callable=AsyncMock) as judge:
         with pytest.raises(ValueError, match="requires one AnswerMatches condition"):
             await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
         with pytest.raises(ValueError, match="requires one AnswerMatches condition"):

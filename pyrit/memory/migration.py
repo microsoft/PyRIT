@@ -105,27 +105,45 @@ def _make_config(*, connection: Connection, stdout: TextIO | None = None) -> Con
     return config
 
 
-def _validate_and_stamp_unversioned_memory_schema(*, config: Config, connection: Connection) -> None:
+def _is_fresh_database(*, table_names: set[str]) -> bool:
+    """
+    Report whether the database contains no PyRIT schema at all.
+
+    A fresh database replays the entire revision chain to build its schema from nothing, so the
+    progress each revision reports describes construction rather than a change to existing data.
+    An unversioned legacy schema is deliberately not treated as fresh: it holds real data that
+    the upgrade rewrites, which is exactly when that progress is worth surfacing.
+
+    Args:
+        table_names (set[str]): Names of the tables present in the database.
+
+    Returns:
+        bool: True if neither the Alembic version table nor any memory table exists.
+    """
+    if PYRIT_MEMORY_ALEMBIC_VERSION_TABLE in table_names:
+        return False
+    return not _MEMORY_TABLES.intersection(table_names)
+
+
+def _validate_and_stamp_unversioned_memory_schema(
+    *, config: Config, connection: Connection, table_names: set[str]
+) -> None:
     """
     Validate and stamp unversioned legacy memory schemas.
 
     Args:
         config (Config): Alembic config bound to the current connection.
         connection (Connection): Database connection to inspect.
+        table_names (set[str]): Names of the tables present in the database.
 
     Raises:
         RuntimeError: If an unversioned memory schema does not match models.
     """
-    # Perform all inspection in one atomic call to avoid race conditions
-    inspector = inspect(connection)
-    table_names = set(inspector.get_table_names())
-
     # If version table already exists, migration has been stamped
     if PYRIT_MEMORY_ALEMBIC_VERSION_TABLE in table_names:
         return
 
-    # If no memory tables exist, this is a fresh database
-    if not _MEMORY_TABLES.intersection(table_names):
+    if _is_fresh_database(table_names=table_names):
         return
 
     # Unversioned memory schema detected; validate it matches the initial pre-Alembic schema
@@ -235,16 +253,24 @@ def run_schema_migrations(*, engine: Engine, silent: bool = False) -> None:
     """
     Upgrade the database schema to the latest Alembic revision.
 
+    Migration progress is only written to the console when an existing database is upgraded.
+    A fresh database builds its schema by replaying every revision, which reports nothing the
+    caller acted on, so that output is suppressed regardless of ``silent``.
+
     Args:
         engine (Engine): SQLAlchemy engine bound to the target database.
-        silent (bool): If True, suppresses Alembic console output. Defaults to False.
+        silent (bool): If True, always suppresses Alembic console output. If False, progress is
+            printed only when an existing database is upgraded. Defaults to False.
 
     Raises:
         Exception: If Alembic fails to apply migrations.
     """
     with engine.begin() as connection:
-        config = _make_config(connection=connection, stdout=_migration_stdout(silent=silent))
-        _validate_and_stamp_unversioned_memory_schema(config=config, connection=connection)
+        # Inspect once so the output decision and the stamp check classify the same snapshot.
+        table_names = set(inspect(connection).get_table_names())
+        quiet = silent or _is_fresh_database(table_names=table_names)
+        config = _make_config(connection=connection, stdout=_migration_stdout(silent=quiet))
+        _validate_and_stamp_unversioned_memory_schema(config=config, connection=connection, table_names=table_names)
         command.upgrade(config, _HEAD_REVISION)
 
 

@@ -16,6 +16,7 @@ from sqlalchemy import (
     INTEGER,
     JSON,
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     TypeDecorator,
     Unicode,
     UniqueConstraint,
+    column,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -36,6 +38,8 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
+from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
+from pyrit.memory.analytics_sql import ResolvedAttackIdentifierHash
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
@@ -70,6 +74,7 @@ from pyrit.models import (
     SeedObjective,
     SeedOrigin,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
     SeedType,
     TargetIdentifier,
@@ -846,6 +851,7 @@ class AttackIdentifierEntry(ComponentIdentifierEntry[AttackIdentifier]):
     adversarial_system_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     adversarial_seed_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     adversarial_prompt_template: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    use_score_as_feedback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     objective_target_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
     )
@@ -1643,12 +1649,45 @@ class SeedEntry(Base):
             decoded = None
         return cleaned, decoded
 
-    def get_seed(self) -> Seed:
+    def get_seed_record(self) -> SeedRecord:
+        """
+        Project stored fields without reconstructing an executable seed.
+
+        Returns:
+            SeedRecord: Stored content, identifiers, and metadata, including raw configuration text.
+        """
+        metadata, response_json_schema = self._unpack_seed_metadata(self.prompt_metadata)
+        return SeedRecord(
+            id=self.id,
+            seed_type=self.seed_type,
+            value=self.value,
+            value_sha256=self.value_sha256,
+            data_type=self.data_type,
+            name=self.name,
+            dataset_name=self.dataset_name,
+            origin=SeedOrigin(self.origin),
+            harm_categories=self.harm_categories,
+            description=self.description,
+            authors=self.authors,
+            groups=self.groups,
+            source=self.source,
+            date_added=self.date_added,
+            added_by=self.added_by,
+            metadata=metadata,
+            prompt_group_id=self.prompt_group_id,
+            sequence=self.sequence,
+            role=self.role,
+            parameters=self.parameters,
+            conditions=self.conditions,
+            response_json_schema=response_json_schema,
+        )
+
+    def get_seed(self) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
         """
         Convert this database entry back into a Seed object.
 
         Returns:
-            Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
+            SeedPrompt | SeedObjective | SeedSimulatedConversation: The reconstructed seed object.
 
         Raises:
             ValueError: If persisted conditions are invalid or attached to a non-objective seed,
@@ -1788,6 +1827,38 @@ class AttackResultEntry(Base):
 
     __tablename__ = "AttackResultEntries"
     __table_args__ = (
+        Index(
+            "ix_AttackResultEntries_objective_target_eval_v1",
+            "objective_target_eval_hash_v1",
+            "outcome",
+        ),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_sqlite",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "targeted_harm_categories",
+            "operation",
+            "operator",
+            info={"dialect": "sqlite"},
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_mssql",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "operation",
+            "operator",
+            mssql_include=["targeted_harm_categories"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_sqlite", "operation", "labels", info={"dialect": "sqlite"}
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_mssql",
+            "operation",
+            mssql_include=["labels"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
         # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
         Index(
             "ix_AttackResultEntries_conversation_timestamp_id",
@@ -1827,6 +1898,15 @@ class AttackResultEntry(Base):
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), nullable=True
     )
+    resolved_atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed(
+            ResolvedAttackIdentifierHash(column("atomic_attack_identifier_hash"), column("atomic_attack_identifier")),
+            persisted=False,
+        ),
+        nullable=True,
+    )
+    objective_target_eval_hash_v1: Mapped[str | None] = mapped_column(String(64), nullable=True)
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
@@ -1840,7 +1920,7 @@ class AttackResultEntry(Base):
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
     execution_time_ms = mapped_column(INTEGER, nullable=False, default=0)
     outcome: Mapped[Literal["success", "failure", "error", "undetermined"]] = mapped_column(
-        String, nullable=False, default="undetermined"
+        String(16), nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
@@ -1908,17 +1988,10 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Always recompute eval_hash before dumping so the stored JSON carries the
-        # freshly computed value for DB-level filtering (never a value from storage).
-        atomic_attack_identifier = None
-        if entry.atomic_attack_identifier:
-            atomic_attack_identifier = AtomicAttackIdentifier.from_component_identifier(entry.atomic_attack_identifier)
-            atomic_attack_identifier = atomic_attack_identifier.with_eval_hash(
-                AtomicAttackEvaluationIdentifier(atomic_attack_identifier).eval_hash
-            )
+        atomic_attack_identifier = self._prepare_atomic_attack_identifier(identifier=entry.atomic_attack_identifier)
+        self._set_atomic_attack_identifier(identifier=atomic_attack_identifier)
+        if atomic_attack_identifier is not None:
             entry.atomic_attack_identifier = atomic_attack_identifier
-        self.atomic_attack_identifier = atomic_attack_identifier.model_dump() if atomic_attack_identifier else None
-        self.atomic_attack_identifier_hash = atomic_attack_identifier.hash if atomic_attack_identifier else None
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions
@@ -1973,6 +2046,42 @@ class AttackResultEntry(Base):
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
         self.attribution_data = entry.attribution_data
+
+    @staticmethod
+    def _prepare_atomic_attack_identifier(
+        *, identifier: ComponentIdentifier | dict[str, Any] | None
+    ) -> ComponentIdentifier | None:
+        """
+        Validate an atomic identifier and recompute its stored evaluation hash.
+
+        Args:
+            identifier (ComponentIdentifier | dict[str, Any] | None): The replacement identifier or None.
+
+        Returns:
+            ComponentIdentifier | None: A normalized identifier with a fresh evaluation hash.
+        """
+        if identifier is None:
+            return None
+        atomic = (
+            AtomicAttackIdentifier.from_component_identifier(identifier)
+            if isinstance(identifier, ComponentIdentifier)
+            else AtomicAttackIdentifier.model_validate(identifier)
+        )
+        return atomic.with_eval_hash(AtomicAttackEvaluationIdentifier(atomic).eval_hash)
+
+    def _set_atomic_attack_identifier(self, *, identifier: ComponentIdentifier | None) -> None:
+        """
+        Set the stored identifier, normalized foreign key, and frozen target evaluation key together.
+
+        Args:
+            identifier (ComponentIdentifier | None): An identifier prepared by
+                ``_prepare_atomic_attack_identifier``, or None to clear the association.
+        """
+        self.atomic_attack_identifier = identifier.model_dump() if identifier is not None else None
+        self.atomic_attack_identifier_hash = identifier.hash if identifier is not None else None
+        self.objective_target_eval_hash_v1 = ObjectiveTargetAnalyticsIdentityV1.from_atomic_document(
+            document=self.atomic_attack_identifier
+        )
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:

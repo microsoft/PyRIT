@@ -29,6 +29,11 @@
 #
 # This means changing *any* of these values creates a new scorer identity. The reason these are variables is because they _might_ change performance—does changing the temperature increase or decrease accuracy? Metrics let you experiment and find out.
 #
+# If any scoring trial returns no verdict for a response, the evaluator excludes that response from
+# accuracy and error calculations. `num_responses` counts rows used; `num_input_responses` counts
+# rows supplied. Compare them before interpreting the metrics. Older saved results may have no
+# input count, so their coverage cannot be recovered from the metrics alone.
+#
 # Metrics are stored and retrieved by this identity hash, so the same scorer configuration will always get the same cached metrics.
 
 # %%
@@ -259,7 +264,8 @@ for _i, e in enumerate(sorted_by_mae[:5], 1):
 #
 # During evaluation, the scorer processes each entry from human-labeled CSV dataset(s). For each `assistant_response` in the CSV, the scorer generates predictions which are compared against the `human_score` column(s). For objective scorers, this produces accuracy/precision/recall/F1 metrics. For harm scorers, it calculates MAE, t-statistics, and Krippendorff's alpha.
 #
-# Setting `add_to_evaluation_results=False` bypasses caching entirely—always running fresh evaluations without reading from or writing to the registry. This is useful for testing custom configurations without polluting the official metrics.
+# Set `update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE` to run a fresh evaluation
+# without updating the registry. The examples below use small packaged datasets.
 
 # %% [markdown]
 # ### Running an Objective Evaluation
@@ -279,9 +285,6 @@ from pyrit.score import (
 
 # Create a refusal scorer - uses the chat target to determine if responses are refusals
 refusal_scorer = SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
-
-# REAL usage would simply be:
-# metrics = await refusal_scorer.evaluate_async()
 
 # For demonstration, use a smaller evaluation file (normally you'd use the full dataset)
 # The evaluation_file_mapping tells the evaluator which human-labeled CSV files to use
@@ -313,17 +316,16 @@ from pyrit.score import LikertScalePaths, RegistryUpdateBehavior, SelfAskLikertS
 from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
 
-# Create a harm scorer using the hate speech Likert scale
+# Create a harm scorer using the hate speech Likert scale.
 likert_scorer = SelfAskLikertScorer.from_likert_scale(
-    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE.load()
+    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.HATE_SPEECH_SCALE.load()
 )
 
-# # Configure evaluation to use a small sample dataset
-# likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
-#     human_labeled_datasets_files=["harm/mini_hate_speech.csv"],
-#     result_file="harm/test_hate_speech_metrics.jsonl",
-#     harm_category="hate_speech",  # Required for harm evaluations
-# )
+likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
+    human_labeled_datasets_files=["harm/mini_hate_speech.csv"],
+    result_file="sample/test_hate_speech_metrics.jsonl",
+    harm_category="hate_speech",
+)
 
 # This can be called without parameters to update the registry
 metrics = await likert_scorer.evaluate_async(  # type: ignore
@@ -341,18 +343,18 @@ else:
 #
 # You can evaluate scorers against your own human-labeled datasets using `ScorerEvalDatasetFiles`:
 #
-# ```python
-# # Configure custom datasets
-# scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
-#     # Glob patterns relative to SCORER_EVALS_PATH
-#     human_labeled_datasets_files=["my_datasets/*.csv"],
-#     # Where to store results
-#     result_file="my_datasets/evaluation_metrics.jsonl",
-#     # Required for harm scorers, ignored for objective scorers
-#     harm_category="violence",
-# )
-# ```
-#
+# Paths are relative to `SCORER_EVALS_PATH`. This example selects the packaged sample;
+# replace its pattern with your dataset pattern when you run your own evaluation.
+# %%
+custom_mapping = ScorerEvalDatasetFiles(
+    human_labeled_datasets_files=["harm/mini_hate_speech.csv"],
+    result_file="sample/custom_hate_speech_metrics.jsonl",
+    harm_category="hate_speech",
+)
+likert_scorer.evaluation_file_mapping = custom_mapping
+print(likert_scorer.evaluation_file_mapping)
+
+# %% [markdown]
 # ### CSV Human Evaluation Files
 #
 # Many human scored dataset csv files are available in the `pyrit/datasets/scorer_evals/` directory. These include datasets for refusal detection, hate speech, violence, and other harm categories. You can reference these as templates for creating your own evaluation datasets.

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -33,7 +33,7 @@ from pydantic import Field
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
-from pyrit.models import AttackOutcome, AttackResult, AttackSeedGroup, ScoringExpectation
+from pyrit.models import AttackOutcome, AttackResult, AttackResultRole, AttackSeedGroup, ScoringExpectation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -191,6 +191,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
     DELEGATES_SCORING: ClassVar[bool] = True
 
+    RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
+
     CHILD_ATTACK_RESULT_IDS_KEY: str = "child_attack_result_ids"
     """Metadata key under which the per-child-attack result IDs are stored."""
 
@@ -248,16 +250,27 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> SequentialAttackResult:
         results: list[AttackResult] = []
+        child_ids: list[str] = []
+        context._error_result_metadata.update(
+            {
+                self.CHILD_ATTACK_RESULT_IDS_KEY: child_ids,
+                self.COMPLETION_POLICY_KEY: self._completion_policy.value,
+            }
+        )
 
-        for child_attack in self._child_attacks:
+        for attempt_index, child_attack in enumerate(self._child_attacks, start=1):
             labels = {**context.memory_labels, **dict(child_attack.memory_labels)}
+            # Each child shares the parent's attribution plus its own position.
+            attribution = replace(context._attribution, attempt_index=attempt_index) if context._attribution else None
             result = await self._run_child_attack_async(
                 child_attack=child_attack,
                 memory_labels=labels,
-                attribution=context._attribution,
+                attribution=attribution,
                 expectation=context.params.expectation,
+                child_result_ids=child_ids,
             )
             results.append(result)
+            child_ids.append(result.attack_result_id)
             if self._should_stop_after(result=result):
                 break
 
@@ -290,6 +303,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         *,
         child_attack: SequentialChildAttack,
         memory_labels: dict[str, str],
+        child_result_ids: list[str],
         attribution: AttackResultAttribution | None = None,
         expectation: ScoringExpectation | None = None,
     ) -> AttackResult:
@@ -312,6 +326,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 parent linkage.
             expectation (ScoringExpectation | None): Explicit scoring input forwarded unchanged.
                 Omission leaves the child's seed preparation and objective fallback in control.
+            child_result_ids (list[str]): This execution's ordered child links. A confirmed
+                persisted result from a failed dispatch is appended before its exception is re-raised.
 
         Returns:
             AttackResult: The ``AttackResult`` produced by the inner
@@ -331,12 +347,15 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             adversarial_chat=child_attack.adversarial_chat,
             objective_scorer=child_attack.objective_scorer,
             memory_labels=memory_labels,
+            return_partial_on_failure=True,
             attribution=attribution,
             **expectation_override,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]
         if executor_result.incomplete_objectives:
+            if executor_result.incomplete_result_ids and executor_result.incomplete_result_ids[0] is not None:
+                child_result_ids.append(executor_result.incomplete_result_ids[0])
             raise executor_result.incomplete_objectives[0][1]
         raise RuntimeError(  # pragma: no cover - defensive
             "AttackExecutor returned neither completed nor incomplete results."
