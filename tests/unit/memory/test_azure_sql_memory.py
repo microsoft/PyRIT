@@ -923,3 +923,12 @@ def test_init_prod_with_skip_schema_migration_still_checks():
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+def test_scenario_history_aggregate_uses_sql_server_json_value(memory_interface: AzureSQLMemory) -> None:
+    statement = memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()], plan_entry_ids=[uuid.uuid4()]
+    )
+    compiled = statement.compile(dialect=memory_interface.engine.dialect)
+    assert "json_value" in str(compiled).lower()
+    assert "$.result_role" in compiled.params.values()

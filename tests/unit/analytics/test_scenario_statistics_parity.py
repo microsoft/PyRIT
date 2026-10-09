@@ -26,6 +26,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultRole,
     AttackSeedGroup,
     ComponentIdentifier,
     OutcomeStatistics,
@@ -55,6 +56,7 @@ class _Attempt:
     attributed_seed_context: str | None = None
     attack_result_id: str | None = None
     seconds: int | None = None
+    result_role: AttackResultRole = AttackResultRole.UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -245,6 +247,15 @@ _HISTORIES = {
         plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
         attempts=[],
     ),
+    "role_aware_accounting": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_group_id="a", result_role=AttackResultRole.TARGET_FACING),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_group_id="a", result_role=AttackResultRole.TARGET_FACING),
+            _Attempt("attack", "A", AttackOutcome.ERROR, seed_group_id="a", result_role=AttackResultRole.TARGET_FACING),
+            _Attempt("attack", "A", AttackOutcome.SUCCESS, seed_group_id="a", result_role=AttackResultRole.ORCHESTRATION),
+        ],
+    ),
 }
 
 # Effective-unit success percentages each history must report everywhere (None: no completed unit).
@@ -266,6 +277,7 @@ _EXPECTED_OVERALL = {
     "identifier_only_then_attributed_only": 100,
     "display_groups": 50,
     "empty_history": None,
+    "role_aware_accounting": 100,
 }
 
 
@@ -297,6 +309,8 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
         if attempt.attributed_seed_context is not None:
             seed_group = _seed_group(attempt.objective, attempt.attributed_seed_context)
             attribution_data["seed_group_id"] = seed_group.logical_id
+        if attempt.result_role != AttackResultRole.UNKNOWN:
+            attribution_data["result_role"] = attempt.result_role.value
         atomic_attack_identifier = None
         if attempt.seed_context is not None:
             atomic_attack_identifier = AtomicAttackIdentifier.build(
@@ -350,6 +364,8 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert progress.summary.overall.succeeded == sdk.overall.succeeded
     assert progress.summary.overall.errors == sdk.overall.errors
     assert progress.summary.overall.outcomes == sdk.overall.outcomes
+    assert progress.summary.overall.producer_counts == sdk.overall.producer_counts
+    assert list_item.producer_counts == sdk.overall.producer_counts
 
     # Reports
     report = json.loads(await JsonScenarioResultPrinter().render_async(scenario_result))
