@@ -33,6 +33,8 @@ if TYPE_CHECKING:
     )
     from pyrit.registry.registry import InstanceHoldingRegistry, ParamBagRegistry, Registry
     from pyrit.registry.registry_metadata import RegistryMetadata
+    from pyrit.registry.scenario_preset_registry import ScenarioPresetRegistry
+    from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
     from pyrit.registry.tag_query import TagQuery
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
@@ -53,6 +55,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "InitializerRegistry": "pyrit.registry.components",
     "RegistryEntry": "pyrit.registry.instance_registry",
     "ScenarioMetadata": "pyrit.registry.components",
+    "ScenarioPresetConflictError": "pyrit.registry.scenario_preset_storage",
+    "ScenarioPresetRegistry": "pyrit.registry.scenario_preset_registry",
+    "ScenarioPresetStorage": "pyrit.registry.scenario_preset_storage",
     "ScenarioRegistry": "pyrit.registry.components",
     "ScorerRegistry": "pyrit.registry.components",
     "ScorerMetadata": "pyrit.registry.components",
