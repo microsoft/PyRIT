@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, cast, get_args, get_o
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SerializeAsAny, TypeAdapter, model_validator
 
 from pyrit.models.score._trace_validation import ToolName  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.text_matcher import TextMatcher  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from typing import Self
@@ -191,6 +192,13 @@ class ToolsCalled(Condition):
         if len(set(names)) != len(names):
             raise ValueError("ToolsCalled requires each tool name once.")
         return self
+
+
+class OutputMatches(Condition):
+    """The output satisfies the supplied text matcher."""
+
+    condition_type: Literal["output_matches"] = "output_matches"
+    matcher: TextMatcher
 
 
 class DivergesFromRepetition(Condition):

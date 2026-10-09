@@ -58,6 +58,7 @@ from pyrit.models import (
     SeedIdentifier,
     SeedObjective,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
     TargetIdentifier,
 )
@@ -549,6 +550,32 @@ class TestSeedEntry:
         seed = _make_seed_prompt(parameters=["param1", "param2"])
         entry = SeedEntry(entry=seed)
         assert entry.parameters == ["param1", "param2"]
+
+    def test_get_seed_record_preserves_stored_fields_without_generated_defaults(self) -> None:
+        seed = _make_seed_prompt(
+            value="{{ unchanged }}",
+            value_sha256="stored-hash",
+            parameters=["unchanged"],
+            metadata={"source_id": 7},
+            response_json_schema={"type": "object"},
+        )
+        entry = SeedEntry(entry=seed)
+        entry.sequence = None
+
+        record = entry.get_seed_record()
+
+        assert isinstance(record, SeedRecord)
+        assert record.id == seed.id
+        assert record.value == "{{ unchanged }}"
+        assert record.value_sha256 == "stored-hash"
+        assert record.parameters == ["unchanged"]
+        assert record.sequence is None
+        assert record.prompt_group_id is None
+        assert record.metadata == {"source_id": 7}
+        assert record.response_json_schema == {"type": "object"}
+        assert record.date_added == seed.date_added
+        assert record.added_by == seed.added_by
+        assert "is_jinja_template" not in record.model_dump()
 
     # ---- response_json_schema persistence ---------------------------------
 

@@ -125,6 +125,13 @@ class ContentEntryScorable(Scorable):
     data_type: PromptDataType = "text"
 
 
+class ConversationScorable(Scorable):
+    """The entire conversation at acquisition time; observations retain the exact snapshot."""
+
+    scorable_type: Literal["conversation"] = "conversation"
+    conversation_id: str = Field(min_length=1, pattern=r"\S")
+
+
 class TraceScorable(Scorable):
     """An exact trace scope supplied by the caller."""
 
@@ -204,7 +211,7 @@ class SurfaceScorable(Scorable):
 # ``scorable_type`` tag and Pydantic dispatches on it, so a new member is never mistaken for
 # an existing one and storage never depends on field shape.
 ScorableUnion = Annotated[
-    MessageScorable | ContentScorable | ContentEntryScorable | TraceScorable | SurfaceScorable,
+    MessageScorable | ContentScorable | ContentEntryScorable | ConversationScorable | TraceScorable | SurfaceScorable,
     Field(discriminator="scorable_type"),
 ]
 

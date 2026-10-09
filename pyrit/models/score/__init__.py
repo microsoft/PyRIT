@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         ContentWritten,
         DivergesFromRepetition,
         MatchesObjective,
+        OutputMatches,
         ToolCallRequirement,
         ToolsCalled,
     )
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     )
     from pyrit.models.score.observation import (
         Acquisition,
+        ConversationObservationPayload,
         Observation,
         ObservationPayload,
         ScorerTargetResponsePayload,
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
     from pyrit.models.score.scorable import (
         ContentEntryScorable,
         ContentScorable,
+        ConversationScorable,
         MessageScorable,
         Scorable,
         ScorableUnion,
@@ -56,6 +59,7 @@ if TYPE_CHECKING:
         UnvalidatedScore,
     )
     from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry
+    from pyrit.models.score.text_matcher import Contains, Equals, Regex, TextMatcher
     from pyrit.models.score.trace import (
         ToolExecution,
         TraceCoverage,
@@ -66,6 +70,13 @@ if TYPE_CHECKING:
     )
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "ConversationScorable": "pyrit.models.score.scorable",
+    "ConversationObservationPayload": "pyrit.models.score.observation",
+    "Contains": "pyrit.models.score.text_matcher",
+    "Equals": "pyrit.models.score.text_matcher",
+    "Regex": "pyrit.models.score.text_matcher",
+    "TextMatcher": "pyrit.models.score.text_matcher",
+    "OutputMatches": "pyrit.models.score.condition",
     "Acquisition": "pyrit.models.score.observation",
     "AnswerMatches": "pyrit.models.score.condition",
     "ComponentIdentifierField": "pyrit.models.score.score",
