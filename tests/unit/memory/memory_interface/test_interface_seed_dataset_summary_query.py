@@ -28,6 +28,20 @@ async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(
 
     def execute(session, statement, *args, **kwargs):
         result = original_execute(session, statement, *args, **kwargs)
+        
+        original_mappings = getattr(result, "mappings", None)
+        if original_mappings:
+            def mappings_wrapper():
+                m_result = original_mappings()
+                original_all = m_result.all
+                def all_rows():
+                    rows = original_all()
+                    captured_rows.extend(rows)
+                    return rows
+                m_result.all = all_rows
+                return m_result
+            result.mappings = mappings_wrapper
+
         original_all = result.all
 
         def all_rows():

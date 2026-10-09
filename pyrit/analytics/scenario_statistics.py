@@ -32,6 +32,8 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultRole,
+    AttackResultMetadata,
     ComponentIdentifier,
     ScenarioExecutionStatistics,
     ScenarioExecutionUnit,
@@ -57,6 +59,9 @@ class _CountableAttempt(Protocol):
 
     @property
     def total_retries(self) -> int: ...
+
+    @property
+    def result_role(self) -> AttackResultRole | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +139,7 @@ class ScenarioAttempt:
     timestamp: datetime
     attempt_id: str
     total_retries: int
+    result_role: AttackResultRole | None
 
 
 def load_scenario_run_plan(scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
@@ -240,6 +246,7 @@ def resolve_attack_result_attempt(
         timestamp=_timestamp_order_key(attack_result.timestamp),
         attempt_id=str(attack_result.attack_result_id),
         total_retries=retries if isinstance(retries, int) else 0,
+        result_role=AttackResultMetadata.from_metadata(metadata=attribution_data).result_role,
     )
 
 
@@ -285,6 +292,16 @@ def count_execution_units(
     succeeded = 0
     errors = 0
     retries = 0
+    target_facing_attempts = 0
+    target_facing_errors = 0
+    target_facing_retries = 0
+    orchestration_attempts = 0
+    orchestration_errors = 0
+    orchestration_retries = 0
+    unknown_attempts = 0
+    unknown_errors = 0
+    unknown_retries = 0
+
     for unit in units:
         attempts = attempts_by_unit.get(unit, ())
         if not attempts:
@@ -296,6 +313,42 @@ def count_execution_units(
             attempts_per_unit=[len(attempts)],
             persisted_retries=[attempt.total_retries for attempt in attempts],
         )
+
+        for attempt in attempts:
+            role = attempt.result_role
+            if role == AttackResultRole.TARGET_FACING:
+                target_facing_attempts += 1
+                target_facing_errors += int(attempt.outcome == AttackOutcome.ERROR)
+                target_facing_retries += max(attempt.total_retries, 0)
+            elif role == AttackResultRole.ORCHESTRATION:
+                orchestration_attempts += 1
+                orchestration_errors += int(attempt.outcome == AttackOutcome.ERROR)
+                orchestration_retries += max(attempt.total_retries, 0)
+            else:
+                unknown_attempts += 1
+                unknown_errors += int(attempt.outcome == AttackOutcome.ERROR)
+                unknown_retries += max(attempt.total_retries, 0)
+
+    from pyrit.models import ScenarioProducerCounts, ScenarioProducerCategoryCounts
+
+    producer_counts = ScenarioProducerCounts(
+        target_facing=ScenarioProducerCategoryCounts(
+            attempts=target_facing_attempts,
+            errors=target_facing_errors,
+            retries=target_facing_retries,
+        ),
+        orchestration=ScenarioProducerCategoryCounts(
+            attempts=orchestration_attempts,
+            errors=orchestration_errors,
+            retries=orchestration_retries,
+        ),
+        unknown=ScenarioProducerCategoryCounts(
+            attempts=unknown_attempts,
+            errors=unknown_errors,
+            retries=unknown_retries,
+        ),
+    )
+
     return ScenarioProgressCounts(
         completed=completed,
         planned=planned,
@@ -303,6 +356,7 @@ def count_execution_units(
         success_percentage=success_percentage(succeeded=succeeded, completed=completed),
         errors=errors,
         retries=retries,
+        producer_counts=producer_counts,
     )
 
 
@@ -318,6 +372,26 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
     completed = sum(item.completed for item in counts)
     succeeded = sum(item.succeeded for item in counts)
     planned = [item.planned for item in counts]
+    
+    from pyrit.models import ScenarioProducerCounts, ScenarioProducerCategoryCounts
+    producer_counts = ScenarioProducerCounts(
+        target_facing=ScenarioProducerCategoryCounts(
+            attempts=sum(item.producer_counts.target_facing.attempts for item in counts),
+            errors=sum(item.producer_counts.target_facing.errors for item in counts),
+            retries=sum(item.producer_counts.target_facing.retries for item in counts),
+        ),
+        orchestration=ScenarioProducerCategoryCounts(
+            attempts=sum(item.producer_counts.orchestration.attempts for item in counts),
+            errors=sum(item.producer_counts.orchestration.errors for item in counts),
+            retries=sum(item.producer_counts.orchestration.retries for item in counts),
+        ),
+        unknown=ScenarioProducerCategoryCounts(
+            attempts=sum(item.producer_counts.unknown.attempts for item in counts),
+            errors=sum(item.producer_counts.unknown.errors for item in counts),
+            retries=sum(item.producer_counts.unknown.retries for item in counts),
+        ),
+    )
+    
     return ScenarioProgressCounts(
         completed=completed,
         planned=sum(value for value in planned if value is not None) if all(v is not None for v in planned) else None,
@@ -325,6 +399,7 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
         success_percentage=success_percentage(succeeded=succeeded, completed=completed),
         errors=sum(item.errors for item in counts),
         retries=sum(item.retries for item in counts),
+        producer_counts=producer_counts,
     )
 
 

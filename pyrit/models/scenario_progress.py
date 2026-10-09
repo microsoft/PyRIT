@@ -9,7 +9,12 @@ from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary  # noqa: TC001
+from pyrit.models.catalog.scenario import (
+    ScenarioOverloadSummary,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
+    ScenarioTargetSummary,
+)  # noqa: TC001
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -191,6 +196,7 @@ class ScenarioProgressCounts(BaseModel):
     success_percentage: int | None = Field(default=None, ge=0, le=100)
     errors: int = Field(..., ge=0)
     retries: int = Field(..., ge=0)
+    producer_counts: ScenarioProducerCounts = Field(default_factory=ScenarioProducerCounts)
 
 
 class ScenarioExecutionUnit(BaseModel):

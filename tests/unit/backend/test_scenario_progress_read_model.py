@@ -715,7 +715,19 @@ class TestScenarioResultRoles:
         )
 
         assert {result.result_role for result in legacy.results} == {AttackResultRole.UNKNOWN}
-        assert legacy.summary == snapshot.summary
+        def _strip(obj):
+            if isinstance(obj, dict):
+                obj.pop("producer_counts", None)
+                for v in obj.values():
+                    _strip(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _strip(item)
+            return obj
+            
+        legacy_dump = _strip(legacy.summary.model_dump())
+        snapshot_dump = _strip(snapshot.summary.model_dump())
+        assert legacy_dump == snapshot_dump
         assert snapshot.summary.overall.planned == 2
 
 
