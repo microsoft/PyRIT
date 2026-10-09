@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions import InvalidJsonException
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.memory import MemoryInterface
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, MessageScorable, Score, ScoringExpectation
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     LlamaGuardCategory,
@@ -105,6 +106,38 @@ async def test_unsafe_response_preserves_categories(patch_central_database: None
         "violated_categories": "S1,S9",
         "raw_classifier_output": "unsafe\nS1,S9",
     }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("response_text, verdict", [("safe", False), ("unsafe\nS1,S9", True)])
+async def test_classifier_response_round_trips_async(
+    *, sqlite_instance: MemoryInterface, response_text: str, verdict: bool
+) -> None:
+    target = MockPromptTarget()
+    scorer = LlamaGuardScorer(chat_target=target)
+    message = await store_message_async(MessagePiece(role="assistant", original_value="scored content").to_message())
+    expectation = ScoringExpectation(objective="Assess safety")
+    response = MessagePiece(role="assistant", original_value=response_text).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]):
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation)
+
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    score = stored[0]
+    assert score.get_value() is verdict
+    assert score.score_category == ["llamaguard"]
+    assert score.score_metadata == {
+        "raw_classifier_output": response_text,
+        **({"violated_categories": "S1,S9"} if verdict else {}),
+    }
+    assert (
+        "violated categories: S1, S9" if verdict else "no configured safety categories were violated"
+    ) in score.score_rationale
+    assert score.scored_expectation == expectation
+    assert score.message_piece_id == message.get_piece().id
+    assert len(score.observation_ids) == 1
+    assert score == Score.model_validate_json(scores[0].model_dump_json())
 
 
 async def test_custom_policy_drives_prompt_and_parser(patch_central_database: None) -> None:

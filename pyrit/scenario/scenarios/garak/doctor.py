@@ -172,4 +172,5 @@ class Doctor(Scenario):
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             include_baseline=context.include_baseline,
+            technique_converters=self._technique_converters,
         )
