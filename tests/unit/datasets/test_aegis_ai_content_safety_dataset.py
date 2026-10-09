@@ -257,3 +257,9 @@ async def test_fetch_dataset_merges_repeated_prompts():
     assert dataset.seeds[0].metadata["aegis_violated_categories"] == (
         "Violence, Harassment, Criminal Planning/Confessions"
     )
+    assert set(dataset.seeds[0].harm_categories) == {
+        "VIOLENT_CONTENT",
+        "VIOLENT_THREATS",
+        "COORDINATION_HARM",
+        "HARASSMENT",
+    }
