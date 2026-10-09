@@ -18,8 +18,8 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
 from pyrit.score.response_handler import CallableResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
@@ -192,6 +192,7 @@ class WildGuardScorer(MessageTrueFalseScorer):
         label = _coerce_label(label)
 
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._label = label
         self._user_prompt = user_prompt
         self._prompt_template = _resolve_prompt_template(prompt_template=prompt_template)
@@ -199,7 +200,6 @@ class WildGuardScorer(MessageTrueFalseScorer):
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
-            chat_target=chat_target,
             message_resolver=_WildGuardMessageResolver(),
         )
 
@@ -263,21 +263,19 @@ class WildGuardScorer(MessageTrueFalseScorer):
         prompt = "\n".join(latest_user_turn)
         return prompt if prompt.strip() else None
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Score one response against the configured WildGuard label.
-
-        Args:
-            message_piece (MessagePiece): The model response to classify.
-            objective (str | None): Objective retained on the resulting score. It is not
-                included in the WildGuard request. Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A single true/false WildGuard score.
+            list[Score]: The scorer's verdict.
 
         Raises:
-            ValueError: If no user prompt can be found.
+            ValueError: If no user prompt is available.
         """
+        objective = expectation.objective if expectation else None
         response = message_piece.converted_value
         user_prompt = _RESOLVED_USER_PROMPT.get()
         if not user_prompt:
@@ -288,18 +286,21 @@ class WildGuardScorer(MessageTrueFalseScorer):
             user_prompt=user_prompt,
             prompt_template=self._prompt_template,
         )
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=None,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=CallableResponseHandler(
                 parser=partial(parse_wildguard_response, label=self._label, scope=str(message_piece.id))
             ),
-            value=request_prompt.value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            category=self.SCORE_CATEGORY,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=None,
+                    value=request_prompt.value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    category=self.SCORE_CATEGORY,
+                )
+            ),
         )
         return [
             unvalidated_score.to_score(
