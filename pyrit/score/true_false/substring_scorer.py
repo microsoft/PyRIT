@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
+from pyrit.common.text_matching import ExactTextMatching, TextMatching
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -56,10 +56,12 @@ class SubStringScorer(MessageTrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        get_matcher_params = getattr(self._text_matcher, "get_identifier_params", None)
         return self._create_identifier(
             params={
                 "substring": self._substring,
                 "text_matcher": self._text_matcher.__class__.__name__,
+                "text_matcher_params": get_matcher_params() if callable(get_matcher_params) else None,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )

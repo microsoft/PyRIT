@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import logging
 import uuid
 from abc import abstractmethod
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -34,7 +35,8 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_scores,
@@ -62,6 +64,18 @@ logger = logging.getLogger(__name__)
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
 ConditionT = TypeVar("ConditionT", bound=Condition)
+
+
+class _SelfContainedJudgeTargetRequirements(TargetRequirements):
+    def validate(self, *, target: PromptTarget) -> None:
+        requirements = CHAT_TARGET_REQUIREMENTS
+        if not target.capabilities.supports_editable_history:
+            requirements = replace(
+                requirements,
+                required=requirements.required - {CapabilityName.EDITABLE_HISTORY},
+                native_required=requirements.native_required | {CapabilityName.SYSTEM_PROMPT},
+            )
+        requirements.validate(target=target)
 
 
 async def _legacy_score_scorable_async(
@@ -157,9 +171,7 @@ class Scorer(Identifiable, abc.ABC):
     evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     #: Capability requirements placed on the scorer's chat target (if any).
-    #: Subclasses that use a chat target should override this and pass the
-    #: target to ``super().__init__(chat_target=...)`` so the base class can
-    #: validate it.
+    #: Concrete target-backed scorers validate these through their target collaborator.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     #: The single required criterion for a leaf, or None for constructor-configured scoring.
@@ -206,8 +218,8 @@ class Scorer(Identifiable, abc.ABC):
         Initialize the Scorer.
 
         Args:
-            chat_target (PromptTarget | None): Chat target used by the scorer, if any. When
-                provided, it is validated against ``TARGET_REQUIREMENTS``.
+            chat_target (PromptTarget | None): Deprecated validation-only compatibility parameter,
+                removed in 1.4.0. Does not store a target or create a judge.
             validator (ScorerPromptValidator | None): Deprecated. Message validation moved to
                 ``MessageScorer``; a value passed here is kept so pre-2.0 subclasses keep working.
         """
@@ -220,6 +232,11 @@ class Scorer(Identifiable, abc.ABC):
             if getattr(self, "_validator", None) is None:
                 self._validator = validator
         if chat_target is not None:
+            print_deprecation_message(
+                old_item="Scorer.__init__(chat_target=...)",
+                new_item="TargetJudge(target=..., requirements=...)",
+                removed_in="1.4.0",
+            )
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     @property
@@ -325,7 +342,8 @@ class Scorer(Identifiable, abc.ABC):
         Return the chat target used by this scorer, or None if it doesn't use one.
 
         Subclasses that wrap other scorers (e.g. inverters, composites) should
-        override to delegate to their inner scorer(s).
+        override to delegate to their inner scorer(s). Batch scoring and evaluation
+        use this target to validate rate-limit settings.
 
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
@@ -519,6 +537,8 @@ class Scorer(Identifiable, abc.ABC):
         Each root receives the original scorable and complete expectation through its public
         ``score_async`` method. Each root is validated independently before any scorer runs.
         This does not apply message-specific evidence policies.
+        If a root fails or is cancelled, unfinished roots are cancelled and drained before
+        the error propagates. Scores persisted by already-completed roots are retained.
 
         Args:
             scorable (Scorable): The evidence each scorer acquires.
@@ -540,13 +560,11 @@ class Scorer(Identifiable, abc.ABC):
         if len(roles) != len(roots):
             raise ValueError("scorer_roles must have one entry per scorer.")
         Scorer.validate_expectation_for_scorers(scorers=roots, expectation=expectation)
-        return await asyncio.gather(
-            *(
-                Scorer._score_with_context_async(
-                    scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
-                )
-                for scorer, role in zip(roots, roles, strict=True)
+        return await gather_with_cleanup_async(
+            Scorer._score_with_context_async(
+                scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
             )
+            for scorer, role in zip(roots, roles, strict=True)
         )
 
     @staticmethod
@@ -1197,11 +1215,10 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Some scorers do not have an associated prompt target; batch helper validates RPM only when present
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=task_func,
             task_arguments=["scorable", "expectation"],
-            prompt_target=cast("PromptTarget", prompt_target),
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[list(scorables), resolved_expectations],
             **task_kwargs,
@@ -1234,11 +1251,10 @@ class Scorer(Identifiable, abc.ABC):
         if len(image_paths) == 0:
             return []
 
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
             task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
-            prompt_target=prompt_target,
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )

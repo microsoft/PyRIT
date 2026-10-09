@@ -21,10 +21,12 @@ async def runtime_readiness_async(request: Request) -> dict[str, str | bool]:
         dict[str, str | bool]: Lightweight runtime readiness.
     """
     runtime = getattr(request.app.state, "runtime_lifecycle", None)
+    if runtime is None:
+        return {"ready": False, "state": "failed", "generation": ""}
     return {
-        "ready": runtime is not None and runtime.state == "ready",
-        "state": runtime.state if runtime else "failed",
-        "generation": runtime.generation if runtime else "",
+        "ready": runtime.reported_state == "ready",
+        "state": runtime.reported_state,
+        "generation": runtime.generation,
     }
 
 

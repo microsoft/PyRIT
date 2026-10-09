@@ -161,6 +161,10 @@ class TestWordLevelConverterSeparator:
         result = await converter.convert_async(prompt="alpha,beta,gamma")
         assert result.output_text == "ALPHA,beta,GAMMA"
 
+    def test_empty_separator_raises_value_error(self):
+        with pytest.raises(ValueError, match="word_split_separator"):
+            SeparatorWordLevelConverter(word_split_separator="")
+
 
 @pytest.mark.parametrize("prompt", ["", "hello world"])
 @pytest.mark.parametrize("reject", [False, True])

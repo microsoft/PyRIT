@@ -3,12 +3,38 @@
 
 """Shared attack fixtures for backend service tests."""
 
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+from pyrit.backend.models.message_sends import MessageSendState, MessageSendStatus
+from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.memory import MemoryInterface
 from pyrit.models import AtomicAttackIdentifier, AttackOutcome, AttackResult, ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
+
+
+async def _settle_send_async(
+    *, service: MessageSendService, status: MessageSendStatus, timeout_seconds: float = 10
+) -> MessageSendStatus:
+    """Wait for a terminal snapshot without cancelling the send on timeout."""
+    async with asyncio.timeout(timeout_seconds):
+        while status.state not in (MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED):
+            status = await service.get_status_async(
+                attack_result_id=status.attack_result_id, send_id=status.send_id, wait_ms=1000
+            )
+    return status
+
+
+@asynccontextmanager
+async def message_send_lifecycle_async(service: MessageSendService) -> AsyncGenerator[None, None]:
+    """Drain owned sends before the enclosing mocks and memory fixtures close."""
+    try:
+        yield
+    finally:
+        await service.shutdown_async()
 
 
 def make_attack_result(

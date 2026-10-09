@@ -425,6 +425,9 @@ export const useMessageListStyles = makeStyles({
     padding: '2px',
     ...mobileTouchTarget,
   },
+  copyMenuItem: {
+    ...mobileTouchTargetHeight,
+  },
   reasoningContainer: {
     backgroundColor: tokens.colorNeutralBackground1,
     border: `1px solid ${tokens.colorNeutralStroke2}`,

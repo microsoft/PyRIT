@@ -103,6 +103,12 @@ async function mockBackendAPIs(page: Page) {
 
       await fulfillMessageSend(route, makeAddMessageResponse(
         "e2e-attack-001", MOCK_CONVERSATION_ID, [...accumulatedMessages],
+        null, {
+          target: {
+            target_type: "OpenAIChatTarget", identifier_hash: "mock-openai-chat-hash",
+            endpoint: "https://mock.openai.com", model_name: "gpt-4o-mock",
+          },
+        },
       ));
     } else if (route.request().method() === "GET") {
       await route.fulfill({
