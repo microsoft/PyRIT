@@ -46,14 +46,20 @@ checkout. PyPI Docker builds preserve and validate the installed wheel's stamp, 
 replace it with the Docker repository commit. Pre-guarded PyPI wheels intentionally
 fail this validation; use the coordinated release, not an older fallback.
 
-Before enabling the PyPI image path, publish the coordinated wheel/sdist and set the
-repository Actions variable `PYRIT_PYPI_VERSION` to that exact version. Alternatively,
-pass `pypiVersion` when manually running the Docker workflow; this supports explicitly
-selected prereleases as well as stable releases. The workflow fails if no version is
-configured, and the Docker build rejects an unguarded wheel. There is no automatic
-"latest" selection or older-version fallback. Run the PyPI image build and smoke tests
-successfully before marking the release ready; configuring a version alone is not proof
-that matching artifacts are available.
+Manually running the Docker workflow automatically resolves PyPI's latest stable,
+non-yanked release at execution time and tests that exact version. To validate an
+explicit published release, including a prerelease, pass `pypiVersion`. Both paths
+require valid PyPI metadata and non-yanked published distributions, with no
+older-version fallback. PyPI checks are temporarily manual-only; after publishing
+and validating `1.2.0`, restore automatic checks on `main` as described in step 10.
+
+Publish a coordinated wheel/sdist before expecting the PyPI image path to pass.
+If the latest release predates compatibility stamping, selection still identifies
+that release, but the Docker build fails with a diagnostic naming the version and
+the missing metadata prerequisite. Do not skip that release or manufacture stamps
+to make the checks pass. Run the selected release's image build and smoke tests
+successfully before marking the release ready; selection alone is not proof that
+matching artifacts are available.
 
 These checks do not establish dependency equality or distinguish uncommitted edits.
 
@@ -457,6 +463,19 @@ where the changes are:
 
 The PR should be made from your fork and should be a different branch than the releases branch you created earlier,
 named after the next development version, for example `1.2.0.dev0`.
+
+### Restore automatic PyPI Docker checks after 1.2.0
+
+Complete [#3007](https://github.com/microsoft/PyRIT/issues/3007) after publishing
+`1.2.0`. First run `docker_build` manually with `pypiVersion=1.2.0`, then without an
+override to exercise latest-release selection. Confirm the published package has
+matching Python/frontend stamps and that the production image, import, GUI, and
+Jupyter checks pass without relaxing compatibility validation.
+
+Restore `main`-push eligibility on `build-and-test-pypi` and all four `pypi-*-check`
+gates while retaining manual dispatches. Update the event-condition tests and
+temporary manual-only documentation, then verify the restored checks on `main`
+before closing the issue.
 
 ### Update the documentation site versions
 

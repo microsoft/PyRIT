@@ -38,6 +38,9 @@
 # - a **`AttackTechniqueSeedGroup`** (`seed_technique`) of general-technique seeds, which can carry a
 #   **system prompt**, a **prepended_conversation**, a **simulated_conversation**
 #   (`SeedSimulatedConversation`), and a **next_message**;
+# - a **score-feedback override** (`use_score_as_feedback`): the scenario still supplies the scorer,
+#   but the technique can decide whether its attacker sees the scorer's rationale each turn (the
+#   `goat` technique turns this off to match its paper);
 # - the selection metadata that lets a scenario pick it: its `name` and `technique_tags`.
 #
 # The objective is *not* part of the technique — it stays separate and is supplied by the dataset at

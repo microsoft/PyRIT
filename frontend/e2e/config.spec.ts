@@ -456,8 +456,30 @@ test.describe("Create Target Dialog", () => {
     await expect(page.getByText("OpenAIChatTarget")).toBeVisible();
   });
 
-  test("should show validation errors for empty required fields", async ({ page }) => {
-    await page.route(/\/api\/targets/, async (route) => {
+  test("should require an endpoint and validate the identity host", async ({ page }) => {
+    await page.route(/\/api\/targets\/types(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              target_type: "OpenAIChatTarget",
+              parameters: [
+                {
+                  name: "endpoint",
+                  type_name: "str",
+                  required: true,
+                  default: null,
+                },
+              ],
+              supported_auth_modes: ["api_key", "identity"],
+            },
+          ],
+        }),
+      });
+    });
+    await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
       await route.fulfill(mockTargetsList([]));
     });
 
@@ -467,25 +489,30 @@ test.describe("Create Target Dialog", () => {
     await page.getByRole("button", { name: /new target/i }).click();
     await expect(page.getByText("Create New Target")).toBeVisible();
 
-    // The Create Target button should be disabled when fields are empty
-    const createBtn = page.locator('[role="dialog"]').getByRole("button", { name: "Create Target" });
+    const dialog = page.locator('[role="dialog"]');
+    const createBtn = dialog.getByRole("button", { name: "Create Target" });
     await expect(createBtn).toBeDisabled();
 
-    // Fill only endpoint (no target type) — button should still be disabled
-    await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://test.com");
-    await expect(createBtn).toBeDisabled();
-
-    // Clear endpoint, select type — button should still be disabled
-    await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("");
     await selectTargetType(
       page,
-      page.locator('[role="dialog"]'),
+      dialog,
       "OpenAIChatTarget"
     );
+
+    // Every rendered endpoint field is required.
+    await expect(createBtn).toBeDisabled();
+    await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
+      "https://api.openai.com"
+    );
+    await expect(createBtn).toBeEnabled();
+
+    // Identity authentication additionally requires a recognized Azure host.
+    await dialog.getByRole("radio", { name: /Identity-based/ }).click();
     await expect(createBtn).toBeDisabled();
 
-    // Fill both — button should be enabled
-    await page.locator('[role="dialog"]').getByPlaceholder("https://your-resource.openai.azure.com/").fill("https://test.com");
+    await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
+      "https://test.openai.azure.com"
+    );
     await expect(createBtn).toBeEnabled();
   });
 });

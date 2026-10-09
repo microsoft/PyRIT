@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.score.observation.conversation_source import ConversationSource
     from pyrit.score.observation.execution import NonReplayableObservationError
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
 
 _LAZY_EXPORTS: dict[str, str] = {
+    "ConversationSource": "pyrit.score.observation.conversation_source",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
     "NonReplayableObservationError": "pyrit.score.observation.execution",
