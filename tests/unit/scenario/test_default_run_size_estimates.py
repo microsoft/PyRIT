@@ -517,7 +517,15 @@ async def test_web_injection_capped_techniques_use_generation_limits_async(
                 WebInjectionTechnique.TaskXSS,
             ],
             "include_baseline": baseline,
-            "dataset_config": DatasetAttackConfiguration(dataset_names=["missing"], max_dataset_size=dataset_limit),
+            # The selected techniques need these datasets; the estimate never reads them.
+            "dataset_config": DatasetAttackConfiguration(
+                dataset_names=[
+                    WebInjection.DATASET_EXAMPLE_DOMAINS,
+                    WebInjection.DATASET_NORMAL_INSTRUCTIONS,
+                    WebInjection.DATASET_WEB_HTML_JS,
+                ],
+                max_dataset_size=dataset_limit,
+            ),
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
