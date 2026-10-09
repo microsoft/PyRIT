@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlencode
 
 import pytest
 from pydantic import ValidationError
@@ -807,17 +808,14 @@ class TestPersistBase64Pieces:
         for serializer in serializers:
             serializer.save_b64_image_async.assert_awaited_once()
 
-    @pytest.mark.parametrize(
-        ("converted_value", "expected_value"),
-        [
-            ("/api/media?path=preview.png", "preview.png"),
-            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
-            ("preview.png", "preview.png"),
-        ],
-    )
+    @pytest.mark.parametrize("origin", ["reference", "url", "local"])
     async def test_converted_media_references_are_not_repersisted_async(
-        self, *, converted_value: str, expected_value: str
+        self, *, origin: str, managed_media_path: Path
     ) -> None:
+        expected_value = "https://example.com/preview.png?token=example" if origin == "url" else str(managed_media_path)
+        converted_value = (
+            f"/api/media?{urlencode({'path': expected_value})}" if origin == "reference" else expected_value
+        )
         request = AddMessageRequest(
             pieces=[
                 MessagePieceRequest(
@@ -829,10 +827,7 @@ class TestPersistBase64Pieces:
             send=False,
             target_conversation_id="test-id",
         )
-        with (
-            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
-            patch("pyrit.backend.services.message_send_service.data_serializer_factory") as factory,
-        ):
+        with patch("pyrit.backend.services.message_send_service.data_serializer_factory") as factory:
             await MessageSendService._persist_base64_pieces_async(request)
 
         assert request.pieces[0].original_value == "source"
@@ -1103,14 +1098,14 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
 
-    async def test_media_reference_is_resolved_without_persistence(self, message_send_service) -> None:
+    async def test_media_reference_is_resolved_without_persistence(self, *, managed_media_path: Path) -> None:
         """Local media URLs are converted back to their decoded file paths."""
         request = AddMessageRequest(
             role="user",
             pieces=[
                 MessagePieceRequest(
                     data_type="image_path",
-                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                    original_value=f"/api/media?{urlencode({'path': str(managed_media_path)})}",
                 ),
             ],
             send=False,
@@ -1120,14 +1115,13 @@ class TestPersistBase64Pieces:
         with patch("pyrit.backend.services.message_send_service.data_serializer_factory") as factory:
             await MessageSendService._persist_base64_pieces_async(request)
 
-        assert request.pieces[0].original_value == "/tmp/image.png"
-        assert request.pieces[0].converted_value == "/tmp/image.png"
+        assert request.pieces[0].original_value == str(managed_media_path)
+        assert request.pieces[0].converted_value == str(managed_media_path)
         factory.assert_not_called()
 
-    async def test_existing_file_is_kept_without_persistence(self, message_send_service, tmp_path: Path) -> None:
+    async def test_existing_file_is_kept_without_persistence(self, *, managed_media_path: Path) -> None:
         """An existing path remains the canonical original and converted value."""
-        media_path = tmp_path / "image.png"
-        media_path.write_bytes(b"image")
+        media_path = managed_media_path
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
@@ -2605,7 +2599,19 @@ class TestExactPreviewSend:
         converted_value: str,
         expected_original: str,
         expected_final: str,
+        managed_media_path: Path,
     ) -> None:
+        mock_memory.results_path = str(managed_media_path.parent.parent)
+        if original_type.endswith("_path"):
+            original_value = f"/api/media?{urlencode({'path': str(managed_media_path)})}"
+            expected_original = str(managed_media_path)
+        if converted_type.endswith("_path"):
+            converted_path = managed_media_path.with_name(
+                "preview.wav" if converted_type == "audio_path" else "preview.png"
+            )
+            converted_path.write_bytes(b"preview")
+            converted_value = f"/api/media?{urlencode({'path': str(converted_path)})}"
+            expected_final = str(converted_path)
         mock_memory.get_attack_results_async.return_value = [make_attack_result(conversation_id="test-id")]
         preview_converter = MagicMock(spec=Converter)
         preview_converter.get_identifier.return_value = ComponentIdentifier(
@@ -2713,6 +2719,46 @@ class TestExactPreviewSend:
             "second",
             "first",
         ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLocalMediaInputs:
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("field", ["original_value", "converted_value"])
+    async def test_rejects_unmanaged_media_before_send_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool, field: str
+    ) -> None:
+        path = tmp_path / "outside.png"
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        request = AddMessageRequest(
+            target_conversation_id="test-id",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value=value if field == "original_value" else str(managed_media_path),
+                    converted_value=value if field == "converted_value" else str(managed_media_path),
+                )
+            ],
+        )
+        service = MessageSendService(scheduler=ManualSendScheduler())
+        target = MockPromptTarget()
+        with (
+            patch.object(target, "send_prompt_async", new_callable=AsyncMock) as send,
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            await service._send_and_store_message_async(
+                conversation_id="test-id",
+                target=target,
+                request=request,
+                sequence=0,
+                request_converter_configurations=[],
+                response_converter_configurations=[],
+                preconverted_indexes=set(),
+                applied_converter_identifiers={},
+            )
+
+        send.assert_not_awaited()
 
 
 def _submission(
