@@ -248,7 +248,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
   bootstrap-history identity, replay, or branching state.
-- HTTP targets and `LiteLLMChatTarget` can propagate a separate trace context for each send. `TargetTraceConfig` controls this
+- HTTP targets, `LiteLLMChatTarget`, and `WebSocketCopilotTarget` can propagate a separate trace context for each send. `TargetTraceConfig` controls this
   behavior, is off by default, and can use a caller-owned tracer. Enable it only for an endpoint that
   is known to accept W3C trace context. Targets record request trace metadata; the prompt normalizer
   persists it. Outbound request metadata is separate from chat role, so missing trace
