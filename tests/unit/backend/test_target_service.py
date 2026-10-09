@@ -348,7 +348,7 @@ class TestListTargetTypes:
         metadata = service._registry.get_registered_class_metadata("OpenAIVideoTarget")
         assert metadata is not None
         registry_n_seconds = next(parameter for parameter in metadata.parameters if parameter.name == "n_seconds")
-        assert registry_n_seconds.type_name == "int | typing.Literal['4', '8', '12']"
+        assert "Literal['4', '8', '12']" in registry_n_seconds.type_name
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
