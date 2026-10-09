@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ContentScorable,
     ContentWritten,
+    MessagePiece,
     MessageScorable,
     ScoringExpectation,
     ScoringScope,
@@ -28,6 +31,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import HTTPTarget
 from pyrit.score import FileWriteScorer, LocalFileSurfaceSource, NonReplayableObservationError
+from pyrit.score.observation import local_file_surface_source as source_module
 from pyrit.score.true_false.file_write_scorer import match_content_written
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -218,6 +222,146 @@ async def test_truncation_keeps_a_prefix_cut_inside_a_multibyte_character(tmp_pa
     assert (entry.content, entry.content_truncated, entry.size_bytes) == ("ab", True, 6)
 
 
+async def test_unlistable_directory_leaves_the_verdict_undetermined_async(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory that cannot be listed never proves the file is absent."""
+    _write(tmp_path, "data/nested/out.txt", "exfiltrated")
+    denied = tmp_path / "data" / "nested"
+    real_scandir = source_module._scandir
+
+    def scandir(path: Path):  # type: ignore[no-untyped-def]
+        if Path(path) == denied:
+            raise PermissionError("denied")
+        return real_scandir(path)
+
+    monkeypatch.setattr(source_module, "_scandir", scandir)
+    scorable = SurfaceScorable(uri="/data/**/*", match="glob")
+
+    observation = await LocalFileSurfaceSource(root=tmp_path).acquire_async(scorable=scorable)
+
+    assert observation.acquisition is Acquisition.PARTIAL
+    assert "listing_failed" in observation.payload.coverage.reasons
+    score = (
+        await FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path)).score_async(
+            scorable=scorable, expectation=_expectation("/data/**/*", match="glob", contains="exfiltrated")
+        )
+    )[0]
+    assert score.status.value == "undetermined"
+
+
+def _count_reads(monkeypatch: pytest.MonkeyPatch, *, delay: float = 0.0) -> list[int]:
+    """Record every chunk the source reads, so a test can check work actually performed."""
+    sizes: list[int] = []
+    real_read = source_module._read_chunk
+
+    def read(fd: int, size: int) -> bytes:
+        if delay:
+            import time
+
+            time.sleep(delay)
+        chunk = real_read(fd, size)
+        sizes.append(len(chunk))
+        return chunk
+
+    monkeypatch.setattr(source_module, "_read_chunk", read)
+    return sizes
+
+
+async def test_read_budget_bounds_the_bytes_read_and_drops_the_digest_async(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, "data/big.txt", "x" * 1_000_000)
+    reads = _count_reads(monkeypatch)
+
+    observation = await LocalFileSurfaceSource(root=tmp_path, max_content_bytes=8, max_read_bytes=1000).acquire_async(
+        scorable=SurfaceScorable(uri="/data/big.txt")
+    )
+
+    assert sum(reads) == 1000
+    assert observation.acquisition is Acquisition.PARTIAL
+    assert "read_limit_exceeded" in observation.payload.coverage.reasons
+    (entry,) = observation.payload.entries
+    assert (entry.size_bytes, entry.sha256, entry.content, entry.content_truncated) == (1_000_000, None, "x" * 8, True)
+
+
+async def test_full_read_within_budget_keeps_the_digest_async(tmp_path: Path) -> None:
+    _write(tmp_path, "data/out.txt", "hello")
+
+    observation = await LocalFileSurfaceSource(root=tmp_path, max_read_bytes=5).acquire_async(
+        scorable=SurfaceScorable(uri="/data/out.txt")
+    )
+
+    (entry,) = observation.payload.entries
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert entry.sha256 is not None
+
+
+async def test_listing_budget_bounds_the_entries_examined_async(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for index in range(20):
+        _write(tmp_path, f"data/{index:02}.txt")
+    examined = 0
+    real_scandir = source_module._scandir
+
+    class Counting:
+        def __init__(self, inner):  # type: ignore[no-untyped-def]
+            self._inner = inner
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *exc):  # type: ignore[no-untyped-def]
+            self._inner.close()
+
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            nonlocal examined
+            for entry in self._inner:
+                examined += 1
+                yield entry
+
+    monkeypatch.setattr(source_module, "_scandir", lambda path: Counting(real_scandir(path)))
+
+    observation = await LocalFileSurfaceSource(root=tmp_path, max_files=1, max_listed_entries=5).acquire_async(
+        scorable=SurfaceScorable(uri="/data/*", match="glob")
+    )
+
+    assert examined <= 6  # the root's single entry plus at most five in data/
+    assert observation.acquisition is Acquisition.PARTIAL
+    assert "listing_limit_exceeded" in observation.payload.coverage.reasons
+
+
+async def test_file_limit_stops_collecting_candidates_async(tmp_path: Path) -> None:
+    for name in ("a", "b", "c"):
+        _write(tmp_path, f"data/{name}/out.txt")
+
+    observation = await LocalFileSurfaceSource(root=tmp_path, max_files=1).acquire_async(
+        scorable=SurfaceScorable(uri="/data/*/out.txt", match="glob")
+    )
+
+    assert [entry.uri for entry in observation.payload.entries] == ["/data/a/out.txt"]
+    assert "file_limit_exceeded" in observation.payload.coverage.reasons
+
+
+async def test_cancellation_stops_the_worker_async(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write(tmp_path, "data/big.txt", "x" * (1 << 22))
+    reads = _count_reads(monkeypatch, delay=0.01)
+    source = LocalFileSurfaceSource(root=tmp_path, max_read_bytes=1 << 22)
+
+    task = asyncio.create_task(source.acquire_async(scorable=SurfaceScorable(uri="/data/big.txt")))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.1)
+    settled = len(reads)
+    await asyncio.sleep(0.2)
+
+    assert len(reads) == settled
+    assert settled < (1 << 22) // (1 << 16)
+
+
 def test_source_rejects_non_positive_limits(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         LocalFileSurfaceSource(root=tmp_path, max_files=0)
@@ -355,6 +499,37 @@ async def test_missing_condition_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises((TypeError, ValueError, RuntimeError), match="ContentWritten"):
         await scorer.score_async(scorable=SurfaceScorable(uri="/data/out.txt"), expectation=wrong)
+
+
+async def _stored_piece_async(memory: SQLiteMemory, conversation_id: str) -> MessagePiece:
+    piece = MessagePiece(role="assistant", original_value="done", conversation_id=conversation_id)
+    await memory.add_message_to_memory_async(request=piece.to_message())
+    return piece
+
+
+async def test_message_reference_with_a_missing_piece_is_rejected_async(
+    sqlite_instance: SQLiteMemory, tmp_path: Path
+) -> None:
+    stored = await _stored_piece_async(sqlite_instance, str(uuid.uuid4()))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+
+    with pytest.raises(RuntimeError):
+        await scorer.score_async(
+            scorable=MessageScorable(message_piece_ids=(stored.id, uuid.uuid4())), expectation=_expectation()
+        )
+
+
+async def test_message_reference_spanning_two_runs_is_rejected_async(
+    sqlite_instance: SQLiteMemory, tmp_path: Path
+) -> None:
+    first = await _stored_piece_async(sqlite_instance, str(uuid.uuid4()))
+    second = await _stored_piece_async(sqlite_instance, str(uuid.uuid4()))
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+
+    with pytest.raises(RuntimeError):
+        await scorer.score_async(
+            scorable=MessageScorable(message_piece_ids=(first.id, second.id)), expectation=_expectation()
+        )
 
 
 def test_negative_clock_skew_is_rejected(tmp_path: Path) -> None:

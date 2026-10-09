@@ -6,8 +6,14 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hashlib
 import logging
+import os
+import stat
+import sys
+import threading
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -27,6 +33,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _READ_CHUNK_BYTES = 1 << 16
+# Opening a FIFO for reading blocks until a writer appears. Non-blocking open lets the
+# type check run first; regular files ignore the flag.
+_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+
+
+class _FileLimitReachedError(Exception):
+    """Unwinds enumeration once more candidates exist than ``max_files`` allows."""
+
+
+class _AcquisitionCancelledError(Exception):
+    """Raised inside the worker thread once the awaiting coroutine was cancelled."""
+
+
+@dataclass
+class _Budget:
+    """Work one acquisition may still perform, plus the cancellation signal."""
+
+    cancel: threading.Event
+    listed_entries_left: int
+    read_bytes_left: int
+    reasons: list[str] = field(default_factory=list)
+
+    def check(self) -> None:
+        if self.cancel.is_set():
+            raise _AcquisitionCancelledError
 
 
 class LocalFileSurfaceSource:
@@ -35,8 +66,22 @@ class LocalFileSurfaceSource:
 
     The root is the directory the system under test writes into, such as a mounted sandbox
     workspace, and a scorable's ``uri`` is read relative to it: ``/data/out.txt`` is
-    ``<root>/data/out.txt``. Nothing outside the root is read, including through symbolic
-    links the system under test may have created.
+    ``<root>/data/out.txt``. The system under test controls that workspace, so every file
+    is confined by the handle actually opened: the source opens the file, asks the
+    operating system where that open handle lives, refuses it unless it is inside the root,
+    and reads size, timestamp and content from that same handle. Links or directories
+    swapped between enumeration and the read therefore cannot redirect the read outside
+    the root. A hard link to an outside file on the same volume is a genuine entry of the
+    root and is read as one.
+
+    A negative is only reported when it is proven. A directory that cannot be listed, a
+    budget that runs out, or a file that cannot be read in full becomes a coverage gap, so
+    the observation is partial and a missing match stays undetermined.
+
+    Work is bounded: ``max_listed_entries`` caps directory entries examined, ``max_files``
+    caps candidate files, and ``max_read_bytes`` caps bytes read and hashed across the
+    whole acquisition. Cancelling the awaiting coroutine stops the worker thread at its
+    next entry or chunk.
 
     Only the scope's ``window`` can be checked here, against each file's modification time.
     A file a run wrote with its original timestamp preserved, or one another process touched
@@ -45,7 +90,15 @@ class LocalFileSurfaceSource:
     so this source records in the observation's metadata that it did not apply them.
     """
 
-    def __init__(self, *, root: str | Path, max_files: int = 1000, max_content_bytes: int = 1_000_000) -> None:
+    def __init__(
+        self,
+        *,
+        root: str | Path,
+        max_files: int = 1000,
+        max_content_bytes: int = 1_000_000,
+        max_read_bytes: int = 16_000_000,
+        max_listed_entries: int = 100_000,
+    ) -> None:
         """
         Initialize bounded acquisition under one root directory.
 
@@ -53,15 +106,20 @@ class LocalFileSurfaceSource:
             root (str | Path): The directory scorable locations are read relative to.
             max_files (int): The most locations one glob scorable may cover.
             max_content_bytes (int): The most bytes of each file retained as text evidence.
+            max_read_bytes (int): The most bytes read and hashed across one acquisition. A
+                file cut short by this budget has no digest and leaves coverage incomplete.
+            max_listed_entries (int): The most directory entries one acquisition examines.
 
         Raises:
             ValueError: If a limit is not positive.
         """
-        if max_files < 1 or max_content_bytes < 1:
-            raise ValueError("max_files and max_content_bytes must be positive.")
+        if min(max_files, max_content_bytes, max_read_bytes, max_listed_entries) < 1:
+            raise ValueError("max_files, max_content_bytes, max_read_bytes and max_listed_entries must be positive.")
         self._root = Path(root)
         self._max_files = max_files
         self._max_content_bytes = max_content_bytes
+        self._max_read_bytes = max_read_bytes
+        self._max_listed_entries = max_listed_entries
 
     def get_identifier(self) -> ComponentIdentifier:
         """
@@ -73,10 +131,12 @@ class LocalFileSurfaceSource:
         return ComponentIdentifier.of(
             self,
             params={
-                "acquisition_version": 1,
+                "acquisition_version": 2,
                 "root": str(self._root),
                 "max_files": self._max_files,
                 "max_content_bytes": self._max_content_bytes,
+                "max_read_bytes": self._max_read_bytes,
+                "max_listed_entries": self._max_listed_entries,
             },
         )
 
@@ -92,17 +152,24 @@ class LocalFileSurfaceSource:
 
         Raises:
             ValueError: If the scorable names another surface or leaves the root.
+            asyncio.CancelledError: If the awaiting task is cancelled; the worker stops too.
         """
         if scorable.surface != "file":
             raise ValueError(f"LocalFileSurfaceSource reads the 'file' surface, not {scorable.surface!r}.")
         relative = PurePosixPath(scorable.uri.lstrip("/"))
         if ".." in relative.parts or not relative.parts:
             raise ValueError("A file surface locator must name a location inside the root.")
-        return await asyncio.to_thread(self._acquire, scorable, relative)
-
-    def _acquire(self, scorable: SurfaceScorable, relative: PurePosixPath) -> Observation:
+        cancel = threading.Event()
         try:
-            root = self._root.resolve(strict=True)
+            return await asyncio.to_thread(self._acquire, scorable, relative, cancel)
+        except asyncio.CancelledError:
+            # to_thread cannot interrupt its worker; the flag stops it at the next checkpoint.
+            cancel.set()
+            raise
+
+    def _acquire(self, scorable: SurfaceScorable, relative: PurePosixPath, cancel: threading.Event) -> Observation:
+        try:
+            root = Path(os.path.realpath(self._root, strict=True))
         except OSError:
             root = None
         if root is None or not root.is_dir():
@@ -110,69 +177,234 @@ class LocalFileSurfaceSource:
                 scorable=scorable, acquisition=Acquisition.UNAVAILABLE, reasons=("surface_root_unavailable",)
             )
 
-        reasons: list[str] = []
-        if scorable.match == "exact":
-            candidates = [root / relative] if (root / relative).is_symlink() or (root / relative).exists() else []
-        else:
-            candidates = sorted(
-                path for path in root.glob(str(relative)) if path.is_file() or (path.is_symlink() and not path.is_dir())
-            )
-            if len(candidates) > self._max_files:
-                reasons.append("file_limit_exceeded")
-                candidates = candidates[: self._max_files]
-
-        entries: list[SurfaceEntry] = []
-        excluded = 0
-        window = scorable.scope.window if scorable.scope is not None else None
-        for path in candidates:
-            location = "/" + path.relative_to(root).as_posix()
+        budget = _Budget(
+            cancel=cancel, listed_entries_left=self._max_listed_entries, read_bytes_left=self._max_read_bytes
+        )
+        try:
             if scorable.match == "exact":
-                location = scorable.uri
-            try:
-                target = path.resolve(strict=True)
-            except OSError:
-                reasons.append("dangling_link")
-                continue
-            if not target.is_relative_to(root):
-                reasons.append("link_outside_root")
-                continue
-            if not target.is_file():
-                reasons.append("not_a_file")
-                continue
-            try:
-                modified_at = datetime.fromtimestamp(target.stat().st_mtime, tz=UTC)
-                if window is not None and not window[0] <= modified_at <= window[1]:
-                    excluded += 1
-                    continue
-                entries.append(self._read(target=target, location=location, modified_at=modified_at))
-            except OSError as error:
-                logger.warning("Reading a surface location failed (%s).", type(error).__name__)
-                reasons.append("read_failed")
+                candidates = self._exact_candidate(root=root, relative=relative, budget=budget)
+            else:
+                candidates = self._glob_candidates(root=root, parts=relative.parts, budget=budget)
 
+            entries: list[SurfaceEntry] = []
+            excluded = 0
+            window = scorable.scope.window if scorable.scope is not None else None
+            for parts in candidates:
+                budget.check()
+                location = scorable.uri if scorable.match == "exact" else "/" + "/".join(parts)
+                entry = self._read_confined(root=root, parts=parts, location=location, window=window, budget=budget)
+                if isinstance(entry, SurfaceEntry):
+                    entries.append(entry)
+                elif entry == "excluded":
+                    excluded += 1
+        except _AcquisitionCancelledError:
+            logger.info("Surface acquisition stopped after cancellation.")
+            raise
+
+        reasons = tuple(dict.fromkeys(budget.reasons))
         return self._observation(
             scorable=scorable,
             acquisition=Acquisition.PARTIAL if reasons else Acquisition.COMPLETE,
-            reasons=tuple(dict.fromkeys(reasons)),
+            reasons=reasons,
             entries=tuple(entries),
             excluded=excluded,
         )
 
-    def _read(self, *, target: Path, location: str, modified_at: datetime) -> SurfaceEntry:
+    # --- enumeration ---------------------------------------------------------------------
+
+    def _exact_candidate(self, *, root: Path, relative: PurePosixPath, budget: _Budget) -> list[tuple[str, ...]]:
+        """
+        Decide whether the named location exists, without following it.
+
+        Returns:
+            list[tuple[str, ...]]: The location's parts, or nothing when it is proven absent.
+        """
+        budget.check()
+        try:
+            info = os.lstat(root.joinpath(*relative.parts))
+        except (FileNotFoundError, NotADirectoryError):
+            return []
+        except OSError:
+            # A parent that cannot be searched does not prove the file is absent.
+            budget.reasons.append("listing_failed")
+            return []
+        if stat.S_ISDIR(info.st_mode):
+            budget.reasons.append("not_a_file")
+            return []
+        return [relative.parts]
+
+    def _glob_candidates(self, *, root: Path, parts: tuple[str, ...], budget: _Budget) -> list[tuple[str, ...]]:
+        """
+        Enumerate files matching a glob pattern, recording every directory not fully searched.
+
+        ``**`` matches zero or more directories. Directory links are not descended into, since
+        their contents are outside this walk's confinement; they are reported as gaps.
+
+        Returns:
+            list[tuple[str, ...]]: Matching file locations, at most ``max_files``, sorted.
+        """
+        found: dict[tuple[str, ...], None] = {}
+
+        def walk(prefix: tuple[str, ...], index: int) -> None:
+            if index >= len(parts):
+                return
+            pattern = parts[index]
+            if pattern == "**":
+                walk(prefix, index + 1)
+            listing = self._list_directory(root=root, prefix=prefix, budget=budget)
+            if listing is None:
+                return
+            last = index == len(parts) - 1
+            for name, kind in listing:
+                if pattern == "**":
+                    if kind == "dir":
+                        walk((*prefix, name), index)
+                    continue
+                if not fnmatch.fnmatch(name, pattern):
+                    continue
+                if last:
+                    if kind == "dir":
+                        continue
+                    if (*prefix, name) not in found:
+                        if len(found) >= self._max_files:
+                            raise _FileLimitReachedError
+                        found[(*prefix, name)] = None
+                elif kind == "dir":
+                    walk((*prefix, name), index + 1)
+
+        try:
+            walk((), 0)
+        except _FileLimitReachedError:
+            # Stop enumerating as soon as one candidate more than the limit is seen.
+            budget.reasons.append("file_limit_exceeded")
+        return sorted(found)
+
+    def _list_directory(self, *, root: Path, prefix: tuple[str, ...], budget: _Budget) -> list[tuple[str, str]] | None:
+        """
+        List one directory as (name, kind) pairs, where kind is "dir", "file" or "link".
+
+        Returns:
+            list[tuple[str, str]] | None: Sorted entries, or None when the directory could not
+            be listed in full; that gap is recorded on the budget.
+        """
+        budget.check()
+        try:
+            iterator = _scandir(root.joinpath(*prefix))
+        except FileNotFoundError:
+            return []
+        except OSError:
+            budget.reasons.append("listing_failed")
+            return None
+        listing: list[tuple[str, str]] = []
+        try:
+            with iterator:
+                for entry in iterator:
+                    budget.check()
+                    if budget.listed_entries_left <= 0:
+                        budget.reasons.append("listing_limit_exceeded")
+                        return None
+                    budget.listed_entries_left -= 1
+                    if entry.is_symlink():
+                        if _link_is_directory(entry):
+                            budget.reasons.append("link_not_followed")
+                            continue
+                        kind = "link"
+                    else:
+                        kind = "dir" if entry.is_dir(follow_symlinks=False) else "file"
+                    listing.append((entry.name, kind))
+        except OSError:
+            budget.reasons.append("listing_failed")
+            return None
+        return sorted(listing)
+
+    # --- reading -------------------------------------------------------------------------
+
+    def _read_confined(
+        self,
+        *,
+        root: Path,
+        parts: tuple[str, ...],
+        location: str,
+        window: tuple[datetime, datetime] | None,
+        budget: _Budget,
+    ) -> SurfaceEntry | str | None:
+        """
+        Open one location, prove the open handle is inside the root, then read through it.
+
+        Returns:
+            SurfaceEntry | str | None: The entry, "excluded" when it falls outside the window,
+            or None when it was not read; the reason is recorded on the budget.
+
+        Raises:
+            _AcquisitionCancelledError: If the awaiting coroutine was cancelled.
+        """
+        path = root.joinpath(*parts)
+        try:
+            fd = os.open(path, _OPEN_FLAGS)
+        except FileNotFoundError:
+            budget.reasons.append("dangling_link" if os.path.islink(path) else "read_failed")
+            return None
+        except OSError:
+            budget.reasons.append("read_failed")
+            return None
+        try:
+            try:
+                opened = _final_path(fd)
+            except OSError:
+                budget.reasons.append("confinement_unverified")
+                return None
+            if not _is_within(opened, root):
+                budget.reasons.append("link_outside_root")
+                return None
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                budget.reasons.append("not_a_file")
+                return None
+            modified_at = datetime.fromtimestamp(info.st_mtime, tz=UTC)
+            if window is not None and not window[0] <= modified_at <= window[1]:
+                return "excluded"
+            return self._read_entry(fd=fd, location=location, info=info, modified_at=modified_at, budget=budget)
+        except _AcquisitionCancelledError:
+            raise
+        except OSError as error:
+            logger.warning("Reading a surface location failed (%s).", type(error).__name__)
+            budget.reasons.append("read_failed")
+            return None
+        finally:
+            os.close(fd)
+
+    def _read_entry(
+        self, *, fd: int, location: str, info: os.stat_result, modified_at: datetime, budget: _Budget
+    ) -> SurfaceEntry:
         digest = hashlib.sha256()
         retained = bytearray()
-        size = 0
-        with target.open("rb") as handle:
-            while chunk := handle.read(_READ_CHUNK_BYTES):
-                digest.update(chunk)
-                size += len(chunk)
-                if len(retained) < self._max_content_bytes:
-                    retained.extend(chunk[: self._max_content_bytes - len(retained)])
-        truncated = size > len(retained)
+        read = 0
+        complete = False
+        while True:
+            budget.check()
+            if budget.read_bytes_left <= 0:
+                # The budget ran out exactly at the recorded size: one byte confirms the end.
+                complete = read >= info.st_size and not _read_chunk(fd, 1)
+                break
+            chunk = _read_chunk(fd, min(_READ_CHUNK_BYTES, budget.read_bytes_left))
+            if not chunk:
+                complete = True
+                break
+            budget.read_bytes_left -= len(chunk)
+            digest.update(chunk)
+            read += len(chunk)
+            if len(retained) < self._max_content_bytes:
+                retained.extend(chunk[: self._max_content_bytes - len(retained)])
+        if not complete:
+            budget.reasons.append("read_limit_exceeded")
+        size = read if complete else max(info.st_size, read)
+        # A read stopped by the budget never proves the retained text is all there is.
+        truncated = not complete or size > len(retained)
         content = _decode_text(bytes(retained), truncated=truncated)
         return SurfaceEntry(
             uri=location,
             size_bytes=size,
-            sha256=digest.hexdigest(),
+            sha256=digest.hexdigest() if complete else None,
             modified_at=modified_at,
             content=content,
             content_truncated=truncated and content is not None,
@@ -206,6 +438,87 @@ class LocalFileSurfaceSource:
                 excluded_outside_scope=excluded,
             ),
         )
+
+
+# --- platform seams (module-level so tests can count or fault them) ---------------------------
+
+
+def _scandir(path: Path) -> os._ScandirIterator[str]:  # noqa: SLF001
+    return os.scandir(path)
+
+
+def _read_chunk(fd: int, size: int) -> bytes:
+    return os.read(fd, size)
+
+
+def _link_is_directory(entry: os.DirEntry[str]) -> bool:
+    try:
+        return entry.is_dir(follow_symlinks=True)
+    except OSError:
+        return False
+
+
+def _is_within(opened: str, root: Path) -> bool:
+    """
+    Compare normalized absolute paths; the root was resolved by the same operating system.
+
+    Returns:
+        bool: True when ``opened`` lies strictly inside ``root``.
+    """
+    opened_norm = os.path.normcase(os.path.normpath(opened))
+    root_norm = os.path.normcase(os.path.normpath(str(root)))
+    try:
+        return os.path.commonpath([opened_norm, root_norm]) == root_norm and opened_norm != root_norm
+    except ValueError:
+        # Different drives on Windows.
+        return False
+
+
+def _final_path(fd: int) -> str:
+    """
+    Return where an open file actually lives, as the operating system resolved it.
+
+    Returns:
+        str: The absolute path of the open handle.
+
+    Raises:
+        OSError: If the platform cannot report the path of an open handle.
+    """
+    if sys.platform == "win32":
+        return _final_path_windows(fd)
+    if sys.platform == "darwin":
+        import fcntl
+
+        buffer = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+        return os.fsdecode(buffer.split(b"\0", 1)[0])
+    proc = f"/proc/self/fd/{fd}"
+    if not os.path.exists(proc):
+        raise OSError("This platform cannot report the path of an open file.")
+    return os.readlink(proc)
+
+
+if sys.platform == "win32":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    _GetFinalPathNameByHandleW = ctypes.windll.kernel32.GetFinalPathNameByHandleW
+    _GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    _GetFinalPathNameByHandleW.restype = wintypes.DWORD
+
+    def _final_path_windows(fd: int) -> str:
+        handle = msvcrt.get_osfhandle(fd)
+        size = 32768
+        buffer = ctypes.create_unicode_buffer(size)
+        length = _GetFinalPathNameByHandleW(handle, buffer, size, 0)
+        if length == 0 or length >= size:
+            raise ctypes.WinError()
+        path = buffer.value
+        if path.startswith("\\\\?\\UNC\\"):
+            return "\\\\" + path[8:]
+        if path.startswith("\\\\?\\"):
+            return path[4:]
+        return path
 
 
 def _decode_text(data: bytes, *, truncated: bool) -> str | None:

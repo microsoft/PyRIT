@@ -19,6 +19,7 @@ from pyrit.models import (
     SurfaceObservationPayload,
     SurfaceScorable,
 )
+from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -155,11 +156,14 @@ class FileWriteScorer(TrueFalseScorer):
             ScoringScope: The attack's id when known, and the run's time window.
 
         Raises:
-            ValueError: If the scored message is not stored in a conversation.
+            ValueError: If the reference names missing pieces, pieces that do not form one
+                stored message, or a message outside a conversation.
         """
-        pieces = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
-        conversation_id = next((piece.conversation_id for piece in pieces if piece.conversation_id), None)
-        if conversation_id is None:
+        # The resolver rejects missing ids and pieces from more than one message, so the run
+        # chosen below is the one run the whole reference belongs to.
+        message = await MessageScorableResolver().resolve_async(scorable=scorable, memory=self._memory)
+        conversation_id = message.message_pieces[0].conversation_id
+        if not conversation_id:
             raise ValueError("File write scoring of a message requires a stored conversation.")
         conversation = await self._memory.get_message_pieces_async(conversation_id=conversation_id)
         metadata = await self._memory.get_conversation_metadata_async(conversation_id=conversation_id)
