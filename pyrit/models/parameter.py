@@ -308,6 +308,35 @@ class Parameter(BaseModel):
             )
         return _is_non_path_json_type(param_type)
 
+    def for_external_catalog(self) -> Parameter:
+        """
+        Describe this parameter in the form external callers send it.
+
+        A flat ``Collection`` or ``Sequence`` is described as a ``list``, and a union as its first
+        alternative in declaration order that external callers can send, so
+        ``font_size: int | tuple[int, int]`` is described as ``int``; ``Path | str`` keeps its own
+        form. Other alternatives are still accepted and coercion is unchanged; only the
+        catalog description changes, and registry metadata keeps the full annotation. A default the
+        described form cannot hold is left out, so callers omit the value and the constructor
+        default applies.
+
+        Returns:
+            Parameter: This parameter, or a copy whose ``param_type`` is the external form.
+        """
+        if self.reference is not None or self.variants is not None or self.opaque:
+            return self
+        external_type = _external_input_type(self.param_type)
+        if external_type == self.param_type:
+            return self
+        described = self.model_copy(update={"param_type": external_type})
+        if self.default is None or self.default is REQUIRED_VALUE:
+            return described
+        try:
+            described.coerce_value(self.default)
+        except ValueError:
+            return described.model_copy(update={"default": None})
+        return described
+
     def is_reference_to(self, component_type: ComponentType) -> bool:
         """
         Whether this parameter is a registry reference to the given component family.
@@ -466,6 +495,32 @@ def _mentions_path(annotation: Any) -> bool:
         bool: True when a value of this type may be a local file path.
     """
     return annotation is Path or any(_mentions_path(argument) for argument in get_args(annotation))
+
+
+def _external_input_type(annotation: Any) -> Any:
+    """
+    Return the form external callers send for an annotation.
+
+    A flat ``Collection`` or ``Sequence`` becomes a ``list``, and a union becomes its first
+    alternative external callers can send, keeping ``None`` when the union allows it.
+    ``Path | str`` and every other annotation are returned unchanged.
+
+    Returns:
+        Any: The external form of the annotation.
+    """
+    if _is_path_or_str(annotation):
+        return annotation
+    origin = get_origin(annotation)
+    if origin in (Union, types.UnionType):
+        members = get_args(annotation)
+        supported = next((member for member in members if _is_non_path_json_type(member)), None)
+        if supported is None:
+            return annotation
+        external = _external_input_type(supported)
+        return external | None if type(None) in members else external
+    if origin in (Collection, Sequence) and len(get_args(annotation)) == 1:
+        return list[get_args(annotation)[0]]  # ty: ignore[invalid-type-form]
+    return annotation
 
 
 def _coerce_simple_value(*, param_name: str, annotation: Any, raw_value: Any) -> Any:

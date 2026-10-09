@@ -113,10 +113,10 @@ class ConverterService:
         List all available converter types from the converter class registry.
 
         Returns every converter that external callers can build, with only the
-        parameters they may supply; converters that need a Python object for a
-        required parameter are left out. Deciding which entries to surface to a
-        user is a presentation concern owned by the caller (e.g. the frontend),
-        not this service.
+        parameters they may supply, each described in the form callers send it;
+        converters that need a Python object for a required parameter are left out.
+        Deciding which entries to surface to a user is a presentation concern owned
+        by the caller (e.g. the frontend), not this service.
 
         Returns:
             ConverterTypeResponse containing all available converter classes.
@@ -126,7 +126,9 @@ class ConverterService:
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=[parameter for parameter in metadata.parameters if parameter.is_external_input],
+                parameters=[
+                    parameter.for_external_catalog() for parameter in metadata.parameters if parameter.is_external_input
+                ],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )

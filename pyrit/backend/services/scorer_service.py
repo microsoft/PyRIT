@@ -38,8 +38,9 @@ class ScorerService:
         """
         List the scorer types external callers can build, without constructing scorers.
 
-        Each entry lists only the parameters external callers may supply; types that
-        need a Python object for a required parameter are left out.
+        Each entry lists only the parameters external callers may supply, each
+        described in the form callers send it; types that need a Python object for a
+        required parameter are left out.
 
         Returns:
             ScorerTypeResponse: Scorer type metadata for external callers.
@@ -49,7 +50,11 @@ class ScorerService:
             items = [
                 ScorerTypeEntry(
                     scorer_type=metadata.class_name,
-                    parameters=[parameter for parameter in metadata.parameters if parameter.is_external_input],
+                    parameters=[
+                        parameter.for_external_catalog()
+                        for parameter in metadata.parameters
+                        if parameter.is_external_input
+                    ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )

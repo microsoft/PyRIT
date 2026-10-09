@@ -196,3 +196,21 @@ async def test_types_list_only_external_inputs() -> None:
     metadata = registry.get_registered_class_metadata("_ObjectConfiguredScorer")
     assert metadata is not None
     assert {parameter.name for parameter in metadata.parameters} == {"label", "tokenizer"}
+
+
+async def test_types_describe_sequences_as_lists() -> None:
+    types = await ScorerService().list_scorer_types_async()
+
+    serialized = {
+        (entry.scorer_type, parameter["name"]): (parameter["type_name"], parameter["is_list"], parameter["required"])
+        for entry in types.items
+        for parameter in entry.model_dump(mode="json")["parameters"]
+    }
+    assert serialized[("AgentThreatRulesScorer", "fields")] == ("list[str]", True, False)
+    assert serialized[("InsecureCodeScorer", "harm_categories")] == ("list[str]", True, True)
+    assert serialized[("InsecureCodeScorer", "system_prompt")] == ("str", False, True)
+    metadata = ScorerRegistry.get_registry_singleton().get_registered_class_metadata("AgentThreatRulesScorer")
+    assert metadata is not None
+    assert next(parameter for parameter in metadata.parameters if parameter.name == "fields").type_name == (
+        "collections.abc.Sequence[str]"
+    )

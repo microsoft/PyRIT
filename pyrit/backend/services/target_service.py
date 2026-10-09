@@ -189,9 +189,10 @@ class TargetService:
         List all available target types from the target class registry.
 
         Returns every target that external callers can build, with the
-        constructor parameters they may supply and the auth modes it supports,
-        all projected from the registry's ``TargetMetadata``; targets that need a
-        Python object for a required parameter are left out. Deciding which entries to surface to a
+        constructor parameters they may supply, each described in the form callers
+        send it, and the auth modes it supports, all projected from the registry's
+        ``TargetMetadata``; targets that need a Python object for a required
+        parameter are left out. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -203,7 +204,7 @@ class TargetService:
             TargetTypeEntry(
                 target_type=metadata.class_name,
                 parameters=[
-                    parameter
+                    parameter.for_external_catalog()
                     for parameter in self._project_target_parameters(
                         target_type=metadata.class_name,
                         parameters=metadata.parameters,

@@ -69,7 +69,11 @@ def _metadata_to_registered_scenario(
         all_techniques=list(metadata.all_techniques),
         technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
-        supported_parameters=[parameter for parameter in metadata.supported_parameters if parameter.is_external_input],
+        supported_parameters=[
+            parameter.for_external_catalog()
+            for parameter in metadata.supported_parameters
+            if parameter.is_external_input
+        ],
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
         uses_default_adversarial_target=metadata.uses_default_adversarial_target,

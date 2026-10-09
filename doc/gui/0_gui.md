@@ -588,10 +588,11 @@ at `GET /api/runtime`.
 ## Registry API Migration Notes
 
 Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
-These endpoints return the constructor parameters external callers can set,
-including flat lists, unions with a supported alternative, and component
-references, and leave out types external callers can't create. Registry metadata
-keeps every parameter.
+These endpoints return the constructor parameters external callers can set, each
+described in the form callers send it: a flat collection as a list, a union as its
+first alternative callers can send (`font_size: int | tuple[int, int]` as `int`),
+and a component reference as a name. They leave out types external callers can't
+create. Registry metadata keeps every parameter with its full annotation.
 Create requests should supply an explicit registry `name`. Converter creation
 returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat

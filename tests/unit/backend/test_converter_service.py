@@ -293,10 +293,43 @@ class TestListConverterTypes:
         assert registry_parameters["font_color"].type_name == "tuple[int, int, int]"
         assert not registry_parameters["font_color"].is_external_input
 
+    async def test_types_describe_parameters_in_the_form_callers_send(self, upload_service: ConverterService) -> None:
+        result = await upload_service.list_converter_types_async()
+        serialized = {
+            (entry.converter_type, parameter["name"]): {
+                key: parameter[key] for key in ("type_name", "is_list", "choices", "default", "required")
+            }
+            for entry in result.items
+            for parameter in entry.model_dump(mode="json")["parameters"]
+        }
+
+        assert serialized[("AddImageTextConverter", "font_size")] == {
+            "type_name": "int",
+            "is_list": False,
+            "choices": None,
+            "default": "15",
+            "required": False,
+        }
+        for name in ("stopwords", "candidate_words"):
+            assert serialized[("SATAMaskingConverter", name)] == {
+                "type_name": "list[str]",
+                "is_list": True,
+                "choices": None,
+                "default": None,
+                "required": False,
+            }
+        registry = {
+            (metadata.class_name, parameter.name): parameter.type_name
+            for metadata in upload_service._registry.get_all_registered_class_metadata()
+            for parameter in metadata.parameters
+        }
+        assert registry[("AddImageTextConverter", "font_size")] == "int | tuple[int, int]"
+        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str]"
+
     @pytest.mark.parametrize(
         ("converter_type", "parameter_name", "type_name", "required", "is_list"),
         [
-            ("SearchReplaceConverter", "replace", "str | list[str]", True, False),
+            ("SearchReplaceConverter", "replace", "str", True, False),
             ("DenylistConverter", "denylist", "list[str]", False, True),
         ],
     )

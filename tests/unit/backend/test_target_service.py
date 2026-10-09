@@ -330,6 +330,26 @@ class TestListTargetTypes:
 
         assert not registry_parameters["custom_configuration"].is_external_input
 
+    async def test_types_describe_the_video_duration_as_an_int(self) -> None:
+        service = TargetService()
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "OpenAIVideoTarget")
+        n_seconds = next(
+            parameter for parameter in entry.model_dump(mode="json")["parameters"] if parameter["name"] == "n_seconds"
+        )
+        assert {key: n_seconds[key] for key in ("type_name", "is_list", "choices", "default", "required")} == {
+            "type_name": "int",
+            "is_list": False,
+            "choices": None,
+            "default": "4",
+            "required": False,
+        }
+        metadata = service._registry.get_registered_class_metadata("OpenAIVideoTarget")
+        assert metadata is not None
+        registry_n_seconds = next(parameter for parameter in metadata.parameters if parameter.name == "n_seconds")
+        assert registry_n_seconds.type_name == "int | typing.Literal['4', '8', '12']"
+
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
 
