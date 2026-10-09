@@ -58,7 +58,7 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
         "self_harm_other": [HarmCategory.SELF_HARM],
         "self_harm_suicide": [HarmCategory.SUICIDE, HarmCategory.SELF_HARM],
         "self_harm_thin": [HarmCategory.EATING_DISORDERS, HarmCategory.SELF_HARM],
-        "sex_harrasment": [HarmCategory.HARASSMENT, HarmCategory.SEXUAL_SOLICITATION],
+        "sex_harassment": [HarmCategory.HARASSMENT, HarmCategory.SEXUAL_SOLICITATION],
         "sex_other": [HarmCategory.SEXUAL_CONTENT],
         "sex_porn": [HarmCategory.SEXUAL_CONTENT],
         "substance_alcohol": [HarmCategory.DRUG_USE, HarmCategory.REGULATED_GOODS],

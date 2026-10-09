@@ -97,7 +97,7 @@ class TestBabelscapeAlertDataset:
             "self_harm_other": ["SELF_HARM"],
             "self_harm_suicide": ["SUICIDE", "SELF_HARM"],
             "self_harm_thin": ["EATING_DISORDERS", "SELF_HARM"],
-            "sex_harrasment": ["HARASSMENT", "SEXUAL_SOLICITATION"],
+            "sex_harassment": ["HARASSMENT", "SEXUAL_SOLICITATION"],
             "sex_other": ["SEXUAL_CONTENT"],
             "sex_porn": ["SEXUAL_CONTENT"],
             "substance_alcohol": ["DRUG_USE", "REGULATED_GOODS"],
