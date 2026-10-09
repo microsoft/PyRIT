@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
 
@@ -68,7 +69,7 @@ class ColloquialWordswapConverter(Converter):
 
             try:
                 with file_path.open("r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
+                    data = safe_load_yaml(f)
             except yaml.YAMLError as exc:
                 raise ValueError(f"Invalid YAML format in wordswap file: {file_path}") from exc
 

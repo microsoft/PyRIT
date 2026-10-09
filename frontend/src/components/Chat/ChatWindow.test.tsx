@@ -16,8 +16,11 @@ import {
   ConverterInstance,
   Message,
   MessageAttachment,
+  MessageSendConversation,
   MessageSendStatus,
   PromptResponseError,
+  RepeatConversionMode,
+  RuntimeReadiness,
   TargetCapabilities,
   TargetInfo,
   TargetInstance,
@@ -384,6 +387,7 @@ describe("ChatWindow Integration", () => {
 
   const defaultProps = {
     onNewAttack: jest.fn(),
+    defaultsReady: true,
     activeTarget: mockTarget,
     availableTargets: [mockTarget],
     targetsLoading: false,
@@ -398,6 +402,23 @@ describe("ChatWindow Integration", () => {
     onSelectConversation: jest.fn(),
     labels: { operator: 'testuser', operation: 'test_op' },
   };
+
+  async function chooseCount(
+    user: ReturnType<typeof userEvent.setup>,
+    count: number,
+    mode?: RepeatConversionMode,
+  ): Promise<void> {
+    await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+    for (let index = 1; index < count; index++) {
+      await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+    }
+    if (mode) {
+      await user.click(screen.getByRole("radio", {
+        name: mode === "shared" ? "Convert once, reuse for all" : "Convert independently for each",
+      }));
+    }
+    await user.keyboard("{Escape}");
+  }
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -462,7 +483,7 @@ describe("ChatWindow Integration", () => {
     jest.restoreAllMocks();
   });
 
-  describe("asynchronous single send", () => {
+  describe("asynchronous sending", () => {
     const props = {
       ...defaultProps,
       attackResultId: "async-attack",
@@ -737,6 +758,192 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
       expect(screen.getByRole("textbox")).toBeDisabled();
       expect(screen.queryByText("Async reply")).not.toBeInTheDocument();
+    });
+
+    describe("repeat sends", () => {
+      function repeatedProgress(states: MessageSendConversation["state"][]): MessageSendStatus {
+        return {
+          ...queued,
+          count: states.length,
+          state: states.every((state) => state === "completed") ? "completed" : "sending",
+          conversations: states.map((state, index): MessageSendConversation => ({
+            conversation_id: index === 0 ? props.conversationId : `copy-${index}`,
+            request_turn_number: 0, state, error: null, failure_stage: null,
+          })),
+        };
+      }
+
+      it("settles completed conversations independently and cannot unlock a newer send on a finished copy", async () => {
+        const user = userEvent.setup();
+        const onSelectConversation = jest.fn();
+        const onAttackChange = jest.fn();
+        let finishOlder: (value: MessageSendStatus) => void = () => {};
+        mockedAttacksApi.submitMessageSend.mockResolvedValueOnce({ ...queued, count: 3 })
+          .mockResolvedValue({ ...queued, send_id: "newer-send", conversation_id: "copy-1" });
+        mockedAttacksApi.getMessageSend.mockResolvedValueOnce(repeatedProgress(["completed", "completed", "sending"]))
+          .mockImplementation((_attackId: string, sendId: string) => new Promise((resolve) => {
+            if (sendId === queued.send_id) finishOlder = resolve;
+          }));
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockImplementation(async (_attackId, conversationId) => ({
+          ...reply, conversation_id: conversationId ?? props.conversationId,
+        }));
+        const rendered = render(<TestWrapper>
+          <ChatWindow {...props} onSelectConversation={onSelectConversation} onAttackChange={onAttackChange} />
+        </TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1].count).toBe(3);
+        expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1].request_converter_configurations).toBeUndefined();
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        expect(screen.getByRole("textbox")).toHaveValue("");
+        expect(screen.getByRole("button", { name: "Open conversation copy-1" })).toHaveTextContent("Completed");
+        expect(screen.getByRole("button", { name: "Open conversation copy-2" })).toHaveTextContent("Sending");
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(2);
+        await user.click(screen.getByRole("button", { name: "Open conversation copy-1" }));
+        expect(onSelectConversation).toHaveBeenCalledWith("copy-1");
+        rendered.rerender(<TestWrapper>
+          <ChatWindow {...props} activeConversationId="copy-1"
+            onSelectConversation={onSelectConversation} onAttackChange={onAttackChange} />
+        </TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await user.type(screen.getByRole("textbox"), "Newer copy draft");
+        await user.click(screen.getByRole("button", { name: "Send message", exact: true }));
+        await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
+        expect(mockedAttacksApi.submitMessageSend.mock.calls[1][1]).toEqual(expect.objectContaining({
+          target_conversation_id: "copy-1",
+          pieces: [expect.objectContaining({ original_value: "Newer copy draft" })],
+        }));
+        onAttackChange.mockClear();
+        await act(async () => { finishOlder(repeatedProgress(["completed", "completed", "completed"])); });
+        expect(await screen.findByRole("button", { name: "Dismiss repeat progress" })).toBeInTheDocument();
+        expect(screen.getByRole("textbox")).toBeDisabled();
+        expect(screen.getByRole("textbox")).toHaveValue("Newer copy draft");
+        expect(onAttackChange).not.toHaveBeenCalled();
+      });
+
+      it("refreshes one shared progress GET after failure without resubmitting any conversation", async () => {
+        const user = userEvent.setup();
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
+        mockedAttacksApi.getMessageSend
+          .mockResolvedValueOnce(repeatedProgress(["completed", "sending", "queued"]))
+          .mockRejectedValueOnce(readError)
+          .mockResolvedValue(repeatedProgress(["completed", "completed", "completed"]));
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockResolvedValue(reply);
+        render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        await user.click(await screen.findByRole("button", { name: "Refresh progress" }));
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "Open conversation copy-1" })).toHaveTextContent("Completed");
+          expect(screen.queryByRole("button", { name: "Refresh progress" })).not.toBeInTheDocument();
+        });
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(3);
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("textbox")).toHaveValue("");
+        await user.click(screen.getByRole("button", { name: "Dismiss repeat progress" }));
+        expect(screen.queryByRole("region", { name: "Repeated send progress" })).not.toBeInTheDocument();
+      });
+
+      it.each([false, true])("reads the final summary when conversations finish first, read failure %s", async (readFails) => {
+        const user = userEvent.setup();
+        const complete = repeatedProgress(["completed", "completed"]);
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 2 });
+        mockedAttacksApi.getMessageSend.mockResolvedValueOnce({ ...complete, state: "sending" });
+        if (readFails) mockedAttacksApi.getMessageSend.mockRejectedValueOnce(readError);
+        mockedAttacksApi.getMessageSend.mockResolvedValue(complete);
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockResolvedValue(reply);
+        render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 2);
+        await sendDraft(user);
+        if (readFails) await user.click(await screen.findByRole("button", { name: "Refresh progress" }));
+        expect(await screen.findByRole("button", { name: "Dismiss repeat progress" })).toBeInTheDocument();
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(readFails ? 3 : 2);
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(["preparation", "sending"] as const)("preserves a %s failure draft and attachment on a copied conversation", async (stage) => {
+        const user = userEvent.setup();
+        const target = makeTarget({
+          ...mockTarget,
+          capabilities: {
+            ...mockTarget.capabilities,
+            supports_multi_message_pieces: true,
+            supported_input_modalities: ["text", "image_path"],
+          },
+        });
+        const attachmentProps = { ...props, activeTarget: target, availableTargets: [target] };
+        const failed = repeatedProgress(["completed", "failed"]);
+        failed.state = "failed";
+        failed.failure_stage = "sending";
+        failed.error = "Some conversations failed";
+        const copy = failed.conversations?.[1];
+        if (!copy) throw new Error("Expected a copy");
+        copy.failure_stage = stage;
+        copy.error = `Controlled ${stage} failure`;
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 2 });
+        mockedAttacksApi.getMessageSend.mockResolvedValue(failed);
+        mockedAttacksApi.getMessages.mockResolvedValueOnce(empty).mockImplementation(async (_attackId, conversationId) => (
+          conversationId === "copy-1"
+            ? { ...(stage === "sending" ? makeErrorResponse("processing", "Copy failed").messages : empty), conversation_id: "copy-1" }
+            : reply
+        ));
+        mockedAttacksApi.createConversation.mockResolvedValue({
+          conversation_id: "clean-copy", created_at: "2026-01-01T00:00:03Z",
+        });
+        const rendered = render(<TestWrapper><ChatWindow {...attachmentProps} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await user.upload(screen.getByTestId("file-input"), new File(["image"], "retained.png", { type: "image/png" }));
+        await chooseCount(user, 2);
+        await sendDraft(user);
+        await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
+        await user.click(screen.getByRole("button", { name: "Open conversation copy-1" }));
+        rendered.rerender(<TestWrapper><ChatWindow {...attachmentProps} activeConversationId="copy-1" /></TestWrapper>);
+        const restore = stage === "preparation" ? /restore prompt/i : /edit in clean conversation/i;
+        await user.click(await screen.findByRole("button", { name: restore }));
+        expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
+        expect(screen.getByText(/retained.png/)).toBeInTheDocument();
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Refresh progress" })).not.toBeInTheDocument();
+        expect(screen.queryByText(/Progress or saved messages could not be loaded/)).not.toBeInTheDocument();
+      });
+
+      it("keeps a failed preparation editable when no copies were committed", async () => {
+        const user = userEvent.setup();
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
+        mockedAttacksApi.getMessageSend.mockResolvedValue({
+          ...queued, count: 3, conversations: [], state: "failed",
+          failure_stage: "preparation", error: "Copies could not be prepared",
+        });
+        render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        await waitFor(() => expect(screen.getByRole("button", { name: "Send message", exact: true })).toBeEnabled());
+        expect(screen.getByRole("textbox")).toHaveValue("Draft to send");
+        expect(screen.queryByRole("button", { name: /open conversation/ })).not.toBeInTheDocument();
+        expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not start copy trackers after unmount while preparation was being read", async () => {
+        const user = userEvent.setup();
+        let finish: (value: MessageSendStatus) => void = () => {};
+        mockedAttacksApi.submitMessageSend.mockResolvedValue({ ...queued, count: 3 });
+        mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+        await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+        await chooseCount(user, 3);
+        await sendDraft(user);
+        const signal = mockedAttacksApi.getMessageSend.mock.calls[0][2];
+        rendered.unmount();
+        expect(signal?.aborted).toBe(true);
+        await act(async () => { finish(repeatedProgress(["sending", "sending", "queued"])); });
+        expect(mockedAttacksApi.getMessageSend).toHaveBeenCalledTimes(1);
+        expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      });
     });
   });
 
@@ -5822,9 +6029,16 @@ describe("ChatWindow Integration", () => {
     expect(request.pieces).toHaveLength(removeFailed ? 1 : 2);
   });
 
-  it("keeps a pipeline after sending but does not reuse the previous message's applied result", async () => {
+  it.each<[number, "default" | RepeatConversionMode]>([
+    [1, "default"], [1, "per_branch"], [3, "default"], [3, "shared"], [3, "per_branch"],
+  ])("keeps a pipeline after sending without reusing applied results (n=%s, mode=%s)", async (
+    count: number, mode: "default" | RepeatConversionMode,
+  ) => {
     const user = userEvent.setup();
-    mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
+    mockedConvertersApi.listConverters.mockResolvedValue({ items: [
+      makeConverterInstance("base64", "Base64Converter"),
+      makeConverterInstance("suffix", "SuffixAppendConverter"),
+    ] });
     mockedConvertersApi.previewConversion.mockResolvedValue({
       original_value: "hello", original_value_data_type: "text",
       converted_value: "aGVsbG8=", converted_value_data_type: "text",
@@ -5836,7 +6050,14 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
     mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
-    mockSendResult.mockResolvedValue(makeTextResponse("response") as never);
+    mockSendResult.mockResolvedValue({
+      attack: {
+        attack_result_id: "ar-persist", conversation_id: "conv-persist",
+        attack_type: "ManualAttack", objective: "", outcome: "undetermined", converters: [],
+        message_count: 2, related_conversation_ids: [], labels: {}, created_at: "", updated_at: "",
+      },
+      ...makeTextResponse("response"),
+    });
     render(<TestWrapper><ChatWindow
       {...defaultProps} attackResultId="ar-persist" conversationId="conv-persist" activeConversationId="conv-persist"
     /></TestWrapper>);
@@ -5847,16 +6068,43 @@ describe("ChatWindow Integration", () => {
     await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
     await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
     await user.click(screen.getByRole("button", { name: "Add converted value" }));
+    await chooseCount(user, count, mode === "default" ? undefined : mode);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(screen.getByTestId("chat-input")).toHaveValue(""));
     expect(screen.getByTestId("converter-item-base64")).toBeInTheDocument();
     expect(screen.queryByTestId("converted-indicator")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add converted value" })).toBeDisabled();
     await user.type(screen.getByTestId("chat-input"), "next");
+    await user.click(screen.getByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /SuffixAppendConverter/ }));
+    await user.click(screen.getByRole("combobox", { name: "Add converter" }));
+    await user.click(await screen.findByRole("option", { name: /Base64Converter/ }));
+    await chooseCount(user, count, mode === "default" ? undefined : mode);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockSendResult).toHaveBeenCalledTimes(2));
-    expect(mockSendResult.mock.calls[0][1].pieces[0].applied_converter_ids).toEqual(["base64"]);
-    expect(mockSendResult.mock.calls[1][1].pieces[0].applied_converter_ids).toBeUndefined();
+    const firstRequest = mockedAttacksApi.submitMessageSend.mock.calls[0][1];
+    const secondRequest = mockedAttacksApi.submitMessageSend.mock.calls[1][1];
+    expect(firstRequest.pieces[0]).toEqual({
+      data_type: "text", original_value: "hello", converted_value: "aGVsbG8=",
+      converted_value_data_type: "text", applied_converter_ids: ["base64"],
+    });
+    expect(firstRequest).not.toHaveProperty("request_converter_configurations");
+    expect(secondRequest.pieces).toEqual([{ data_type: "text", original_value: "next" }]);
+    if (count > 1 && mode === "per_branch") {
+      expect(secondRequest.request_converter_configurations).toEqual([
+        { converter_ids: ["base64", "suffix", "base64"], indexes_to_apply: [0] },
+      ]);
+    } else {
+      expect(secondRequest).not.toHaveProperty("request_converter_configurations");
+    }
+    if (count === 1) {
+      expect(secondRequest).not.toHaveProperty("count");
+      expect(secondRequest).not.toHaveProperty("request_converter_mode");
+    } else {
+      expect(secondRequest.count).toBe(count);
+      expect(secondRequest.request_converter_mode).toBe(mode === "default" ? "shared" : mode);
+    }
+    expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
   });
 
   it.each(["Working input - Text", "Stage 1 output - Text"])(
@@ -5908,8 +6156,15 @@ describe("ChatWindow Integration", () => {
     },
   );
 
-  it.each(["original chat", ""])("sends the exact edited pane result with original text %j", async (original: string) => {
+  it.each<[string, number, RepeatConversionMode]>([
+    ["original chat", 1, "shared"], ["", 1, "shared"],
+    ["original chat", 3, "shared"], ["", 3, "shared"],
+    ["original chat", 3, "per_branch"], ["", 3, "per_branch"],
+  ])("sends the exact edited pane result with original text %j (n=%s, mode=%s)", async (
+    original: string, count: number, mode: RepeatConversionMode,
+  ) => {
     const user = userEvent.setup();
+    const appliedResult = "  final manual result\nsecond line  ";
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [makeConverterInstance("base64", "Base64Converter")] });
     mockedConvertersApi.previewConversion.mockResolvedValue({
       original_value: "working draft", original_value_data_type: "text",
@@ -5938,18 +6193,20 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Convert", exact: true }));
     const output = await screen.findByRole("textbox", { name: "Stage 1 output - Text" });
     await user.clear(output);
-    await user.type(output, "final manual result");
+    await user.type(output, appliedResult);
     await user.click(screen.getByRole("button", { name: "Add converted value" }));
     expect(screen.getByTestId("chat-input")).toHaveValue(original);
-    expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue("final manual result");
+    expect(screen.getByRole("textbox", { name: /converted prompt/i })).toHaveValue(appliedResult);
+    await chooseCount(user, count, mode);
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockSendResult).toHaveBeenCalledWith("ar-edited", expect.objectContaining({
       pieces: [{
         data_type: "text", original_value: original,
-        converted_value: "final manual result", converted_value_data_type: "text",
+        converted_value: appliedResult, converted_value_data_type: "text",
         applied_converter_ids: ["base64"],
       }],
     })));
+    expect(mockedAttacksApi.submitMessageSend.mock.calls[0][1]).not.toHaveProperty("request_converter_configurations");
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1);
   });
 
@@ -6416,4 +6673,233 @@ describe("ChatWindow Integration", () => {
       );
     });
   });
-});
+
+  describe('defaults readiness gating scope', () => {
+    const savedAttack: AttackSummary = {
+      attack_result_id: "existing-attack",
+      conversation_id: "conv-1",
+      attack_type: "ManualAttack",
+      objective: "",
+      outcome: "undetermined",
+      converters: [],
+      message_count: 2,
+      related_conversation_ids: [],
+      operator: "testuser",
+      operation: "original_op",
+      labels: { team: "original_team" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:01Z",
+    }
+    const reply: AddMessageResponse = {
+      attack: savedAttack,
+      messages: { conversation_id: "conv-1", messages: [], target_response_status: null },
+    }
+    const copiedSource: Awaited<ReturnType<typeof attacksApi.getMessages>> = {
+      conversation_id: "conv-1", target_response_status: null,
+      messages: [{
+        turn_number: 0, role: "assistant", created_at: "2026-01-01T00:00:00Z",
+        message_pieces: [{
+          id: "saved-piece", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "Saved reply", converted_value: "Saved reply", scores: [], response_error: "none",
+        }],
+      }],
+    }
+
+    it('allows sending a reply in an existing attack while defaults are loading', async () => {
+      const user = userEvent.setup()
+      const onAttackChange = jest.fn()
+      mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] })
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([])
+      mockedMapper.buildMessagePieces.mockResolvedValue([
+        { data_type: "text", original_value: "replying in an existing attack" },
+      ])
+      mockSendResult.mockResolvedValue(reply)
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            defaultsReady={false}
+            labels={{ ...defaultProps.labels, operation: "config_op_v2" }}
+            onAttackChange={onAttackChange}
+            attackResultId="existing-attack"
+            conversationId="conv-1"
+            activeConversationId="conv-1"
+          />
+        </TestWrapper>
+      )
+      const input = await screen.findByRole('textbox')
+      await user.type(input, 'replying in an existing attack')
+      await user.keyboard('{Enter}')
+
+      await waitFor(() => {
+        expect(onAttackChange).toHaveBeenCalledWith(expect.objectContaining({
+          operation: "original_op", labels: { team: "original_team" },
+        }))
+      })
+      expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledWith(
+        "existing-attack", expect.objectContaining({ target_conversation_id: "conv-1" }),
+      )
+      expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled()
+      expect(mockedAttacksApi.updateAttack).not.toHaveBeenCalled()
+    })
+
+    it('blocks the first message of a new attack while defaults are loading', async () => {
+      const user = userEvent.setup()
+      render(<TestWrapper><ChatWindow {...defaultProps} defaultsReady={false} attackResultId={null} /></TestWrapper>)
+      const input = await screen.findByRole('textbox')
+      await user.type(input, 'starting a brand new attack')
+      await user.keyboard('{Enter}')
+
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(input).toHaveValue('starting a brand new attack')
+      expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled()
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      { name: "defaults start loading", ready: true, generation: "gen-1", defaultsReady: false },
+      { name: "a new generation is already ready", ready: true, generation: "gen-2", defaultsReady: true },
+      { name: "the runtime becomes unavailable", ready: false, generation: "gen-1", defaultsReady: true },
+    ])('preserves a prepared draft when $name before attack creation', async (
+      change: { name: string; ready: boolean; generation: string; defaultsReady: boolean },
+    ) => {
+      const user = userEvent.setup()
+      const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
+        ready: true, state: "ready", generation: "gen-1",
+      })
+      const file = new File(["image content"], "draft.png", { type: "image/png" })
+      const props = {
+        ...defaultProps,
+        activeTarget: makeTarget({
+          capabilities: buildCapabilities({
+            supports_multi_message_pieces: true,
+            supported_input_modalities: ["text", "image_path"],
+          }),
+        }),
+      }
+      const pieces: Awaited<ReturnType<typeof messageMapper.buildMessagePieces>> = [
+        { data_type: "text", original_value: "prepared draft" },
+        { data_type: "image_path", original_value: "aW1hZ2U=" },
+      ]
+      let resolvePieces: (value: typeof pieces) => void = () => {}
+      mockedMapper.buildMessagePieces.mockReturnValueOnce(new Promise((resolve) => { resolvePieces = resolve }))
+      mockedMapper.buildMessagePieces.mockResolvedValue(pieces)
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([])
+      mockSendResult.mockResolvedValue({
+        ...reply,
+        attack: {
+          ...savedAttack,
+          attack_result_id: "default-created-attack",
+          conversation_id: "default-created-conversation",
+          operation: "config_op_v2",
+        },
+      })
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>)
+      const input = screen.getByRole('textbox')
+      await user.type(input, 'prepared draft')
+      await user.upload(screen.getByTestId('file-input'), file)
+      await user.click(screen.getByRole('button', { name: 'Send message' }))
+      expect(mockedMapper.buildMessagePieces).toHaveBeenCalledTimes(1)
+
+      const nextRuntime: RuntimeReadiness = {
+        ready: change.ready, state: change.ready ? "ready" : "unavailable", generation: change.generation,
+      }
+      runtime.mockReturnValue(nextRuntime)
+      rendered.rerender(
+        <TestWrapper>
+          <ChatWindow {...props} defaultsReady={change.defaultsReady} labels={{ operation: "config_op_v2" }} />
+        </TestWrapper>,
+      )
+      await act(async () => { resolvePieces(pieces) })
+
+      expect(await screen.findByText(/Runtime or default labels changed while preparing this message/)).toBeInTheDocument()
+      expect(input).toHaveValue('prepared draft')
+      expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled()
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled()
+
+      runtime.mockReturnValue({ ready: true, state: "ready", generation: "gen-2" })
+      rendered.rerender(
+        <TestWrapper>
+          <ChatWindow {...props} defaultsReady={true} labels={{ operation: "config_op_v2" }} />
+        </TestWrapper>,
+      )
+      await user.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1))
+      expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({
+        labels: { operation: "config_op_v2" },
+      }))
+      expect(mockedMapper.buildMessagePieces).toHaveBeenLastCalledWith(
+        'prepared draft', expect.arrayContaining([expect.objectContaining({ file })]),
+      )
+    })
+
+    it('blocks copying to a new attack while defaults load and uses refreshed labels when creation resumes', async () => {
+      const user = userEvent.setup()
+      mockedAttacksApi.getMessages.mockResolvedValue(copiedSource)
+      mockedAttacksApi.saveConversation.mockResolvedValue(reply)
+      mockedAttacksApi.saveConversation.mockClear()
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "assistant", content: "Saved reply" }])
+      const props = {
+        ...defaultProps,
+        attackResultId: "existing-attack",
+        conversationId: "conv-1",
+        activeConversationId: "conv-1",
+      }
+      const rendered = render(<TestWrapper><ChatWindow {...props} defaultsReady={false} /></TestWrapper>)
+      await user.click(await screen.findByRole('button', { name: 'Copy conversation' }))
+      const create = screen.getByRole('menuitem', { name: 'New attack', exact: true })
+      expect(create).toHaveAttribute('aria-disabled', 'true')
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled()
+
+      rendered.rerender(
+        <TestWrapper>
+          <ChatWindow {...props} defaultsReady={true} labels={{ ...defaultProps.labels, operation: "config_op_v2" }} />
+        </TestWrapper>,
+      )
+      expect(create).not.toHaveAttribute('aria-disabled', 'true')
+      await user.click(create)
+      await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+        destination: 'new_attack',
+        source_conversation_id: "conv-1",
+        labels: { ...defaultProps.labels, operation: "config_op_v2" },
+      })))
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled()
+    })
+
+    it('rejects a new-attack copy if the runtime changes while source messages are loading', async () => {
+      const user = userEvent.setup()
+      const runtime = jest.spyOn(runtimeHooks, "useRuntime").mockReturnValue({
+        ready: true, state: "ready", generation: "gen-1",
+      })
+      mockedAttacksApi.getMessages.mockResolvedValue(copiedSource)
+      mockedAttacksApi.saveConversation.mockResolvedValue(reply)
+      mockedAttacksApi.saveConversation.mockClear()
+      mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "assistant", content: "Saved reply" }])
+      const props = {
+        ...defaultProps,
+        attackResultId: "existing-attack", conversationId: "conv-1", activeConversationId: "conv-1",
+      }
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>)
+      await user.click(await screen.findByRole('button', { name: 'Copy conversation' }))
+      let finish: (value: typeof copiedSource) => void = () => {}
+      mockedAttacksApi.getMessages.mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+      await user.click(screen.getByRole('menuitem', { name: 'New attack', exact: true }))
+
+      runtime.mockReturnValue({ ready: true, state: "ready", generation: "gen-2" })
+      rendered.rerender(
+        <TestWrapper>
+          <ChatWindow {...props} labels={{ ...defaultProps.labels, operation: "config_op_v2" }} />
+        </TestWrapper>,
+      )
+      await act(async () => { finish(copiedSource) })
+      expect(await screen.findByText(/Runtime or default labels changed while loading this conversation/)).toBeInTheDocument()
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole('button', { name: 'Copy conversation' }))
+      await user.click(screen.getByRole('menuitem', { name: 'New attack', exact: true }))
+      await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+        destination: 'new_attack', labels: { ...defaultProps.labels, operation: "config_op_v2" },
+      })))
+    })
+  })
+})

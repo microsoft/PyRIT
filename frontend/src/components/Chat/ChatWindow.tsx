@@ -28,6 +28,7 @@ import { AddRegular, ArrowDownloadRegular, ArrowShuffleRegular, EditRegular, Pan
 import { Link } from 'react-router'
 import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
+import MultiSendProgress from './MultiSendProgress'
 import ConversationPanel from './ConversationPanel'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
@@ -48,6 +49,8 @@ import {
   applyConvertedValues,
   buildMediaUrl,
   buildDraftPieceIds,
+  buildConverterInputs,
+  buildRequestConverterConfigurations,
   dataTypeToAttachmentKind,
   isPathDataType,
   withDraftIdentity,
@@ -71,12 +74,16 @@ import type {
   BackendScore,
   ChatSendOutcome,
   ConversationMessagesResponse,
+  ConverterPipelineStage,
   CreateAttackRequest,
   CreateConversationRequest,
   Message,
   MessageAttachment,
+  MessageSendConversation,
   MessageSendRequest,
   MessageSendStatus,
+  MultiSendOptions,
+  NewAttackContext,
   TargetInstance,
   TargetInfo,
 } from '../../types'
@@ -102,6 +109,7 @@ interface RecoverableSendDraft {
   source: 'live' | 'persisted'
   missingConverterSelections: boolean
   converterGeneration?: string
+  pipelines?: Record<string, ConverterPipelineStage[]>
 }
 
 interface ConversationLoadRequest {
@@ -120,19 +128,34 @@ interface PendingSend {
   readonly initialMessages: Message[]
   readonly navigationRevision: number
   readonly converterGeneration: string
+  readonly pipelines?: Record<string, ConverterPipelineStage[]>
   attackResultId: string | null
   conversationId: string
   needsRefresh: boolean
   responseReadId?: number
   progress?: MessageSendStatus
+  repeatGroup?: RepeatSendGroup
+}
+
+interface RepeatSendGroup {
+  source: PendingSend
+  progress: MessageSendStatus
+  conversations: Map<string, PendingSend>
+  read?: Promise<MessageSendStatus>
+}
+
+interface RepeatSendView {
+  progress: MessageSendStatus
+  needsRefresh: boolean
 }
 
 interface SendIssue {
   description: string
   blocking: boolean
+  draft?: PendingSend
 }
 
-function isSendFinished(progress: MessageSendStatus): boolean {
+function isSendFinished(progress: MessageSendConversation): boolean {
   return ['completed', 'failed', 'interrupted'].includes(progress.state)
 }
 
@@ -251,6 +274,8 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
+  /** False while the current generation's server defaults are still loading; launching is gated. */
+  defaultsReady?: boolean
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -294,6 +319,7 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
+  defaultsReady = false,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -314,7 +340,9 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingObjective, setPendingObjective] = useState('')
   const currentObjective = attackResultId ? objective : pendingObjective
-  const editor = useConversationDraft()
+  const runtime = useRuntime()
+  const newAttackContext: NewAttackContext = { generation: runtime.generation, ready: runtime.ready && defaultsReady, labels }
+  const editor = useConversationDraft(newAttackContext)
   const { draft: editDraft, discard: discardEditor, changeObjective: setEditorObjective } = editor
   const editorTarget = editDraft?.target ?? null
   const editorObjective = editDraft?.objective ?? ''
@@ -322,7 +350,7 @@ export default function ChatWindow({
   const editorRef = useRef<ConversationEditorHandle>(null)
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const copyingRef = useRef(false)
-  const copySave = useConversationSave()
+  const copySave = useConversationSave(newAttackContext)
   const [editorNotice, setEditorNotice] = useState<string | null>(null)
   const [editorError, setEditorError] = useState<string | null>(null)
   // Track sending state per conversation so parallel conversations can send independently
@@ -341,7 +369,10 @@ export default function ChatWindow({
   const isExportingRef = useRef(false)
   const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
-  const runtime = useRuntime()
+  const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady })
+  useLayoutEffect(() => {
+    launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady }
+  }, [runtime.generation, runtime.ready, defaultsReady])
   // Conversation-wide preference for rendering message text as Markdown.
   const { preferences, updatePreferences } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
@@ -366,13 +397,14 @@ export default function ChatWindow({
     : undefined
   const recoverableSend = useMemo<RecoverableSendDraft | undefined>(() => (
     savedRecovery?.converterGeneration !== undefined && savedRecovery.converterGeneration !== runtime.generation
-      ? { ...savedRecovery, conversions: {}, source: 'persisted', missingConverterSelections: true }
+      ? { ...savedRecovery, conversions: {}, pipelines: undefined, source: 'persisted', missingConverterSelections: true }
       : savedRecovery
   ), [savedRecovery, runtime.generation])
   const [sendIssues, setSendIssues] = useState<Record<string, SendIssue>>({})
   const sendIssueConversationId = attackResultId ? viewedConversationId : loadedConversationId ?? viewedConversationId
   const sendIssue = sendIssues[sendIssueConversationId ?? '__pending__']
   const pendingSendsRef = useRef<Map<string, PendingSend>>(new Map())
+  const [repeatSends, setRepeatSends] = useState<RepeatSendView[]>([])
   const latestSendRef = useRef<string | null>(null)
   const loadedUserPieceIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const viewedAttackRef = useRef(attackResultId)
@@ -562,7 +594,11 @@ export default function ChatWindow({
       if (sendingConvIdsRef.current.has(convId)) {
         const operation = pendingSendsRef.current.get(convId)
         const pending = pendingUserMessagesRef.current.get(convId) ?? []
-        const requestStored = operation && [...savedUserIds].some((id) => !operation.priorUserPieceIds.has(id))
+        const requestStored = operation?.progress?.request_turn_number != null
+          ? response.messages.some((message: BackendMessage) => (
+            message.role === 'user' && message.turn_number === operation.progress?.request_turn_number
+          ))
+          : operation && [...savedUserIds].some((id) => !operation.priorUserPieceIds.has(id))
         if (!operation?.progress || !isSendFinished(operation.progress)) {
           if (!requestStored) { frontendMessages.push(...pending) }
           frontendMessages.push({
@@ -673,7 +709,8 @@ export default function ChatWindow({
     setPanelRefreshKey((key) => key + 1)
   }
   const retireSend = (operation: PendingSend): void => {
-    if (isCurrentSend(operation) && !operation.needsRefresh) {
+    if (isCurrentSend(operation) && !operation.needsRefresh
+      && operation.progress?.failure_stage !== 'preparation') {
       pendingSendsRef.current.delete(operation.conversationId)
     }
   }
@@ -713,6 +750,7 @@ export default function ChatWindow({
       attachments: operation.attachments,
       conversions: operation.conversions,
       converterGeneration: operation.converterGeneration,
+      pipelines: operation.pipelines,
       source: 'live',
       missingConverterSelections: false,
     } : recovery
@@ -732,19 +770,82 @@ export default function ChatWindow({
     }
     return {
       status,
-      clearDraft: status !== 'retryable_failure' && latestSendRef.current === operation.submissionId,
+      clearDraft: status !== 'retryable_failure' && latestSendRef.current === operation.submissionId
+        && (!operation.repeatGroup || operation.repeatGroup.source === operation),
     }
+  }
+
+  const updateRepeatView = (group: RepeatSendGroup): void => {
+    if (group.source.controller.signal.aborted) return
+    const needsRefresh = [...group.conversations.values()].some(
+      (operation: PendingSend) => isCurrentSend(operation) && operation.needsRefresh,
+    )
+    setRepeatSends((previous: RepeatSendView[]) => previous.map((view: RepeatSendView) => (
+      view.progress.send_id === group.progress.send_id ? { progress: group.progress, needsRefresh } : view
+    )))
+  }
+
+  const receiveRepeatProgress = (group: RepeatSendGroup, progress: MessageSendStatus): void => {
+    if (group.source.controller.signal.aborted) return
+    group.progress = progress
+    let addedConversations = false
+    for (const conversation of progress.conversations ?? []) {
+      if (group.conversations.has(conversation.conversation_id)) continue
+      addedConversations = true
+      const operation: PendingSend = {
+        ...group.source,
+        conversationId: conversation.conversation_id,
+        draftRevision: undefined,
+        responseReadId: undefined,
+        needsRefresh: false,
+        progress: { ...progress, ...conversation },
+      }
+      group.conversations.set(operation.conversationId, operation)
+      // A finished sibling may already have a newer send by the time this snapshot arrives.
+      if (pendingSendsRef.current.has(operation.conversationId)) continue
+      pendingSendsRef.current.set(operation.conversationId, operation)
+      sendingConvIdsRef.current.add(operation.conversationId)
+      const pending = pendingUserMessagesRef.current.get(group.source.conversationId)
+      if (pending) pendingUserMessagesRef.current.set(operation.conversationId, [...pending])
+      setSendingConversations((previous: Set<string>) => new Set(previous).add(operation.conversationId))
+      void trackSend(operation).then(() => { retireSend(operation) })
+    }
+    if (addedConversations) setPanelRefreshKey((key: number) => key + 1)
+    updateRepeatView(group)
+  }
+
+  const readSendProgress = async (operation: PendingSend): Promise<MessageSendStatus> => {
+    const { attackResultId: sendAttackId, progress: previousProgress } = operation
+    if (!sendAttackId || !previousProgress) throw new Error('The send has no progress handle.')
+    const group = operation.repeatGroup
+    const read = (): Promise<MessageSendStatus> => attacksApi.getMessageSend(
+      sendAttackId, previousProgress.send_id, operation.controller.signal,
+    )
+    if (!group) return read()
+    // Every conversation uses the same in-flight GET, but settles its own evidence reads and ownership.
+    group.read ??= read().then((progress: MessageSendStatus) => {
+      receiveRepeatProgress(group, progress)
+      return progress
+    }).finally(() => { group.read = undefined })
+    const progress = await group.read
+    const conversation = progress.conversations?.find(
+      (candidate: MessageSendConversation) => candidate.conversation_id === operation.conversationId,
+    )
+    return conversation ? { ...progress, ...conversation } : progress
   }
 
   const trackSend = async (operation: PendingSend): Promise<ChatSendOutcome> => {
     try {
       if (!operation.attackResultId) { throw new Error('The send has no attack ID.') }
-      while (operation.progress && !isSendFinished(operation.progress)) {
+      while (operation.progress) {
+        const repeatProgress = operation.repeatGroup?.progress
+        // The last conversation can release ownership before the operation publishes its final summary.
+        const awaitingSummary = repeatProgress && !isSendFinished(repeatProgress)
+          && repeatProgress.conversations?.length && repeatProgress.conversations.every(isSendFinished)
+        if (isSendFinished(operation.progress) && !awaitingSummary) break
         let progress: MessageSendStatus | undefined
         try {
-          progress = await attacksApi.getMessageSend(
-            operation.attackResultId, operation.progress.send_id, operation.controller.signal,
-          )
+          progress = await readSendProgress(operation)
         } catch (err) {
           if (toApiError(err).status !== 404) { throw err }
           // Lost handles permit evidence reads, never a new submission or a claim of delivery.
@@ -776,9 +877,13 @@ export default function ChatWindow({
         return { status: 'non_retryable_failure', clearDraft: false }
       }
       setSendIssue(operation.conversationId, progress.failure_stage === 'preparation'
-        ? { description: progress.error ?? 'Message preparation failed before target dispatch.', blocking: false }
+        ? {
+          description: progress.error ?? 'Message preparation failed before target dispatch.',
+          blocking: false,
+          draft: operation,
+        }
         : undefined)
-      operation.needsRefresh = progress.failure_stage === 'preparation'
+      operation.needsRefresh = false
       return outcome
     } catch (err) {
       if (isCurrentSend(operation)) {
@@ -798,11 +903,12 @@ export default function ChatWindow({
       return { status: 'non_retryable_failure', clearDraft: false }
     } finally {
       finishTracking(operation)
+      if (operation.repeatGroup) updateRepeatView(operation.repeatGroup)
     }
   }
 
-  const refreshSend = async (): Promise<void> => {
-    const operation = pendingSendsRef.current.get(sendIssueConversationId ?? '__pending__')
+  const refreshSend = async (conversationIdToRefresh = sendIssueConversationId ?? '__pending__'): Promise<void> => {
+    const operation = pendingSendsRef.current.get(conversationIdToRefresh)
     if (!operation || sendingConvIdsRef.current.has(operation.conversationId)) { return }
     sendingConvIdsRef.current.add(operation.conversationId)
     setSendingConversations((previous) => new Set(previous).add(operation.conversationId))
@@ -818,13 +924,33 @@ export default function ChatWindow({
     retireSend(operation)
   }
 
+  const restorePreparationDraft = (): void => {
+    const operation = sendIssue?.draft
+    if (!operation || !isCurrentSend(operation) || !isViewingSend(operation)) return
+    const sameGeneration = operation.converterGeneration === runtime.generation
+    const attachments = operation.attachments.map(withDraftIdentity)
+    setChatInputText(operation.originalValue)
+    setDraftAttachments(attachments)
+    inputBoxRef.current?.restoreDraft(operation.originalValue, attachments)
+    restoreConversions(
+      operation.originalValue, attachments, sameGeneration ? operation.conversions : {},
+      sameGeneration ? operation.pipelines : undefined,
+    )
+    if (!sameGeneration) setSendIssue(operation.conversationId, {
+      ...sendIssue,
+      description: 'Prompt restored. Converter choices could not be restored after the runtime changed; review them before sending.',
+    })
+  }
+
   const handleSend = async (
     originalValue: string,
     convertedValue: string | undefined,
     attachments: MessageAttachment[],
+    options?: MultiSendOptions,
   ): Promise<ChatSendOutcome> => {
     if (
       !runtime.ready
+      || (!attackResultId && !defaultsReady)
       || !activeTarget
       || editDraft !== null
       || isLoadingAttack
@@ -854,6 +980,9 @@ export default function ChatWindow({
 
     // Capture all piece conversions upfront before any async work or state clears
     const conversions = { ...activePieceConversions }
+    const count = options?.count ?? 1
+    const converterMode = options?.requestConverterMode ?? 'shared'
+    const pipelines = count > 1 ? { ...converters.pipelines } : undefined
     const operation: PendingSend = {
       submissionId: generateClientId(),
       controller: new AbortController(),
@@ -865,6 +994,7 @@ export default function ChatWindow({
       initialMessages: [...messages],
       navigationRevision: navigationRevisionRef.current,
       converterGeneration: runtime.generation,
+      pipelines,
       attackResultId,
       conversationId: initialSendConvId,
       needsRefresh: false,
@@ -878,10 +1008,8 @@ export default function ChatWindow({
     const isTextTextConversion = textConversion?.convertedDataType === 'text'
     const isTextFileConversion = Boolean(textConversion) && !isTextTextConversion
 
-    // Track which conversation this send belongs to (may be updated after attack creation)
-    let sendConvId = initialSendConvId
     // Mark synchronously so the useEffect guard sees it immediately
-    sendingConvIdsRef.current.add(sendConvId)
+    sendingConvIdsRef.current.add(initialSendConvId)
 
     // When a text→text converter is active, show the converted text as the bubble's
     // primary content. When a text→file converter is active, keep the typed text
@@ -910,12 +1038,12 @@ export default function ChatWindow({
     setMessages(prev => [...prev, userMessage])
 
     // Track as pending so switching back before the server stores it still shows it
-    const pending = pendingUserMessagesRef.current.get(sendConvId) ?? []
+    const pending = pendingUserMessagesRef.current.get(initialSendConvId) ?? []
     pending.push(userMessage)
-    pendingUserMessagesRef.current.set(sendConvId, pending)
+    pendingUserMessagesRef.current.set(initialSendConvId, pending)
 
     // Show loading indicator
-    setSendingConversations(prev => new Set(prev).add(sendConvId))
+    setSendingConversations(prev => new Set(prev).add(initialSendConvId))
     const loadingMessage: Message = {
       role: 'assistant',
       content: '...',
@@ -943,6 +1071,11 @@ export default function ChatWindow({
       let currentConversationId = conversationId
       let currentActiveConversationId = activeConversationId
       if (!currentAttackResultId) {
+        const currentLaunchState = launchStateRef.current
+        if (currentLaunchState.generation !== operation.converterGeneration
+          || !currentLaunchState.ready || !currentLaunchState.defaultsReady) {
+          throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
+        }
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
           name: pendingObjective || undefined,
@@ -982,7 +1115,6 @@ export default function ChatWindow({
           next.add(currentConversationId!)
           return next
         })
-        sendConvId = currentConversationId!
       }
 
       // The effective conversation we're sending for
@@ -992,6 +1124,9 @@ export default function ChatWindow({
       if (!currentAttackResultId || !effectiveConvId) {
         throw new Error('Message send is missing an attack or conversation ID.')
       }
+      const requestConfigurations = count > 1 && converterMode === 'per_branch' ? buildRequestConverterConfigurations(
+        buildConverterInputs(originalValue, attachments), pieceIds, pipelines ?? {}, conversions,
+      ) : []
       const addMessageRequest: MessageSendRequest = {
         role: 'user',
         pieces,
@@ -999,13 +1134,38 @@ export default function ChatWindow({
         target_registry_name: activeTarget.target_registry_name,
         target_conversation_id: effectiveConvId,
         submission_id: operation.submissionId,
+        ...(count > 1 ? {
+          count,
+          request_converter_mode: converterMode,
+        } : {}),
+        ...(requestConfigurations.length ? { request_converter_configurations: requestConfigurations } : {}),
       }
       submissionAttempted = true
       operation.progress = await attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
+      if (count > 1) {
+        const group: RepeatSendGroup = {
+          source: operation,
+          progress: operation.progress,
+          conversations: new Map([[operation.conversationId, operation]]),
+        }
+        operation.repeatGroup = group
+        setRepeatSends((previous: RepeatSendView[]) => [
+          ...previous.filter((view: RepeatSendView) => !isSendFinished(view.progress)),
+          { progress: group.progress, needsRefresh: false },
+        ])
+        receiveRepeatProgress(group, group.progress)
+        const sourceProgress = group.progress.conversations?.find(
+          (conversation: MessageSendConversation) => conversation.conversation_id === operation.conversationId,
+        )
+        if (sourceProgress) operation.progress = { ...group.progress, ...sourceProgress }
+        if (isViewingSend(operation) && !isNarrowScreen) setIsPanelOpen(true)
+        setPanelRefreshKey((key: number) => key + 1)
+      }
       return await trackSend(operation)
     } catch (err) {
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
+      const sendConvId = operation.conversationId
       const apiError = toApiError(err)
       if (submissionAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(apiError.status ?? 0)) {
         operation.needsRefresh = true
@@ -1118,7 +1278,9 @@ export default function ChatWindow({
     const attachments = recoverableSend.attachments.map(withDraftIdentity)
     setChatInputText(recoverableSend.originalValue)
     setDraftAttachments(attachments)
-    restoreConversions(recoverableSend.originalValue, attachments, recoverableSend.conversions)
+    restoreConversions(
+      recoverableSend.originalValue, attachments, recoverableSend.conversions, recoverableSend.pipelines,
+    )
     inputBoxRef.current?.restoreDraft(
       recoverableSend.originalValue,
       attachments,
@@ -1332,12 +1494,19 @@ export default function ChatWindow({
   const copyConversation = async (messageIndex: number, destination: 'same_attack' | 'new_attack'): Promise<void> => {
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
+    if (destination === 'new_attack' && (!runtime.ready || !defaultsReady)) return
     const sourceId = viewedConversationId
     copyingRef.current = true
     setIsLoadingEdit(true)
     setEditorError(null)
     try {
       const source = await attacksApi.getMessages(attackResultId, sourceId)
+      if (destination === 'new_attack' && (
+        launchStateRef.current.generation !== runtime.generation
+        || !launchStateRef.current.ready || !launchStateRef.current.defaultsReady
+      )) {
+        throw new Error('Runtime or default labels changed while loading this conversation. Retry after default labels finish loading.')
+      }
       const copiedMessages = toConversationDraft(source.messages.slice(0, messageIndex + 1))
       const target = destination === 'new_attack' && activeTarget
         && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))
@@ -1371,6 +1540,9 @@ export default function ChatWindow({
     : targetResolutionStatus === 'unbound' && editorTarget
       ? 'Choose New attack to select a target while editing an unbound attack.'
     : isTargetResolutionLocked ? 'The source target cannot be safely resolved. Choose New attack.'
+    : undefined
+  const newAttackDisabledReason = !runtime.ready || !defaultsReady
+    ? 'Default labels are not ready. Retry after default labels finish loading.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
 
@@ -1515,7 +1687,7 @@ export default function ChatWindow({
                 onNewAttack()
               }
             }}
-            disabled={isSavingEditor || (editDraft === null && !attackResultId)}
+            disabled={isSavingEditor || (editDraft !== null && Boolean(newAttackDisabledReason)) || (editDraft === null && !attackResultId)}
             data-testid="new-attack-btn"
             aria-label={editDraft !== null ? 'Save to new attack' : 'New Attack'}
             className={styles.newAttackButton}
@@ -1597,13 +1769,14 @@ export default function ChatWindow({
           ref={editorRef}
           controller={editor}
           sameAttackDisabledReason={sameAttackDisabledReason}
+          newAttackDisabledReason={newAttackDisabledReason}
           onSaved={handleEditorSaved}
         />}
         {editDraft === null && <MessageList
           messages={messages}
           onCopyToInput={handleCopyToInput}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}
-          onCopyToNewAttack={(index: number) => { void copyConversation(index, 'new_attack') }}
+          onCopyToNewAttack={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack') }}
           copyConversationDisabled={isSending || isLoadingEdit}
           newConversationDisabledReason={isMutationLocked ? "This attack is read-only. Copy to a new attack instead." : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
@@ -1621,10 +1794,38 @@ export default function ChatWindow({
                 onRecover: handleRecoverProcessingError,
               }}
         />}
+        {repeatSends.filter((view: RepeatSendView) => view.progress.attack_result_id === attackResultId).map(
+          (view: RepeatSendView) => (
+            <MultiSendProgress
+              key={view.progress.send_id}
+              progress={view.progress}
+              needsRefresh={view.needsRefresh}
+              onSelectConversation={handlePanelSelectConversation}
+              onDismiss={() => setRepeatSends((previous: RepeatSendView[]) => previous.filter(
+                (candidate: RepeatSendView) => candidate.progress.send_id !== view.progress.send_id,
+              ))}
+              onRefresh={() => {
+                for (const operation of pendingSendsRef.current.values()) {
+                  if (operation.repeatGroup?.progress.send_id === view.progress.send_id && operation.needsRefresh) {
+                    void refreshSend(operation.conversationId)
+                  }
+                }
+              }}
+            />
+          ),
+        )}
         {sendIssue && (
           <MessageBar intent="error">
             <MessageBarBody>{sendIssue.description}</MessageBarBody>
             <MessageBarActions>
+              {sendIssue.draft && (
+                <Button
+                  className={styles.ribbonAction} disabled={isSending || isMutationLocked || !runtime.ready}
+                  onClick={restorePreparationDraft}
+                >
+                  Restore prompt
+                </Button>
+              )}
               <Button className={styles.ribbonAction} disabled={isSending} onClick={() => { void refreshSend() }}>
                 Refresh saved messages
               </Button>
@@ -1635,7 +1836,7 @@ export default function ChatWindow({
         <ChatInputArea
           ref={inputBoxRef}
           onSend={handleSend}
-          sendDisabled={editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking}
+          sendDisabled={(!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking}
           conversionRevisionKey={conversionRevisionKey}
           showSystemPrompt={!attackResultId}
           supportsSystemPrompt={supportsSystemPrompt}

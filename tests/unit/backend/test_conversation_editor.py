@@ -36,6 +36,7 @@ from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_target import OpenAIResponseTarget
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from unit.backend.mocks import _settle_send_async, message_send_lifecycle_async
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, run_memory_session_async
 
 
@@ -991,30 +992,29 @@ class TestConversationEditor:
             )
         )
         with patch.object(service._message_send_service, "_send_and_store_message_async", new_callable=AsyncMock):
-            accepted = await service.submit_message_send_async(
-                attack_result_id=first.attack.attack_result_id,
-                request=MessageSendRequest(
-                    submission_id="first-send",
-                    target_conversation_id=related.messages.conversation_id,
-                    target_registry_name="selected",
-                    pieces=[ConversationPieceRequest(original_value="Next")],
-                ),
-            )
-            progress = await service._message_send_service.get_status_async(
-                attack_result_id=first.attack.attack_result_id, send_id=accepted.send_id, wait_ms=1000
-            )
-        assert progress.state == MessageSendState.COMPLETED
-        current = await service.get_attack_async(attack_result_id=first.attack.attack_result_id)
-        assert current is not None
-        assert not current.target_unbound
-        owned = await sqlite_instance.get_attack_result_conversations_async(
-            attack_result_id=first.attack.attack_result_id
-        )
-        assert {conversation.conversation_id for conversation in owned} == {
-            first.messages.conversation_id,
-            related.messages.conversation_id,
-        }
-        assert all(conversation.target_identifier == editor_target.get_identifier() for conversation in owned)
+            async with message_send_lifecycle_async(service._message_send_service):
+                accepted = await service.submit_message_send_async(
+                    attack_result_id=first.attack.attack_result_id,
+                    request=MessageSendRequest(
+                        submission_id="first-send",
+                        target_conversation_id=related.messages.conversation_id,
+                        target_registry_name="selected",
+                        pieces=[ConversationPieceRequest(original_value="Next")],
+                    ),
+                )
+                progress = await _settle_send_async(service=service._message_send_service, status=accepted)
+                assert progress.state == MessageSendState.COMPLETED
+                current = await service.get_attack_async(attack_result_id=first.attack.attack_result_id)
+                assert current is not None
+                assert not current.target_unbound
+                owned = await sqlite_instance.get_attack_result_conversations_async(
+                    attack_result_id=first.attack.attack_result_id
+                )
+                assert {conversation.conversation_id for conversation in owned} == {
+                    first.messages.conversation_id,
+                    related.messages.conversation_id,
+                }
+                assert all(conversation.target_identifier == editor_target.get_identifier() for conversation in owned)
 
     async def test_competing_binding_cannot_replace_target_async(self, sqlite_instance: SQLiteMemory) -> None:
         service = AttackService()

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toApiError } from '@/services/errors'
 import type {
   AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, ConversationSaveInput,
-  MessageAttachment, PieceConversion, SaveConversationRequest, TargetInstance,
+  MessageAttachment, NewAttackContext, PieceConversion, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import {
@@ -25,13 +25,13 @@ interface DraftState extends ConversationSaveInput {
   baselineTarget: string | undefined
 }
 
-export function useConversationDraft() {
+export function useConversationDraft(newAttackContext?: NewAttackContext) {
   const [draft, setDraft] = useState<DraftState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const activeId = useRef<string | null>(null)
   const saved = useRef(false)
   const urls = useRef(new Set<string>())
-  const workflow = useConversationSave()
+  const workflow = useConversationSave(newAttackContext)
   const dirty = draft !== null && (
     draft.messages !== draft.baselineMessages || draft.objective !== draft.initialObjective
     || targetKey(draft.target) !== draft.baselineTarget

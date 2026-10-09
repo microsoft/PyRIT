@@ -77,6 +77,7 @@ class AzureBlobStorageTarget(PromptTarget):
         *,
         container_url: str | None = None,
         sas_token: str | None = None,
+        auth_mode: AuthMode | None = None,
         blob_content_type: SupportedContentType = SupportedContentType.PLAIN_TEXT,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
@@ -89,6 +90,9 @@ class AzureBlobStorageTarget(PromptTarget):
                 Defaults to the AZURE_STORAGE_ACCOUNT_CONTAINER_URL environment variable.
             sas_token (str, Optional): The SAS token for authentication.
                 Defaults to the AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable.
+            auth_mode (AuthMode | None): Explicit authentication mode selected by
+                the create-target API. Identity mode bypasses all SAS token sources.
+                None preserves automatic credential selection. Defaults to None.
             blob_content_type (SupportedContentType): The content type for blobs.
                 Defaults to PLAIN_TEXT.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
@@ -102,6 +106,7 @@ class AzureBlobStorageTarget(PromptTarget):
         )
 
         self._sas_token: str | None = sas_token
+        self._auth_mode = auth_mode
         self._client_async: AsyncContainerClient | None = None
         self._credential: DefaultAzureCredential | None = None
 
@@ -125,6 +130,19 @@ class AzureBlobStorageTarget(PromptTarget):
             },
         )
 
+    @classmethod
+    def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
+        """
+        Preserve explicit authentication intent through target construction.
+
+        Args:
+            auth_mode (AuthMode): Authentication mode selected by the caller.
+
+        Returns:
+            dict[str, object]: Constructor parameters that enforce the mode.
+        """
+        return {"auth_mode": auth_mode}
+
     async def _create_container_client_async(self) -> None:
         """
         Create an asynchronous ContainerClient for Azure Storage. If a SAS token is provided via the
@@ -133,25 +151,33 @@ class AzureBlobStorageTarget(PromptTarget):
         to hold a data-plane role such as Storage Blob Data Contributor on the storage account.
         """
         container_url, _ = self._parse_url()
+        if self._auth_mode == "identity":
+            self._create_identity_container_client(container_url=container_url)
+            return
+
         try:
             sas_token: str = default_values.get_required_value(
                 env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE, passed_value=self._sas_token
             )
         except ValueError:
             logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
-            account_url, _, container_name = container_url.rpartition("/")
-            self._credential = DefaultAzureCredential()
-            self._client_async = AsyncContainerClient(
-                account_url=account_url,
-                container_name=container_name,
-                credential=self._credential,
-            )
+            self._create_identity_container_client(container_url=container_url)
             return
 
         logger.info("Using SAS token from environment variable or passed parameter.")
         self._client_async = AsyncContainerClient.from_container_url(
             container_url=container_url,
             credential=sas_token,
+        )
+
+    def _create_identity_container_client(self, *, container_url: str) -> None:
+        """Create a container client that authenticates only through Microsoft Entra ID."""
+        account_url, _, container_name = container_url.rpartition("/")
+        self._credential = DefaultAzureCredential()
+        self._client_async = AsyncContainerClient(
+            account_url=account_url,
+            container_name=container_name,
+            credential=self._credential,
         )
 
     async def _close_client_async(self) -> None:

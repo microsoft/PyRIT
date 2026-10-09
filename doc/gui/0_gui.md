@@ -112,6 +112,51 @@ Type a message and press Enter (or click Send) to send it to the chat target. Th
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
+#### Repeating a Message
+
+Use **n=1** beside Send to choose **1 to 10** repetitions. Enter and Send use the
+same settings, and the count resets to 1 after submission. Count 1 keeps the
+ordinary chat behavior.
+
+For count `n`, CoPyRIT keeps the selected conversation and creates exactly `n-1`
+copies of its history before sending the next message once in each. All copies
+belong to the same attack. Repeating again branches only the selected conversation:
+five conversations followed by three repetitions from one of them produces seven,
+not fifteen. Historical messages keep their original-piece lineage and are not
+converted again.
+
+**Convert once, reuse for all** is the default request-converter mode.
+For single sends and shared repeats in the GUI, use **Add converted value** to apply
+conversions before sending. Selected but unapplied pipelines are not run.
+**Convert independently for each** runs selected but unapplied request pipelines
+separately on each conversation's original inputs when the count is greater than 1.
+An explicitly applied preview, including manual edits, is reused exactly
+in either mode. Converter order, repeated stages, and original/converted values
+are preserved. API response converters always run independently per conversation.
+
+Compact progress links open each conversation in the ordinary chat and sidebar.
+A completed conversation can continue while its siblings are still sending.
+One failure does not undo successful siblings. A known preparation failure offers
+**Restore prompt**; a stored processing error offers the existing clean-conversation
+recovery. Review the restored draft and converter choices before submitting again.
+
+Progress is transient, not a durable delivery receipt. If progress or saved-message
+reads fail, use **Refresh progress** or **Refresh saved messages**. These retry reads
+only, never the send. Interrupted sends and missing/expired handles can leave
+provider delivery unknown. Inspect saved conversations before deciding to send again.
+
+API clients use the existing `POST /api/attacks/{id}/message-sends` endpoint with
+`count` (a strict integer, default `1`) and `request_converter_mode` (`shared`,
+the default, or `per_branch`). API clients can supply `request_converter_configurations`
+in either mode: `shared` converts once and reuses the result, while `per_branch`
+converts independently. Custom `start_token` and `end_token` conversion markers
+are honored in both modes. Status retains the selected `conversation_id` and
+`request_turn_number`; repeated sends also return `conversations` with individual
+states and explicit failure stages after history copies commit atomically.
+All conversations consume the shared admission budget, so a request is rejected
+without creating copies if there is insufficient capacity. The synchronous
+messages endpoint and `send=false` context storage are unchanged.
+
 #### Editing Converter Pipelines
 
 Open **Converters** and use the picker above the working input to add registered
@@ -131,13 +176,64 @@ you can edit it directly before applying it.
 
 To convert only part of a text value, select it and click **Convert selection only**.
 This wraps the selection in `⟪` and `⟫`. The next converter transforms only the marked
-regions and removes their markers, preserving everything outside them. Marked regions
-have a colored highlight while their markers stay visible. Later stages convert the
-whole result unless you select another region. Multiple and multiline
-regions are supported; unmatched and nested regions are rejected. Empty regions
-pass an empty string to the converter. Partial
+regions and removes their markers, preserving everything outside them. Multiple,
+multiline, empty, and nested regions are supported. Each stage transforms **all
+innermost regions** and removes only their marker pairs. Outer markers remain for
+later stages. Marked regions have a colored highlight while every marker stays visible.
+You can select text inside a marked region or select one or more complete regions
+to add an outer pair. A selection that crosses only one boundary of an existing pair
+is rejected. Unmatched markers must be corrected before adding a region or converting.
+Empty regions pass an empty string to the converter. Partial
 conversion requires text input and text output. Without markers, converters retain
 their normal whole-value behavior, including media conversions.
+
+For a **Translate to French -> Base64 -> ROT13** pipeline, wrap each region three times:
+
+```text
+Decode this recursively: ⟪⟪⟪Hello⟫⟫⟫ and ⟪⟪⟪Goodbye⟫⟫⟫
+```
+
+If translation returns `Bonjour` and `Au revoir`, the regions change as follows:
+
+| Stage | First region | Second region |
+|---|---|---|
+| Translate to French | `⟪⟪Bonjour⟫⟫` | `⟪⟪Au revoir⟫⟫` |
+| Base64 | `⟪Qm9uam91cg==⟫` | `⟪QXUgcmV2b2ly⟫` |
+| ROT13 | `Dz9hnz91pt==` | `DKHtpzI2o2yl` |
+
+`Decode this recursively:` and ` and ` stay unchanged through these three stages.
+Regions can have different depths. A region with no markers left stays unchanged
+while other marked regions are selected. When no markers remain anywhere, any later
+converter transforms the whole value. If the pipeline ends with outer markers still
+present, those markers remain in the final value.
+
+For a `SelectiveTextConverter` with `TokenSelectionStrategy`, setting
+`preserve_tokens=True` keeps each converted region's marker pair for the next stage.
+That stage does not consume a marker layer. The default, `preserve_tokens=False`,
+consumes the innermost pairs as described above.
+Python callers can request the same behavior on ordinary converters with
+`convert_tokens_async(..., keep_tokens=True)`. Without markers, this wraps the
+whole text result; it does not wrap non-text outputs.
+Native token-selection wrappers nested with the same markers share one selection:
+if either preserves tokens, they retain one pair instead of adding duplicate pairs.
+Explicit nested marker pairs in the input remain intact.
+
+API clients can set non-empty `start_token` and `end_token` strings on converter
+preview and message requests, including queued sends. The same settings control
+request and response converter pipelines. For example, use
+`start_token="<|pyrit_start_8f3a|>"` and `end_token="<|pyrit_end_8f3a|>"`
+to select ASCII-marked regions:
+
+```text
+<|pyrit_start_8f3a|>hello<|pyrit_end_8f3a|>
+```
+
+Use the same settings on token-based `SelectiveTextConverter` instances in the
+pipeline. Other marker characters stay literal. Omitting these fields retains the
+Unicode defaults; the GUI selection button still inserts those defaults.
+Choose markers that are unlikely to appear in prompts or replies. If response
+converters are configured, an unmatched marker in a reply raises before that reply
+is stored. Longer markers reduce accidental matches but do not eliminate them.
 
 Click **Add converted value** to apply the final result, then **Send**. The exact
 applied value is sent and stored alongside the unchanged original; the backend does
@@ -412,7 +508,7 @@ Click "New Target" to open the creation dialog. Fill in:
 
 - **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
 - **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
-- **Model / Deployment Name** (optional): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
+- **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
 - **API Key** (optional): Stored in memory only (not persisted to disk)
 
 For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
@@ -459,6 +555,13 @@ prevents newly admitted work from overlapping replacement.
 
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
+
+Backend shutdown closes runtime and management admission, then waits for accepted requests and any live apply
+to finish before stopping the scheduler and closing shared resources. This includes requests retained after a
+client disconnect and their offloaded writes. Cancelling the shutdown caller does not interrupt that cleanup;
+a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
+Shutdown can therefore wait for an outstanding operation. Runtime readiness reports `ready: false` and
+`state: stopping` as soon as shutdown closes admission, including while an accepted live apply finishes.
 
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the

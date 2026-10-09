@@ -1,7 +1,8 @@
 import { act, renderHook } from '@testing-library/react'
 
 import { attacksApi } from '@/services/api'
-import type { AddMessageResponse, ConversationSaveInput } from '@/types'
+import type { AddMessageResponse, ConversationSaveInput, NewAttackContext } from '@/types'
+import * as conversationDraft from '@/utils/conversationDraft'
 
 import { useConversationSave } from './useConversationSave'
 
@@ -22,6 +23,7 @@ const response: AddMessageResponse = {
 
 describe('useConversationSave', () => {
   beforeEach(() => jest.resetAllMocks())
+  afterEach(() => jest.restoreAllMocks())
 
   it('reuses the attempt after a lost response, then starts a new intentional copy after success', async () => {
     jest.mocked(attacksApi.saveConversation).mockRejectedValueOnce(new Error('Response lost')).mockResolvedValue(response)
@@ -71,5 +73,57 @@ describe('useConversationSave', () => {
     const changed = objective !== input.initialObjective
     expect(request.objective).toBe(changed ? objective : undefined)
     expect(request.expected_objective).toBe(changed ? input.initialObjective : undefined)
+  })
+
+  it('blocks new attacks while defaults load but still saves within an existing attack', async () => {
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
+    const context: NewAttackContext = { generation: 'gen-1', ready: false, labels: { operation: 'new_op' } }
+    const { result } = renderHook(() => useConversationSave(context))
+    await act(async () => {
+      await expect(result.current.save(input, 'new_attack')).rejects.toThrow('Default labels are not ready')
+    })
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    await act(async () => { await result.current.save(input, 'same_attack') })
+    expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      destination: 'same_attack', labels: input.labels,
+    }))
+  })
+
+  it.each([
+    { generation: 'gen-1', ready: false },
+    { generation: 'gen-2', ready: true },
+  ])('rejects a new attack after delayed serialization when context becomes %j', async (next: NewAttackContext) => {
+    let finish: (messages: Awaited<ReturnType<typeof conversationDraft.serializeDraft>>) => void = () => {}
+    jest.spyOn(conversationDraft, 'serializeDraft').mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
+    const context: NewAttackContext = { generation: 'gen-1', ready: true, labels: { operation: 'old_op' } }
+    const { result, rerender } = renderHook(
+      (props: NewAttackContext) => useConversationSave(props), { initialProps: context },
+    )
+    let pending: Promise<AddMessageResponse>
+    await act(async () => { pending = result.current.save(input, 'new_attack') })
+    rerender({ ...next, labels: { operation: 'new_op' } })
+    await act(async () => {
+      finish([{ role: 'user', pieces: [{ data_type: 'text', original_value: 'Prompt' }] }])
+      await expect(pending).rejects.toThrow('Runtime or default labels changed')
+    })
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    expect(result.current.saving).toBe(false)
+    rerender({ generation: 'gen-2', ready: true, labels: { operation: 'new_op' } })
+    await act(async () => { await result.current.save(input, 'new_attack') })
+    expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      operation: 'new_op', labels: { operation: 'new_op' },
+    }))
+  })
+
+  it('uses current labels rather than the labels captured when editing began', async () => {
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
+    const { result } = renderHook(() => useConversationSave({
+      generation: 'gen-2', ready: true, labels: { operator: 'owner', operation: 'refreshed_op' },
+    }))
+    await act(async () => { await result.current.save({ ...input, labels: { operation: 'old_op' } }, 'new_attack') })
+    expect(attacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      operator: 'owner', operation: 'refreshed_op', labels: { operator: 'owner', operation: 'refreshed_op' },
+    }))
   })
 })
