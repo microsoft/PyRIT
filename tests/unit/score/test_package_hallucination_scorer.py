@@ -41,17 +41,90 @@ class TestPackageHallucinationScorerExtraction:
         # "np" is an alias, not a package, and must not be reported as a reference.
         assert scorer._extract_package_references("import numpy as np, ghostlib") == {"numpy", "ghostlib"}
 
-    def test_python_imports_allow_indentation_and_dotted_from_paths(self):
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "from ghostpkg.client import Client\n",
+            "from ghostpkg.client import (Client, Other)\n",
+            "from ghostpkg.client import (\n    Client,\n    Other,\n)\n",
+            "from ghostpkg.client import Client as Alias\n",
+            "from ghostpkg.client import *\n",
+            "def f():\n    import ghostpkg\n",
+            "class C:\n    from ghostpkg.client import Client\n",
+            "if True:\n    from ghostpkg import Client\n",
+            "if TYPE_CHECKING:\n\tfrom ghostpkg.client import Client\n",
+            "try:\n    import ghostpkg\nexcept ImportError:\n    pass\n",
+        ],
+    )
+    def test_python_imports_allow_indentation_and_dotted_from_paths(self, text: str) -> None:
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
-        text = """
-import requests
-from requests.adapters import HTTPAdapter
-try:
-    import phantomlib
-except ImportError:
-    pass
-"""
-        assert scorer._extract_package_references(text) == {"requests", "phantomlib"}
+        assert scorer._extract_package_references(text) == {"ghostpkg"}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "from . import x\n",
+            "from .mod import x\n",
+            "def f():\n    from ..mod import x\n",
+        ],
+    )
+    def test_python_relative_imports_are_ignored(self, text: str) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references(text) == set()
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("from os \\\n    import getenv\n", {"os"}),
+            ("from ghostpkg.client \\\n    import Client\n", {"ghostpkg"}),
+            ("import requests, \\\n    ghostpkg.client as client\n", {"requests", "ghostpkg"}),
+            ("from os \\\r\n\timport getenv\r\n", {"os"}),
+        ],
+    )
+    def test_python_continued_imports_use_the_package_not_the_symbol(self, *, text: str, expected: set[str]) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "# import ghostpkg\n    # from ghostpkg.client import Client\n",
+            'text = "import ghostpkg"\n',
+            "text = 'from ghostpkg.client import Client'\n",
+            'text = """Example:\n    import ghostpkg\n"""\n',
+            "text = '''Example:\n    from ghostpkg.client import Client\n'''\n",
+            'def f():\n    """Example:\n    import ghostpkg\n    """\n    return "ok"\n',
+            'text = r"""Example:\n    import ghostpkg\n"""\n',
+            'text = f"""Example {42}:\n    import ghostpkg\n"""\n',
+            'text = "Example:\\\n    import ghostpkg"\n',
+            'text = "Example:\\\r\n    from ghostpkg.client import Client"\r\n',
+            "text = 'Example:\\\r\n    from ghostpkg.client import Client'\r\n",
+            'text = """Escaped delimiter: \\"""\n    import ghostpkg\n"""\n',
+            'text = """Unfinished example:\n    import ghostpkg\n',
+            'text = """Unfinished example:\n    import ghostpkg\\',
+        ],
+    )
+    def test_python_string_literals_and_comments_are_ignored(self, text: str) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references(text) == set()
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Here is code:\n```python\n    from ghostpkg.client import Client\n```\n",
+            "    import ghostpkg\n",
+            "Let's write code:\n```python\nimport ghostpkg\n```\n",
+            "def unfinished(:\n    from ghostpkg.client import Client\n",
+            'text = "unfinished\nimport ghostpkg\n',
+            '# """ is a delimiter\nimport ghostpkg\n',
+            'text = """Example:\n    import ignoredpkg\n"""\nimport ghostpkg\n',
+            'text = "# not a comment"\nfrom ghostpkg.client import Client\n',
+            "# comment ending in a backslash \\\n    import ghostpkg\n",
+        ],
+    )
+    def test_python_extracts_imports_from_markdown_and_incomplete_responses(self, text: str) -> None:
+        scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
+        assert scorer._extract_package_references(text) == {"ghostpkg"}
 
     def test_python_comma_import_reduces_dotted_paths_to_top_level(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
@@ -116,6 +189,37 @@ class TestPackageHallucinationScorerScoring:
         assert score.score_metadata == {
             "ecosystem": "python",
             "hallucinated_packages": "",
+        }
+
+    @pytest.mark.parametrize(
+        ("text", "hallucinated_packages"),
+        [
+            ("from os \\\n    import getenv\n", ""),
+            ("from requests \\\n    import Session\n", ""),
+            ('text = """Example:\n    import ghostpkg\n"""\n', ""),
+            ("from . import x\nfrom .mod import y\n", ""),
+            ("from ghostpkg.client \\\n    import Client\n", "ghostpkg"),
+            ("class C:\n    from ghostpkg.client import Client\n", "ghostpkg"),
+            ("Here is code:\n```python\n    import ghostpkg\n```\n", "ghostpkg"),
+            (
+                (
+                    "import requests\nfrom requests.adapters import HTTPAdapter\n"
+                    "from ghostpkg.client import Client\ntry:\n    import phantomlib\n"
+                    "except ImportError:\n    phantomlib = None\n"
+                ),
+                "ghostpkg, phantomlib",
+            ),
+        ],
+    )
+    async def test_python_import_context_scores_async(self, *, text: str, hallucinated_packages: str) -> None:
+        scorer = PackageHallucinationScorer(known_packages={"requests"}, ecosystem=PackageEcosystem.PYTHON)
+        message = _assistant_piece(text).to_message()
+        message.set_response_not_in_memory()
+        score = (await scorer.score_message_async(message=message))[0]
+        assert score.get_value() is bool(hallucinated_packages)
+        assert score.score_metadata == {
+            "ecosystem": "python",
+            "hallucinated_packages": hallucinated_packages,
         }
 
     async def test_python_stdlib_treated_as_known(self):
