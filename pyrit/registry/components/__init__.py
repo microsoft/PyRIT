@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.registry.components.attack_registry import AttackRegistry
     from pyrit.registry.components.attack_technique_registry import AttackTechniqueMetadata, AttackTechniqueRegistry
     from pyrit.registry.components.converter_registry import ConverterMetadata, ConverterRegistry
     from pyrit.registry.components.initializer_registry import InitializerMetadata, InitializerRegistry
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from pyrit.registry.components.target_registry import TargetMetadata, TargetRegistry
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AttackRegistry": "pyrit.registry.components.attack_registry",
     "AttackTechniqueRegistry": "pyrit.registry.components.attack_technique_registry",
     "AttackTechniqueMetadata": "pyrit.registry.components.attack_technique_registry",
     "ConverterRegistry": "pyrit.registry.components.converter_registry",

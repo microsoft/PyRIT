@@ -4,13 +4,14 @@
 """Canonical models for durable scenario run plans and incremental progress."""
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary  # noqa: TC001
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
-from pyrit.models.results.attack_result import AttackOutcome
+from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score.score import ScoreStatus
@@ -18,6 +19,23 @@ from pyrit.models.score.score import ScoreStatus
 SCENARIO_RUN_PLAN_METADATA_KEY = "run_plan"
 SCENARIO_RUN_STARTED_AT_METADATA_KEY = "started_at"
 SCENARIO_RUN_PLAN_VERSION = 1
+
+
+class ScenarioRunPlanGroupKind(str, Enum):
+    """What a planned atomic group runs, recorded by the code that builds the group."""
+
+    #: An ordinary technique attack.
+    ATTACK = "attack"
+
+    #: The unmodified comparison built by ``build_baseline_atomic_attack``.
+    BASELINE = "baseline"
+
+    #: One Adaptive objective, run as an orchestration parent and its attempts.
+    ADAPTIVE = "adaptive"
+
+    #: Read-side value for groups whose plan does not record a kind, such as plans persisted
+    #: before kinds were recorded. Plans never store it.
+    UNKNOWN = "unknown"
 
 
 class ScenarioRunPlanSeedGroup(BaseModel):
@@ -50,6 +68,8 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     seed_group_ids: list[str]
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
+    #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
+    kind: ScenarioRunPlanGroupKind | None = None
 
 
 class ScenarioRunPlan(BaseModel):
@@ -154,6 +174,12 @@ class ScenarioProgressResult(BaseModel):
     error_type: str | None = None
     error_message: str | None = None
     score: ScenarioProgressScore | None = None
+    #: Recorded by the producing strategy. ``unknown`` when the row predates roles.
+    result_role: AttackResultRole = AttackResultRole.UNKNOWN
+    #: Ordered results this orchestration parent ran, as persisted by ``SequentialAttack``.
+    child_attack_result_ids: list[str] = Field(default_factory=list)
+    #: 1-based position of this result among its orchestration parent's children.
+    attempt_index: int | None = Field(default=None, ge=1)
 
 
 class ScenarioProgressCounts(BaseModel):
@@ -165,6 +191,42 @@ class ScenarioProgressCounts(BaseModel):
     success_percentage: int | None = Field(default=None, ge=0, le=100)
     errors: int = Field(..., ge=0)
     retries: int = Field(..., ge=0)
+
+
+class ScenarioExecutionUnit(BaseModel):
+    """
+    Identity of one scenario execution unit.
+
+    ``atomic_group_id`` identifies the atomic attack together with its technique configuration, so
+    two configurations that share an atomic attack name are separate units. ``seed_group_id``
+    identifies the logical seed group within it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    atomic_group_id: str
+    seed_group_id: str
+
+
+class ScenarioExecutionStatistics(BaseModel):
+    """
+    Effective execution-unit statistics for one scenario run, calculated by ``pyrit.analytics``.
+
+    Each execution unit counts once, by its latest attempt, so recovered errors do not lower the success
+    percentage. ``attempts`` and the ``errors`` and ``retries`` of each count keep the historical attempt
+    history separately from the effective-unit statistics.
+    """
+
+    #: Counts across every counted execution unit.
+    overall: ScenarioProgressCounts
+    #: Counts keyed by atomic attack name (all technique configurations that share the name).
+    atomic_attacks: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
+    #: Counts keyed by display group label.
+    display_groups: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
+    #: Total persisted attempts, including superseded ones.
+    attempts: int = Field(default=0, ge=0)
+    #: Attempts that matched no planned execution unit and are excluded from the counts.
+    unattributed_attempts: int = Field(default=0, ge=0)
 
 
 class ScenarioTechniqueProgress(ScenarioProgressCounts):
@@ -204,6 +266,7 @@ class ScenarioAtomicGroupProgress(ScenarioProgressCounts):
     display_group: str
     status: Literal["RUNNING", "PENDING", "INCOMPLETE", "COMPLETED"]
     technique_details: ScenarioAttackTechniqueDetails | None = None
+    kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.UNKNOWN
 
 
 class ScenarioObjectiveScorerMetrics(BaseModel):
@@ -291,6 +354,7 @@ class ScenarioAttackResultDelta(BaseModel):
     error_type: str | None = None
     error_message: str | None = None
     attribution_data: dict[str, Any] = Field(default_factory=dict)
+    attack_metadata: dict[str, Any] = Field(default_factory=dict)
     score: ScenarioProgressScore | None = None
 
 

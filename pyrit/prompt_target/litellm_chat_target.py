@@ -34,6 +34,7 @@ from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_response_pieces_async,
     capture_usage_and_finish_reason,
     extract_partial_content,
+    get_finish_reason,
     is_content_filter_response,
     validate_chat_completion_response,
 )
@@ -46,9 +47,11 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.prompt_target.common.utils import (
+    build_empty_truncated_response,
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
+    warn_truncated_response,
 )
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 
@@ -450,7 +453,13 @@ class LiteLLMChatTarget(PromptTarget):
             self._capture_response_cost(pieces=filter_message.message_pieces, response=response)
             return [filter_message]
 
-        validate_chat_completion_response(response=response)
+        # A response cut off at the token limit may legitimately carry a partial answer (or no
+        # content at all), so skip the strict empty-response validation for it — mirroring
+        # OpenAIChatTarget. Truncation is flagged on the piece by the construct step below.
+        if self._is_truncated_response(response):
+            warn_truncated_response(signal="finish_reason='length'", limit_parameter="max_tokens")
+        else:
+            validate_chat_completion_response(response=response)
         return [await self._construct_message_from_response_async(response=response, request=request_piece)]
 
     async def _resolve_api_key_async(self) -> str | None:
@@ -519,13 +528,54 @@ class LiteLLMChatTarget(PromptTarget):
 
         return {k: v for k, v in body.items() if v is not None}
 
+    @staticmethod
+    def _is_truncated_response(response: Any) -> bool:
+        """
+        Whether the response was cut off at the output-token limit.
+
+        Args:
+            response (Any): The LiteLLM completion response object.
+
+        Returns:
+            bool: True when the first choice's ``finish_reason`` is ``"length"``.
+        """
+        return get_finish_reason(response=response) == "length"
+
     async def _construct_message_from_response_async(self, *, response: Any, request: MessagePiece) -> Message:
+        """
+        Construct a Message from a LiteLLM completion response.
+
+        Args:
+            response (Any): The LiteLLM completion response object.
+            request (MessagePiece): The originating request piece.
+
+        Returns:
+            Message: Constructed message with one or more MessagePiece entries.
+
+        Raises:
+            EmptyResponseException: If a non-truncated response contains no content, audio, or tool
+                calls. A truncated (``finish_reason == "length"``) response with no content instead
+                yields a graceful empty piece so the run continues. Truncated responses are flagged
+                via ``MessagePiece.mark_as_truncated`` on the first piece.
+        """
         audio_format = self._audio_response_config.audio_format if self._audio_response_config else "wav"
+        truncated = self._is_truncated_response(response)
         pieces = await build_response_pieces_async(response=response, request=request, audio_format=audio_format)
         if not pieces:
+            # A truncated (finish_reason == "length") response may legitimately produce no content;
+            # return a graceful empty piece so the run continues. Validation already raised for
+            # genuinely empty (non-truncated) responses.
+            if truncated:
+                empty_message = build_empty_truncated_response(request=request)
+                capture_usage_and_finish_reason(pieces=empty_message.message_pieces, response=response)
+                self._capture_response_cost(pieces=empty_message.message_pieces, response=response)
+                empty_message.message_pieces[0].mark_as_truncated()
+                return empty_message
             raise EmptyResponseException(message="Failed to extract any response content from LiteLLM.")
         capture_usage_and_finish_reason(pieces=pieces, response=response)
         self._capture_response_cost(pieces=pieces, response=response)
+        if truncated:
+            pieces[0].mark_as_truncated()
         return Message(message_pieces=pieces)
 
     def _capture_response_cost(self, *, pieces: list[MessagePiece], response: Any) -> None:

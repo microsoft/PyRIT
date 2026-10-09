@@ -27,6 +27,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
     AttackSeedGroup,
+    ScenarioRunPlanGroupKind,
     config_hash,
 )
 
@@ -65,6 +66,7 @@ class AtomicAttack:
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
+        group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -88,6 +90,10 @@ class AtomicAttack:
             objective_scorer: Optional scorer for evaluating simulated
                 conversations.
             memory_labels: Additional labels to apply to prompts.
+            group_kind: What this group runs, recorded in the scenario's run plan.
+                ``build_baseline_atomic_attack`` passes ``BASELINE`` and Adaptive
+                scenarios pass ``ADAPTIVE``. It describes the group and does not
+                change its identity or what it executes.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -98,6 +104,7 @@ class AtomicAttack:
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
         self._technique_name = technique_name
+        self._group_kind = group_kind
 
         self._attack_technique = attack_technique
 
@@ -186,6 +193,11 @@ class AtomicAttack:
     def technique_name(self) -> str | None:
         """Catalog name of the technique that built this attack."""
         return self._technique_name
+
+    @property
+    def group_kind(self) -> ScenarioRunPlanGroupKind:
+        """What this group runs, as recorded in the scenario's run plan."""
+        return self._group_kind
 
     @property
     def technique_eval_hash(self) -> str:

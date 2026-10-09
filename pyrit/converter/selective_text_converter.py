@@ -62,7 +62,8 @@ class SelectiveTextConverter(Converter):
             selection_strategy (TextSelectionStrategy): The strategy for selecting which text to convert.
                 Can be character-level or word-level strategy.
             preserve_tokens (bool): If True, wraps converted text with start/end tokens.
-                This allows subsequent converters in a chain to target different regions. Defaults to False.
+                With TokenSelectionStrategy, retains each converted region's marker pair, including
+                nested pairs. Without markers, wraps the whole converted value. Defaults to False.
             start_token (str): The token to place before converted text when preserve_tokens=True.
                 Defaults to "⟪".
             end_token (str): The token to place after converted text when preserve_tokens=True.
@@ -88,6 +89,117 @@ class SelectiveTextConverter(Converter):
         self._word_separator = word_separator
         self._is_word_level = isinstance(selection_strategy, WordSelectionStrategy)
         self._is_token_based = isinstance(selection_strategy, TokenSelectionStrategy)
+
+    def _is_conversion_dispatch(self, prompt: str) -> bool:
+        return self._is_token_based and self._has_native_implementation("convert_async")
+
+    def _has_native_implementation(self, method_name: str) -> bool:
+        owner = next(cls for cls in type(self).__mro__ if method_name in cls.__dict__)
+        return owner is SelectiveTextConverter
+
+    def _get_token_payload_converter(self, *, start_token: str, end_token: str) -> tuple[Converter, bool]:
+        converter = self._sub_converter
+        preserve_tokens = self._preserve_tokens
+        # Collapse only native wrappers, not subclasses that can override conversion.
+        while (
+            isinstance(converter, SelectiveTextConverter)
+            and type(converter) is SelectiveTextConverter
+            and converter._is_token_based
+            and converter._start_token == start_token
+            and converter._end_token == end_token
+        ):
+            preserve_tokens |= converter._preserve_tokens
+            converter = converter._sub_converter
+        return converter, preserve_tokens
+
+    async def convert_tokens_async(
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType = "text",
+        start_token: str = "⟪",
+        end_token: str = "⟫",
+        keep_tokens: bool = False,
+    ) -> ConverterResult:
+        """
+        Apply token selection once, including when called from a pipeline.
+
+        Args:
+            prompt (str): The input text.
+            input_type (PromptDataType): The input type. Must be text for token selection.
+            start_token (str): Opening marker used by the pipeline.
+            end_token (str): Closing marker used by the pipeline.
+            keep_tokens (bool): Retain the call's marker pair even if preserve_tokens is False.
+
+        Returns:
+            ConverterResult: Converted text with selected boundaries consumed or preserved.
+
+        Raises:
+            ValueError: If preserving markers around a custom token override is requested.
+        """
+        if not self._is_token_based or not self._has_native_implementation("convert_async"):
+            return await super().convert_tokens_async(
+                prompt=prompt,
+                input_type=input_type,
+                start_token=start_token,
+                end_token=end_token,
+                keep_tokens=keep_tokens,
+            )
+        return await self._convert_token_selection_async(
+            prompt=prompt,
+            input_type=input_type,
+            start_token=start_token,
+            end_token=end_token,
+            keep_tokens=keep_tokens,
+        )
+
+    async def _convert_token_selection_async(
+        self,
+        *,
+        prompt: str,
+        input_type: PromptDataType,
+        start_token: str,
+        end_token: str,
+        keep_tokens: bool = False,
+    ) -> ConverterResult:
+        if input_type != "text":
+            raise ValueError(f"SelectiveTextConverter only supports text input, got {input_type}")
+        if not start_token or not end_token:
+            raise ValueError("Start and end tokens must be non-empty.")
+
+        converter, preserve_tokens = self._get_token_payload_converter(start_token=start_token, end_token=end_token)
+        if type(converter).convert_tokens_async not in (
+            Converter.convert_tokens_async,
+            SelectiveTextConverter.convert_tokens_async,
+        ):
+            if preserve_tokens or keep_tokens:
+                raise ValueError(
+                    "Cannot preserve selected-region markers around a custom convert_tokens_async override. "
+                    "Use preserve_tokens=False and keep_tokens=False to delegate to the override, "
+                    "or implement convert_async "
+                    "with the shared token parser."
+                )
+            result = await converter.convert_tokens_async(
+                prompt=prompt, input_type=input_type, start_token=start_token, end_token=end_token
+            )
+            if result.output_type != "text":
+                raise ValueError(f"SelectiveTextConverter requires text output, but received {result.output_type}.")
+            return result
+
+        async def convert_region_async(text: str) -> ConverterResult:
+            result = await converter.convert_async(prompt=text, input_type="text")
+            if result.output_type != "text":
+                raise ValueError(f"SelectiveTextConverter requires text output, but received {result.output_type}.")
+            return result
+
+        return await self._convert_token_regions_async(
+            prompt=prompt,
+            input_type=input_type,
+            start_token=start_token,
+            end_token=end_token,
+            keep_tokens=preserve_tokens or keep_tokens,
+            convert_text_async=convert_region_async,
+        )
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -156,26 +268,20 @@ class SelectiveTextConverter(Converter):
 
         Raises:
             ValueError: If the input type is not "text".
+            ValueError: If token-based conversion produces non-text output.
+            ValueError: If marker preservation is requested around a custom token override.
         """
         if input_type != "text":
             raise ValueError(f"SelectiveTextConverter only supports text input, got {input_type}")
 
-        # If using TokenSelectionStrategy, delegate to convert_tokens_async
         if self._is_token_based:
-            result = await self._sub_converter.convert_tokens_async(
-                prompt=prompt,
-                input_type="text",
-                start_token=self._start_token,
-                end_token=self._end_token,
-            )
-            # If preserve_tokens is True, the tokens are already in the result
-            # If False, convert_tokens_async removes them
-            if self._preserve_tokens and self._start_token not in result.output_text:
-                # Wrap the result with tokens if they were removed
-                result = ConverterResult(
-                    output_text=f"{self._start_token}{result.output_text}{self._end_token}", output_type="text"
+            if not self._has_native_implementation("convert_tokens_async"):
+                return await self.convert_tokens_async(
+                    prompt=prompt, input_type=input_type, start_token=self._start_token, end_token=self._end_token
                 )
-            return result
+            return await self._convert_token_selection_async(
+                prompt=prompt, input_type=input_type, start_token=self._start_token, end_token=self._end_token
+            )
 
         if self._is_word_level:
             return await self._convert_word_level_async(prompt=prompt)

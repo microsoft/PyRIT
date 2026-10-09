@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
+from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import (
     AttackContext,
@@ -25,6 +25,7 @@ from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackResultRole,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
@@ -889,14 +890,15 @@ class TestDefaultAttackStrategyEventHandler:
         assert sample_attack_result.attribution_parent_id == "scenario-1"
         assert sample_attack_result.attribution_data == {
             "parent_collection": "atomic_a",
+            "result_role": "target_facing",
             "seed_group_id": "seed-a",
         }
 
-    async def test_on_post_execute_no_attribution_leaves_fields_none(
+    async def test_on_post_execute_no_attribution_records_only_result_role(
         self, sample_attack_context, sample_attack_result, mock_memory
     ):
-        """Outside a Scenario, _attribution is None and the attribution fields
-        on the persisted AttackResult must stay None."""
+        """Outside a Scenario, _attribution is None, so the persisted AttackResult
+        records its role but no parent link."""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
             handler = _DefaultAttackStrategyEventHandler()
             sample_attack_context.start_time = 100.0
@@ -912,7 +914,7 @@ class TestDefaultAttackStrategyEventHandler:
             await handler.on_event_async(event_data)
 
         assert sample_attack_result.attribution_parent_id is None
-        assert sample_attack_result.attribution_data is None
+        assert sample_attack_result.attribution_data == {"result_role": "target_facing"}
 
     async def test_on_error_stamps_scenario_attribution_when_present(self, sample_attack_context, mock_memory):
         """Error AttackResults must also carry the attribution foreign key so
@@ -944,7 +946,46 @@ class TestDefaultAttackStrategyEventHandler:
         assert persisted.attribution_parent_id == "scenario-err"
         assert persisted.attribution_data == {
             "parent_collection": "atomic_err",
+            "result_role": "target_facing",
             "seed_group_id": "seed-error",
+        }
+
+    @pytest.mark.parametrize("event", [StrategyEvent.ON_POST_EXECUTE, StrategyEvent.ON_ERROR])
+    async def test_attribution_records_result_role_and_attempt_index(
+        self, event, sample_attack_context, sample_attack_result, mock_memory
+    ):
+        """Completed and error results both carry the context's role and the child's position."""
+        from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+
+        with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):
+            handler = _DefaultAttackStrategyEventHandler()
+            sample_attack_context.start_time = 100.0
+            sample_attack_context._result_role = AttackResultRole.ORCHESTRATION
+            sample_attack_context._attribution = AttackResultAttribution(
+                parent_id="scenario-1",
+                parent_collection="atomic_a",
+                attempt_index=2,
+            )
+            is_error = event is StrategyEvent.ON_ERROR
+            event_data = StrategyEventData(
+                event=event,
+                strategy_name="TestStrategy",
+                strategy_id="test-id",
+                context=sample_attack_context,
+                result=None if is_error else sample_attack_result,
+                error=RuntimeError("boom") if is_error else None,
+            )
+            await handler.on_event_async(event_data)
+
+        persisted = (
+            mock_memory.add_attack_results_to_memory_async.call_args.kwargs["attack_results"][0]
+            if is_error
+            else sample_attack_result
+        )
+        assert persisted.attribution_data == {
+            "parent_collection": "atomic_a",
+            "result_role": "orchestration",
+            "attempt_index": 2,
         }
 
     async def test_on_post_execute_stamps_targeted_harm_categories(self, sample_attack_result, mock_memory):
@@ -1323,9 +1364,10 @@ def _adv_target(*, model_name: str = "gpt-adv", extra_params: dict | None = None
 class _IdentityTestStrategy(AttackStrategy):
     """Minimal concrete strategy that exposes a settable adversarial config for identity tests."""
 
-    def __init__(self, *, objective_target, adversarial_config=None):
+    def __init__(self, *, objective_target, adversarial_config=None, scoring_config=None):
         super().__init__(context_type=AttackContext, objective_target=objective_target)
         self._test_adversarial_config = adversarial_config
+        self._test_scoring_config = scoring_config
 
     def _validate_context(self, *, context):
         pass
@@ -1348,6 +1390,9 @@ class _IdentityTestStrategy(AttackStrategy):
 
     def get_attack_adversarial_config(self):
         return self._test_adversarial_config
+
+    def get_attack_scoring_config(self):
+        return self._test_scoring_config
 
 
 def _eval_hash(attack_identifier: ComponentIdentifier) -> str:
@@ -1508,3 +1553,47 @@ class TestCreateIdentifierAdversarial:
             adversarial_config=AttackAdversarialConfig(target=_adv_target(), system_prompt=None, first_message=None),
         )
         assert plain.get_identifier().hash != adversarial.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateIdentifierScoreFeedback:
+    """Tests for ``use_score_as_feedback`` in the attack identifier (component + eval hash)."""
+
+    def test_disabled_feedback_stored_in_params(self, mock_objective_target):
+        strategy = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        assert strategy.get_identifier().params["use_score_as_feedback"] is False
+
+    @pytest.mark.parametrize(
+        "scoring_config", [None, AttackScoringConfig(), AttackScoringConfig(use_score_as_feedback=True)]
+    )
+    def test_default_feedback_omitted_from_params(self, mock_objective_target, scoring_config):
+        """Enabled feedback is the default, so it is omitted to keep existing hashes stable."""
+        strategy = _IdentityTestStrategy(objective_target=mock_objective_target, scoring_config=scoring_config)
+        assert "use_score_as_feedback" not in strategy.get_identifier().params
+
+    def test_enabled_feedback_hash_matches_attack_without_scoring_config(self, mock_objective_target):
+        """Attacks created before this field existed must keep their component and eval hashes."""
+        without_config = _IdentityTestStrategy(objective_target=mock_objective_target)
+        with_default_config = _IdentityTestStrategy(
+            objective_target=mock_objective_target, scoring_config=AttackScoringConfig()
+        )
+        assert without_config.get_identifier().hash == with_default_config.get_identifier().hash
+        assert _eval_hash(without_config.get_identifier()) == _eval_hash(with_default_config.get_identifier())
+
+    def test_different_feedback_changes_full_and_eval_hash(self, mock_objective_target):
+        """Regression test: scenario resume matches completed objectives by eval hash, so attacks
+        that differ only in whether the adversarial chat sees the scorer rationale must not collide."""
+        with_feedback = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            scoring_config=AttackScoringConfig(use_score_as_feedback=True),
+        )
+        without_feedback = _IdentityTestStrategy(
+            objective_target=mock_objective_target,
+            scoring_config=AttackScoringConfig(use_score_as_feedback=False),
+        )
+        id1, id2 = with_feedback.get_identifier(), without_feedback.get_identifier()
+        assert id1.hash != id2.hash
+        assert _eval_hash(id1) != _eval_hash(id2)

@@ -10,7 +10,7 @@ which are class-based alternatives to initialization scripts.
 
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from typing import Any
 
@@ -159,7 +159,7 @@ class PyRITInitializer(ABC):
             await self.initialize_async()
 
     @contextmanager
-    def _track_initialization_changes(self) -> Iterator[dict[str, Any]]:
+    def _track_initialization_changes(self) -> Generator[dict[str, Any], None, None]:
         """
         Context manager to track what changes during initialization.
 

@@ -692,6 +692,39 @@ async def test_unknown_finish_reason_raises(target, litellm_stub):
 
 
 # ---------------------------------------------------------------------------
+# Token-limit truncation (finish_reason == "length")
+# ---------------------------------------------------------------------------
+
+
+async def test_token_limit_truncation_marks_the_piece(target, litellm_stub, caplog):
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("The answer is", finish_reason="length"))
+
+    result = await target.send_prompt_async(message=_user_message("hi"))
+
+    piece = result[0].message_pieces[0]
+    assert piece.converted_value == "The answer is"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 5
+    assert "finish_reason='length'" in caplog.text
+
+
+async def test_token_limit_truncation_with_no_content_does_not_raise(target, litellm_stub):
+    empty = _mock_response(content=None, finish_reason="length")
+    empty.choices[0].message.content = None
+    empty.choices[0].message.tool_calls = None
+    empty.choices[0].message.audio = None
+    litellm_stub.acompletion = AsyncMock(return_value=empty)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    piece = result[0].message_pieces[0]
+    assert piece.response_error == "empty"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["finish_reason"] == "length"
+
+
+# ---------------------------------------------------------------------------
 # Exception translation
 # ---------------------------------------------------------------------------
 

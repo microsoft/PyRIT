@@ -10,6 +10,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from pyrit.analytics import compute_scenario_statistics
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -19,6 +20,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioRunPlanGroupKind,
     ScenarioRunState,
     SeedObjective,
     SeedPrompt,
@@ -107,6 +109,7 @@ def mock_atomic_attacks():
     mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
     run1 = MagicMock(spec=AtomicAttack)
+    run1.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run1.atomic_attack_name = "attack_run_1"
     run1.display_group = "attack_run_1"
     run1._attack = mock_attack
@@ -115,6 +118,7 @@ def mock_atomic_attacks():
     type(run1).objectives = PropertyMock(return_value=["objective1"])
 
     run2 = MagicMock(spec=AtomicAttack)
+    run2.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run2.atomic_attack_name = "attack_run_2"
     run2.display_group = "attack_run_2"
     run2._attack = mock_attack
@@ -123,6 +127,7 @@ def mock_atomic_attacks():
     type(run2).objectives = PropertyMock(return_value=["objective2"])
 
     run3 = MagicMock(spec=AtomicAttack)
+    run3.group_kind = ScenarioRunPlanGroupKind.ATTACK
     run3.atomic_attack_name = "attack_run_3"
     run3.display_group = "attack_run_3"
     run3._attack = mock_attack
@@ -319,6 +324,7 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="duplicate objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_attack.atomic_attack_name = "duplicate_attack"
         atomic_attack.display_group = "duplicate_attack"
         atomic_attack.technique_eval_hash = "duplicate-technique"
@@ -352,6 +358,7 @@ class TestScenarioInitialization2:
             AttackSeedGroup(seeds=[SeedObjective(value="second objective")]),
         ]
         atomic_attack = MagicMock(spec=AtomicAttack)
+        atomic_attack.group_kind = ScenarioRunPlanGroupKind.ATTACK
         atomic_attack.atomic_attack_name = "unique_attack"
         atomic_attack.display_group = "custom display group"
         atomic_attack.technique_name = "test"
@@ -756,6 +763,7 @@ class TestScenarioProperties:
         mock_attack.get_attack_scoring_config.return_value = MagicMock()
 
         single_run_mock = MagicMock(spec=AtomicAttack)
+        single_run_mock.group_kind = ScenarioRunPlanGroupKind.ATTACK
         single_run_mock.atomic_attack_name = "attack_1"
         single_run_mock.display_group = "attack_1"
         single_run_mock._attack = mock_attack
@@ -778,6 +786,7 @@ class TestScenarioProperties:
         many_runs = []
         for i in range(10):
             run = MagicMock(spec=AtomicAttack)
+            run.group_kind = ScenarioRunPlanGroupKind.ATTACK
             run.atomic_attack_name = f"attack_{i}"
             run.display_group = f"attack_{i}"
             run._attack = mock_attack
@@ -837,10 +846,10 @@ class TestScenarioResult:
         )
 
         assert len(result.attack_results["base64"]) == 0
-        assert result.objective_achieved_rate() == 0
+        assert compute_scenario_statistics(result).overall.success_percentage is None
 
-    def test_scenario_result_objective_achieved_rate(self, sample_attack_results):
-        """Test objective_achieved_rate calculation."""
+    def test_scenario_result_success_percentage(self, sample_attack_results):
+        """Test the effective success percentage of a scenario result."""
         # All successful
         result = make_scenario_result(
             scenario_name="Test",
@@ -852,19 +861,19 @@ class TestScenarioResult:
             attack_results={"base64": sample_attack_results},
             objective_scorer_identifier=_TEST_SCORER_ID,
         )
-        assert result.objective_achieved_rate() == 100
+        assert compute_scenario_statistics(result).overall.success_percentage == 100
 
         # Mixed outcomes
         mixed_results = sample_attack_results[:3] + [
             AttackResult(
                 conversation_id="conv-fail",
-                objective="objective",
+                objective="objective-fail",
                 outcome=AttackOutcome.FAILURE,
                 executed_turns=1,
             ),
             AttackResult(
                 conversation_id="conv-fail2",
-                objective="objective",
+                objective="objective-fail2",
                 outcome=AttackOutcome.FAILURE,
                 executed_turns=1,
             ),
@@ -879,7 +888,7 @@ class TestScenarioResult:
             attack_results={"base64": mixed_results},
             objective_scorer_identifier=_TEST_SCORER_ID,
         )
-        assert result2.objective_achieved_rate() == 60  # 3 out of 5
+        assert compute_scenario_statistics(result2).overall.success_percentage == 60  # 3 out of 5
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1980,6 +1989,41 @@ class TestScenarioParallelExecution:
         assert "attack_run_3" not in completed_calls
         # Sanity check: the failure actually happened.
         assert bad_started.is_set()
+
+    async def test_child_cancellation_stops_queue_before_ready_sibling_finishes(
+        self, mock_atomic_attacks, sample_attack_results, mock_objective_target
+    ):
+        sibling_started = asyncio.Event()
+        release_sibling = asyncio.Event()
+
+        async def cancelled_run_async(**_kwargs):
+            await sibling_started.wait()
+            release_sibling.set()
+            raise asyncio.CancelledError("atomic attack cancelled")
+
+        async def sibling_run_async(**_kwargs):
+            sibling_started.set()
+            await release_sibling.wait()
+            return AttackExecutorResult(completed_results=[sample_attack_results[1]], incomplete_objectives=[])
+
+        mock_atomic_attacks[0].run_async = AsyncMock(side_effect=cancelled_run_async)
+        mock_atomic_attacks[1].run_async = AsyncMock(side_effect=sibling_run_async)
+        mock_atomic_attacks[2].run_async = create_mock_run_async(
+            [sample_attack_results[2]], atomic_attack=mock_atomic_attacks[2]
+        )
+        scenario = ConcreteScenario(
+            name="Child Cancellation Scenario",
+            version=1,
+            atomic_attacks_to_return=mock_atomic_attacks,
+        )
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario.initialize_async()
+
+        with pytest.raises(asyncio.CancelledError, match="atomic attack cancelled"):
+            await asyncio.wait_for(scenario.run_async(), timeout=5)
+
+        mock_atomic_attacks[2].run_async.assert_not_called()
+        assert not scenario._active_atomic_groups
 
     async def test_multiple_inflight_failures_are_grouped_into_exception_group(
         self, mock_atomic_attacks, sample_attack_results, mock_objective_target
