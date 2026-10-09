@@ -25,6 +25,13 @@ if TYPE_CHECKING:
     from pyrit.models import PromptDataType
 
 
+_ALLOWED_MEDIA_SUBDIRECTORIES = frozenset({"prompt-memory-entries", "seed-prompt-entries"})
+
+
+class MediaAccessDeniedError(ValueError):
+    """A local media path is outside the API's allowed storage directories."""
+
+
 class MediaOrigin(str, Enum):
     """Origin recognized for one path-typed media value."""
 
@@ -54,30 +61,49 @@ def validate_media_path(*, path: str, allowed_root: Path) -> Path:
     """
     Resolve symlinks and parent components before checking results-directory containment.
 
+    Args:
+        path (str): The local media path.
+        allowed_root (Path): The configured results directory.
+
     Returns:
         The canonical path in an allowed media subdirectory.
 
     Raises:
-        ValueError: If the path is outside the allowed media directories.
+        MediaAccessDeniedError: If the path is outside the allowed media directories.
     """
     real_path = Path(path).resolve(strict=False)
     try:
         relative_parts = real_path.relative_to(allowed_root.resolve(strict=False)).parts
     except ValueError as exc:
-        raise ValueError("Access denied: path is outside the allowed results directory.") from exc
+        raise MediaAccessDeniedError("Access denied: path is outside the allowed results directory.") from exc
 
-    if not relative_parts or relative_parts[0] not in {"prompt-memory-entries", "seed-prompt-entries"}:
-        raise ValueError("Access denied: path is not in a media subdirectory.")
+    if not relative_parts or relative_parts[0] not in _ALLOWED_MEDIA_SUBDIRECTORIES:
+        raise MediaAccessDeniedError("Access denied: path is not in a media subdirectory.")
 
     return real_path
 
 
-async def _validate_local_media_path_async(path: str) -> str:
-    memory = CentralMemory.get_memory_instance()
+async def validate_local_media_path_async(*, path: str) -> Path:
+    """
+    Validate a local media path against the configured results directory.
+
+    Args:
+        path (str): The local media path.
+
+    Returns:
+        The canonical path in an allowed media subdirectory.
+
+    Raises:
+        RuntimeError: If memory or its results path is not configured.
+        MediaAccessDeniedError: If the path is outside the allowed media directories.
+    """
+    try:
+        memory = CentralMemory.get_memory_instance()
+    except ValueError as exc:
+        raise RuntimeError("Memory not initialized; cannot determine results path.") from exc
     if not memory.results_path:
-        raise ValueError("Memory results_path is not configured.")
-    validated_path = await asyncio.to_thread(validate_media_path, path=path, allowed_root=Path(memory.results_path))
-    return str(validated_path)
+        raise RuntimeError("Memory results_path is not configured.")
+    return await asyncio.to_thread(validate_media_path, path=path, allowed_root=Path(memory.results_path))
 
 
 def _is_raw_base64(value: str) -> bool:
@@ -154,7 +180,7 @@ async def persist_media_value_async(
             if file_path is None:
                 raise ValueError("Media reference must include a path.")
             return MediaPersistenceResult(
-                value=await _validate_local_media_path_async(file_path),
+                value=str(await validate_local_media_path_async(path=file_path)),
                 origin=MediaOrigin.MEDIA_REFERENCE,
                 persisted=False,
                 resolved=True,
@@ -176,7 +202,7 @@ async def persist_media_value_async(
             is_file = False
         if is_file:
             return MediaPersistenceResult(
-                value=await _validate_local_media_path_async(value),
+                value=str(await validate_local_media_path_async(path=value)),
                 origin=MediaOrigin.LOCAL_PATH,
                 persisted=False,
                 resolved=True,

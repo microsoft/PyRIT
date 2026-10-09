@@ -19,13 +19,11 @@ opaque bytes.
 import asyncio
 import logging
 import mimetypes
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from pyrit.backend.services.media_persistence import validate_media_path
-from pyrit.memory import CentralMemory
+from pyrit.backend.services.media_persistence import MediaAccessDeniedError, validate_local_media_path_async
 
 logger = logging.getLogger(__name__)
 
@@ -84,20 +82,14 @@ async def serve_media_async(
     Raises:
         HTTPException 403: If the path is outside the allowed directory.
         HTTPException 404: If the file does not exist.
-        HTTPException 500: If memory is not initialized.
+        HTTPException 500: If memory or its results path is not configured.
     """
     try:
-        memory = CentralMemory.get_memory_instance()
-        if not memory.results_path:
-            raise HTTPException(status_code=500, detail="Memory results_path is not configured.")
-        allowed_root = await asyncio.to_thread(Path(memory.results_path).resolve, strict=False)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail="Memory not initialized; cannot determine results path.") from exc
-
-    try:
-        validated_path = await asyncio.to_thread(validate_media_path, path=path, allowed_root=allowed_root)
-    except ValueError as exc:
+        validated_path = await validate_local_media_path_async(path=path)
+    except MediaAccessDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     if not await asyncio.to_thread(validated_path.is_file):
         raise HTTPException(status_code=404, detail="File not found.")

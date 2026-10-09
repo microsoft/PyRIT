@@ -15,9 +15,11 @@ from urllib.parse import quote, urlencode
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from pyrit import converter
+from pyrit.backend.main import app
 from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
@@ -31,6 +33,8 @@ from pyrit.converter import (
     Base64Converter,
     BinaryConverter,
     CaesarConverter,
+    ImageCompressionConverter,
+    QRCodeConverter,
     RepeatTokenConverter,
     ROT13Converter,
     SelectiveTextConverter,
@@ -1312,6 +1316,44 @@ class TestPreviewConversion:
         assert result.steps[0].input_data_type == "image_path"
         assert result.steps[0].output_data_type == "audio_path"
 
+    async def test_preview_media_steps_can_be_served_and_reused_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        upload_service._registry.instances.register(QRCodeConverter(), name="qr")
+        upload_service._registry.instances.register(
+            ImageCompressionConverter(output_format="PNG", min_compression_threshold=0, fallback_to_original=False),
+            name="compress",
+        )
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(original_value="media preview", converter_ids=["qr", "compress"])
+        )
+
+        assert len(result.steps) == 2
+        assert result.steps[0].input_value == "media preview"
+        assert result.steps[1].input_value == result.steps[0].output_value
+        assert result.steps[0].output_value != result.steps[1].output_value
+        assert [step.output_data_type for step in result.steps] == ["image_path", "image_path"]
+        assert result.converted_value == result.steps[1].output_value
+
+        client = TestClient(app)
+        for step in result.steps:
+            response = await asyncio.to_thread(client.get, "/api/media", params={"path": step.output_value})
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "image/png"
+            assert response.content == await asyncio.to_thread(Path(step.output_value).read_bytes)
+
+        resumed = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=result.steps[0].output_value,
+                original_value_data_type=result.steps[0].output_data_type,
+                converter_ids=["compress"],
+            )
+        )
+        assert resumed.steps[0].input_value == result.steps[0].output_value
+        assert resumed.converted_value_data_type == "image_path"
+        response = await asyncio.to_thread(client.get, "/api/media", params={"path": resumed.converted_value})
+        assert response.status_code == 200
+
     async def test_preview_conversion_persists_data_uri_for_image_path(self) -> None:
         """Data URIs on *_path types are decoded via the DEFAULT_MEDIA_EXTENSIONS map and persisted."""
         service = ConverterService()
@@ -1484,6 +1526,33 @@ class TestPreviewConversion:
 
         assert exc_info.value.status_code == 400
         assert "outside the allowed results directory" in exc_info.value.detail
+        convert.assert_not_awaited()
+
+    @pytest.mark.parametrize("failure", ["uninitialized-memory", "missing-results-path"])
+    async def test_preview_storage_configuration_error_returns_500_async(
+        self, *, upload_service: ConverterService, managed_media_path: Path, failure: str
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        instance = Base64Converter()
+        upload_service._registry.instances.register(instance, name="base64")
+        request = ConverterPreviewRequest(
+            original_value=str(managed_media_path), original_value_data_type="image_path", converter_ids=["base64"]
+        )
+        with (
+            patch.object(memory, "results_path", None),
+            patch.object(
+                CentralMemory,
+                "get_memory_instance",
+                return_value=memory,
+                side_effect=ValueError("not initialized") if failure == "uninitialized-memory" else None,
+            ),
+            patch.object(instance, "convert_async", new_callable=AsyncMock) as convert,
+            patch.object(converter_routes, "get_converter_service", return_value=upload_service),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await converter_routes.preview_conversion(request)
+
+        assert exc_info.value.status_code == 500
         convert.assert_not_awaited()
 
 
