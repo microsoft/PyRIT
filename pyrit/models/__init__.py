@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         AttackAnalyticsValueKind,
         AttackResultSelection,
         AttackStats,
+        OutcomeStatistics,
     )
     from pyrit.models.catalog import (
         ScenarioDatasetSizeCap,
@@ -295,6 +296,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AttackAnalyticsValueKind": "pyrit.models.analytics",
     "AttackResultSelection": "pyrit.models.analytics",
     "AttackStats": "pyrit.models.analytics",
+    "OutcomeStatistics": "pyrit.models.analytics",
     "Acquisition": "pyrit.models.score",
     "AnswerMatches": "pyrit.models.score",
     "ALLOWED_CHAT_MESSAGE_ROLES": "pyrit.models.messages.chat_message",

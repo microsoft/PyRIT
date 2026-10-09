@@ -11,21 +11,27 @@ drift apart. It owns:
 - execution-unit identity: an atomic group (atomic attack name plus technique configuration) and a
   logical seed group, resolved against the saved run plan when one exists;
 - attempt selection: each unit counts once, by its latest attempt (timestamp, then attempt ID);
-- counts, denominators, and rounding: the success percentage is succeeded units over completed units,
-  truncated to an integer.
+- unit outcome counts, passed to the shared outcome calculator for both denominator policies.
 
 Historical attempt, error, and retry counts are reported separately from the effective-unit counts.
+The legacy success percentage remains succeeded units over all completed units.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import ValidationError
 
+from pyrit.analytics.outcome_statistics import (
+    combine_outcome_statistics,
+    compute_outcome_statistics,
+    success_percentage,
+)
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -262,17 +268,6 @@ def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Itera
     return within_attempts + repeated_units
 
 
-def success_percentage(*, succeeded: int, completed: int) -> int | None:
-    """
-    Return the success percentage for effective execution units.
-
-    Returns:
-        int | None: ``succeeded / completed`` as a truncated integer percentage, or None with no
-            completed units.
-    """
-    return int((succeeded / completed) * 100) if completed else None
-
-
 def count_execution_units(
     *,
     units: Iterable[ScenarioExecutionUnit],
@@ -286,10 +281,9 @@ def count_execution_units(
     oldest first; the last attempt decides the unit's outcome.
 
     Returns:
-        ScenarioProgressCounts: Completed and succeeded units plus historical errors and retries.
+        ScenarioProgressCounts: Shared statistics for latest unit outcomes plus historical errors and retries.
     """
-    completed = 0
-    succeeded = 0
+    counts: Counter[AttackOutcome] = Counter()
     errors = 0
     retries = 0
     target_facing_attempts = 0
@@ -306,14 +300,12 @@ def count_execution_units(
         attempts = attempts_by_unit.get(unit, ())
         if not attempts:
             continue
-        completed += 1
-        succeeded += int(attempts[-1].outcome == AttackOutcome.SUCCESS)
+        counts[attempts[-1].outcome] += 1
         errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in attempts)
         retries += retry_pressure(
             attempts_per_unit=[len(attempts)],
             persisted_retries=[attempt.total_retries for attempt in attempts],
         )
-
         for attempt in attempts:
             role = attempt.result_role
             if role == AttackResultRole.TARGET_FACING:
@@ -349,14 +341,16 @@ def count_execution_units(
         ),
     )
 
+    outcomes = compute_outcome_statistics(counts)
     return ScenarioProgressCounts(
-        completed=completed,
+        completed=outcomes.total_results,
         planned=planned,
-        succeeded=succeeded,
-        success_percentage=success_percentage(succeeded=succeeded, completed=completed),
+        succeeded=outcomes.successes,
+        success_percentage=success_percentage(succeeded=outcomes.successes, completed=outcomes.total_results),
         errors=errors,
         retries=retries,
         producer_counts=producer_counts,
+        outcomes=outcomes,
     )
 
 
@@ -366,13 +360,13 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
 
     Returns:
         ScenarioProgressCounts: The summed counts with the success percentage recomputed. ``planned`` is
-            None unless every input has one.
+            None unless every input has one. ``outcomes`` is None if a nonempty legacy input
+            lacks its breakdown; historical errors cannot reconstruct latest outcomes.
     """
-    counts = list(counts)
+    counts = [ScenarioProgressCounts.model_validate(item) for item in counts]
     completed = sum(item.completed for item in counts)
     succeeded = sum(item.succeeded for item in counts)
     planned = [item.planned for item in counts]
-    
     from pyrit.models import ScenarioProducerCounts, ScenarioProducerCategoryCounts
     producer_counts = ScenarioProducerCounts(
         target_facing=ScenarioProducerCategoryCounts(
@@ -391,7 +385,13 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
             retries=sum(item.producer_counts.unknown.retries for item in counts),
         ),
     )
-    
+
+    if any(item.completed and item.outcomes is None for item in counts):
+        logger.warning("Cannot combine outcome statistics from legacy scenario counts without an outcome breakdown.")
+        outcomes = None
+    else:
+        outcomes = combine_outcome_statistics(item.outcomes for item in counts if item.outcomes is not None)
+
     return ScenarioProgressCounts(
         completed=completed,
         planned=sum(value for value in planned if value is not None) if all(v is not None for v in planned) else None,
@@ -400,6 +400,7 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
         errors=sum(item.errors for item in counts),
         retries=sum(item.retries for item in counts),
         producer_counts=producer_counts,
+        outcomes=outcomes,
     )
 
 

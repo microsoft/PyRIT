@@ -3,8 +3,9 @@
 
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, Literal, TypedDict, TypeVar, overload
 
+from pyrit.analytics.outcome_statistics import compute_outcome_statistics
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     AttackOutcome,
@@ -13,35 +14,81 @@ from pyrit.models import (
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
+    OutcomeStatistics,
 )
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_interface import MemoryInterface
 
 _SYNC_API_REMOVAL_VERSION = "1.4.0"
+_StatisticsT = TypeVar("_StatisticsT", bound=AttackStats)
+
+
+class _AnalysisResult(TypedDict, Generic[_StatisticsT]):
+    """The existing result dictionary, with precise types for its two keys."""
+
+    Overall: _StatisticsT
+    By_attack_identifier: dict[str, _StatisticsT]
 
 
 def _compute_stats(successes: int, failures: int, undetermined: int, errors: int) -> AttackStats:
-    total_decided = successes + failures
-    success_rate = successes / total_decided if total_decided > 0 else None
+    statistics = compute_outcome_statistics(
+        {
+            AttackOutcome.SUCCESS: successes,
+            AttackOutcome.FAILURE: failures,
+            AttackOutcome.UNDETERMINED: undetermined,
+            AttackOutcome.ERROR: errors,
+        }
+    )
+    return _as_attack_stats(statistics)
+
+
+def _as_attack_stats(statistics: OutcomeStatistics) -> AttackStats:
     return AttackStats(
-        success_rate=success_rate,
-        total_decided=total_decided,
-        successes=successes,
-        failures=failures,
-        undetermined=undetermined,
-        errors=errors,
+        success_rate=statistics.success_rate,
+        total_decided=statistics.total_decided,
+        successes=statistics.successes,
+        failures=statistics.failures,
+        undetermined=statistics.undetermined,
+        errors=statistics.errors,
     )
 
 
-def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats | dict[str, AttackStats]]:
+@overload
+def analyze_results(
+    attack_results: list[AttackResult], *, include_outcome_statistics: Literal[True]
+) -> _AnalysisResult[OutcomeStatistics]: ...
+
+
+@overload
+def analyze_results(
+    attack_results: list[AttackResult], *, include_outcome_statistics: Literal[False] = False
+) -> _AnalysisResult[AttackStats]: ...
+
+
+@overload
+def analyze_results(
+    attack_results: list[AttackResult], *, include_outcome_statistics: bool
+) -> _AnalysisResult[AttackStats] | _AnalysisResult[OutcomeStatistics]: ...
+
+
+def analyze_results(
+    attack_results: list[AttackResult], *, include_outcome_statistics: bool = False
+) -> _AnalysisResult[AttackStats] | _AnalysisResult[OutcomeStatistics]:
     """
     Analyze a list of AttackResult objects and return overall and grouped statistics.
 
+    This API remains supported. Both output shapes use the shared outcome calculator
+    and count the supplied results without changing their grouping or selecting retries.
+
+    Args:
+        attack_results (list[AttackResult]): Results to count.
+        include_outcome_statistics (bool): Return ``OutcomeStatistics`` with both success
+            rates, totals, and shares. False preserves the six-field ``AttackStats`` shape.
+
     Returns:
-        A dictionary of AttackStats objects. The overall stats are accessible with the key
-        "Overall", and the stats of any attack can be retrieved using "By_attack_identifier"
-        followed by the identifier of the attack.
+        dict: Overall statistics under "Overall" and per-attack-type statistics under
+            "By_attack_identifier". The opt-in changes values, not dictionary keys.
 
     Raises:
         ValueError: if attack_results is empty.
@@ -57,8 +104,8 @@ def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats
     if not attack_results:
         raise ValueError("attack_results cannot be empty")
 
-    overall_counts: defaultdict[str, int] = defaultdict(int)
-    by_type_counts: defaultdict[str, defaultdict[str, int]] = defaultdict(lambda: defaultdict(int))
+    overall_counts: defaultdict[AttackOutcome, int] = defaultdict(int)
+    by_type_counts: defaultdict[str, defaultdict[AttackOutcome, int]] = defaultdict(lambda: defaultdict(int))
 
     for attack in attack_results:
         if not isinstance(attack, AttackResult):
@@ -68,39 +115,16 @@ def analyze_results(attack_results: list[AttackResult]) -> dict[str, AttackStats
         _strategy_id = attack.get_attack_strategy_identifier()
         attack_type = _strategy_id.class_name if _strategy_id is not None else "unknown"
 
-        if outcome == AttackOutcome.SUCCESS:
-            overall_counts["successes"] += 1
-            by_type_counts[attack_type]["successes"] += 1
-        elif outcome == AttackOutcome.FAILURE:
-            overall_counts["failures"] += 1
-            by_type_counts[attack_type]["failures"] += 1
-        elif outcome == AttackOutcome.ERROR:
-            overall_counts["errors"] += 1
-            by_type_counts[attack_type]["errors"] += 1
-        else:
-            overall_counts["undetermined"] += 1
-            by_type_counts[attack_type]["undetermined"] += 1
+        overall_counts[outcome] += 1
+        by_type_counts[attack_type][outcome] += 1
 
-    overall_stats = _compute_stats(
-        successes=overall_counts["successes"],
-        failures=overall_counts["failures"],
-        undetermined=overall_counts["undetermined"],
-        errors=overall_counts["errors"],
-    )
-
-    by_type_stats = {
-        attack_type: _compute_stats(
-            successes=counts["successes"],
-            failures=counts["failures"],
-            undetermined=counts["undetermined"],
-            errors=counts["errors"],
-        )
-        for attack_type, counts in by_type_counts.items()
-    }
-
+    overall_stats = compute_outcome_statistics(overall_counts)
+    by_type_stats = {attack_type: compute_outcome_statistics(counts) for attack_type, counts in by_type_counts.items()}
+    if include_outcome_statistics:
+        return {"Overall": overall_stats, "By_attack_identifier": by_type_stats}
     return {
-        "Overall": overall_stats,
-        "By_attack_identifier": by_type_stats,
+        "Overall": _as_attack_stats(overall_stats),
+        "By_attack_identifier": {name: _as_attack_stats(statistics) for name, statistics in by_type_stats.items()},
     }
 
 
