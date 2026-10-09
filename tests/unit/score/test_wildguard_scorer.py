@@ -10,15 +10,53 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.completion import Completion
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, Message, MessagePiece
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.prompt_target import OpenAICompletionTarget, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import MessageScorable, WildGuardLabel, WildGuardScorer, render_wildguard_prompt
 
 FULL_RESPONSE = "Harmful request: yes\nResponse refusal: no\nHarmful response: yes"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("verdict", [True, False])
+async def test_classifier_metadata_mutation_round_trips_async(
+    *, sqlite_instance: MemoryInterface, verdict: bool
+) -> None:
+    target = MockPromptTarget()
+    scorer = WildGuardScorer(chat_target=target)
+    answer = await _stored_exchange_async(sqlite_instance, prompt="user request", response="model response")
+    expectation = ScoringExpectation(objective="Assess response safety")
+    token = "yes" if verdict else "no"
+    response_text = f"Harmful request: yes\nResponse refusal: no\nHarmful response: {token}"
+    response = MessagePiece(role="assistant", original_value=response_text).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]) as send:
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(answer), expectation=expectation)
+
+    send.assert_awaited_once()
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    score = stored[0]
+    prefix = f"wildguard_{answer.get_piece().id}"
+    assert score.get_value() is verdict
+    assert score.score_category == ["wildguard"]
+    assert score.score_metadata == {
+        "selected_label": "Harmful response",
+        f"{prefix}_harmful_request": "yes",
+        f"{prefix}_response_refusal": "no",
+        f"{prefix}_harmful_response": token,
+        f"{prefix}_raw_output": response_text,
+        "wildguard_harmful_response_verdict": token,
+    }
+    assert f"Harmful response: {token}" in score.score_rationale
+    assert score.scored_expectation == expectation
+    assert score.message_piece_id == answer.get_piece().id
+    assert len(score.observation_ids) == 1
+    assert score == Score.model_validate_json(scores[0].model_dump_json())
 
 
 @pytest.mark.parametrize("prompt", ["", "   ", "\n\t"])
@@ -117,13 +155,16 @@ def _mock_target(response_text: str) -> MagicMock:
 
 def _sent_request(target: MagicMock) -> str:
     _, send_kwargs = target.send_prompt_async.call_args
-    return send_kwargs["message"].message_pieces[-1].converted_value
+    message = send_kwargs["message"]
+    assert isinstance(message, Message)
+    return message.message_pieces[-1].converted_value
 
 
-def _label_value(metadata: dict, suffix: str) -> str:
+def _label_value(metadata: dict[str, str | int | float], suffix: str) -> str:
     """Read a per-piece label value, whose key carries the scored piece's id."""
     matches = [value for key, value in metadata.items() if key.endswith(f"_{suffix}")]
     assert len(matches) == 1, f"expected one {suffix} entry, got {matches}"
+    assert isinstance(matches[0], str)
     return matches[0]
 
 
