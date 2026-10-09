@@ -47,6 +47,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.memory",
     ),
     (
+        "pyrit.models",
+        "SeedRecord",
+        "pyrit.models.seeds.seed_record",
+        "pyrit.memory",
+    ),
+    (
         "pyrit.models.catalog",
         "RegisteredInitializer",
         "pyrit.models.catalog.initializer",
