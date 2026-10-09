@@ -47,40 +47,49 @@ async def test_score_async_unsupported_data_type_returns_empty(
     os.remove(audio_message_piece.converted_value)
 
 
-async def test_score_piece_async_text(patch_central_database, text_message_piece: MessagePiece):
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("severity", range(8))
+async def test_score_piece_async_text(*, text_message_piece: MessagePiece, severity: int) -> None:
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
     mock_client = AsyncMock()
-    mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Hate"}]}
+    mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": severity, "category": "Hate"}]}
     scorer._azure_cf_client = mock_client
     scores = await scorer._score_piece_async(text_message_piece)
+    mock_client.analyze_text.assert_awaited_once()
+    assert mock_client.analyze_text.await_args.args[0].output_type == "EightSeverityLevels"
     assert len(scores) == 1
     score = scores[0]
     assert score.score_type == "float_scale"
-    assert score.score_value == str(2.0 / 7)
+    assert score.score_value == str(severity / 7)
     assert score.score_category == ["Hate"]
     assert isinstance(score.score_metadata, dict)
-    assert score.score_metadata["azure_severity"] == 2
+    assert score.score_metadata["azure_severity"] == severity
     assert "AzureContentFilterScorer" in str(score.scorer_class_identifier)
 
 
-async def test_score_piece_async_image(patch_central_database, image_message_piece: MessagePiece):
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("severity,expected_value", [(0, 0.0), (2, 1.0 / 3), (4, 2.0 / 3), (6, 1.0)])
+async def test_score_piece_async_image(
+    *, image_message_piece: MessagePiece, severity: int, expected_value: float
+) -> None:
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
     mock_client = AsyncMock()
-    mock_client.analyze_image.return_value = {"categoriesAnalysis": [{"severity": "3", "category": "Hate"}]}
+    mock_client.analyze_image.return_value = {"categoriesAnalysis": [{"severity": severity, "category": "Hate"}]}
     scorer._azure_cf_client = mock_client
     # Patch _get_base64_image_data to avoid actual file IO
     # Return a valid base64 string (represents a tiny 1x1 PNG image)
     valid_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     with patch.object(scorer, "_get_base64_image_data_async", AsyncMock(return_value=valid_base64)):
         scores = await scorer._score_piece_async(image_message_piece)
+    mock_client.analyze_image.assert_awaited_once()
+    assert mock_client.analyze_image.await_args.args[0].output_type == "FourSeverityLevels"
     assert len(scores) == 1
     score = scores[0]
     assert score.score_type == "float_scale"
-    assert score.score_value == str(3.0 / 7)
+    assert score.score_value == str(expected_value)
     assert score.score_category == ["Hate"]
     assert isinstance(score.score_metadata, dict)
-    assert score.score_metadata["azure_severity"] == 3
-    assert "AzureContentFilterScorer" in str(score.scorer_class_identifier)
+    assert score.score_metadata["azure_severity"] == severity
     assert "AzureContentFilterScorer" in str(score.scorer_class_identifier)
     os.remove(image_message_piece.converted_value)
 

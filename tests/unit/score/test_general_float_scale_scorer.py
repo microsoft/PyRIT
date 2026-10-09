@@ -5,11 +5,12 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import NumericRange
+from pyrit.score import NumericRange, NumericRubric
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
     SelfAskGeneralFloatScaleScorer,
 )
@@ -225,6 +226,28 @@ def test_general_float_scorer_init_invalid_min_max():
         NumericRange(minimum_value=10, maximum_value=5, category="test")
 
 
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        {"minimum_value": True, "maximum_value": 10},
+        {"minimum_value": 0, "maximum_value": True},
+    ],
+)
+def test_numeric_range_rejects_bool_bounds(bounds):
+    # `bool` is a subclass of `int`, so a bool bound has to be rejected rather than coerced to 0 or 1.
+    with pytest.raises(ValidationError, match="not a bool"):
+        NumericRange(**bounds)
+
+
+def test_numeric_rubric_from_yaml_rejects_bool_bounds(tmp_path):
+    # The YAML path is how a user actually supplies these bounds.
+    rubric = tmp_path / "rubric.yaml"
+    rubric.write_text("category: test\nminimum_value: true\nmaximum_value: 10\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="not a bool"):
+        NumericRubric.from_yaml(rubric)
+
+
 def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
     """Test that get_scorer_metrics returns None when eval_hash is None."""
     from unittest.mock import patch as _patch
@@ -297,3 +320,45 @@ def test_general_float_scale_no_chat_target_raises():
             system_prompt_format_string="prompt",
             scale=DEFAULT_RANGE,
         )
+
+
+def _response(body: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=body)])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("body", "configured_category", "expected_category"),
+    [
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": "test_category"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": null}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', None, ["violence"]),
+    ],
+    ids=[
+        "configured_category_wins",
+        "matching_categories",
+        "no_response_category",
+        "null_response_category",
+        "no_configured_category",
+    ],
+)
+async def test_general_float_scorer_category_precedence_async(
+    body: str, configured_category: str | None, expected_category: list[str]
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt_async = AsyncMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=NumericRange(minimum_value=0, maximum_value=100, category=configured_category),
+    )
+
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert score[0].score_category == expected_category
+    assert score[0].score_value == "0.5"
+    chat_target.send_prompt_async.assert_awaited_once()

@@ -3,12 +3,10 @@
 
 import base64
 import hashlib
-import logging
 from io import BytesIO
 from pathlib import Path
-from typing import cast
 
-from PIL import Image, ImageFont
+from PIL import Image
 from PIL.ImageFont import FreeTypeFont
 
 from pyrit.common import get_mime_type
@@ -16,8 +14,6 @@ from pyrit.converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.converter.converter import ConverterResult
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
-
-logger = logging.getLogger(__name__)
 
 
 class AddTextImageConverter(_BaseImageTextConverter):
@@ -48,21 +44,24 @@ class AddTextImageConverter(_BaseImageTextConverter):
             text_to_add (str): Text to add to an image.
             font_name (Path | None): Path of font to use. Must be a TrueType font (.ttf).
                 Defaults to None which uses Pillow's built-in default font.
-            color (tuple): Color to print text in, using RGB values. Defaults to (0, 0, 0).
+            color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int): Size of font to use. Defaults to 15.
             x_pos (int): X coordinate to place text in (0 is left most). Defaults to 10.
             y_pos (int): Y coordinate to place text in (0 is upper most). Defaults to 10.
 
         Raises:
-            ValueError: If ``text_to_add`` is empty, or if ``font_name`` does not end with ".ttf".
+            ValueError: If ``text_to_add`` is empty, ``font_name`` does not end with ".ttf",
+                ``color`` is not a valid RGB tuple, or ``font_size`` is not positive.
         """
         if text_to_add.strip() == "":
             raise ValueError("Please provide valid text_to_add value")
-        if font_name is not None and Path(font_name).suffix.lower() != ".ttf":
-            raise ValueError("The specified font must be a TrueType font with a .ttf extension")
+        self._validate_font_name(font_name)
+        self._validate_color(color)
+        self._extract_font_size(font_size)
         self._text_to_add = text_to_add
         self._font_name = str(font_name) if font_name is not None else None
-        self._font_size = font_size
+        self._font_size = self._font_size_max
+        self._font_load_failed = font_name is None
         self._font = self._load_font()
         self._color = color
         self._x_pos = x_pos
@@ -94,14 +93,7 @@ class AddTextImageConverter(_BaseImageTextConverter):
         Returns:
             FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
         """
-        font_name = self._font_name
-        if font_name is None:
-            return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
-        try:
-            return ImageFont.truetype(font_name, self._font_size)
-        except OSError:
-            logger.warning(f"Cannot open font resource: {font_name}. Using Pillow built-in default font.")
-            return cast("FreeTypeFont", ImageFont.load_default(size=self._font_size))
+        return self._load_font_at_size(self._font_size)
 
     def _add_text_to_image(self, image: Image.Image) -> Image.Image:
         """

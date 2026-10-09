@@ -3,15 +3,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import inspect
 import logging
+import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
+from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import (
     ComponentRole,
     PyritException,
@@ -41,6 +43,8 @@ from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
     _collect_scores,
+    _get_current_scorable,
+    _get_current_scored_message_piece,
     _ObservationEvidence,
     _scoring_collection,
     _scoring_expectation_context,
@@ -51,40 +55,17 @@ from pyrit.score.observation.execution import (
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
-    import uuid
-    from collections.abc import Awaitable, Sequence
+    from collections.abc import Sequence
 
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.observation.target_judge import JudgmentRequest
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped batch API is removed, two minor releases out.
 MESSAGE_BATCH_REMOVED_IN = "1.3.0"
-
-
-async def _gather_score_tasks_cancel_on_error_async(
-    tasks: Sequence[Awaitable[list[Score]]],
-) -> list[list[Score]]:
-    scheduled_tasks = [asyncio.ensure_future(task) for task in tasks]
-    try:
-        return await asyncio.gather(*scheduled_tasks)
-    except BaseException:  # noqa: BLE001 - cancellation must cancel and drain every child task
-        for task in scheduled_tasks:
-            if not task.done():
-                task.cancel()
-        drain = asyncio.gather(*scheduled_tasks, return_exceptions=True)
-        outer_cancellation: asyncio.CancelledError | None = None
-        while not drain.done():
-            try:
-                await asyncio.shield(drain)
-            except asyncio.CancelledError as cancellation:
-                outer_cancellation = cancellation
-        drain.result()
-        if outer_cancellation:
-            raise outer_cancellation from None
-        raise
 
 
 def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInterface) -> str:
@@ -344,7 +325,7 @@ class MessageScorer(Scorer):
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces.
-            chat_target (PromptTarget | None): Optional target used by the scorer.
+            chat_target (PromptTarget | None): Deprecated validation-only parameter, removed in 1.4.0.
             message_resolver (MessageScorableResolver | None): Evidence resolver.
 
         Raises:
@@ -762,7 +743,7 @@ class MessageScorer(Scorer):
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
-            aux_scores, obj_scores = await _gather_score_tasks_cancel_on_error_async([aux_task, obj_task])
+            aux_scores, obj_scores = await gather_with_cleanup_async([aux_task, obj_task])
             result["auxiliary_scores"] = aux_scores
             result["objective_scores"] = obj_scores
         else:
@@ -790,7 +771,7 @@ class MessageScorer(Scorer):
         Returns:
             list[Score]: The roots' scores, in input order.
         """
-        results = await _gather_score_tasks_cancel_on_error_async(
+        results = await gather_with_cleanup_async(
             [
                 MessageScorer._score_response_with_scorer_async(
                     scorer=scorer,
@@ -1058,33 +1039,14 @@ class MessageScorer(Scorer):
                     expectation=effective_expectation,
                 )
         except ScorerLLMResponseBlockedException as e:
-            # The scorer's own LLM response was content-filtered. By default this is a real
-            # error and propagates; when raise_if_scorer_blocks is False, no verdict was
-            # reached, so the score is undetermined rather than a definitive negative. The
-            # decision lives here in the scorer, not the transport (see doc/code/framework.md).
-            if self.raise_if_scorer_blocks:
-                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
-                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
-                raise
-            logger.info(
-                "Scorer %s LLM response was blocked by content filtering; "
-                "returning an undetermined score (raise_if_scorer_blocks=False).",
-                self.__class__.__name__,
-            )
             first_piece = scoring_message.message_pieces[0]
             scores = [
-                self._build_undetermined_score(
-                    rationale=(
-                        "The scorer's own LLM response was blocked by content filtering "
-                        "(raise_if_scorer_blocks is False), so no verdict was reachable."
-                    ),
-                    description="Scorer response blocked; no verdict was reachable.",
+                self._handle_blocked_judge_response(
+                    error=e,
                     message_piece_id=first_piece.id or first_piece.original_prompt_id,
                     objective=objective,
                 )
             ]
-            if e.observation_id is not None:
-                scores[0].observation_ids.append(e.observation_id)
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
             e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
@@ -1107,6 +1069,44 @@ class MessageScorer(Scorer):
         )
 
         return scores
+
+    def _handle_blocked_judge_response(
+        self,
+        *,
+        error: ScorerLLMResponseBlockedException,
+        message_piece_id: uuid.UUID | str | None = None,
+        objective: str | None = None,
+    ) -> Score:
+        """
+        Apply the scorer's blocked-judge policy and retain any error observation.
+
+        Returns:
+            Score: An undetermined score for the caller to anchor.
+
+        Raises:
+            ScorerLLMResponseBlockedException: If this scorer is configured to raise.
+        """
+        if self.raise_if_scorer_blocks:
+            error.message = f"Error in scorer {self.__class__.__name__}: {error.message}"
+            error.args = (f"Status Code: {error.status_code}, Message: {error.message}",)
+            raise error
+        logger.info(
+            "Scorer %s LLM response was blocked by content filtering; "
+            "returning an undetermined score (raise_if_scorer_blocks=False).",
+            self.__class__.__name__,
+        )
+        score = self._build_undetermined_score(
+            rationale=(
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False), so no verdict was reachable."
+            ),
+            description="Scorer response blocked; no verdict was reachable.",
+            message_piece_id=message_piece_id,
+            objective=objective,
+        )
+        if error.observation_id is not None:
+            score.observation_ids.append(error.observation_id)
+        return score
 
     def _validate_scoring_message(self, *, message: Message, objective: str | None) -> None:
         """
@@ -1294,7 +1294,7 @@ class MessageScorer(Scorer):
             return []
 
         # Run all piece-level scorings concurrently
-        piece_score_lists = await asyncio.gather(*tasks)
+        piece_score_lists = await gather_with_cleanup_async(tasks)
 
         # Flatten list[list[Score]] -> list[Score]
         return [score for sublist in piece_score_lists for score in sublist]
@@ -1317,6 +1317,22 @@ class MessageScorer(Scorer):
         return await self._score_piece_async(
             message_piece=message_piece,
             objective=expectation.objective if expectation else None,
+        )
+
+    @staticmethod
+    def _capture_judgment_evidence(request: JudgmentRequest) -> JudgmentRequest:
+        """
+        Attach the message pipeline's evidence before sending a prepared judge request.
+
+        Returns:
+            JudgmentRequest: A request that retains the original piece, not its rendered prompt.
+        """
+        return replace(
+            request,
+            scorable=_get_current_scorable(),
+            scored_message_piece=_get_current_scored_message_piece(
+                scored_piece_id=uuid.UUID(str(request.scored_prompt_id))
+            ),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:

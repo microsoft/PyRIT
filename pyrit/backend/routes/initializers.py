@@ -18,7 +18,7 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from pyrit.backend.middleware.auth import require_admin
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.initializers import (
     ConfiguredInitializerSetting,
     CustomInitializerListResponse,
@@ -88,7 +88,7 @@ def _check_custom_initializers_allowed(request: Request) -> None:
 )
 async def list_initializers(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: str | None = Query(None, description="Pagination cursor (initializer_name to start after)"),
+    cursor: CursorStr | None = Query(None, description="Pagination cursor (initializer_name to start after)"),
 ) -> ListRegisteredInitializersResponse:
     """
     List all available initializers.
@@ -148,7 +148,7 @@ async def list_custom_initializers(request: Request) -> CustomInitializerListRes
         404: {"model": ProblemDetail, "description": "Initializer not found"},
     },
 )
-async def get_initializer(initializer_name: str) -> RegisteredInitializer:  # pyrit-async-suffix-exempt
+async def get_initializer(initializer_name: IdentifierStr) -> RegisteredInitializer:  # pyrit-async-suffix-exempt
     """
     Get details for a specific initializer.
 
@@ -223,7 +223,7 @@ async def register_initializer(  # pyrit-async-suffix-exempt
 )
 async def unregister_initializer(  # pyrit-async-suffix-exempt
     request: Request,
-    initializer_name: str,
+    initializer_name: IdentifierStr,
 ) -> None:
     """
     Remove a custom initializer from the registry.

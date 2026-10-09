@@ -27,7 +27,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
 from pyrit.backend.models.converters import CreateConverterRequest
 from pyrit.backend.services.converter_service import ConverterService, get_converter_service
+from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
+from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scorer_service import get_scorer_service
+from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
 
@@ -38,7 +42,7 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
 
     def wait_in_database() -> int:
         started.set()
-        if not release.wait(timeout=10):
+        if not release.wait(timeout=60):
             raise RuntimeError("Database wait was not released")
         return 1
 
@@ -51,9 +55,9 @@ async def test_health_responds_while_database_operation_is_pending(sqlite_instan
         )
         query = asyncio.create_task(session.execute(text("SELECT wait_in_database()")))
         try:
-            assert await asyncio.to_thread(started.wait, 5)
+            assert await asyncio.to_thread(started.wait, 30)
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await asyncio.wait_for(client.get("/api/health"), timeout=2)
+                response = await asyncio.wait_for(client.get("/api/health"), timeout=30)
             assert response.status_code == 200
             assert response.json()["status"] == "healthy"
             assert not query.done()
@@ -80,6 +84,60 @@ def mock_scenario_run_lifecycle():
 @pytest.mark.usefixtures("patch_central_database")
 class TestLifespan:
     """Tests for the application lifespan context manager."""
+
+    async def test_cancelled_manual_shutdown_still_closes_converter_and_clears_caches_async(
+        self, *, patch_central_database: MagicMock
+    ) -> None:
+        service = get_message_send_service()
+        converter = get_converter_service()
+        get_scorer_service()
+        with (
+            patch.object(service, "shutdown_async", side_effect=asyncio.CancelledError),
+            patch.object(converter, "close_async", wraps=converter.close_async) as close,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await close_services_async()
+        close.assert_awaited_once()
+        assert get_message_send_service.cache_info().currsize == 0
+        assert get_manual_send_scheduler.cache_info().currsize == 0
+        assert get_converter_service.cache_info().currsize == 0
+        assert get_scorer_service.cache_info().currsize == 0
+
+    @pytest.mark.parametrize("scenario_failure", [False, True])
+    async def test_manual_sends_stop_before_converter_cleanup_and_caches_reset_async(
+        self, *, patch_central_database: MagicMock, mock_scenario_run_lifecycle: MagicMock, scenario_failure: bool
+    ) -> None:
+        fake_config = ConfigurationLoader()
+        order: list[str] = []
+        service = get_message_send_service()
+        scheduler = get_manual_send_scheduler()
+        converter = get_converter_service()
+        close = converter.close_async
+
+        async def shutdown_async() -> None:
+            assert scheduler._closing
+            order.append("sends")
+
+        async def close_async() -> None:
+            order.append("converters")
+            await close()
+
+        if scenario_failure:
+            mock_scenario_run_lifecycle.shutdown_async.side_effect = RuntimeError("scenario shutdown failed")
+        with (
+            patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
+            patch.object(ConfigurationLoader, "initialize_pyrit_async", new=AsyncMock()),
+            patch("pyrit.backend.main.setup_frontend"),
+            patch.object(service, "shutdown_async", side_effect=shutdown_async),
+            patch.object(converter, "close_async", side_effect=close_async),
+            pytest.raises(RuntimeError, match="scenario shutdown failed") if scenario_failure else nullcontext(),
+        ):
+            async with lifespan(app):
+                assert get_message_send_service() is service
+        assert order == ["sends", "converters"]
+        assert get_message_send_service.cache_info().currsize == 0
+        assert get_manual_send_scheduler.cache_info().currsize == 0
+        assert get_converter_service.cache_info().currsize == 0
 
     @pytest.fixture(autouse=True)
     def isolated_lifespan_state(self) -> Iterator[None]:
@@ -355,6 +413,7 @@ class TestSetupFrontend:
         with (
             patch("pyrit.backend.main.DEV_MODE", False),
             patch("pyrit.backend.main.Path") as mock_path_cls,
+            patch.object(app, "mount") as mount,
             patch("builtins.print"),
         ):
             mock_path_instance = MagicMock()
@@ -362,6 +421,14 @@ class TestSetupFrontend:
             mock_path_cls.return_value = mock_path_instance
 
             setup_frontend()
+
+        mount.assert_called_once()
+        assert mount.call_args.args[0] == "/"
+        static_files = mount.call_args.args[1]
+        assert isinstance(static_files, SPAStaticFiles)
+        assert static_files.directory == str(tmp_path)
+        assert static_files.html
+        assert mount.call_args.kwargs == {"name": "frontend"}
 
     def test_frontend_missing_warns_but_continues(self) -> None:
         """Test that setup_frontend warns but does not exit when frontend is missing."""

@@ -46,14 +46,20 @@ checkout. PyPI Docker builds preserve and validate the installed wheel's stamp, 
 replace it with the Docker repository commit. Pre-guarded PyPI wheels intentionally
 fail this validation; use the coordinated release, not an older fallback.
 
-Before enabling the PyPI image path, publish the coordinated wheel/sdist and set the
-repository Actions variable `PYRIT_PYPI_VERSION` to that exact version. Alternatively,
-pass `pypiVersion` when manually running the Docker workflow; this supports explicitly
-selected prereleases as well as stable releases. The workflow fails if no version is
-configured, and the Docker build rejects an unguarded wheel. There is no automatic
-"latest" selection or older-version fallback. Run the PyPI image build and smoke tests
-successfully before marking the release ready; configuring a version alone is not proof
-that matching artifacts are available.
+Manually running the Docker workflow automatically resolves PyPI's latest stable,
+non-yanked release at execution time and tests that exact version. To validate an
+explicit published release, including a prerelease, pass `pypiVersion`. Both paths
+require valid PyPI metadata and non-yanked published distributions, with no
+older-version fallback. PyPI checks are temporarily manual-only; after publishing
+and validating `1.2.0`, restore automatic checks on `main` as described in step 10.
+
+Publish a coordinated wheel/sdist before expecting the PyPI image path to pass.
+If the latest release predates compatibility stamping, selection still identifies
+that release, but the Docker build fails with a diagnostic naming the version and
+the missing metadata prerequisite. Do not skip that release or manufacture stamps
+to make the checks pass. Run the selected release's image build and smoke tests
+successfully before marking the release ready; selection alone is not proof that
+matching artifacts are available.
 
 These checks do not establish dependency equality or distinguish uncommitted edits.
 
@@ -458,6 +464,19 @@ where the changes are:
 The PR should be made from your fork and should be a different branch than the releases branch you created earlier,
 named after the next development version, for example `1.2.0.dev0`.
 
+### Restore automatic PyPI Docker checks after 1.2.0
+
+Complete [#3007](https://github.com/microsoft/PyRIT/issues/3007) after publishing
+`1.2.0`. First run `docker_build` manually with `pypiVersion=1.2.0`, then without an
+override to exercise latest-release selection. Confirm the published package has
+matching Python/frontend stamps and that the production image, import, GUI, and
+Jupyter checks pass without relaxing compatibility validation.
+
+Restore `main`-push eligibility on `build-and-test-pypi` and all four `pypi-*-check`
+gates while retaining manual dispatches. Update the event-condition tests and
+temporary manual-only documentation, then verify the restored checks on `main`
+before closing the issue.
+
 ### Update the documentation site versions
 
 Add the new release as a version on the [documentation site](https://microsoft.github.io/PyRIT/) by
@@ -469,6 +488,36 @@ editing `.github/docs-versions.yml`:
 
 Once merged, the docs workflow rebuilds the site and the new version appears in the version picker on
 every page of every version.
+
+The behavior below applies only to branches with the updated `build-book` workflow.
+For PRs targeting a release branch, that target branch must contain the update;
+existing release branches continue using their older docs workflows until updated.
+
+The `build-book` workflow validates ordinary PRs with a single `Build latest` job.
+It checks out the PR's immutable tested merge commit, not `main` or the PR's moving
+head branch. This also applies to PRs targeting release branches; `latest` is only
+the validation artifact's slug and does not change what will be published.
+
+PRs changing the version configuration, docs workflow, matrix/composition/manifest
+helpers, or version-picker code also build every configured release and run the
+read-only `Compose site` job. That checks the complete tree, default/stable redirects,
+page manifests, and picker before publication. Ordinary content, API, or dependency
+changes do not rebuild historical releases. Markdown-only documentation changes
+trigger both PR validation and publication after merging.
+
+Only a push to `main` or a manual run from `main` can deploy. Both publish the full
+configured version list, with `latest` pinned to that run's commit. Release pushes
+and manual runs from other refs remain validation-only. A listed release validates
+its own version at the triggering commit. An unlisted release or manual ref validates
+that commit under `latest`, while retaining all configured historical releases.
+Production runs share a non-cancelling queue for the **whole pipeline**, so a slower earlier build cannot
+overtake a later deployment. PRs have separate per-PR queues that cancel superseded
+runs and never cancel a publication.
+
+Rendered-site caches require an exact match on the tested workflow's hash, version
+slug, and checked-out commit SHA. There are no partial-key fallbacks to a build of
+`main`. Each release still uses its own build scripts and `uv.lock` with
+`uv sync --frozen`; changing the pipeline invalidates old rendered-site caches.
 
 For example, releasing `1.1.0` would change:
 

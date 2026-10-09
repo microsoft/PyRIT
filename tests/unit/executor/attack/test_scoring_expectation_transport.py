@@ -4,11 +4,14 @@
 """Per-execution expectations reach real outcome scorers without becoming attack prompts."""
 
 import asyncio
+from collections.abc import Iterable
 from contextlib import nullcontext
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from aiosqlite import Cursor
+from sqlalchemy import event
 from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
@@ -587,6 +590,62 @@ class TestExecutionExpectationTransport:
         assert f"{failing_role.value} identifier:" in str(raised.value)
         assert raised.value.__cause__.__cause__ is original
         assert get_execution_context() is None
+
+    async def test_attack_error_persists_after_cancelled_score_validation_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        objective, auxiliary = _RecordingScorer(), _RecordingScorer(value=False)
+        attack = PromptSendingAttack(
+            objective_target=MockPromptTarget(),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=objective, auxiliary_scorers=[auxiliary]),
+        )
+        write_started, validation_started, release_read = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = ValueError("scoring failed")
+
+        def record_write(*args: Any) -> None:
+            if args[2] == "BEGIN IMMEDIATE":
+                write_started.set()
+
+        async def fail_auxiliary_async(**_kwargs: Any) -> list[Score]:
+            await validation_started.wait()
+            raise original
+
+        fetchall = Cursor.fetchall
+
+        async def delayed_fetchall_async(cursor: Cursor) -> Iterable[Any]:
+            if write_started.is_set() and not validation_started.is_set():
+                validation_started.set()
+                await release_read.wait()
+            return await fetchall(cursor)
+
+        engine = sqlite_instance._get_async_engine()
+        event.listen(engine.sync_engine, "after_cursor_execute", record_write)
+        try:
+            with (
+                patch.object(auxiliary, "_score_scorable_async", side_effect=fail_auxiliary_async),
+                patch.object(Cursor, "fetchall", new=delayed_fetchall_async),
+            ):
+                task = asyncio.create_task(
+                    attack.execute_async(objective="attack objective", expectation=_expectation())
+                )
+                try:
+                    with pytest.raises(RuntimeError, match="Strategy execution failed for auxiliary_scorer") as raised:
+                        await asyncio.wait_for(task, timeout=5)
+                finally:
+                    release_read.set()
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+        finally:
+            event.remove(engine.sync_engine, "after_cursor_execute", record_write)
+
+        assert validation_started.is_set()
+        assert raised.value.__cause__.__cause__ is original
+        [stored] = await sqlite_instance.get_attack_results_async(objective="attack objective")
+        assert stored.outcome == AttackOutcome.ERROR
+        assert stored.error_message is not None
+        assert "scoring failed" in stored.error_message
+        assert await sqlite_instance.get_scores_async() == []
 
     @pytest.mark.parametrize("duplicate", [False, True], ids=["initial_node", "duplicated_node"])
     @pytest.mark.parametrize("explicit_expectation", [False, True], ids=["default_objective", "scoring_objective"])

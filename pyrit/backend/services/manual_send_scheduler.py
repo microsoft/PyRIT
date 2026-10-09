@@ -4,8 +4,7 @@
 """Bounded admission and execution shared by manual messages in one backend process."""
 
 import asyncio
-from collections import deque
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -34,20 +33,27 @@ class ManualSendScheduler:
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         max_operations: int = DEFAULT_MAX_OPERATIONS,
     ) -> None:
-        """Initialize bounded ownership and a shared FIFO execution budget."""
+        """Initialize bounded ownership and a shared execution budget."""
         if max_concurrency < 1 or max_operations < max_concurrency:
             raise ValueError("Manual-send limits require 1 <= max_concurrency <= max_operations")
-        self._max_concurrency = max_concurrency
         self._max_operations = max_operations
         self._conversations: set[str] = set()
         self._converters: set[int] = set()
         self._metadata_updates: set[str] = set()
         self._condition = asyncio.Condition()
-        self._queue: deque[object] = deque()
-        self._active = 0
+        self._execution_slots = asyncio.Semaphore(max_concurrency)
+        self._closing = False
+
+    def stop_admission(self) -> None:
+        """Reject new operations while existing owners finish cancellation cleanup."""
+        self._closing = True
+
+    def has_active_work(self) -> bool:
+        """Return whether any manual operation still owns a conversation."""
+        return bool(self._conversations)
 
     @contextmanager
-    def reserve(self, *, conversation_id: str) -> Iterator[None]:
+    def reserve(self, *, conversation_id: str) -> Generator[None, None, None]:
         """
         Own a conversation from admission through completion, including failures.
 
@@ -58,6 +64,8 @@ class ManualSendScheduler:
             ManualSendConflictError: If a manual operation already owns the conversation.
             ManualSendQueueFullError: If accepting the operation would exceed the budget.
         """
+        if self._closing:
+            raise ManualSendQueueFullError("Manual message operations are shutting down")
         if conversation_id in self._conversations:
             raise ManualSendConflictError("A manual message operation is already in progress for this conversation")
         if len(self._conversations) >= self._max_operations:
@@ -69,38 +77,18 @@ class ManualSendScheduler:
             self._conversations.remove(conversation_id)
 
     @asynccontextmanager
-    async def operation_async(self) -> AsyncIterator[None]:
+    async def operation_async(self) -> AsyncGenerator[None, None]:
         """
-        Hold an execution slot, releasing the slot or waiting ticket on every exit.
+        Hold an execution slot until exit, without guaranteeing FIFO ordering.
 
         Yields:
             None: The operation's execution slot.
         """
-        ticket = object()
-        acquired = False
-        async with self._condition:
-            self._queue.append(ticket)
-            try:
-                await self._condition.wait_for(
-                    lambda: self._queue[0] is ticket and self._active < self._max_concurrency
-                )
-                self._queue.popleft()
-                self._active += 1
-                acquired = True
-                self._condition.notify_all()
-            finally:
-                if not acquired:
-                    self._queue.remove(ticket)
-                    self._condition.notify_all()
-        try:
+        async with self._execution_slots:
             yield
-        finally:
-            async with self._condition:
-                self._active -= 1
-                self._condition.notify_all()
 
     @asynccontextmanager
-    async def conversion_async(self, converter: "Converter") -> AsyncIterator[None]:
+    async def conversion_async(self, converter: "Converter") -> AsyncGenerator[None, None]:
         """
         Protect one shared converter instance only while it is converting.
 
@@ -119,7 +107,7 @@ class ManualSendScheduler:
                 self._condition.notify_all()
 
     @asynccontextmanager
-    async def metadata_update_async(self, *, attack_result_id: str) -> AsyncIterator[None]:
+    async def metadata_update_async(self, *, attack_result_id: str) -> AsyncGenerator[None, None]:
         """
         Serialize the complete metadata read/merge/write for one attack.
 

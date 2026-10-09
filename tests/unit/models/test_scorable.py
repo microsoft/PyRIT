@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
+    ConversationScorable,
     Message,
     MessagePiece,
     MessageScorable,
@@ -58,7 +59,7 @@ def test_scorables_are_inert():
 
 def test_scorables_are_keyword_only():
     with pytest.raises(TypeError):
-        ContentScorable("hello")  # type: ignore[misc]
+        ContentScorable("hello")  # type: ignore[ty:too-many-positional-arguments]
 
 
 def test_message_scorable_defaults():
@@ -151,6 +152,7 @@ def test_every_union_member_round_trips_to_its_own_type():
         ContentScorable(value="hello"),
         ContentEntryScorable(content_id=uuid.uuid4()),
         TraceScorable(trace_ids=("1" * 32,)),
+        ConversationScorable(conversation_id="whole-conversation"),
     ]
 
     assert {type(case) for case in cases} == set(SCORABLE_TYPES)

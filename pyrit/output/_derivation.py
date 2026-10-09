@@ -5,19 +5,20 @@
 Shared *derivation* helpers for the output printers.
 
 These compute values from models (target fields, success rates, score display,
-attack selection) so the pretty / markdown / json printers derive them **once**
-instead of each keeping its own copy. Presentation (color, fallback strings) stays
-in the printers; these return raw values with an optional ``none_value`` fallback.
+attack and objective-score selection) so the pretty / markdown / json printers
+derive them **once** instead of each keeping its own copy. Presentation (color,
+fallback strings) stays in the printers; these return raw values with an optional
+``none_value`` fallback.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from pyrit.models import AttackOutcome
+from pyrit.analytics.scenario_statistics import combine_execution_counts, compute_scenario_statistics
 
 if TYPE_CHECKING:
-    from pyrit.models import AttackResult, ComponentIdentifier, ScenarioResult, Score
+    from pyrit.models import AttackResult, ComponentIdentifier, MessagePiece, ScenarioResult, Score
 
 
 class TargetInfo(NamedTuple):
@@ -53,21 +54,60 @@ def resolve_target_info(target_id: ComponentIdentifier | None) -> TargetInfo:
     )
 
 
-def group_success_rate(attacks: list[AttackResult]) -> int:
+class GroupStatistics(NamedTuple):
+    """Effective-unit statistics for one display group, alongside its raw attempt count."""
+
+    name: str
+    objective_executions: int
+    attempts: int
+    success_rate: int
+
+
+class ScenarioOverview(NamedTuple):
+    """Overall and per-display-group statistics for a scenario report."""
+
+    objective_executions: int
+    attempts: int
+    success_rate: int
+    groups: list[GroupStatistics]
+
+
+def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     """
-    Return the percentage of *attacks* whose outcome is SUCCESS (0 when empty).
+    Summarize a scenario result for the reports, using ``pyrit.analytics.compute_scenario_statistics``.
+
+    ``objective_executions`` (one objective run with one attack configuration) is the success-rate
+    denominator; ``attempts`` counts every persisted attempt, retries included.
 
     Args:
-        attacks (list[AttackResult]): The attacks to score.
+        result (ScenarioResult): The scenario result to summarize.
 
     Returns:
-        int: The success rate as an integer percent.
+        ScenarioOverview: The overall and per-group statistics.
     """
-    total = len(attacks)
-    if not total:
-        return 0
-    successful = sum(1 for attack in attacks if attack.outcome == AttackOutcome.SUCCESS)
-    return int((successful / total) * 100)
+    statistics = compute_scenario_statistics(result)
+    groups: list[GroupStatistics] = []
+    for group_name, group_results in result.get_display_groups().items():
+        atomic_attack_names = [
+            name for name in result.attack_results if result.display_group_map.get(name, name) == group_name
+        ]
+        counts = combine_execution_counts(
+            statistics.atomic_attacks[name] for name in atomic_attack_names if name in statistics.atomic_attacks
+        )
+        groups.append(
+            GroupStatistics(
+                name=group_name,
+                objective_executions=counts.completed,
+                attempts=len(group_results),
+                success_rate=counts.success_percentage or 0,
+            )
+        )
+    return ScenarioOverview(
+        objective_executions=statistics.overall.completed,
+        attempts=statistics.attempts,
+        success_rate=statistics.overall.success_percentage or 0,
+        groups=groups,
+    )
 
 
 def attack_score_display(attack: AttackResult, *, none_value: str | None = None) -> str | None:
@@ -122,3 +162,45 @@ def resolve_scorer_name(score: Score, *, none_value: str | None = None) -> str |
     """
     identifier = score.scorer_class_identifier
     return identifier.class_name if identifier else none_value
+
+
+def select_objective_scores(
+    *,
+    pieces: list[MessagePiece],
+    scores: list[Score],
+    objective_scorer_identifier: ComponentIdentifier,
+) -> dict[str, Score]:
+    """
+    Pick the objective scorer's score for each message piece.
+
+    A score only counts for the piece it is stored on: a duplicated piece's scores are stored on
+    its original, and a message-level score is stored on one piece of the message. The identity
+    hash is matched before the class name.
+
+    Args:
+        pieces (list[MessagePiece]): The pieces to pick scores for.
+        scores (list[Score]): The scores read for those pieces.
+        objective_scorer_identifier (ComponentIdentifier): The objective scorer to match.
+
+    Returns:
+        dict[str, Score]: The objective score of each piece that has one, keyed by piece id.
+    """
+    hash_matches: dict[str, Score] = {}
+    class_name_matches: dict[str, Score] = {}
+    for score in scores:
+        identifier = score.scorer_class_identifier
+        if identifier is None or score.message_piece_id is None:
+            continue
+        owner_id = str(score.message_piece_id)
+        if identifier.hash == objective_scorer_identifier.hash:
+            hash_matches.setdefault(owner_id, score)
+        elif identifier.class_name == objective_scorer_identifier.class_name:
+            class_name_matches.setdefault(owner_id, score)
+
+    selected: dict[str, Score] = {}
+    for piece in pieces:
+        owner_id = str(piece.original_prompt_id or piece.id)
+        score = hash_matches.get(owner_id, class_name_matches.get(owner_id))
+        if score is not None:
+            selected[str(piece.id)] = score
+    return selected

@@ -23,6 +23,18 @@ _EAGER_PACKAGE_EXCEPTIONS = frozenset(
 
 _LAZY_IMPORT_SPOT_CHECKS = [
     (
+        "pyrit.registry",
+        "AttackRegistry",
+        "pyrit.registry.components.attack_registry",
+        "pyrit.executor.attack",
+    ),
+    (
+        "pyrit.registry.components",
+        "AttackRegistry",
+        "pyrit.registry.components.attack_registry",
+        "pyrit.executor.attack",
+    ),
+    (
         "pyrit.models",
         "Message",
         "pyrit.models.messages.message",
@@ -32,6 +44,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.models",
         "SeedDatasetSummary",
         "pyrit.models.seeds.seed_dataset_summary",
+        "pyrit.memory",
+    ),
+    (
+        "pyrit.models",
+        "SeedRecord",
+        "pyrit.models.seeds.seed_record",
         "pyrit.memory",
     ),
     (
@@ -122,6 +140,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.score",
         "SubStringScorer",
         "pyrit.score.true_false.substring_scorer",
+        "pyrit.score.true_false.audio_true_false_scorer",
+    ),
+    (
+        "pyrit.score",
+        "CategoryConflictPolicy",
+        "pyrit.score.response_handler",
         "pyrit.score.true_false.audio_true_false_scorer",
     ),
     (

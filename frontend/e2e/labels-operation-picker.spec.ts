@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 
 // ---------------------------------------------------------------------------
 // The operation picker's size and placement are decided by Fluent's floating
@@ -38,6 +39,9 @@ async function setupMocks(
     }
     if (path === "/auth/config") {
       return route.fulfill(json({ clientId: "", tenantId: "", allowedGroupIds: "" }));
+    }
+    if (path === "/runtime") {
+      return route.fulfill(json(READY_RUNTIME));
     }
     if (path === "/version") {
       versionRequests += 1;

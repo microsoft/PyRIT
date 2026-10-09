@@ -2,28 +2,38 @@
 # Licensed under the MIT license.
 
 import asyncio
+import logging
 import uuid
+from contextlib import suppress
+from dataclasses import replace
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_target_identifier, store_message_async
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
+import pyrit.score.scorer as scorer_module
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
+    Acquisition,
     AnswerMatches,
     ChatMessageRole,
     ComponentIdentifier,
     ContentScorable,
     Message,
     MessagePiece,
+    PromptDataType,
     Scorable,
     Score,
+    ScorerTargetResponsePayload,
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target.common import target_requirements as target_requirements_module
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
@@ -34,12 +44,16 @@ from pyrit.score import (
     MessageTrueFalseScorer,
     Scorer,
     ScorerPromptValidator,
+    SelfAskRefusalScorer,
+    SelfAskTrueFalseScorer,
     TrueFalseInverterScorer,
+    TrueFalseQuestion,
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
+from pyrit.score.observation.target_judge import JudgmentRequest
 
 
 @pytest.fixture
@@ -120,6 +134,269 @@ class MockScorer(MessageTrueFalseScorer):
 
     def validate_return_scores(self, scores: list[Score]):
         assert all(s.score_value in ["true", "false"] for s in scores if s.status != ScoreStatus.UNDETERMINED)
+
+
+def _make_mock_judge_target(*, editable_history: bool = False) -> MockPromptTarget:
+    return MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_multi_message_pieces=True,
+                supports_system_prompt=True,
+                supports_editable_history=editable_history,
+            )
+        )
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "scorer_type",
+    [
+        pytest.param(SelfAskRefusalScorer, id="refusal"),
+        pytest.param(SelfAskTrueFalseScorer, id="true-false"),
+    ],
+)
+@pytest.mark.parametrize(
+    (
+        "extra_required",
+        "extra_native_required",
+        "extra_input_modalities",
+        "extra_output_modalities",
+        "rejected_routes",
+        "error_fragments",
+    ),
+    [
+        pytest.param(
+            frozenset({CapabilityName.STREAMING_AUDIO}),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset({"editable", "native"}),
+            ("supports_streaming_audio",),
+            id="additional-required-capability",
+        ),
+        pytest.param(
+            frozenset(),
+            frozenset({CapabilityName.EDITABLE_HISTORY}),
+            frozenset(),
+            frozenset(),
+            frozenset({"native"}),
+            ("natively support 'supports_editable_history'",),
+            id="native-required-editable-history",
+        ),
+        pytest.param(
+            frozenset(),
+            frozenset(),
+            frozenset({frozenset({"audio_path"})}),
+            frozenset({frozenset({"audio_path"})}),
+            frozenset({"editable", "native"}),
+            ("input modality {audio_path}", "output modality {audio_path}"),
+            id="additional-input-output-modalities",
+        ),
+    ],
+)
+def test_self_ask_scorers_preserve_shared_target_requirements(
+    *,
+    scorer_type: type[SelfAskRefusalScorer] | type[SelfAskTrueFalseScorer],
+    extra_required: frozenset[CapabilityName],
+    extra_native_required: frozenset[CapabilityName],
+    extra_input_modalities: frozenset[frozenset[PromptDataType]],
+    extra_output_modalities: frozenset[frozenset[PromptDataType]],
+    rejected_routes: frozenset[str],
+    error_fragments: tuple[str, ...],
+) -> None:
+    shared_requirements = target_requirements_module.CHAT_TARGET_REQUIREMENTS
+    shared_fields = (
+        shared_requirements.required,
+        shared_requirements.native_required,
+        shared_requirements.required_input_modalities,
+        shared_requirements.required_output_modalities,
+    )
+    targets = (
+        ("editable", _make_mock_judge_target(editable_history=True)),
+        ("native", _make_mock_judge_target()),
+    )
+
+    for _, target in targets:
+        scorer_type(chat_target=target)
+
+    future_requirements = replace(
+        shared_requirements,
+        required=shared_requirements.required | extra_required,
+        native_required=shared_requirements.native_required | extra_native_required,
+        required_input_modalities=shared_requirements.required_input_modalities | extra_input_modalities,
+        required_output_modalities=shared_requirements.required_output_modalities | extra_output_modalities,
+    )
+    with patch.object(scorer_module, "CHAT_TARGET_REQUIREMENTS", future_requirements):
+        for route, target in targets:
+            if route in rejected_routes:
+                with pytest.raises(ValueError) as exc_info:
+                    scorer_type(chat_target=target)
+                assert all(fragment in str(exc_info.value) for fragment in error_fragments)
+            else:
+                scorer_type(chat_target=target)
+
+    assert target_requirements_module.CHAT_TARGET_REQUIREMENTS is shared_requirements
+    assert (
+        shared_requirements.required,
+        shared_requirements.native_required,
+        shared_requirements.required_input_modalities,
+        shared_requirements.required_output_modalities,
+    ) == shared_fields
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    (
+        "scorer_kind",
+        "answer",
+        "judge_json",
+        "expected_score",
+        "expected_rationale",
+        "expected_judge_prompt",
+        "expected_system_prompt_fragment",
+    ),
+    [
+        pytest.param(
+            "refusal",
+            "I cannot answer that question.",
+            '{"score_value":"True","description":"Refusal detected","rationale":"The response explicitly refuses."}',
+            True,
+            "The response explicitly refuses.",
+            "conversation_objective: Name France's capital\nresponse_to_evaluate_input: I cannot answer that question.",
+            None,
+            id="refusal",
+        ),
+        pytest.param(
+            "refusal",
+            "France's capital is Paris.",
+            '{"score_value":"False","description":"No refusal detected",'
+            '"rationale":"The response answers the objective."}',
+            False,
+            "The response answers the objective.",
+            "conversation_objective: Name France's capital\nresponse_to_evaluate_input: France's capital is Paris.",
+            None,
+            id="answer",
+        ),
+        pytest.param(
+            "true_false",
+            "Paris is the capital of France.",
+            '{"score_value":true,"description":"Correct","rationale":"Paris is the capital of France."}',
+            True,
+            "Paris is the capital of France.",
+            "objective: Name France's capital\nresponse: Paris is the capital of France.",
+            "The response correctly identifies Paris as the capital of France.",
+            id="true-false",
+        ),
+    ],
+)
+async def test_self_ask_scorers_use_fresh_conversations_for_noneditable_text_judgments_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    scorer_kind: str,
+    answer: str,
+    judge_json: str,
+    expected_score: bool,
+    expected_rationale: str,
+    expected_judge_prompt: str,
+    expected_system_prompt_fragment: str | None,
+) -> None:
+    target = _make_mock_judge_target()
+    sent_conversations: list[list[Message]] = []
+    sent_conversation_ids: list[str] = []
+    reset_conversation_ids: list[str] = []
+    sent_response_piece_ids: list[uuid.UUID] = []
+
+    async def send_judge_reply_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        sent_conversations.append(normalized_conversation)
+        conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        sent_conversation_ids.append(conversation_id)
+        if len(sent_conversation_ids) == 2:
+            assert reset_conversation_ids == [sent_conversation_ids[0]]
+        response_text = "malformed judge response" if len(sent_conversation_ids) == 1 else judge_json
+        response = MessagePiece(
+            role="assistant",
+            original_value=response_text,
+            conversation_id=conversation_id,
+        ).to_message()
+        sent_response_piece_ids.append(response.get_piece().id)
+        return [response]
+
+    async def reset_conversation_async(*, conversation_id: str) -> None:
+        reset_conversation_ids.append(conversation_id)
+
+    target_send = AsyncMock(side_effect=send_judge_reply_async)
+    reset = AsyncMock(side_effect=reset_conversation_async)
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+    ):
+        saved_answer = await store_message_async(
+            MessagePiece(
+                role="assistant",
+                conversation_id=str(uuid.uuid4()),
+                original_value=answer,
+            ).to_message()
+        )
+        input_piece = saved_answer.get_piece()
+        input_scorable = MessageScorable.from_message(saved_answer)
+
+        if scorer_kind == "refusal":
+            scorer = SelfAskRefusalScorer(chat_target=target)
+        else:
+            question = TrueFalseQuestion(
+                category="capital correctness",
+                true_description="The response correctly identifies Paris as the capital of France.",
+                false_description="The response does not correctly identify Paris as the capital of France.",
+            )
+            scorer = SelfAskTrueFalseScorer.from_question(chat_target=target, question=question)
+
+        expectation = ScoringExpectation(objective="Name France's capital")
+        scores = await scorer.score_async(scorable=input_scorable, expectation=expectation)
+
+    assert len(scores) == 1
+    assert scores[0].get_value() is expected_score
+    assert scores[0].score_rationale == expected_rationale
+    assert scores[0].message_piece_id == input_piece.id
+    assert scores[0].scorable == input_scorable
+    assert len(scores[0].observation_ids) == 1
+    observation = (await sqlite_instance.get_observations_async(observation_ids=scores[0].observation_ids))[0]
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert isinstance(observation.payload, ScorerTargetResponsePayload)
+    assert observation.payload.message_piece_ids == (sent_response_piece_ids[1],)
+    assert target_send.await_count == 2
+    assert len(set(sent_conversation_ids)) == 2
+    assert reset_conversation_ids == sent_conversation_ids
+
+    user_pieces = [conversation[-1].get_piece() for conversation in sent_conversations]
+    assert all(piece.original_value == expected_judge_prompt for piece in user_pieces)
+    assert user_pieces[0].converted_value == user_pieces[1].converted_value
+    assert "The response should conform to the following JSON schema:" in user_pieces[0].converted_value
+    assert '"score_value"' in user_pieces[0].converted_value
+    assert '"rationale"' in user_pieces[0].converted_value
+
+    memory_pieces = await sqlite_instance.get_message_pieces_async()
+    system_pieces = [
+        piece for piece in memory_pieces if piece.role == "system" and piece.conversation_id in sent_conversation_ids
+    ]
+    assert len(system_pieces) == 2
+    assert system_pieces[0].original_value == system_pieces[1].original_value
+    if expected_system_prompt_fragment is not None:
+        assert expected_system_prompt_fragment in system_pieces[0].original_value
+    assert any(
+        piece.role == "assistant"
+        and piece.original_value == "malformed judge response"
+        and piece.conversation_id == sent_conversation_ids[0]
+        for piece in memory_pieces
+    )
+    stored_answer = await sqlite_instance.get_message_pieces_async(prompt_ids=[input_piece.id])
+    assert len(stored_answer) == 1
+    assert stored_answer[0].original_value == answer
+    replayed_scores = await scorer.score_observation_async(observation=observation, expectation=expectation)
+    assert len(replayed_scores) == 1
+    assert replayed_scores[0].get_value() is expected_score
+    assert target_send.await_count == 2
 
 
 class SelectiveValidator(ScorerPromptValidator):
@@ -207,13 +484,15 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="123",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="123",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
     # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py
@@ -231,14 +510,325 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id(patch_cen
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="123",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="123",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("editable_history", [False, True], ids=["native", "editable"])
+async def test_llm_scoring_selects_retry_mode_for_opted_in_judgments_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    editable_history: bool,
+) -> None:
+    target = _make_mock_judge_target(editable_history=editable_history)
+    attempted_conversation_ids: list[str] = []
+    reset_conversation_ids: list[str] = []
+
+    async def send_invalid_json_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        attempted_conversation_ids.append(conversation_id)
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=BAD_JSON,
+                conversation_id=conversation_id,
+            ).to_message()
+        ]
+
+    async def reset_async(*, conversation_id: str) -> None:
+        reset_conversation_ids.append(conversation_id)
+
+    target_send = AsyncMock(side_effect=send_invalid_json_async)
+    reset = AsyncMock(side_effect=reset_async)
+    scorer = MockScorer()
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+        pytest.raises(InvalidJsonException),
+    ):
+        await _run_llm_scoring_async(
+            chat_target=target,
+            response_handler=JsonSchemaResponseHandler(),
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="Judge this answer.",
+                value="The answer to judge.",
+                data_type="text",
+                scored_prompt_id="saved-answer-id",
+                expectation=ScoringExpectation(objective="Name France's capital"),
+            ),
+            fresh_conversation_per_attempt=True,
+        )
+
+    assert target_send.await_count == 2
+    assert len(set(attempted_conversation_ids)) == (1 if editable_history else 2)
+    assert reset_conversation_ids == ([] if editable_history else attempted_conversation_ids)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("cancel_during", "reset_behavior"),
+    [
+        pytest.param("send", "runtime-error", id="send-cancel-reset-runtime-error"),
+        pytest.param("send", "cancelled-error", id="send-cancel-reset-cancelled-error"),
+        pytest.param("send", "mixed-group", id="send-cancel-reset-mixed-group"),
+        pytest.param("reset", "propagate-cancellation", id="reset-cancellation-propagates"),
+        pytest.param("reset", "wrap-cancellation", id="reset-cancellation-wrapped-by-error"),
+    ],
+)
+async def test_fresh_llm_scoring_preserves_caller_cancellation_async(
+    *,
+    good_json: str,
+    cancel_during: str,
+    reset_behavior: str,
+) -> None:
+    target = _make_mock_judge_target()
+    send_started = asyncio.Event()
+    reset_started = asyncio.Event()
+    send_gate = asyncio.Event()
+    reset_gate = asyncio.Event()
+    sent_conversation_ids: list[str] = []
+    reset_conversation_ids: list[str] = []
+    send_cancellations: list[asyncio.CancelledError] = []
+    reset_cancellations: list[asyncio.CancelledError] = []
+    caller_cancellation_message = "caller cancellation"
+    reset_cancellation = asyncio.CancelledError("reset-origin cancellation")
+    reset_failure = RuntimeError("native session release failed")
+    mixed_cleanup_error = BaseExceptionGroup(
+        "session release and client stop failed",
+        [reset_cancellation, reset_failure],
+    )
+
+    async def send_response_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        assert conversation_id is not None
+        sent_conversation_ids.append(conversation_id)
+        if cancel_during == "send":
+            send_started.set()
+            try:
+                await send_gate.wait()
+            except asyncio.CancelledError as error:
+                send_cancellations.append(error)
+                raise
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=good_json,
+                conversation_id=conversation_id,
+            ).to_message()
+        ]
+
+    async def reset_conversation_async(*, conversation_id: str) -> None:
+        reset_conversation_ids.append(conversation_id)
+        if cancel_during == "send":
+            if reset_behavior == "runtime-error":
+                raise reset_failure
+            if reset_behavior == "mixed-group":
+                raise mixed_cleanup_error
+            raise reset_cancellation
+
+        reset_started.set()
+        try:
+            await reset_gate.wait()
+        except asyncio.CancelledError as error:
+            reset_cancellations.append(error)
+            if reset_behavior == "wrap-cancellation":
+                raise reset_failure from error
+            raise
+
+    target_send = AsyncMock(side_effect=send_response_async)
+    reset = AsyncMock(side_effect=reset_conversation_async)
+    scorer = MockScorer()
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+    ):
+        scoring_task = asyncio.create_task(
+            _run_llm_scoring_async(
+                chat_target=target,
+                response_handler=JsonSchemaResponseHandler(),
+                request=JudgmentRequest(
+                    scorer_identifier=scorer.get_identifier(),
+                    system_prompt="Judge this answer.",
+                    value="The answer to judge.",
+                    data_type="text",
+                    scored_prompt_id="saved-answer-id",
+                    expectation=ScoringExpectation(objective="Name France's capital"),
+                ),
+                fresh_conversation_per_attempt=True,
+            )
+        )
+        try:
+            cancellation_point = send_started if cancel_during == "send" else reset_started
+            await asyncio.wait_for(cancellation_point.wait(), timeout=5)
+            scoring_task.cancel(caller_cancellation_message)
+            with pytest.raises(asyncio.CancelledError) as exc_info:
+                await asyncio.wait_for(scoring_task, timeout=5)
+        finally:
+            if not scoring_task.done():
+                scoring_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait_for(scoring_task, timeout=5)
+
+    assert scoring_task.done()
+    assert scoring_task.cancelled()
+    assert target_send.await_count == 1
+    assert reset.await_count == 1
+    assert len(sent_conversation_ids) == 1
+    assert reset_conversation_ids == sent_conversation_ids
+
+    if cancel_during == "send":
+        [caller_cancellation] = send_cancellations
+        assert exc_info.value is caller_cancellation
+        assert exc_info.value.args == (caller_cancellation_message,)
+        if reset_behavior == "runtime-error":
+            expected_reset_error = reset_failure
+        elif reset_behavior == "mixed-group":
+            expected_reset_error = mixed_cleanup_error
+        else:
+            expected_reset_error = reset_cancellation
+        assert exc_info.value.__cause__ is expected_reset_error
+    elif reset_behavior == "propagate-cancellation":
+        [caller_cancellation] = reset_cancellations
+        assert exc_info.value is caller_cancellation
+        assert exc_info.value.args == (caller_cancellation_message,)
+        assert exc_info.value.__cause__ is None
+    else:
+        [caller_cancellation] = reset_cancellations
+        assert exc_info.value.__cause__ is reset_failure
+        assert reset_failure.__cause__ is caller_cancellation
+        assert reset_failure.__context__ is caller_cancellation
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("reply_kind", "release_fails"),
+    [
+        pytest.param("valid", True, id="valid-reply-release-fails"),
+        pytest.param("malformed", True, id="malformed-json-release-fails"),
+        pytest.param("blocked", False, id="blocked-reply-release-succeeds"),
+        pytest.param("blocked", True, id="blocked-reply-release-fails"),
+    ],
+)
+async def test_fresh_judgment_release_failure_keeps_scoring_outcome_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    caplog: pytest.LogCaptureFixture,
+    reply_kind: str,
+    release_fails: bool,
+) -> None:
+    target = _make_mock_judge_target()
+    valid_reply = '{"score_value":"False","description":"Not a refusal","rationale":"The response is not a refusal."}'
+    reply_text = {"valid": valid_reply, "malformed": BAD_JSON, "blocked": "blocked response"}[reply_kind]
+    reply_data_type: PromptDataType = "error" if reply_kind == "blocked" else "text"
+    release_failure = RuntimeError("native session release failed")
+    sent_conversation_ids: list[str] = []
+    request_piece_ids: list[uuid.UUID] = []
+    response_piece_ids: list[uuid.UUID] = []
+    reset_conversation_ids: list[str] = []
+
+    async def send_response_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1].get_piece()
+        conversation_id = request.conversation_id
+        assert conversation_id is not None
+        sent_conversation_ids.append(conversation_id)
+        request_piece_ids.append(request.id)
+        response_piece = MessagePiece(
+            role="assistant",
+            original_value=reply_text,
+            original_value_data_type=reply_data_type,
+            converted_value=reply_text,
+            converted_value_data_type=reply_data_type,
+            conversation_id=conversation_id,
+            response_error="blocked" if reply_kind == "blocked" else "none",
+        )
+        response_piece_ids.append(response_piece.id)
+        return [response_piece.to_message()]
+
+    async def reset_conversation_async(*, conversation_id: str) -> None:
+        reset_conversation_ids.append(conversation_id)
+        if release_fails:
+            raise release_failure
+
+    target_send = AsyncMock(side_effect=send_response_async)
+    reset = AsyncMock(side_effect=reset_conversation_async)
+    saved_response = await store_message_async(
+        MessagePiece(
+            role="assistant",
+            conversation_id=str(uuid.uuid4()),
+            original_value="candidate response",
+        ).to_message()
+    )
+    scorable = MessageScorable.from_message(saved_response)
+    expectation = ScoringExpectation(objective="Assess this response")
+    scorer = SelfAskRefusalScorer(chat_target=target)
+    scorer.raise_if_scorer_blocks = False
+
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new=target_send),
+        patch.object(target, "reset_conversation_async", new=reset),
+        patch.object(
+            sqlite_instance,
+            "add_scores_to_memory_async",
+            wraps=sqlite_instance.add_scores_to_memory_async,
+        ) as persist_scores,
+        caplog.at_level(logging.WARNING, logger="pyrit.score.llm_scoring"),
+    ):
+        if reply_kind == "malformed":
+            with pytest.raises(InvalidJsonException):
+                await scorer.score_async(scorable=scorable, expectation=expectation)
+            persist_scores.assert_not_called()
+        else:
+            [score] = await scorer.score_async(scorable=scorable, expectation=expectation)
+            assert len(score.observation_ids) == 1
+            [observation] = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
+            assert isinstance(observation.payload, ScorerTargetResponsePayload)
+            assert observation.payload.message_piece_ids == (response_piece_ids[0],)
+            persist_scores.assert_called_once()
+            [persisted_observation] = persist_scores.call_args.kwargs["observations"]
+            assert persisted_observation.id == observation.id
+            if reply_kind == "valid":
+                assert score.get_value() is False
+                assert observation.acquisition is Acquisition.COMPLETE
+            else:
+                assert score.is_undetermined
+                assert observation.acquisition is Acquisition.ERROR
+                assert observation.metadata == {"reason": "scorer_response_blocked"}
+                [replayed_score] = await scorer.score_observation_async(
+                    observation=observation,
+                    expectation=expectation,
+                )
+                assert replayed_score.is_undetermined
+
+        expected_attempts = 2 if reply_kind == "malformed" else 1
+        assert target_send.await_count == expected_attempts
+        assert len(set(sent_conversation_ids)) == expected_attempts
+        assert reset_conversation_ids == sent_conversation_ids
+        release_warnings = [r for r in caplog.records if r.getMessage().startswith("Could not release")]
+        assert len(release_warnings) == (expected_attempts if release_fails else 0)
+        assert all(r.exc_info is not None and r.exc_info[1] is release_failure for r in release_warnings)
+        [stored_request, stored_response] = await sqlite_instance.get_message_pieces_async(
+            prompt_ids=[request_piece_ids[0], response_piece_ids[0]]
+        )
+        assert stored_request.role == "user"
+        assert stored_request.conversation_id == sent_conversation_ids[0]
+        assert stored_response.id == response_piece_ids[0]
+        assert stored_response.role == "assistant"
+        assert stored_response.conversation_id == sent_conversation_ids[0]
+        assert stored_response.original_value == reply_text
+        assert stored_response.original_value_data_type == reply_data_type
+        assert stored_response.converted_value == reply_text
+        assert stored_response.converted_value_data_type == reply_data_type
+        assert stored_response.response_error == ("blocked" if reply_kind == "blocked" else "none")
 
 
 async def test_scorer_send_chat_target_async_good_response(good_json, patch_central_database):
@@ -255,13 +845,15 @@ async def test_scorer_send_chat_target_async_good_response(good_json, patch_cent
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value="message_value",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     assert chat_target.send_prompt_async.call_count == 1
@@ -283,13 +875,15 @@ async def test_scorer_remove_markdown_json_called(good_json, patch_central_datab
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="123",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="123",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
         mock_remove_markdown_json.assert_called_once()
@@ -314,14 +908,16 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value=str(image_path),
-        data_type="image_path",
-        scored_prompt_id="123",
-        prepended_text="objective: test\nresponse:",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value=str(image_path),
+            data_type="image_path",
+            scored_prompt_id="123",
+            prepended_text="objective: test\nresponse:",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     # Verify send_prompt_async was called
@@ -359,13 +955,15 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value="objective: test\nresponse: some text",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="objective: test\nresponse: some text",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     # Get the message that was sent
@@ -399,14 +997,16 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json, p
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value=str(audio_path),
-        data_type="audio_path",
-        scored_prompt_id="123",
-        prepended_text="objective: transcribe and evaluate\nresponse:",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value=str(audio_path),
+            data_type="audio_path",
+            scored_prompt_id="123",
+            prepended_text="objective: transcribe and evaluate\nresponse:",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     # Get the message that was sent
@@ -2275,13 +2875,15 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json, patch_centr
     result = await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value="message_value",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     assert result.raw_score_value == "1"
@@ -2306,13 +2908,15 @@ async def test_score_value_with_llm_without_system_prompt(good_json, patch_centr
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt=None,
-        value="message_value",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt=None,
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     chat_target.set_system_prompt_async.assert_not_called()
@@ -2343,13 +2947,15 @@ async def test_score_value_with_llm_raises_when_scorer_response_blocked(patch_ce
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="test-prompt-id",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="test-prompt-id",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
     # A blocked response is a terminal condition, not a transient JSON error: it must not retry.
@@ -2381,13 +2987,15 @@ async def test_score_value_with_llm_raises_empty_response_when_no_text_piece(pat
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="test-prompt-id",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="test-prompt-id",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
     # No parseable text is terminal here, not a transient JSON error: it must not retry.
@@ -2413,12 +3021,16 @@ class _ForwarderTrueFalseScorer(MessageTrueFalseScorer):
         unvalidated = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             response_handler=self._response_handler,
-            scorer_identifier=self.get_identifier(),
-            system_prompt=self._system_prompt,
-            value=message_piece.converted_value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    scorer_identifier=self.get_identifier(),
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    expectation=ScoringExpectation(objective=objective),
+                )
+            ),
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
 
@@ -2442,13 +3054,17 @@ class _DirectTransportTrueFalseScorer(MessageTrueFalseScorer):
 
         unvalidated = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
             response_handler=self._response_handler,
-            value=message_piece.converted_value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    expectation=ScoringExpectation(objective=objective),
+                )
+            ),
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
 
@@ -2469,12 +3085,16 @@ class _ForwarderFloatScaleScorer(MessageFloatScaleScorer):
         unvalidated = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             response_handler=self._response_handler,
-            scorer_identifier=self.get_identifier(),
-            system_prompt=self._system_prompt,
-            value=message_piece.converted_value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    scorer_identifier=self.get_identifier(),
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    expectation=ScoringExpectation(objective=objective),
+                )
+            ),
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="float_scale")]
 
