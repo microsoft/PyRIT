@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
 
+from pyrit.backend.services.target_service import get_target_service
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pyrit.converter import Converter
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
@@ -20,6 +24,29 @@ _CONVERTER_MODIFIER_PREFIX = "converter."
 
 class ScenarioConfigurationResolver:
     """Resolve registry-backed scenario inputs for launch and estimation."""
+
+    @staticmethod
+    @contextmanager
+    def reserve_targets(
+        *, target_name: str | None, adversarial_target_name: str | None, techniques: list[str] | None
+    ) -> Iterator[None]:
+        """Retain request targets, server defaults, and converter dependencies while work owns the configuration."""
+        service = get_target_service()
+        with ExitStack() as reservation:
+            reservation.enter_context(
+                service.reserve_targets(
+                    [target_name, adversarial_target_name or "adversarial_chat", "objective_scorer_chat"]
+                )
+            )
+            instances = ConverterRegistry.get_registry_singleton().instances
+            for token in techniques or []:
+                for modifier in token.split(":")[1:]:
+                    if modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
+                        converter = instances.get(modifier[len(_CONVERTER_MODIFIER_PREFIX) :])
+                        # A launch initializer may register a missing reference later; normal resolution validates it.
+                        if converter is not None:
+                            reservation.enter_context(service.reserve_identifiers([converter.get_identifier()]))
+            yield
 
     @classmethod
     def resolve_adversarial_target(cls, *, target_name: str | None) -> PromptTarget | None:

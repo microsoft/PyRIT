@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections import OrderedDict
@@ -208,12 +209,22 @@ class ScenarioService:
                 self._configured_estimate_tasks = tasks
             task = tasks.get(estimate_key)
             if task is None:
-                task = asyncio.create_task(
-                    self._run_configured_estimate_with_capacity_async(
-                        scenario_name=scenario_name,
-                        request=request,
+                with contextlib.ExitStack() as reservation:
+                    reservation.enter_context(
+                        ScenarioConfigurationResolver.reserve_targets(
+                            target_name=request.target_name,
+                            adversarial_target_name=request.adversarial_target_name,
+                            techniques=request.techniques,
+                        )
                     )
-                )
+                    task = asyncio.create_task(
+                        self._run_configured_estimate_with_capacity_async(
+                            scenario_name=scenario_name,
+                            request=request,
+                        )
+                    )
+                    worker_reservation = reservation.pop_all()
+                    task.add_done_callback(lambda _: worker_reservation.close())
                 tasks[estimate_key] = task
 
                 def clear_estimate_task(completed_task: _EstimateTask) -> None:
@@ -381,11 +392,14 @@ class ScenarioService:
             ScenarioRunSizeEstimate: The authoritative scenario estimate.
         """
         try:
-            return await self._run_default_estimate_async(
-                scenario_name=scenario_name,
-                construction_complete=construction_complete,
-                execution_timed_out=execution_timed_out,
-            )
+            with ScenarioConfigurationResolver.reserve_targets(
+                target_name=None, adversarial_target_name=None, techniques=None
+            ):
+                return await self._run_default_estimate_async(
+                    scenario_name=scenario_name,
+                    construction_complete=construction_complete,
+                    execution_timed_out=execution_timed_out,
+                )
         finally:
             semaphore.release()
 

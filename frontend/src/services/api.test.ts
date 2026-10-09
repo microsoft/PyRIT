@@ -363,6 +363,17 @@ describe("api service", () => {
       expect(result.target_registry_name).toBe("new-target");
     });
 
+    it("should delete a target with an encoded registry name", async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ status: 204 });
+      await expect(targetsApi.deleteTarget("manual target/name")).resolves.toBeUndefined();
+      expect(apiClient.delete).toHaveBeenCalledWith("/targets/manual%20target%2Fname");
+    });
+
+    it("should propagate a target deletion conflict", async () => {
+      (apiClient.delete as jest.Mock).mockRejectedValueOnce(new Error("Target is in use"));
+      await expect(targetsApi.deleteTarget("manual")).rejects.toThrow("Target is in use");
+    });
+
     it("should handle list targets error", async () => {
       const error = new Error("Server error");
       (apiClient.get as jest.Mock).mockRejectedValueOnce(error);

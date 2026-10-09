@@ -16,6 +16,39 @@ const second = makeTarget({ target_registry_name: 'second' })
 describe('useTargetRegistry', () => {
   beforeEach(() => jest.resetAllMocks())
 
+  it('refreshes on explicit request after another client deletes a target', async () => {
+    listTargets.mockResolvedValueOnce({
+      items: [first], pagination: { limit: 200, has_more: false },
+    }).mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
+    const { result } = renderHook(useTargetRegistry)
+    await waitFor(() => expect(result.current.targets).toEqual([first]))
+    act(() => result.current.refresh())
+    await waitFor(() => expect(result.current.targets).toEqual([]))
+    expect(result.current.error).toBeNull()
+  })
+
+  it('does not refresh in the background on time, focus, or visibility changes', async () => {
+    jest.useFakeTimers()
+    try {
+      listTargets.mockResolvedValueOnce({
+        items: [first], pagination: { limit: 200, has_more: false },
+      }).mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } })
+      const { result } = renderHook(useTargetRegistry)
+      await act(async () => {})
+      expect(result.current.targets).toEqual([first])
+      await act(async () => {
+        jest.advanceTimersByTime(60_000)
+        window.dispatchEvent(new Event('focus'))
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(result.current.targets).toEqual([first])
+      expect(result.current.loading).toBe(false)
+      expect(listTargets).toHaveBeenCalledTimes(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('loads every page and removes duplicate registry names', async () => {
     listTargets.mockResolvedValueOnce({
       items: [first], pagination: { limit: 200, has_more: true, next_cursor: 'next' },

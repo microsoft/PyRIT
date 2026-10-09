@@ -38,6 +38,7 @@ from pyrit.backend.models.converters import (
     PreviewStep,
 )
 from pyrit.backend.services.media_persistence import persist_media_value_async
+from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import MessagePiece, PromptDataType
@@ -239,13 +240,14 @@ class ConverterService:
             original_value = result.value
 
         converters = self._gather_converters(converter_ids=request.converter_ids)
-        steps, final_value, final_type = await self._apply_converters_async(
-            converters=converters,
-            initial_value=original_value,
-            initial_type=data_type,
-            start_token=request.start_token,
-            end_token=request.end_token,
-        )
+        with get_target_service().reserve_identifiers([converter.get_identifier() for _, _, converter in converters]):
+            steps, final_value, final_type = await self._apply_converters_async(
+                converters=converters,
+                initial_value=original_value,
+                initial_type=data_type,
+                start_token=request.start_token,
+                end_token=request.end_token,
+            )
 
         return ConverterPreviewResponse(
             original_value=request.original_value,

@@ -11,6 +11,7 @@ jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
+    deleteTarget: jest.fn(),
   },
 }));
 
@@ -74,6 +75,14 @@ const sampleTargets: TargetInstance[] = [
   }),
 ];
 
+async function openDeleteDialog(
+  user: ReturnType<typeof userEvent.setup>,
+  registryName: string,
+): Promise<void> {
+  await user.click(await screen.findByRole("button", { name: `Actions for ${registryName}` }));
+  await user.click(await screen.findByRole("menuitem", { name: `Delete ${registryName}` }));
+}
+
 describe("TargetConfig", () => {
   const defaultProps = {
     defaultObjectiveTarget: null as TargetInstance | null,
@@ -86,6 +95,125 @@ describe("TargetConfig", () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     mockRuntimeGeneration = "generation-1";
+  });
+
+  it("should enable deletion only for manually added targets and explain protected targets", async () => {
+    const user = userEvent.setup();
+    const manual = { ...sampleTargets[1], can_delete: true };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [sampleTargets[0], manual],
+      pagination: { limit: 200, has_more: false },
+    });
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    await user.click(await screen.findByRole("button", { name: `Actions for ${sampleTargets[0].target_registry_name}` }));
+    expect(await screen.findByRole("menuitem", { name: `Hide ${sampleTargets[0].target_registry_name}` })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^Delete / })).toHaveAttribute("aria-disabled", "true");
+    expect(within(screen.getByRole("menuitem", { name: /^Delete / })).getByText(/edit .env \/ .pyrit_conf and reinitialize/)).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: `Actions for ${manual.target_registry_name}` }));
+    expect(await screen.findByRole("menuitem", { name: `Delete ${manual.target_registry_name}` })).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("should confirm deletion and remove the target without selecting a replacement", async () => {
+    const user = userEvent.setup();
+    const manual = { ...sampleTargets[1], can_delete: true };
+    const onTargetsLoaded = jest.fn();
+    mockedTargetsApi.listTargets.mockResolvedValueOnce({
+      items: [sampleTargets[0], manual],
+      pagination: { limit: 200, has_more: false },
+    }).mockResolvedValue({
+      items: [sampleTargets[0]],
+      pagination: { limit: 200, has_more: false },
+    });
+    mockedTargetsApi.deleteTarget.mockResolvedValueOnce(undefined);
+    render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={manual} onTargetsLoaded={onTargetsLoaded} />
+      </TestWrapper>
+    );
+    await openDeleteDialog(user, manual.target_registry_name);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(/Saved conversations and results are kept/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/immediately removes.*shared registry for all users and cannot be undone/)).toBeInTheDocument();
+    expect(mockedTargetsApi.deleteTarget).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete target" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText(manual.target_registry_name)).not.toBeInTheDocument());
+    expect(mockedTargetsApi.deleteTarget).toHaveBeenCalledWith(manual.target_registry_name);
+    expect(onTargetsLoaded).toHaveBeenLastCalledWith([sampleTargets[0]]);
+    expect(defaultProps.onSetDefaultObjectiveTarget).not.toHaveBeenCalled();
+    expect(defaultProps.onSetDefaultAdversarialTarget).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "New Target" })).toHaveFocus());
+  });
+
+  it("should leave the registry unchanged when deletion is cancelled", async () => {
+    const user = userEvent.setup();
+    const manual = { ...sampleTargets[1], can_delete: true };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [manual], pagination: { limit: 200, has_more: false },
+    });
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    await openDeleteDialog(user, manual.target_registry_name);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(mockedTargetsApi.deleteTarget).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: `Actions for ${manual.target_registry_name}` })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: `Actions for ${manual.target_registry_name}` })).toHaveFocus());
+  });
+
+  it.each([204, 404])("should restore the empty state and focus after deleting the last target (%s)", async (status: number) => {
+    const user = userEvent.setup();
+    const manual = { ...sampleTargets[0], can_delete: true };
+    mockedTargetsApi.listTargets.mockResolvedValueOnce({
+      items: [manual], pagination: { limit: 200, has_more: false },
+    }).mockResolvedValue({ items: [], pagination: { limit: 200, has_more: false } });
+    if (status === 404) {
+      mockedTargetsApi.deleteTarget.mockRejectedValueOnce({
+        isAxiosError: true, response: { status: 404, data: { detail: "Target not found" } },
+      });
+    } else {
+      mockedTargetsApi.deleteTarget.mockResolvedValueOnce(undefined);
+    }
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    const trigger = await screen.findByRole("button", { name: `Actions for ${manual.target_registry_name}` });
+    trigger.focus();
+    await user.keyboard("{Enter}{End}{Enter}");
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(new RegExp(manual.target_registry_name))).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    await user.tab();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("No Targets Configured")).toBeInTheDocument();
+    expect(screen.queryByText("Target not found")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "New Target" })).toHaveFocus());
+  });
+
+  it("should use shared registry updates when another client removes a target", async () => {
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: sampleTargets, pagination: { limit: 200, has_more: false },
+    });
+    const { rerender } = render(
+      <TestWrapper><TargetConfig {...defaultProps} registeredTargets={sampleTargets} /></TestWrapper>
+    );
+    await screen.findByRole("table");
+    rerender(<TestWrapper><TargetConfig {...defaultProps} registeredTargets={[]} /></TestWrapper>);
+    expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("should show the in-use error and retain the target", async () => {
+    const user = userEvent.setup();
+    const manual = { ...sampleTargets[1], can_delete: true };
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [manual], pagination: { limit: 200, has_more: false },
+    });
+    mockedTargetsApi.deleteTarget.mockRejectedValueOnce(new Error("Target is in use by queued work."));
+    const onTargetsLoaded = jest.fn();
+    render(<TestWrapper><TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} /></TestWrapper>);
+    await openDeleteDialog(user, manual.target_registry_name);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete target" }));
+    expect(await screen.findByText("Target is in use by queued work.")).toBeInTheDocument();
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete target" })).toBeEnabled();
   });
 
   it("should show loading state initially", () => {

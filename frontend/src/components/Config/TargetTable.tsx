@@ -1,4 +1,4 @@
-import React, { useState, useMemo, forwardRef } from 'react'
+import React, { useState, useMemo, useRef, forwardRef } from 'react'
 import {
   Table,
   TableHeader,
@@ -12,7 +12,14 @@ import {
   Text,
   Tooltip,
   Checkbox,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
+  MenuDivider,
   mergeClasses,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import {
   CheckmarkCircleFilled,
@@ -31,6 +38,8 @@ import {
   ChevronDownRegular,
   EyeOffRegular,
   EyeRegular,
+  DeleteRegular,
+  MoreHorizontalRegular,
 } from '@fluentui/react-icons'
 
 import { useUserPreferences } from '@/hooks/useUserPreferences'
@@ -64,6 +73,7 @@ interface TargetTableProps {
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  onDeleteTarget?: (target: TargetInstance, trigger: HTMLButtonElement | null) => void
 }
 
 /** Format target_specific_params into a short human-readable string. */
@@ -247,8 +257,11 @@ export default function TargetTable({
   defaultAdversarialTarget,
   onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
+  onDeleteTarget,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
+  const restoreFocusTarget = useRestoreFocusTarget()
+  const actionButtons = useRef(new Map<string, HTMLButtonElement>())
   const { preferences, updatePreferences } = useUserPreferences()
   const hiddenTargetRegistryNames = useMemo(
     () => new Set(preferences.hiddenTargetRegistryNames),
@@ -415,6 +428,11 @@ export default function TargetTable({
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
             const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
+            const canDelete = target.can_delete === true && Boolean(onDeleteTarget)
+            const deletionBlockedReason = target.can_delete !== true
+              ? target.deletion_blocked_reason
+                || 'Only user-created targets can be deleted. For configuration-managed or auto-generated targets, edit .env / .pyrit_conf and reinitialize.'
+              : !onDeleteTarget ? 'Target deletion is unavailable in this view.' : null
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
@@ -428,17 +446,58 @@ export default function TargetTable({
                   data-testid={`target-row-${target.target_registry_name}`}
                 >
                   <TableCell className={styles.actionCell}>
-                    <Button
-                      className={styles.rowAction}
-                      appearance="subtle"
-                      size="small"
-                      icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
-                      onClick={() => setTargetHidden(target, !hidden)}
-                      aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
-                      data-testid={`toggle-target-visibility-${target.target_registry_name}`}
-                    >
-                      {hidden ? 'Show' : 'Hide'}
-                    </Button>
+                    <Menu>
+                      <MenuTrigger disableButtonEnhancement>
+                        <Button
+                          {...restoreFocusTarget}
+                          ref={(button: HTMLButtonElement | null) => {
+                            if (button) actionButtons.current.set(target.target_registry_name, button)
+                            else actionButtons.current.delete(target.target_registry_name)
+                          }}
+                          className={styles.rowAction}
+                          appearance="subtle"
+                          size="small"
+                          icon={<MoreHorizontalRegular />}
+                          aria-label={`Actions for ${target.target_registry_name}`}
+                          title="Target actions"
+                        />
+                      </MenuTrigger>
+                      <MenuPopover>
+                        <MenuList>
+                          <MenuItem
+                            className={styles.menuItem}
+                            icon={hidden ? <EyeRegular /> : <EyeOffRegular />}
+                            onClick={() => setTargetHidden(target, !hidden)}
+                            aria-label={`${hidden ? 'Show' : 'Hide'} ${target.target_registry_name}`}
+                            data-testid={`toggle-target-visibility-${target.target_registry_name}`}
+                          >
+                            {hidden ? 'Show target' : 'Hide target'}
+                          </MenuItem>
+                          <MenuDivider />
+                          <Tooltip
+                            content={deletionBlockedReason ?? 'Delete this user-created target'}
+                            relationship="description"
+                          >
+                            <MenuItem
+                              className={mergeClasses(styles.menuItem, canDelete && styles.deleteMenuItem)}
+                              icon={<DeleteRegular />}
+                              disabled={!canDelete}
+                              onClick={() => onDeleteTarget?.(
+                                target, actionButtons.current.get(target.target_registry_name) ?? null,
+                              )}
+                              aria-label={`Delete ${target.target_registry_name}`}
+                            >
+                              Delete target
+                              {deletionBlockedReason && (
+                                <Text className={styles.deletionExplanation} size={200}>
+                                  {deletionBlockedReason}
+                                </Text>
+                              )}
+                            </MenuItem>
+                          </Tooltip>
+                        </MenuList>
+                      </MenuPopover>
+                    </Menu>
                   </TableCell>
                   <TableCell className={styles.registryNameCell}>
                     <Text size={200} className={styles.registryNameText}>{target.target_registry_name}</Text>

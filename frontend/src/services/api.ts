@@ -253,6 +253,10 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+
+  deleteTarget: async (targetRegistryName: string): Promise<void> => {
+    await apiClient.delete(`/targets/${encodeURIComponent(targetRegistryName)}`)
+  },
 }
 
 export const convertersApi = {

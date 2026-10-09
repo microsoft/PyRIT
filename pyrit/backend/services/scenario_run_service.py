@@ -18,7 +18,7 @@ import uuid
 from collections import OrderedDict, deque
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -162,6 +162,7 @@ class _ActiveTask:
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
+    target_reservation: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +364,25 @@ class ScenarioRunService:
 
     async def _start_run_locked_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
+        Reserve targets through preparation and transfer ownership to the scheduler.
+
+        Returns:
+            ScenarioRunSummary: The prepared run's scheduling state.
+        """
+        with contextlib.ExitStack() as reservation:
+            reservation.enter_context(
+                self._configuration_resolver.reserve_targets(
+                    target_name=request.target_name,
+                    adversarial_target_name=request.adversarial_target_name,
+                    techniques=request.techniques,
+                )
+            )
+            return await self._prepare_and_schedule_run_async(request=request, reservation=reservation)
+
+    async def _prepare_and_schedule_run_async(
+        self, *, request: RunScenarioRequest, reservation: contextlib.ExitStack
+    ) -> ScenarioRunSummary:
+        """
         Initialize and schedule a scenario run.
 
         Performs all validation and initialization eagerly (initializers, target
@@ -372,6 +392,7 @@ class ScenarioRunService:
 
         Args:
             request: The run request with scenario name, target, and options.
+            reservation: Target ownership to transfer to the scheduled run.
 
         Returns:
             ScenarioRunSummary with a stable ID and current active or queued state.
@@ -384,10 +405,20 @@ class ScenarioRunService:
         resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
         if request.scenario_result_id:
             self._preparing_run_ids.add(request.scenario_result_id)
-        prepare_task = asyncio.get_running_loop().run_in_executor(
-            self._prepare_executor,
-            functools.partial(self._prepare_run_blocking, request=request),
-        )
+        with contextlib.ExitStack() as preparation_reservation:
+            preparation_reservation.enter_context(
+                self._configuration_resolver.reserve_targets(
+                    target_name=request.target_name,
+                    adversarial_target_name=request.adversarial_target_name,
+                    techniques=request.techniques,
+                )
+            )
+            prepare_task = asyncio.get_running_loop().run_in_executor(
+                self._prepare_executor,
+                functools.partial(self._prepare_run_blocking, request=request),
+            )
+            worker_reservation = preparation_reservation.pop_all()
+            prepare_task.add_done_callback(lambda _: worker_reservation.close())
         self._preparations.add(prepare_task)
         prepare_task.add_done_callback(self._discard_preparation)
         if request.scenario_result_id:
@@ -444,7 +475,13 @@ class ScenarioRunService:
             created_at=persisted[0].creation_time,
             enqueued_at=datetime.now(UTC),
         )
-        await self._enqueue_run_async(scheduled=scheduled)
+        scheduled.target_reservation = reservation.pop_all()
+        try:
+            await self._enqueue_run_async(scheduled=scheduled)
+        except BaseException:
+            if scheduled not in self._queued_runs and self._active_tasks.get(scenario_result_id) is not scheduled:
+                scheduled.target_reservation.close()
+            raise
 
         snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
         response = await self.get_run_from_storage_async(
@@ -825,6 +862,7 @@ class ScenarioRunService:
                     error_type="CancelledError",
                 )
                 self._queued_runs.remove(queued)
+                queued.target_reservation.close()
                 self._queue_revision += 1
             elif self._active_scenario_result_id == scenario_result_id:
                 active = self._active_tasks[scenario_result_id]
@@ -948,6 +986,7 @@ class ScenarioRunService:
                 if queued:
                     self._queue_revision += 1
                 for run in queued:
+                    run.target_reservation.close()
                     try:
                         await self._memory.update_scenario_run_state_async(
                             scenario_result_id=run.scenario_result_id,
@@ -1053,6 +1092,7 @@ class ScenarioRunService:
                 )
                 if not persisted or persisted[0].scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
+                    next_run.target_reservation.close()
                     self._queue_revision += 1
                     continue
                 await self._start_scheduled_run_locked_async(scheduled=next_run)
@@ -1066,6 +1106,8 @@ class ScenarioRunService:
     def _release_completed_task(self, *, scenario_result_id: str) -> None:
         """Release executable state while retaining bounded terminal error evidence."""
         completed = self._active_tasks.pop(scenario_result_id, None)
+        if completed is not None:
+            completed.target_reservation.close()
         if completed is None or completed.error is None:
             return
         self._terminal_errors[scenario_result_id] = completed.error

@@ -407,7 +407,7 @@ test.describe("Create Target Dialog", () => {
       if (route.request().method() === "POST") {
         const body = JSON.parse(route.request().postData() ?? "{}");
         createdTarget = {
-          target_registry_name: "new-target-1",
+          target_registry_name: body.name,
           target_type: body.type,
           endpoint: body.params?.endpoint,
           model_name: body.params?.model_name,
@@ -434,6 +434,7 @@ test.describe("Create Target Dialog", () => {
     const dialog = page.locator('[role="dialog"]');
 
     // Select target type
+    await dialog.getByRole("textbox", { name: "Target name" }).fill("new-target-1");
     await selectTargetType(page, dialog, "OpenAIChatTarget");
 
     // Fill endpoint
@@ -504,6 +505,8 @@ test.describe("Create Target Dialog", () => {
     await dialog.getByPlaceholder("https://your-resource.openai.azure.com/").fill(
       "https://api.openai.com"
     );
+    await expect(createBtn).toBeDisabled();
+    await dialog.getByRole("textbox", { name: "Target name" }).fill("test-chat-target");
     await expect(createBtn).toBeEnabled();
 
     // Identity authentication additionally requires a recognized Azure host.

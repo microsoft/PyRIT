@@ -8,7 +8,7 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.targets import (
@@ -16,7 +16,11 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
     TargetTypeResponse,
 )
-from pyrit.backend.services.target_service import get_target_service
+from pyrit.backend.services.target_service import (
+    TargetDeletionConflictError,
+    TargetDeletionProtectedError,
+    get_target_service,
+)
 from pyrit.models.catalog.target import TargetInstance
 
 router = APIRouter(prefix="/targets", tags=["targets"])
@@ -130,3 +134,30 @@ async def get_target(
         )
 
     return target
+
+
+@router.delete(
+    "/{target_registry_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        403: {"model": ProblemDetail, "description": "Target is not manually added"},
+        404: {"model": ProblemDetail, "description": "Target not found"},
+        409: {"model": ProblemDetail, "description": "Target is in use"},
+    },
+)
+async def delete_target_async(target_registry_name: IdentifierStr) -> Response:
+    """
+    Delete only an unused, manually added target registration.
+
+    Returns:
+        Response: Empty success response after unregistering the target.
+    """
+    try:
+        deleted = await get_target_service().delete_target_async(target_registry_name=target_registry_name)
+    except TargetDeletionProtectedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TargetDeletionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Target '{target_registry_name}' not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

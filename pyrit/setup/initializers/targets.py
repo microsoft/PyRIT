@@ -712,7 +712,9 @@ class TargetInitializer(PyRITInitializer):
 
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
-        registry.instances.register(target, name=config.registry_name, replace=True)
+        registry.instances.register(
+            target, name=config.registry_name, metadata={"target_origin": "configuration"}, replace=True
+        )
         if config.tags:
             registry.instances.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
@@ -752,6 +754,7 @@ class TargetInitializer(PyRITInitializer):
                     primary,
                     name="adversarial_chat_primary",
                     tags=[TargetInitializerTags.DEFAULT],
+                    metadata={"target_origin": "configuration"},
                     replace=True,
                 )
 
@@ -759,6 +762,7 @@ class TargetInitializer(PyRITInitializer):
             canonical_target,
             name="adversarial_chat",
             tags=[TargetInitializerTags.DEFAULT],
+            metadata={"target_origin": "auto_generated"},
             replace=True,
         )
 
@@ -823,7 +827,7 @@ class TargetInitializer(PyRITInitializer):
                 logger.debug(f"Skipping auto-group {rr_name}: name already exists in registry")
                 continue
 
-            registry.instances.register(rr_target, name=rr_name)
+            registry.instances.register(rr_target, name=rr_name, metadata={"target_origin": "auto_generated"})
 
             logger.info(f"Auto-grouped round-robin target: {rr_name} (members: {member_names})")
 

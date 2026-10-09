@@ -24,6 +24,7 @@ from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLook
 from pyrit.backend.services.scenario_run_service import (
     ScenarioRunService,
 )
+from pyrit.backend.services.target_service import TargetDeletionConflictError, TargetService
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Converter
 from pyrit.memory import (
@@ -57,7 +58,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import ScenarioMetadata, ScenarioRegistry
+from pyrit.registry import ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -447,6 +448,104 @@ class TestAdversarialRunScope:
         finally:
             release.set()
             await service.shutdown_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("cancel_active", [False, True])
+async def test_target_deletion_tracks_active_and_queued_runs_async(
+    *, mock_all_registries: dict[str, Any], cancel_active: bool
+) -> None:
+    targets = TargetService()
+    targets._registry = TargetRegistry()
+    for name in ("active", "queued", "adversary", "unrelated"):
+        targets._registry.instances.register(MockPromptTarget(), name=name, metadata={"created_by_target_api": True})
+    service = ScenarioRunService()
+    records: dict[str, MagicMock] = {}
+    release = asyncio.Event()
+
+    def prepare(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+        run_id = request.target_name
+        scenario = MagicMock(spec=Scenario)
+        scenario._scenario_result_id = run_id
+        scenario.active_atomic_group_ids = set()
+        scenario.run_async = AsyncMock(side_effect=release.wait)
+        records[run_id] = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.CREATED)
+        return _svc_mod._PreparedRun(scenario=scenario)
+
+    def update(*, scenario_result_id: str, scenario_run_state: ScenarioRunState, **_: object) -> bool:
+        records[scenario_result_id].scenario_run_state = scenario_run_state
+        return True
+
+    memory = mock_all_registries["memory"]
+    memory.get_scenario_results_async.side_effect = lambda *, scenario_result_ids: [
+        records[name] for name in scenario_result_ids
+    ]
+    memory.try_update_scenario_run_state_async.side_effect = update
+    memory.update_scenario_run_state_async.side_effect = update
+    memory.update_scenario_run_state_and_metadata_fields_async.side_effect = update
+    with (
+        patch.object(_resolver_mod, "get_target_service", return_value=targets),
+        patch.object(service, "_prepare_run_blocking", side_effect=prepare),
+    ):
+        try:
+            for name in ("active", "queued"):
+                request = _make_request(target_name=name)
+                request.adversarial_target_name = "adversary"
+                await service.start_run_async(request=request)
+            assert await targets.delete_target_async(target_registry_name="unrelated")
+            for name in ("active", "queued", "adversary"):
+                with pytest.raises(TargetDeletionConflictError, match="active or queued"):
+                    await targets.delete_target_async(target_registry_name=name)
+            await service.cancel_run_async(scenario_result_id="queued")
+            assert await targets.delete_target_async(target_registry_name="queued")
+            with pytest.raises(TargetDeletionConflictError):
+                await targets.delete_target_async(target_registry_name="adversary")
+            task = service._active_tasks["active"].task
+            assert task is not None
+            if cancel_active:
+                await service.cancel_run_async(scenario_result_id="active")
+            else:
+                release.set()
+                await asyncio.wait_for(task, timeout=5)
+            assert await targets.delete_target_async(target_registry_name="active")
+            assert await targets.delete_target_async(target_registry_name="adversary")
+        finally:
+            release.set()
+            await service.shutdown_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_target_deletion_waits_for_cancelled_preparation_thread_async(
+    mock_all_registries: dict[str, Any],
+) -> None:
+    targets = TargetService()
+    targets._registry = TargetRegistry()
+    targets._registry.instances.register(MockPromptTarget(), name="my_target", metadata={"created_by_target_api": True})
+    service = ScenarioRunService()
+    started = threading.Event()
+    release = threading.Event()
+
+    def prepare(*, request: RunScenarioRequest) -> _svc_mod._PreparedRun:
+        started.set()
+        assert release.wait(timeout=5)
+        raise ValueError("preparation failed")
+
+    with (
+        patch.object(_resolver_mod, "get_target_service", return_value=targets),
+        patch.object(service, "_prepare_run_blocking", side_effect=prepare),
+    ):
+        task = asyncio.create_task(service.start_run_async(request=_make_request()))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            with pytest.raises(TargetDeletionConflictError):
+                await targets.delete_target_async(target_registry_name="my_target")
+        finally:
+            release.set()
+            await service.shutdown_async()
+    assert await targets.delete_target_async(target_registry_name="my_target")
 
 
 class TestScenarioRunServiceStartRun:

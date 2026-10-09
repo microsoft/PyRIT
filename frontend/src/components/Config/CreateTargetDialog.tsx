@@ -69,6 +69,9 @@ const FALLBACK_IDENTITY_TARGET_TYPES = new Set([
   'AzureMLChatTarget',
 ])
 
+const TARGET_NAME_FORMAT_ERROR =
+  'Use 1-64 letters, numbers, dots (.), underscores (_) or hyphens (-), starting with a letter or number. Spaces and other characters are not allowed.'
+
 const TARGET_DISPLAY_NAMES: Record<string, string> = {
   AzureMLChatTarget: 'Azure Machine Learning chat',
   OpenAIChatTarget: 'OpenAI chat',
@@ -220,6 +223,7 @@ function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
 
 export default function CreateTargetDialog({ open, onClose, onCreated, existingTargets }: CreateTargetDialogProps) {
   const styles = useCreateTargetDialogStyles()
+  const [targetName, setTargetName] = useState('')
   const [targetType, setTargetType] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [modelName, setModelName] = useState('')
@@ -231,12 +235,21 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{
+    targetName?: string
     targetType?: string
     endpoint?: string
     modelName?: string
     underlyingModel?: string
     apiKey?: string
   }>({})
+  const normalizedName = targetName.trim()
+  const validName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(normalizedName)
+  const duplicateName = existingTargets?.some((target: TargetInstance) => (
+    target.target_registry_name === normalizedName
+  )) ?? false
+  const targetNameError = fieldErrors.targetName
+    || (targetName.length > 0 && !validName ? TARGET_NAME_FORMAT_ERROR : undefined)
+    || (duplicateName ? 'A target with this name already exists.' : undefined)
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -432,6 +445,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }
 
   const resetForm = () => {
+    setTargetName('')
     setTargetType('')
     setEndpoint('')
     setModelName('')
@@ -451,6 +465,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   }
 
   const handleSubmit = async () => {
+    if (submitting) return
+    if (!validName || duplicateName) {
+      setFieldErrors({
+        targetName: duplicateName
+          ? 'A target with this name already exists.'
+          : TARGET_NAME_FORMAT_ERROR,
+      })
+      return
+    }
+    setFieldErrors({})
     // For RoundRobinTarget, validation is different: we need ≥2 selected targets, not endpoint
     if (isRoundRobin) {
       if (selectedInnerTargets.length < 2) {
@@ -475,6 +499,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
       try {
         await targetsApi.createTarget({
+          name: normalizedName,
           type: 'RoundRobinTarget',
           params: {
             targets: selectedInnerTargets.map((t) => t.registryName),
@@ -545,6 +570,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
 
       await targetsApi.createTarget({
+        name: normalizedName,
         type: targetType,
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
@@ -590,6 +616,24 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   </MessageBarBody>
                 </MessageBar>
               )}
+
+              <Field
+                label="Target name"
+                required
+                hint="Choose a meaningful, unique name, such as team-image-model. Use 1-64 letters, numbers, dots, underscores or hyphens; start with a letter or number."
+                validationMessage={targetNameError}
+                validationState={targetNameError ? 'error' : 'none'}
+              >
+                <Input
+                  value={targetName}
+                  onChange={(_, data) => {
+                    setTargetName(data.value)
+                    setFieldErrors((current) => ({ ...current, targetName: undefined }))
+                  }}
+                  placeholder="team-image-model"
+                  maxLength={64}
+                />
+              </Field>
 
               <Field
                 className={styles.formField}
@@ -819,7 +863,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={modelNameParameter?.description || undefined}
+                      hint="The model ID expected by your provider, e.g. gpt-image-1."
                       required={modelNameRequired}
                       validationMessage={fieldErrors.modelName}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}
@@ -1013,6 +1057,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               onClick={handleSubmit}
               disabled={
                 submitting ||
+                !validName ||
+                duplicateName ||
                 !targetType ||
                 (isRoundRobin
                   ? selectedInnerTargets.length < 2 ||

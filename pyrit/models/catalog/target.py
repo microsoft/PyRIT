@@ -44,6 +44,12 @@ class TargetInstance(BaseModel):
     """
 
     target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
+    can_delete: bool = Field(
+        False, description="Manually created registry entry; deletion still requires that the target is not in use"
+    )
+    deletion_blocked_reason: str | None = Field(
+        None, description="Why this registration is protected and how to change its source configuration instead"
+    )
     identifier: TargetIdentifier = Field(
         ...,
         description=(

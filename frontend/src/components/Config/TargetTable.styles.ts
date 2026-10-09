@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { mobileTouchTarget, mobileTouchTargetHeight } from '../../styles/touchTargets'
 
 export const useTargetTableStyles = makeStyles({
   tableContainer: {
@@ -119,10 +119,24 @@ export const useTargetTableStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
   },
   actionCell: {
-    width: '100px',
+    width: '4.5rem',
+    textAlign: 'center',
   },
   rowAction: {
     ...mobileTouchTarget,
+  },
+  menuItem: {
+    ...mobileTouchTargetHeight,
+  },
+  deleteMenuItem: {
+    color: tokens.colorPaletteRedForeground1,
+  },
+  deletionExplanation: {
+    display: 'block',
+    maxWidth: '20rem',
+    marginTop: tokens.spacingVerticalXS,
+    whiteSpace: 'normal',
+    color: tokens.colorNeutralForeground2,
   },
   /** Sub-row for inner targets of a RoundRobinTarget — visually indented with a
    *  lighter background so it's clear these are children, not standalone targets. */

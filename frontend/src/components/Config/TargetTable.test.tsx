@@ -95,6 +95,15 @@ async function pickFilterOption(user: ReturnType<typeof userEvent.setup>, filter
   await user.keyboard('{Escape}')
 }
 
+async function chooseTargetAction(
+  user: ReturnType<typeof userEvent.setup>,
+  registryName: string,
+  action: 'Hide' | 'Show' | 'Delete',
+): Promise<void> {
+  await user.click(screen.getByRole('button', { name: `Actions for ${registryName}` }))
+  await user.click(await screen.findByRole('menuitem', { name: `${action} ${registryName}` }))
+}
+
 describe('TargetTable', () => {
   const defaultProps = {
     targets: sampleTargets,
@@ -107,6 +116,61 @@ describe('TargetTable', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     window.localStorage.clear()
+  })
+
+  it('should expose compact row actions with keyboard access and restore focus on Escape', async () => {
+    const user = userEvent.setup()
+    const onDeleteTarget = jest.fn()
+    const manual = { ...sampleTargets[0], can_delete: true }
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[manual]} onDeleteTarget={onDeleteTarget} />
+      </TestWrapper>,
+    )
+    const trigger = screen.getByRole('button', { name: `Actions for ${manual.target_registry_name}` })
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^(Hide|Delete) / })).not.toBeInTheDocument()
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('menuitem', { name: `Hide ${manual.target_registry_name}` })).toHaveFocus()
+    expect(screen.getAllByRole('menuitem').map((item: HTMLElement) => item.textContent)).toEqual([
+      'Hide target', 'Delete target',
+    ])
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
+    expect(onDeleteTarget).not.toHaveBeenCalled()
+    await user.keyboard('{Enter}{End}{Enter}')
+    expect(onDeleteTarget).toHaveBeenCalledWith(manual, trigger)
+  })
+
+  it.each([
+    ['environment-target', 'This target is loaded from configuration. Edit .env / .pyrit_conf and reinitialize.'],
+    ['generated-round-robin', 'PyRIT generates this target automatically. Edit .env / .pyrit_conf and reinitialize.'],
+    ['adversarial_chat', 'PyRIT generates this target automatically. Edit .env / .pyrit_conf and reinitialize.'],
+  ])('should disable deletion and explain ownership for %s', async (name: string, reason: string) => {
+    const user = userEvent.setup()
+    const onDeleteTarget = jest.fn()
+    const protectedTarget = {
+      ...makeTarget({ target_registry_name: name }),
+      can_delete: false,
+      deletion_blocked_reason: reason,
+    }
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={[protectedTarget]} onDeleteTarget={onDeleteTarget} />
+      </TestWrapper>,
+    )
+    await user.click(screen.getByRole('button', { name: `Actions for ${name}` }))
+    const deletion = await screen.findByRole('menuitem', { name: `Delete ${name}` })
+    expect(deletion).toHaveAttribute('aria-disabled', 'true')
+    expect(deletion).toHaveAccessibleDescription(reason)
+    expect(within(deletion).getByText(reason)).toBeVisible()
+    await user.keyboard('{End}')
+    expect(deletion).toHaveFocus()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(reason)
+    await user.keyboard('{Enter}')
+    await user.click(deletion)
+    expect(onDeleteTarget).not.toHaveBeenCalled()
   })
 
   it('should render a flat table with all targets visible', () => {
@@ -440,7 +504,7 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await chooseTargetAction(user, 'openai_chat_gpt4', 'Hide')
 
     expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
@@ -464,18 +528,18 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
+    await chooseTargetAction(user, 'azure_image_dalle', 'Hide')
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Show azure_image_dalle' }))
+    await chooseTargetAction(user, 'azure_image_dalle', 'Show')
 
     expect(screen.getByText('dall-e-3')).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
 
-    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await chooseTargetAction(user, 'openai_chat_gpt4', 'Hide')
 
     expect(screen.queryByText('gpt-4')).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
@@ -493,7 +557,7 @@ describe('TargetTable', () => {
       ...DEFAULT_USER_PREFERENCES,
       hiddenTargetRegistryNames: ['azure_image_dalle'],
     })
-    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await chooseTargetAction(user, 'openai_chat_gpt4', 'Hide')
 
     expect(readUserPreferences('local').hiddenTargetRegistryNames).toEqual([
       'azure_image_dalle',
@@ -509,7 +573,7 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    await user.click(screen.getByRole('button', { name: 'Hide openai_chat_gpt4' }))
+    await chooseTargetAction(user, 'openai_chat_gpt4', 'Hide')
     await user.click(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' }))
 
     act(() => {
@@ -522,7 +586,7 @@ describe('TargetTable', () => {
 
     expect(screen.getByRole('checkbox', { name: 'Show hidden targets (0)' })).toBeDisabled()
 
-    await user.click(screen.getByRole('button', { name: 'Hide azure_image_dalle' }))
+    await chooseTargetAction(user, 'azure_image_dalle', 'Hide')
 
     expect(screen.queryByText('dall-e-3')).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Show hidden targets (1)' })).not.toBeChecked()
@@ -550,7 +614,7 @@ describe('TargetTable', () => {
       </TestWrapper>
     )
 
-    await user.click(screen.getByRole('button', { name: 'Hide first_registry_name' }))
+    await chooseTargetAction(user, 'first_registry_name', 'Hide')
 
     expect(screen.queryByText('first_registry_name')).not.toBeInTheDocument()
     expect(screen.getByText('second_registry_name')).toBeInTheDocument()

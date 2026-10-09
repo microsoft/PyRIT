@@ -59,13 +59,12 @@ class TargetListResponse(BaseModel):
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
-    # LEGACY COMPATIBILITY: The current target configuration UI does not send a
-    # name. Make this field required after that UI sends explicit registry names.
+    # Older API clients may omit names; the GUI requires an explicit registry name.
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
-        description="Unique registry name; omitted only for legacy UI compatibility",
+        description="Unique registry name; omitted only for legacy API compatibility",
     )
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(

@@ -14,6 +14,7 @@ from pyrit.backend.models.scorers import (
     ScorerTypeEntry,
     ScorerTypeResponse,
 )
+from pyrit.backend.services.target_service import get_target_service
 from pyrit.models.catalog.scorer import ScorerInstance
 from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.registry import ScorerRegistry
@@ -106,12 +107,16 @@ class ScorerService:
         def create() -> ScorerInstance:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
-            scorer = self._registry.create_named_instance(
-                name=request.name,
-                type_name=request.type,
-                params=request.params,
-            )
-            return self._build_instance(name=request.name, scorer=scorer)
+            metadata = self._registry.get_registered_class_metadata(request.type)
+            if metadata is None:
+                raise ValueError(f"Scorer type '{request.type}' not found")
+            with get_target_service().reserve_parameter_targets(parameters=metadata.parameters, values=request.params):
+                scorer = self._registry.create_named_instance(
+                    name=request.name,
+                    type_name=request.type,
+                    params=request.params,
+                )
+                return self._build_instance(name=request.name, scorer=scorer)
 
         return await asyncio.to_thread(create)
 

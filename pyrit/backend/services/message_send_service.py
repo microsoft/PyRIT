@@ -11,7 +11,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable, Coroutine
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
@@ -176,6 +176,7 @@ class MessageSendService:
                 return existing.status.model_copy(deep=True)
 
             with ExitStack() as reservation:
+                reservation.enter_context(get_target_service().reserve_targets([request.target_registry_name]))
                 conversations: dict[str, ExitStack] = {}
                 for conversation_id in [
                     request.target_conversation_id,
@@ -186,6 +187,7 @@ class MessageSendService:
                     conversations[conversation_id] = owner
                 owned_request = request.model_copy(deep=True)
                 validated = await self._validate_message_async(attack_result_id=attack_result_id, request=owned_request)
+                reservation.enter_context(self._reserve_validated_targets(validated))
                 if self._closing:
                     raise ManualSendQueueFullError("Manual message operations are shutting down")
                 operation = _Send(
@@ -264,15 +266,35 @@ class MessageSendService:
         Yields:
             None: The completed operation's conversation reservation.
         """
-        with self._scheduler.reserve(conversation_id=request.target_conversation_id):
+        with (
+            self._scheduler.reserve(conversation_id=request.target_conversation_id),
+            get_target_service().reserve_targets([request.target_registry_name] if request.send else []),
+        ):
             await self._add_message_async(attack_result_id=attack_result_id, request=request)
             yield
 
     async def _add_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> None:
         validated = await self._validate_message_async(attack_result_id=attack_result_id, request=request)
-        await self._execute_validated_message_async(
-            attack_result_id=attack_result_id, request=request, validated=validated
-        )
+        with self._reserve_validated_targets(validated):
+            await self._execute_validated_message_async(
+                attack_result_id=attack_result_id, request=request, validated=validated
+            )
+
+    def _reserve_validated_targets(self, validated: _ValidatedMessage) -> AbstractContextManager[None]:
+        """
+        Retain all target dependencies through execution and cancellation cleanup.
+
+        Returns:
+            AbstractContextManager[None]: A reservation for resolved targets and converters.
+        """
+        identifiers = [
+            converter.get_identifier()
+            for configuration in [*validated.request_configurations, *validated.response_configurations]
+            for converter in configuration.converters
+        ]
+        if validated.target is not None:
+            identifiers.append(validated.target.get_identifier())
+        return get_target_service().reserve_identifiers(identifiers)
 
     async def _validate_message_async(self, *, attack_result_id: str, request: AddMessageRequest) -> _ValidatedMessage:
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])

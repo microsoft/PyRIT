@@ -721,6 +721,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   path="targets"
                   element={
                     <TargetConfig
+                      registeredTargets={registry.targets}
                       defaultObjectiveTarget={targetDefaults.objectiveTarget}
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
                       onSetDefaultObjectiveTarget={(target: TargetInstance | null) => setDefaultTarget('objective', target)}

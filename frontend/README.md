@@ -32,6 +32,55 @@ a new attack, the draft is kept so you can retry after loading finishes. Copies
 and drafts saved to an existing attack remain available during defaults reloads
 and keep that attack's attribution.
 
+## Deleting manually added targets
+
+The **New Target** dialog requires a meaningful, unique registry name, such as
+`team-image-model`. Names contain 1-64 letters, numbers, dots, underscores, or
+hyphens and start with a letter or number. Older API clients may still omit a
+name for compatibility.
+
+Each Target Registry row has a three-dot **Actions** menu containing **Hide target**
+(or **Show target**) and a separated **Delete target** option. Deletion is enabled
+only for targets added through the GUI/API in the current runtime, including
+manually created round-robin targets. Configuration-sourced targets, automatically
+generated round-robin groups, and the generated canonical `adversarial_chat`
+registration show a keyboard-focusable, disabled Delete option with a tooltip
+and visible explanation of their ownership, directing
+users to edit `.env` / `.pyrit_conf` and reinitialize. Entries without explicit
+manual-origin metadata are also protected.
+
+Deletion requires confirmation that removal is immediate, shared by all users,
+and cannot be undone. It removes the registration from the backend itself, rather
+than hiding it in one browser; it does not delete deployments, credentials, saved
+conversations, or results.
+
+The backend rejects deletion while that target is reserved by a manual send,
+scenario preparation, queued/running scenario, or configured estimate. Unrelated
+targets remain deletable. Registered targets, converters, scorers, and attack
+techniques that reference the target also block deletion. Finish/cancel the work
+or remove the dependency before retrying. A deleted selection becomes unavailable
+rather than silently selecting another model.
+
+The target list refreshes when users open the registry or click **Refresh**,
+not on a timer or when the window gains focus. If that refresh finds a saved
+objective or adversarial default missing, the app prompts its user to choose
+a new default without silently switching models.
+Deleting an already-removed target refreshes the list without a not-found error.
+Deleting the last target restores **No Targets Configured**; after removal,
+keyboard focus returns to **New Target**, or to the row's Actions control after
+cancelling.
+
+The isolated real-backend browser suite covers creation, confirmation, cross-client
+removal and defaults, deletion races, keyboard focus, the empty state, and
+configuration/round-robin refusals:
+
+```bash
+E2E_FRONTEND_PORT=13038 npx playwright test e2e/target-deletion.spec.ts --project=seeded --workers=1
+```
+
+Run this from `frontend/`. Each test starts its own in-memory backend without
+datasets or provider calls and leaves the running GUI's registry unchanged.
+
 ## Development
 
 ```bash
