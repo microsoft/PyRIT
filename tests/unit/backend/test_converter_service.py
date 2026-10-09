@@ -11,6 +11,7 @@ import codecs
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
+from urllib.parse import quote, urlencode
 
 import pytest
 from fastapi import HTTPException
@@ -1019,14 +1020,16 @@ class TestPreviewConversion:
         ("value", "resolved_value"),
         [
             ("https://example.test/image.png", "https://example.test/image.png"),
-            ("/api/media?path=%2Ftmp%2Fimage.png", "/tmp/image.png"),
+            ("/api/media?path={path}", "{path}"),
         ],
     )
     async def test_preview_conversion_resolves_reference_without_persistence(
-        self, value: str, resolved_value: str
+        self, *, value: str, resolved_value: str, managed_media_path: Path
     ) -> None:
         """Remote and local media references bypass serializer persistence."""
         service = ConverterService()
+        value = value.format(path=quote(str(managed_media_path), safe=""))
+        resolved_value = resolved_value.format(path=str(managed_media_path))
         request = ConverterPreviewRequest(
             original_value=value,
             original_value_data_type="image_path",
@@ -1289,8 +1292,10 @@ class TestPreviewConversion:
         convert.assert_not_awaited()
 
     async def test_preview_conversion_unmarked_media_retains_result_type_async(
-        self, upload_service: ConverterService
+        self, *, upload_service: ConverterService, tmp_path: Path
     ) -> None:
+        output_path = tmp_path / "converted.wav"
+        output_path.write_bytes(b"RIFF")
         instance = Base64Converter()
         upload_service._registry.instances.register(instance, name="media")
         request = ConverterPreviewRequest(
@@ -1299,10 +1304,10 @@ class TestPreviewConversion:
             converter_ids=["media"],
         )
         with patch.object(instance, "convert_async", new_callable=AsyncMock) as convert:
-            convert.return_value = converter.ConverterResult(output_text="converted.wav", output_type="audio_path")
+            convert.return_value = converter.ConverterResult(output_text=str(output_path), output_type="audio_path")
             result = await upload_service.preview_conversion_async(request=request)
         convert.assert_awaited_once_with(prompt=request.original_value, input_type="image_path")
-        assert result.converted_value == "converted.wav"
+        assert result.converted_value == str(output_path)
         assert result.converted_value_data_type == "audio_path"
         assert result.steps[0].input_data_type == "image_path"
         assert result.steps[0].output_data_type == "audio_path"
@@ -1442,11 +1447,10 @@ class TestPreviewConversion:
         ):
             await service.preview_conversion_async(request=request)
 
-    async def test_preview_conversion_preserves_existing_file(self, tmp_path: Path) -> None:
+    async def test_preview_conversion_preserves_existing_file(self, *, managed_media_path: Path) -> None:
         """Existing local media paths pass through without being persisted again."""
         service = ConverterService()
-        media_path = tmp_path / "input.wav"
-        media_path.write_bytes(b"RIFF")
+        media_path = managed_media_path
         request = ConverterPreviewRequest(
             original_value=str(media_path),
             original_value_data_type="audio_path",
@@ -1458,6 +1462,29 @@ class TestPreviewConversion:
 
         mock_factory.assert_not_called()
         assert result.converted_value == str(media_path)
+
+    @pytest.mark.parametrize("reference", [False, True])
+    async def test_preview_rejects_unmanaged_file_before_conversion_async(
+        self, *, upload_service: ConverterService, tmp_path: Path, reference: bool
+    ) -> None:
+        path = tmp_path / "outside.png"
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        instance = Base64Converter()
+        upload_service._registry.instances.register(instance, name="base64")
+        request = ConverterPreviewRequest(
+            original_value=value, original_value_data_type="image_path", converter_ids=["base64"]
+        )
+        with (
+            patch.object(instance, "convert_async", new_callable=AsyncMock) as convert,
+            patch.object(converter_routes, "get_converter_service", return_value=upload_service),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await converter_routes.preview_conversion(request)
+
+        assert exc_info.value.status_code == 400
+        assert "outside the allowed results directory" in exc_info.value.detail
+        convert.assert_not_awaited()
 
 
 class TestGetConverterObjectsForIds:

@@ -5,10 +5,17 @@
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlencode
 
 import pytest
 
-from pyrit.backend.services.media_persistence import MediaOrigin, persist_media_value_async
+from pyrit.backend.models.attacks import MessagePieceRequest
+from pyrit.backend.services.media_persistence import (
+    MediaOrigin,
+    persist_media_value_async,
+    persist_message_pieces_async,
+)
+from pyrit.memory import SQLiteMemory
 
 
 def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
@@ -22,8 +29,7 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
     ("value", "origin", "resolved_value", "resolved"),
     [
         ("https://example.test/media.png", MediaOrigin.REMOTE_URL, "https://example.test/media.png", True),
-        ("/api/media?path=%2Ftmp%2Fmedia.png", MediaOrigin.MEDIA_REFERENCE, "/tmp/media.png", True),
-        ("/api/media", MediaOrigin.MEDIA_REFERENCE, "/api/media", False),
+        ("http://example.test/media.png", MediaOrigin.REMOTE_URL, "http://example.test/media.png", True),
     ],
 )
 async def test_existing_references_are_not_persisted(
@@ -40,9 +46,18 @@ async def test_existing_references_are_not_persisted(
     factory.assert_not_called()
 
 
-async def test_existing_local_path_is_not_persisted(tmp_path: Path) -> None:
-    media_path = tmp_path / "audio.wav"
-    media_path.write_bytes(b"RIFF")
+@pytest.mark.parametrize("value", ["/api/media", "/api/media?path=", "/api/media?other=image.png"])
+async def test_media_reference_requires_path_async(value: str) -> None:
+    factory = MagicMock()
+
+    with pytest.raises(ValueError, match="Media reference must include a path"):
+        await persist_media_value_async(value=value, data_type="image_path", serializer_factory=factory)
+
+    factory.assert_not_called()
+
+
+async def test_existing_local_path_is_not_persisted_async(managed_media_path: Path) -> None:
+    media_path = managed_media_path
     factory = MagicMock()
 
     result = await persist_media_value_async(value=str(media_path), data_type="audio_path", serializer_factory=factory)
@@ -51,6 +66,130 @@ async def test_existing_local_path_is_not_persisted(tmp_path: Path) -> None:
     assert result.value == str(media_path)
     assert result.persisted is False
     factory.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestLocalMediaPaths:
+    async def test_media_prefix_does_not_bypass_local_path_check_async(self) -> None:
+        with (
+            patch.object(Path, "is_file", return_value=True),
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            await persist_media_value_async(value="/api/media-other.png", data_type="image_path")
+
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("folder", ["prompt-memory-entries", "seed-prompt-entries"])
+    async def test_accepts_allowed_media_folders_async(
+        self, *, managed_media_path: Path, reference: bool, folder: str
+    ) -> None:
+        path = managed_media_path.parent.parent / folder / "nested" / "image.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        factory = MagicMock()
+
+        result = await persist_media_value_async(value=value, data_type="image_path", serializer_factory=factory)
+
+        assert result.value == str(path.resolve())
+        assert result.origin is (MediaOrigin.MEDIA_REFERENCE if reference else MediaOrigin.LOCAL_PATH)
+        assert result.resolved is True
+        assert result.persisted is False
+        factory.assert_not_called()
+
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("location", ["outside", "results-root", "other-directory", "sibling", "traversal"])
+    async def test_rejects_unmanaged_files_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool, location: str
+    ) -> None:
+        root = managed_media_path.parent.parent
+        paths = {
+            "outside": tmp_path / "outside.png",
+            "results-root": root / "image.png",
+            "other-directory": root / "other" / "image.png",
+            "sibling": root / "prompt-memory-entries-other" / "image.png",
+            "traversal": managed_media_path.parent / ".." / "image.png",
+        }
+        path = paths[location]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        factory = MagicMock()
+
+        with pytest.raises(ValueError, match="Access denied"):
+            await persist_media_value_async(value=value, data_type="image_path", serializer_factory=factory)
+
+        factory.assert_not_called()
+
+    @pytest.mark.parametrize("reference", [False, True])
+    async def test_returns_canonical_allowed_path_async(self, *, managed_media_path: Path, reference: bool) -> None:
+        nested = managed_media_path.parent / "nested"
+        nested.mkdir()
+        path = nested / ".." / managed_media_path.name
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+
+        result = await persist_media_value_async(value=value, data_type="image_path")
+
+        assert result.value == str(managed_media_path.resolve())
+
+    @pytest.mark.parametrize("reference", [False, True])
+    async def test_checks_resolved_path_not_input_path_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool
+    ) -> None:
+        outside = tmp_path / "outside.png"
+        value = f"/api/media?{urlencode({'path': str(managed_media_path)})}" if reference else str(managed_media_path)
+        with (
+            patch.object(Path, "resolve", side_effect=[outside, managed_media_path.parent.parent]),
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            await persist_media_value_async(value=value, data_type="image_path")
+
+    @pytest.mark.parametrize("reference", [False, True])
+    async def test_rejects_symlink_escape_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool
+    ) -> None:
+        outside = tmp_path / "outside.png"
+        outside.write_bytes(b"image")
+        path = managed_media_path.parent / "link.png"
+        try:
+            path.symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"Cannot create symlink in this environment: {exc}")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+
+        with pytest.raises(ValueError, match="outside the allowed results directory"):
+            await persist_media_value_async(value=value, data_type="image_path")
+
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("field", ["original_value", "converted_value"])
+    async def test_checks_both_message_values_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool, field: str
+    ) -> None:
+        outside = tmp_path / "outside.png"
+        outside.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(outside)})}" if reference else str(outside)
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value=value if field == "original_value" else str(managed_media_path),
+            converted_value=value if field == "converted_value" else str(managed_media_path),
+            converted_value_data_type="audio_path",
+        )
+        before = piece.model_dump()
+        factory = MagicMock()
+
+        with pytest.raises(ValueError, match="outside the allowed results directory"):
+            await persist_message_pieces_async(pieces=[piece], serializer_factory=factory)
+
+        assert piece.model_dump() == before
+        factory.assert_not_called()
+
+    async def test_requires_configured_results_path_async(
+        self, *, managed_media_path: Path, sqlite_instance: SQLiteMemory
+    ) -> None:
+        with (
+            patch.object(sqlite_instance, "results_path", None),
+            pytest.raises(ValueError, match="results_path is not configured"),
+        ):
+            await persist_media_value_async(value=str(managed_media_path), data_type="image_path")
 
 
 async def test_data_uri_uses_explicit_mime_before_uri_mime() -> None:

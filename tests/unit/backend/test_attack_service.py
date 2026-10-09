@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlencode
 
 import pytest
 from sqlalchemy import select
@@ -812,6 +813,33 @@ class TestGetConversationMessages:
 @pytest.mark.usefixtures("patch_central_database")
 class TestCreateAttack:
     """Tests for create_attack method."""
+
+    @pytest.mark.parametrize("reference", [False, True])
+    @pytest.mark.parametrize("field", ["original_value", "converted_value"])
+    async def test_rejects_unmanaged_prepended_media_async(
+        self, *, managed_media_path: Path, tmp_path: Path, reference: bool, field: str
+    ) -> None:
+        path = tmp_path / "outside.png"
+        path.write_bytes(b"image")
+        value = f"/api/media?{urlencode({'path': str(path)})}" if reference else str(path)
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value=value if field == "original_value" else str(managed_media_path),
+            converted_value=value if field == "converted_value" else str(managed_media_path),
+        )
+        service = AttackService()
+        with (
+            patch.object(service, "_get_save_target_async", new=AsyncMock(return_value=None)),
+            patch.object(service._memory, "add_conversation_branches_to_attack_async", new_callable=AsyncMock) as store,
+            pytest.raises(ValueError, match="outside the allowed results directory"),
+        ):
+            await service.create_attack_async(
+                request=CreateAttackRequest(
+                    prepended_conversation=[PrependedMessageRequest(role="user", pieces=[piece])]
+                )
+            )
+
+        store.assert_not_awaited()
 
     @pytest.mark.parametrize("copy_history", [False, True])
     async def test_manual_creation_registers_ownership_async(
@@ -2110,17 +2138,14 @@ class TestPersistBase64Pieces:
         for serializer in serializers:
             serializer.save_b64_image_async.assert_awaited_once()
 
-    @pytest.mark.parametrize(
-        ("converted_value", "expected_value"),
-        [
-            ("/api/media?path=preview.png", "preview.png"),
-            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
-            ("preview.png", "preview.png"),
-        ],
-    )
+    @pytest.mark.parametrize("origin", ["reference", "url", "local"])
     async def test_converted_media_references_are_not_repersisted_async(
-        self, *, converted_value: str, expected_value: str
+        self, *, origin: str, managed_media_path: Path
     ) -> None:
+        expected_value = "https://example.com/preview.png?token=example" if origin == "url" else str(managed_media_path)
+        converted_value = (
+            f"/api/media?{urlencode({'path': expected_value})}" if origin == "reference" else expected_value
+        )
         request = AddMessageRequest(
             pieces=[
                 MessagePieceRequest(
@@ -2132,10 +2157,7 @@ class TestPersistBase64Pieces:
             send=False,
             target_conversation_id="test-id",
         )
-        with (
-            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
-            patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory,
-        ):
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
             await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         assert request.pieces[0].original_value == "source"
@@ -2401,14 +2423,14 @@ class TestPersistBase64Pieces:
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
 
-    async def test_media_reference_is_resolved_without_persistence(self, attack_service) -> None:
+    async def test_media_reference_is_resolved_without_persistence(self, *, managed_media_path: Path) -> None:
         """Local media URLs are converted back to their decoded file paths."""
         request = AddMessageRequest(
             role="user",
             pieces=[
                 MessagePieceRequest(
                     data_type="image_path",
-                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                    original_value=f"/api/media?{urlencode({'path': str(managed_media_path)})}",
                 ),
             ],
             send=False,
@@ -2418,14 +2440,13 @@ class TestPersistBase64Pieces:
         with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
             await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
-        assert request.pieces[0].original_value == "/tmp/image.png"
-        assert request.pieces[0].converted_value == "/tmp/image.png"
+        assert request.pieces[0].original_value == str(managed_media_path)
+        assert request.pieces[0].converted_value == str(managed_media_path)
         factory.assert_not_called()
 
-    async def test_existing_file_is_kept_without_persistence(self, attack_service, tmp_path: Path) -> None:
+    async def test_existing_file_is_kept_without_persistence(self, *, managed_media_path: Path) -> None:
         """An existing path remains the canonical original and converted value."""
-        media_path = tmp_path / "image.png"
-        media_path.write_bytes(b"image")
+        media_path = managed_media_path
         request = AddMessageRequest(
             role="user",
             pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
