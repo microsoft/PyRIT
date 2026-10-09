@@ -231,6 +231,9 @@ await output_scenario_async(figstep_result)
 # every dataset the selected techniques read. Otherwise the scenario stops before running and names
 # each missing dataset. Datasets already loaded into memory never fill the gap.
 #
+# Framework callers cannot supply inline seeds or seed groups. `StringAssemblyDataExfil` can use
+# an empty `dataset_names` list because its prompts are built in.
+#
 # | Technique | Required datasets |
 # |---|---|
 # | MarkdownImageExfil, ColabAIDataLeakage, PlaygroundMarkdownExfil, MarkdownURIImageExfilExtended, MarkdownURINonImageExfilExtended | `garak_example_domains_xss` |

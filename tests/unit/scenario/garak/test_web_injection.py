@@ -424,6 +424,69 @@ class TestWebInjectionTechniqueDatasetRequirements:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestWebInjectionDatasetSelection:
+    @pytest.mark.parametrize(
+        "technique", [WebInjectionTechnique.TaskXSS, WebInjectionTechnique.StringAssemblyDataExfil]
+    )
+    @pytest.mark.parametrize("source", ["seeds", "seed_groups"])
+    @pytest.mark.parametrize("empty", [False, True], ids=["populated_inline", "empty_inline"])
+    @pytest.mark.parametrize("preloaded", [False, True], ids=["empty_memory", "preloaded_memory"])
+    async def test_inline_sources_rejected_before_loading_async(
+        self,
+        *,
+        technique: WebInjectionTechnique,
+        source: str,
+        empty: bool,
+        preloaded: bool,
+        mock_objective_target: PromptTarget,
+        dataset_values: dict[str, list[str]],
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        if preloaded:
+            seeds = [SeedPrompt(value=v, dataset_name=name) for name, values in dataset_values.items() for v in values]
+            await memory.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+        seeds_before = len(await memory.get_seeds_async())
+
+        if source == "seeds":
+            config = DatasetAttackConfiguration(seeds=[] if empty else [SeedPrompt(value="Custom prompt.")])
+        else:
+            config = DatasetAttackConfiguration(
+                seed_groups=(
+                    []
+                    if empty
+                    else [
+                        AttackSeedGroup(
+                            seeds=[SeedObjective(value="Custom objective."), SeedPrompt(value="Custom prompt.")]
+                        )
+                    ]
+                )
+            )
+        scenario = WebInjection()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "scenario_techniques": [technique],
+                "dataset_config": config,
+                "include_baseline": False,
+            }
+        )
+        with (
+            patch.object(
+                config, "_collect_named_seeds_async", side_effect=AssertionError("Inline input read datasets")
+            ),
+            patch.object(
+                scenario, "_load_dataset_values_async", side_effect=AssertionError("Inline input read memory")
+            ),
+        ):
+            for action in (scenario.get_run_size_estimate_async, scenario.initialize_async):
+                with pytest.raises(
+                    DatasetConstraintError,
+                    match="^WebInjection does not support inline seeds or seed groups; use dataset_names instead\\.$",
+                ):
+                    await action()
+
+        assert len(await memory.get_seeds_async()) == seeds_before
+        assert not await memory.get_scenario_results_async()
+
     @pytest.mark.parametrize("preloaded", [False, True], ids=["empty_memory", "preloaded_memory"])
     async def test_incomplete_selection_fails_identically_regardless_of_memory_async(
         self, *, preloaded: bool, mock_objective_target: PromptTarget, dataset_values: dict[str, list[str]]
@@ -510,18 +573,25 @@ class TestWebInjectionDatasetSelection:
             "which is missing from the selected dataset names (--dataset-names)."
         )
 
-    async def test_technique_without_source_datasets_accepts_any_selection_async(
-        self, *, mock_objective_target: PromptTarget
+    @pytest.mark.parametrize(
+        "dataset_names", [[], [WebInjection.DATASET_MARKDOWN_JS]], ids=["no_datasets", "named_dataset"]
+    )
+    async def test_technique_without_source_datasets_accepts_named_or_empty_selection_async(
+        self, *, dataset_names: list[str], mock_objective_target: PromptTarget
     ) -> None:
         scenario = WebInjection()
         _select(
             scenario,
             objective_target=mock_objective_target,
             techniques=[WebInjectionTechnique.StringAssemblyDataExfil],
-            dataset_names=[WebInjection.DATASET_MARKDOWN_JS],
+            dataset_names=dataset_names,
         )
 
+        estimate = await scenario.get_run_size_estimate_async()
         await scenario.initialize_async()
 
+        assert estimate.estimated_attack_count == len(WebInjection.STRING_ASSEMBLY_SEEDS)
         assert [attack.atomic_attack_name for attack in scenario._atomic_attacks] == ["string_assembly_data_exfil"]
         assert len(scenario._atomic_attacks[0].seed_groups) == len(WebInjection.STRING_ASSEMBLY_SEEDS)
+        if not dataset_names:
+            assert not await CentralMemory.get_memory_instance().get_seeds_async()
