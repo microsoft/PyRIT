@@ -24,7 +24,7 @@ export function scenarioRunProvenance(searchParams: URLSearchParams): string | n
   return values[0]
 }
 
-/** Returns only one validated evidence identity, never a caller-supplied return URL. */
+/** Returns one validated evidence id. Never returns a caller-supplied return URL. */
 export function findingEvidenceOrigin(searchParams: URLSearchParams): string | null {
   const values = searchParams.getAll(FINDING_EVIDENCE_ID_QUERY_KEY)
   return values.length === 1 && UUID_PATTERN.test(values[0]) ? values[0] : null

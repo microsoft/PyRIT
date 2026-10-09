@@ -26,11 +26,11 @@ class FindingNotFoundError(LookupError):
 
 
 class FindingEvidenceNotFoundError(LookupError):
-    """Raised when the requested association or source cannot be viewed."""
+    """Raised when an evidence link or its conversation cannot be found."""
 
 
 class FindingEvidenceAttributionError(ValueError):
-    """Raised when the source lacks the finding's exact Operation attribution."""
+    """Raised when a conversation's attack is not labeled with the finding's exact operation name."""
 
 
 class DuplicateOperationError(ValueError):
@@ -107,10 +107,10 @@ class OperationService:
         self, *, operation_id: UUID, limit: int, offset: int, title_query: str | None = None
     ) -> FindingListResponse:
         """
-        Read one page of an operation's findings and detect whether another is available.
+        Read one page of an operation's findings and whether there is a next page.
 
         Returns:
-            FindingListResponse: The page and continuation offset.
+            FindingListResponse: The page and the offset of the next one, if any.
         """
         await self.get_async(operation_id)
         findings = await CentralMemory.get_memory_instance().get_findings_async(
@@ -131,10 +131,12 @@ class OperationService:
         self, *, operation_id: UUID, finding_id: UUID, request: FindingEvidenceCreateRequest
     ) -> FindingEvidenceAttachResponse:
         """
-        Validate the saved owner and attach its active, viewer-addressable conversation.
+        Link a conversation to a finding.
+
+        The conversation must be active and non-empty, and its attack must be labeled with this operation.
 
         Returns:
-            FindingEvidenceAttachResponse: The stable association and creation indicator.
+            FindingEvidenceAttachResponse: The evidence and whether it was newly linked.
         """
         operation = await self.get_async(operation_id)
         await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
@@ -166,10 +168,10 @@ class OperationService:
         self, *, operation_id: UUID, finding_id: UUID, limit: int, offset: int
     ) -> FindingEvidenceListResponse:
         """
-        Read a bounded page, retaining missing sources and propagating storage failures.
+        Read one page of a finding's evidence. Links whose conversation is gone are kept and marked unavailable.
 
         Returns:
-            FindingEvidenceListResponse: Associations with current viewer context.
+            FindingEvidenceListResponse: The evidence with availability and scanner context.
         """
         await self.get_async(operation_id)
         await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
@@ -207,7 +209,7 @@ class OperationService:
         )
 
     async def detach_finding_evidence_async(self, *, operation_id: UUID, finding_id: UUID, evidence_id: UUID) -> None:
-        """Remove only the association owned by the requested finding."""
+        """Unlink evidence, but only if it belongs to the requested finding."""
         await self.get_async(operation_id)
         await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
         try:

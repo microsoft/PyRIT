@@ -23,7 +23,7 @@ class FindingSeverity(str, Enum):
 
 
 class FindingCreate(BaseModel):
-    """A human assessment independent of attack outcomes and scores."""
+    """A finding as an operator enters it, independent of attack outcomes and scores."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -40,7 +40,7 @@ class FindingCreate(BaseModel):
         Require custom text only for an Other selection.
 
         Returns:
-            Self: The validated assessment.
+            Self: The validated finding.
 
         Raises:
             ValueError: If custom text is missing, blank, or has no Other selection.
@@ -74,7 +74,7 @@ class FindingCreate(BaseModel):
 
 
 class Finding(FindingCreate):
-    """A saved assessment belonging to one operation."""
+    """A saved finding in one operation."""
 
     operation_id: UUID
     id: UUID = Field(default_factory=uuid4)
@@ -82,7 +82,7 @@ class Finding(FindingCreate):
 
 
 class FindingEvidence(BaseModel):
-    """A live conversation reference supporting a saved assessment."""
+    """A conversation linked to a finding as evidence."""
 
     model_config = ConfigDict(extra="forbid")
 

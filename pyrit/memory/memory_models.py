@@ -236,7 +236,7 @@ class Base(DeclarativeBase):
 
 
 class OperationEntry(Base):
-    """Persistent named engagement that owns findings."""
+    """A saved operation that owns findings."""
 
     __tablename__ = "OperationEntries"
     __table_args__ = (Index("ix_OperationEntries_name_key", "name_key", unique=True),)
@@ -257,7 +257,7 @@ class OperationEntry(Base):
 
     def get_operation(self) -> Operation:
         """
-        Reconstruct the canonical operation.
+        Rebuild the operation model.
 
         Returns:
             Operation: The stored operation.
@@ -266,7 +266,7 @@ class OperationEntry(Base):
 
 
 class FindingEntry(Base):
-    """Persistent human assessment, separate from scoring and attack records."""
+    """A saved finding, kept separate from scores and attack results."""
 
     __tablename__ = "FindingEntries"
     __table_args__ = (Index("ix_FindingEntries_operation_id", "operation_id"),)
@@ -284,7 +284,7 @@ class FindingEntry(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     def __init__(self, finding: Finding) -> None:
-        """Store validated assessment values."""
+        """Store a validated finding."""
         validated = Finding.model_validate(finding.model_dump())
         self.id = validated.id
         self.operation_id = validated.operation_id
@@ -298,10 +298,10 @@ class FindingEntry(Base):
 
     def get_finding(self) -> Finding:
         """
-        Reconstruct the canonical assessment.
+        Rebuild the finding model.
 
         Returns:
-            Finding: The stored assessment.
+            Finding: The stored finding.
         """
         return Finding(
             id=self.id,
@@ -317,7 +317,7 @@ class FindingEntry(Base):
 
 
 class FindingEvidenceEntry(Base):
-    """Persistent association without foreign keys to removable sources."""
+    """A finding-to-conversation link. Conversations can be deleted, so they have no foreign key here."""
 
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
@@ -334,7 +334,7 @@ class FindingEvidenceEntry(Base):
     attached_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     def __init__(self, evidence: FindingEvidence) -> None:
-        """Store validated association values."""
+        """Store validated evidence."""
         validated = FindingEvidence.model_validate(evidence.model_dump())
         self.id = validated.id
         self.finding_id = validated.finding_id
@@ -344,10 +344,10 @@ class FindingEvidenceEntry(Base):
 
     def get_evidence(self) -> FindingEvidence:
         """
-        Reconstruct the stored association.
+        Rebuild the evidence model.
 
         Returns:
-            FindingEvidence: The canonical association.
+            FindingEvidence: The stored evidence.
         """
         return FindingEvidence(
             id=self.id,

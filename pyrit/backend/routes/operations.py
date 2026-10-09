@@ -34,7 +34,7 @@ router = APIRouter(prefix="/operations", tags=["operations"])
 @router.post("", response_model=Operation, status_code=status.HTTP_201_CREATED)
 async def create_operation_async(request: OperationCreate) -> Operation:
     """
-    Create an operation with a name unique after trimming and case folding.
+    Create an operation. Names must be unique, ignoring case and surrounding whitespace.
 
     Returns:
         Operation: The saved operation.
@@ -65,7 +65,7 @@ async def list_operations_async() -> OperationListResponse:
 @router.get("/finding-options", response_model=FindingOptionsResponse)
 async def get_finding_options_async() -> FindingOptionsResponse:
     """
-    Read the canonical harm categories for findings.
+    List the harm categories a finding can use.
 
     Returns:
         FindingOptionsResponse: Selectable categories, including Other.
@@ -109,7 +109,7 @@ async def list_operation_findings_async(
     List one page of an operation's findings, by severity and then newest first.
 
     Returns:
-        FindingListResponse: A bounded page.
+        FindingListResponse: One page of findings.
     """
     return await _require_operation_async(
         OperationService().list_findings_async(operation_id=operation_id, limit=limit, offset=offset, title_query=title)
@@ -148,10 +148,10 @@ async def attach_finding_evidence_async(
     *, operation_id: UUID, finding_id: UUID, request: FindingEvidenceCreateRequest, response: Response
 ) -> FindingEvidenceAttachResponse:
     """
-    Attach a saved conversation or return its unchanged existing association.
+    Link a saved conversation to a finding, or return the existing link.
 
     Returns:
-        FindingEvidenceAttachResponse: The association and creation indicator.
+        FindingEvidenceAttachResponse: The evidence and whether it was newly linked.
     """
     result = await _require_operation_async(
         OperationService().attach_finding_evidence_async(
@@ -171,10 +171,10 @@ async def list_finding_evidence_async(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> FindingEvidenceListResponse:
     """
-    Read a bounded evidence page with current source availability.
+    List one page of a finding's evidence, with whether each conversation is still available.
 
     Returns:
-        FindingEvidenceListResponse: The page and continuation offset.
+        FindingEvidenceListResponse: The page and the offset of the next one, if any.
     """
     return await _require_operation_async(
         OperationService().list_finding_evidence_async(
@@ -186,7 +186,7 @@ async def list_finding_evidence_async(
 @router.delete("/{operation_id}/findings/{finding_id}/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def detach_finding_evidence_async(*, operation_id: UUID, finding_id: UUID, evidence_id: UUID) -> Response:
     """
-    Remove an association without deleting the conversation.
+    Unlink evidence from a finding. The conversation is kept.
 
     Returns:
         Response: An empty success response.

@@ -11,31 +11,31 @@ from pyrit.models.harm_category import HarmCategory
 
 
 class FindingOptionsResponse(BaseModel):
-    """Canonical harm categories for the fixed finding form."""
+    """Harm categories a finding can use."""
 
     harm_types: list[HarmCategory]
 
 
 class OperationListItem(Operation):
-    """An operation with its findings counted by severity, omitting severities without findings."""
+    """An operation with its finding counts by severity. Severities with no findings are omitted."""
 
     finding_counts: dict[FindingSeverity, int]
 
 
 class OperationListResponse(BaseModel):
-    """All operations available as homes for findings."""
+    """All saved operations."""
 
     items: list[OperationListItem]
 
 
 class FindingListItem(Finding):
-    """A finding with a bounded bulk-derived association count."""
+    """A finding with its evidence count."""
 
     evidence_count: int = Field(ge=0)
 
 
 class FindingListResponse(BaseModel):
-    """A bounded page of findings within one operation."""
+    """One page of an operation's findings."""
 
     items: list[FindingListItem]
     has_more: bool
@@ -43,7 +43,7 @@ class FindingListResponse(BaseModel):
 
 
 class FindingEvidenceCreateRequest(BaseModel):
-    """The persisted viewer identity to attach."""
+    """The saved conversation to link, identified by its attack and conversation ids."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -52,7 +52,7 @@ class FindingEvidenceCreateRequest(BaseModel):
 
 
 class FindingEvidenceAttachResponse(BaseModel):
-    """An attachment and whether this request created it."""
+    """Linked evidence and whether this request created the link."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -61,14 +61,14 @@ class FindingEvidenceAttachResponse(BaseModel):
 
 
 class EvidenceAvailability(str, Enum):
-    """Current viewer addressability of the live reference."""
+    """Whether a linked conversation can still be opened."""
 
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
 
 
 class FindingEvidenceItem(BaseModel):
-    """An association with read-time source and scanner context."""
+    """Linked evidence with its conversation's current availability and scanner run, if any."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -78,7 +78,7 @@ class FindingEvidenceItem(BaseModel):
 
 
 class FindingEvidenceListResponse(BaseModel):
-    """A bounded page of live evidence references."""
+    """One page of a finding's evidence."""
 
     model_config = ConfigDict(extra="forbid")
 

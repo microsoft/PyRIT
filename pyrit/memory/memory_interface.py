@@ -565,7 +565,7 @@ class MemoryInterface(abc.ABC):
 
     async def add_operation_async(self, operation: Operation) -> Operation:
         """
-        Persist an operation whose trimmed, case-folded name is unique.
+        Save an operation. Names are unique, ignoring case and surrounding whitespace.
 
         Returns:
             Operation: The saved operation, or the existing one when the name is taken.
@@ -604,10 +604,10 @@ class MemoryInterface(abc.ABC):
 
     async def add_finding_async(self, finding: Finding) -> Finding:
         """
-        Persist an assessment atomically, without changing attacks or scores.
+        Save a finding.
 
         Returns:
-            Finding: The saved assessment.
+            Finding: The saved finding.
         """
         entry = FindingEntry(finding)
         async with await self.get_session_async() as session, session.begin():
@@ -622,7 +622,7 @@ class MemoryInterface(abc.ABC):
         Replace a finding's editable fields without changing identity or creation time.
 
         Returns:
-            Finding: The updated assessment.
+            Finding: The updated finding.
 
         Raises:
             LookupError: If the finding does not belong to the operation.
@@ -676,10 +676,10 @@ class MemoryInterface(abc.ABC):
         title_query: str | None = None,
     ) -> list[Finding]:
         """
-        Read a bounded page ordered by severity, recency, and stable identity.
+        Read one page of findings, highest severity first, then newest first.
 
         Returns:
-            list[Finding]: Assessments in descending severity and recency order.
+            list[Finding]: The findings on the page.
 
         Raises:
             ValueError: If the page bounds are invalid.
@@ -720,17 +720,17 @@ class MemoryInterface(abc.ABC):
 
     async def add_finding_evidence_async(self, *, evidence: FindingEvidence) -> FindingEvidence:
         """
-        Persist a unique association only while its finding exists.
+        Link a conversation to a finding, if the finding still exists.
 
         The insert runs before the existence check so the write lock is held
         when the finding is checked, and a concurrent delete can't leave an orphan.
 
         Returns:
-            FindingEvidence: The saved association, or the existing one for the same finding and conversation.
+            FindingEvidence: The saved evidence, or the existing link for the same finding and conversation.
 
         Raises:
             LookupError: If the finding does not exist.
-            IntegrityError: If the insert fails for a reason other than a duplicate source.
+            IntegrityError: If the insert fails for a reason other than a duplicate link.
         """
         entry = FindingEvidenceEntry(evidence)
         try:
@@ -755,10 +755,10 @@ class MemoryInterface(abc.ABC):
         self, *, finding_id: uuid.UUID, limit: int, offset: int
     ) -> list[FindingEvidence]:
         """
-        Read a bounded page ordered by attachment time and identity.
+        Read one page of a finding's evidence, most recently linked first.
 
         Returns:
-            list[FindingEvidence]: Associations in descending attachment order.
+            list[FindingEvidence]: The evidence on the page.
 
         Raises:
             ValueError: If the page bounds are invalid.
@@ -779,10 +779,10 @@ class MemoryInterface(abc.ABC):
         self, *, finding_id: uuid.UUID, conversation_id: str
     ) -> FindingEvidence | None:
         """
-        Read the unique association for a finding and conversation.
+        Read the evidence linking a finding to a conversation.
 
         Returns:
-            FindingEvidence | None: The matching association, if present.
+            FindingEvidence | None: The evidence, if linked.
         """
         async with await self.get_session_async() as session:
             entry = await session.scalar(
@@ -795,10 +795,10 @@ class MemoryInterface(abc.ABC):
 
     async def delete_finding_evidence_async(self, *, finding_id: uuid.UUID, evidence_id: uuid.UUID) -> None:
         """
-        Detach an association without changing its source.
+        Unlink evidence from a finding. The conversation is kept.
 
         Raises:
-            LookupError: If the association does not belong to the finding.
+            LookupError: If the evidence does not belong to the finding.
             RuntimeError: If the database does not return a cursor result.
         """
         async with await self.get_session_async() as session, session.begin():
@@ -814,10 +814,10 @@ class MemoryInterface(abc.ABC):
 
     async def get_finding_evidence_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
         """
-        Count associations for a page of findings in one query.
+        Count evidence for several findings in one query.
 
         Returns:
-            dict[uuid.UUID, int]: Counts for findings with associations.
+            dict[uuid.UUID, int]: Counts for findings that have evidence.
         """
         if not finding_ids:
             return {}
