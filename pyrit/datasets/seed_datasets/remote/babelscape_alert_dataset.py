@@ -152,10 +152,21 @@ class _BabelscapeAlertDataset(_RemoteDatasetLoader):
                 split="test",
                 cache=cache,
             )
-            prompts.extend(
-                (_strip_instruction_template(item["prompt"]), item["category"], item.get("attack_type"))
-                for item in data
-            )
+            empty_ids: list[str] = []
+            for item in data:
+                prompt = _strip_instruction_template(item["prompt"])
+                # A few rows hold only the template. Sending them would be a blank request, not a test.
+                if not prompt.strip():
+                    empty_ids.append(str(item.get("id")))
+                    continue
+                prompts.append((prompt, item["category"], item.get("attack_type")))
+            if empty_ids:
+                logger.warning(
+                    "Skipped %d empty ALERT prompt(s) in '%s' (ids: %s)",
+                    len(empty_ids),
+                    category_name,
+                    ", ".join(empty_ids),
+                )
 
         seed_prompts: list[SeedUnion] = [
             SeedPrompt(
