@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import re
+import unicodedata
 from enum import Enum
 
 import numpy as np
@@ -74,11 +74,21 @@ class PlagiarismScorer(MessageFloatScaleScorer):
         """
         Tokenize text using whitespace-based tokenization (case-insensitive).
 
+        Text is normalized to NFKC first so that compatibility forms (fullwidth
+        letters, mathematical alphanumerics, decomposed accents) fold to a single
+        representation. Combining marks are then kept rather than stripped, so
+        scripts that carry meaning in them (Devanagari, Thai, Tamil, ...) do not
+        collapse into each other.
+
         Returns:
             list[str]: List of lowercase tokens with punctuation removed.
         """
-        text = text.lower()
-        text = re.sub(r"[^\w\s]", "", text)
+        text = unicodedata.normalize("NFKC", text).lower()
+        text = "".join(
+            char
+            for char in text
+            if char.isalnum() or char == "_" or char.isspace() or unicodedata.category(char).startswith("M")
+        )
         return text.split()
 
     def _lcs_length(self, a: list[str], b: list[str]) -> int:

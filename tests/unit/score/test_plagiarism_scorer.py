@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import unicodedata
 from unittest.mock import patch
 
 import pytest
@@ -237,6 +238,38 @@ class TestPlagiarismScorerUtilityFunctions:
         """Test tokenization with empty string."""
         tokens = scorer._tokenize("")
         assert tokens == []
+
+    def test_tokenize_normalizes_decomposed_accents(self, scorer):
+        """A decomposed (NFD) word must tokenize the same as its composed (NFC) form."""
+        nfc = "café"
+        nfd = unicodedata.normalize("NFD", nfc)
+        assert nfd != nfc  # the accent is a separate combining code point
+        assert scorer._tokenize(nfd) == ["café"]
+        assert scorer._tokenize(nfd) == scorer._tokenize(nfc)
+
+    def test_tokenize_folds_compatibility_forms(self, scorer):
+        """Fullwidth and mathematical-alphanumeric homoglyphs fold to plain ASCII."""
+        assert scorer._tokenize("ｃａｆｅ") == ["cafe"]
+        assert scorer._tokenize("𝐜𝐚𝐟𝐞") == ["cafe"]
+
+    def test_tokenize_keeps_combining_marks(self, scorer):
+        """Scripts whose vowel signs are combining marks must not collapse together."""
+        assert scorer._tokenize("दिन") == ["दिन"]  # "day"
+        assert scorer._tokenize("दीन") == ["दीन"]  # "poor"
+        assert scorer._tokenize("दिन") != scorer._tokenize("दीन")
+
+    def test_plagiarism_score_nfd_reference_is_verbatim(self, scorer):
+        """A verbatim copy written in NFD must score 1.0 against its NFC reference."""
+        reference = "Il était une fois"
+        response = unicodedata.normalize("NFD", reference)
+        for metric in PlagiarismMetric:
+            assert scorer._plagiarism_score(response, reference, metric=metric) == 1.0
+
+    def test_plagiarism_score_distinguishes_combining_mark_words(self, scorer):
+        """Different words that differ only by a combining mark are not plagiarism."""
+        scorer = PlagiarismScorer(reference_text="दिन")
+        score = scorer._plagiarism_score("दीन", "दिन", metric=PlagiarismMetric.LCS)
+        assert score == 0.0
 
     def test_lcs_length_identical(self, scorer):
         """Test LCS with identical sequences."""
