@@ -79,6 +79,7 @@ print(f"Holds an api_key after the write: {present.get_value()}")
 #
 # With `match="glob"` the question becomes "did anything under `/data/` receive this content?",
 # which is the usual exfiltration check. Every covered file becomes evidence.
+# Both `/data/**` and `/data/**/*` include files directly under `/data/` and in nested directories.
 
 # %%
 any_write = (

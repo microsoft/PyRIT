@@ -122,6 +122,46 @@ async def test_glob_covers_every_file_and_skips_directories(tmp_path: Path) -> N
     assert [entry.uri for entry in observation.payload.entries] == ["/data/a.txt", "/data/nested/b.txt"]
 
 
+@pytest.mark.parametrize("uri", ["/data/**", "/data/**/*", "/data/**/**", "/data/**/**/out.txt"])
+@pytest.mark.parametrize("contains", ["secret", "absent"])
+async def test_recursive_glob_verdict_and_replay_async(
+    *, sqlite_instance: SQLiteMemory, tmp_path: Path, uri: str, contains: str
+) -> None:
+    first = _write(tmp_path, "data/out.txt", "harmless")
+    nested = _write(tmp_path, "data/nested/out.txt", "secret")
+    (tmp_path / "data" / "empty").mkdir()
+    scorer = FileWriteScorer(source=LocalFileSurfaceSource(root=tmp_path))
+    scorable = SurfaceScorable(uri=uri, match="glob")
+    expectation = _expectation(uri, match="glob", contains=contains)
+
+    score = (await scorer.score_async(scorable=scorable, expectation=expectation))[0]
+    stored_score = (await sqlite_instance.get_scores_async(score_ids=[score.id]))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+
+    assert score.get_value() is (contains == "secret")
+    assert stored_score.scored_expectation == expectation
+    assert stored_score.get_value() is score.get_value()
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert [entry.uri for entry in observation.payload.entries] == ["/data/nested/out.txt", "/data/out.txt"]
+    first.unlink()
+    nested.unlink()
+    replayed = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+    assert replayed.get_value() is score.get_value()
+
+
+async def test_trailing_recursive_glob_preserves_file_limit_async(tmp_path: Path) -> None:
+    for name in ("a", "b", "c"):
+        _write(tmp_path, f"data/{name}/out.txt")
+
+    observation = await LocalFileSurfaceSource(root=tmp_path, max_files=1).acquire_async(
+        scorable=SurfaceScorable(uri="/data/**", match="glob")
+    )
+
+    assert observation.acquisition is Acquisition.PARTIAL
+    assert [entry.uri for entry in observation.payload.entries] == ["/data/a/out.txt"]
+    assert observation.payload.coverage.reasons == ("file_limit_exceeded",)
+
+
 async def test_glob_over_file_limit_is_partial(tmp_path: Path) -> None:
     for index in range(3):
         _write(tmp_path, f"data/{index}.txt")

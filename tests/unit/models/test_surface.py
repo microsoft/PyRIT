@@ -82,6 +82,18 @@ def test_truncated_entry_requires_retained_text() -> None:
         _entry(content=None, content_truncated=True)
 
 
+def test_incomplete_read_cannot_claim_full_text() -> None:
+    with pytest.raises(ValidationError, match="must be marked truncated"):
+        _entry(sha256=None, content="prefix")
+
+
+def test_incomplete_read_retains_a_replayable_prefix_without_a_digest() -> None:
+    entry = _entry(sha256=None, content="pre", content_truncated=True)
+
+    assert SurfaceEntry.model_validate_json(entry.model_dump_json()) == entry
+    assert entry.sha256 is None
+
+
 def test_exact_scope_payload_holds_only_its_location() -> None:
     scope = SurfaceScorable(uri="/data/out.txt")
     with pytest.raises(ValidationError, match="exact surface scope"):

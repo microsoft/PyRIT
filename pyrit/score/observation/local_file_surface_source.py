@@ -131,7 +131,7 @@ class LocalFileSurfaceSource:
         return ComponentIdentifier.of(
             self,
             params={
-                "acquisition_version": 2,
+                "acquisition_version": 3,
                 "root": str(self._root),
                 "max_files": self._max_files,
                 "max_content_bytes": self._max_content_bytes,
@@ -237,13 +237,20 @@ class LocalFileSurfaceSource:
         """
         Enumerate files matching a glob pattern, recording every directory not fully searched.
 
-        ``**`` matches zero or more directories. Directory links are not descended into, since
-        their contents are outside this walk's confinement; they are reported as gaps.
+        ``**`` matches zero or more directories and, as the final segment, all files beneath
+        them. Directory links are not descended into, since their contents are outside this
+        walk's confinement; they are reported as gaps.
 
         Returns:
             list[tuple[str, ...]]: Matching file locations, at most ``max_files``, sorted.
         """
         found: dict[tuple[str, ...], None] = {}
+
+        def add_candidate(candidate: tuple[str, ...]) -> None:
+            if candidate not in found:
+                if len(found) >= self._max_files:
+                    raise _FileLimitReachedError
+                found[candidate] = None
 
         def walk(prefix: tuple[str, ...], index: int) -> None:
             if index >= len(parts):
@@ -259,16 +266,15 @@ class LocalFileSurfaceSource:
                 if pattern == "**":
                     if kind == "dir":
                         walk((*prefix, name), index)
+                    elif last:
+                        add_candidate((*prefix, name))
                     continue
                 if not fnmatch.fnmatch(name, pattern):
                     continue
                 if last:
                     if kind == "dir":
                         continue
-                    if (*prefix, name) not in found:
-                        if len(found) >= self._max_files:
-                            raise _FileLimitReachedError
-                        found[(*prefix, name)] = None
+                    add_candidate((*prefix, name))
                 elif kind == "dir":
                     walk((*prefix, name), index + 1)
 
@@ -509,11 +515,11 @@ if sys.platform == "win32":
     def _final_path_windows(fd: int) -> str:
         handle = msvcrt.get_osfhandle(fd)
         size = 32768
-        buffer = ctypes.create_unicode_buffer(size)
+        buffer: ctypes.Array[ctypes.c_wchar] = ctypes.create_unicode_buffer(size)
         length = _GetFinalPathNameByHandleW(handle, buffer, size, 0)
         if length == 0 or length >= size:
             raise ctypes.WinError()
-        path = buffer.value
+        path = ctypes.wstring_at(ctypes.addressof(buffer), length)
         if path.startswith("\\\\?\\UNC\\"):
             return "\\\\" + path[8:]
         if path.startswith("\\\\?\\"):
