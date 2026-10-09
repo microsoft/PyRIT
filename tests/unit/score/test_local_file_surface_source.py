@@ -9,6 +9,7 @@ import runpy
 import stat
 import subprocess
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,6 @@ from pyrit.score.true_false.file_write_scorer import match_content_written
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -50,7 +50,15 @@ def _listing_mock(tmp_path: Path) -> MagicMock:
 @pytest.mark.parametrize("error", [NotADirectoryError, PermissionError])
 async def test_exact_location_lookup_failure_async(*, tmp_path: Path, error: type[OSError]) -> None:
     source = LocalFileSurfaceSource(root=tmp_path)
-    with patch.object(source_module.os, "lstat", side_effect=error("cannot search parent")):
+    target = tmp_path.resolve() / "parent" / "out.txt"
+    real_lstat = os.lstat
+
+    def lstat(path: str | Path) -> os.stat_result:
+        if Path(path) == target:
+            raise error("cannot search parent")
+        return real_lstat(path)
+
+    with patch.object(source_module.os, "lstat", side_effect=lstat):
         observation = await source.acquire_async(scorable=SurfaceScorable(uri="/parent/out.txt"))
 
     if error is NotADirectoryError:
