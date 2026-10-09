@@ -26,6 +26,7 @@
 # CBT-Bench [@zhang2024cbtbench],
 # CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
 # CoCoNot [@brahman2024coconot],
+# CyberSecEval [@bhatt2023cyberseceval],
 # DarkBench [@darkbench2025],
 # DecodingTrust [@wang2023decodingtrust],
 # Do Anything Now [@shen2023donotanything],
