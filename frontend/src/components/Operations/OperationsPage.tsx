@@ -1,19 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
-  Button, MessageBar, MessageBarBody, Spinner, Text,
+  Badge, Button, MessageBar, MessageBarBody, Spinner, Table, TableBody, TableCell, TableHeader,
+  TableHeaderCell, TableRow, Text,
 } from '@fluentui/react-components'
 
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { Operation } from '@/types'
+import type { FindingSeverity, OperationListItem } from '@/types'
+import { FINDING_SEVERITY_LABELS, findingSeverityColor } from '@/utils/findingSeverity'
 import { useOperationsStyles } from './Operations.styles'
 import OperationCreateDialog from './OperationCreateDialog'
+
+const SEVERITY_ORDER = Object.keys(FINDING_SEVERITY_LABELS) as FindingSeverity[]
 
 export default function OperationsPage() {
   const styles = useOperationsStyles()
   const navigate = useNavigate()
-  const [operations, setOperations] = useState<Operation[]>([])
+  const [operations, setOperations] = useState<OperationListItem[]>([])
   const [settledRevision, setSettledRevision] = useState(-1)
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState('')
@@ -45,18 +49,46 @@ export default function OperationsPage() {
       ) : operations.length === 0 ? (
         <Text>No operations yet. Create one to start recording findings.</Text>
       ) : (
-        <ul className={styles.list}>
-          {operations.map(operation => (
-            <li key={operation.id} className={styles.item}>
-              <Link to={`/operations/${encodeURIComponent(operation.id)}`} className={styles.link}
-                translate="no">{operation.name}</Link>
-              <div className={styles.metadata}>
-                <Text size={200}>Created <time dateTime={operation.created_at}>
-                  {new Date(operation.created_at).toLocaleString()}</time></Text>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <Table className={styles.table} aria-label="Operations list">
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell className={styles.colName}>Name</TableHeaderCell>
+              <TableHeaderCell className={styles.colFindings}>Findings</TableHeaderCell>
+              <TableHeaderCell className={styles.colDate}>Created</TableHeaderCell>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {operations.map(operation => {
+              const counts = SEVERITY_ORDER.flatMap(severity => {
+                const count = operation.finding_counts[severity]
+                return count ? [{ severity, count }] : []
+              })
+              return (
+                <TableRow key={operation.id}>
+                  <TableCell>
+                    <Link to={`/operations/${encodeURIComponent(operation.id)}`} className={styles.link}
+                      translate="no">{operation.name}</Link>
+                  </TableCell>
+                  <TableCell>
+                    {counts.length > 0 ? (
+                      <div className={styles.badgeGroup}>
+                        {counts.map(({ severity, count }) => (
+                          <Badge key={severity} appearance="tint" color={findingSeverityColor(severity)}>
+                            {count} {FINDING_SEVERITY_LABELS[severity]}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : <Text size={200} className={styles.muted}>No findings</Text>}
+                  </TableCell>
+                  <TableCell>
+                    <Text size={200}><time dateTime={operation.created_at}>
+                      {new Date(operation.created_at).toLocaleString()}</time></Text>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
       )}
     </section>
   )

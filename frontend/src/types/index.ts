@@ -1278,8 +1278,12 @@ export interface Operation extends OperationCreate {
   created_at: string
 }
 
+export interface OperationListItem extends Operation {
+  finding_counts: Partial<Record<FindingSeverity, number>>
+}
+
 export interface OperationListResponse {
-  items: Operation[]
+  items: OperationListItem[]
 }
 
 export interface FindingCreate {

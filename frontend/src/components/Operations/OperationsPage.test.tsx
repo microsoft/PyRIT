@@ -4,14 +4,16 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { operationsApi } from '@/services/api'
-import type { Operation } from '@/types'
+import type { Operation, OperationListItem } from '@/types'
 import OperationsPage from './OperationsPage'
 
 jest.mock('@/services/api', () => ({
   operationsApi: { list: jest.fn(), create: jest.fn() },
 }))
 
-const OPERATION: Operation = { id: 'op-1', name: 'Operation A', created_at: '2026-10-06T20:00:00Z' }
+const OPERATION: OperationListItem = {
+  id: 'op-1', name: 'Operation A', created_at: '2026-10-06T20:00:00Z', finding_counts: {},
+}
 
 function LocationProbe() {
   return <span data-testid="location">{useLocation().pathname}</span>
@@ -47,6 +49,21 @@ it('lists operations as links to their pages', async () => {
   renderPage()
   await user.click(await screen.findByRole('link', { name: /Operation A/ }))
   expect(screen.getByTestId('location')).toHaveTextContent('/operations/op-1')
+})
+
+it('summarizes finding counts by severity in severity order', async () => {
+  jest.mocked(operationsApi.list).mockResolvedValue({
+    items: [
+      { ...OPERATION, finding_counts: { low: 1, critical: 2 } },
+      { ...OPERATION, id: 'op-2', name: 'Operation B' },
+    ],
+  })
+  renderPage()
+  const rowA = (await screen.findByRole('link', { name: /Operation A/ })).closest('tr') as HTMLElement
+  const badges = within(rowA).getAllByText(/^\d+ /)
+  expect(badges.map(badge => badge.textContent)).toEqual(['2 Critical', '1 Low'])
+  const rowB = screen.getByRole('link', { name: /Operation B/ }).closest('tr') as HTMLElement
+  expect(within(rowB).getByText('No findings')).toBeInTheDocument()
 })
 
 it('shows an empty state when no operations exist', async () => {

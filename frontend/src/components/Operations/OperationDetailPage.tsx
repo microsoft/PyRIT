@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import {
   Badge, Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  MessageBar, MessageBarBody, Spinner, Text,
+  MessageBar, MessageBarBody, mergeClasses, Spinner, Text,
 } from '@fluentui/react-components'
 import { ArrowLeftRegular } from '@fluentui/react-icons'
 
@@ -160,7 +160,7 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
       {finding.description && <p className={styles.description}>{finding.description}</p>}
       <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
         onDetached={() => { setEvidenceRevision(value => value + 1) }} />
-      <div className={styles.actions}>
+      <div className={mergeClasses(styles.actions, styles.findingActions)}>
         <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`} onClick={event => {
           returnFocusRef.current = event.currentTarget
           setEditing(finding)

@@ -57,5 +57,16 @@ export const useOperationsStyles = makeStyles({
     marginTop: tokens.spacingVerticalS,
   },
   description: { whiteSpace: 'pre-wrap', maxWidth: '75ch', marginBottom: 0 },
+  findingActions: { marginTop: tokens.spacingVerticalM },
+  table: {
+    minWidth: '100%',
+    tableLayout: 'auto',
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  colName: { minWidth: '200px' },
+  colFindings: { minWidth: '240px' },
+  colDate: { minWidth: '160px', whiteSpace: 'nowrap' },
+  badgeGroup: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXXS },
+  muted: { color: tokens.colorNeutralForeground3 },
   button: { ...mobileTouchTargetHeight },
 })

@@ -12,9 +12,10 @@ const MAX_LISTED = 200
 interface OperationPickerProps {
   currentValue: string
   onSelect: (name: string) => void
+  onMissing: () => void
 }
 
-export default function OperationPicker({ currentValue, onSelect }: OperationPickerProps) {
+export default function OperationPicker({ currentValue, onSelect, onMissing }: OperationPickerProps) {
   const styles = useLabelsBarStyles()
   const rootRef = useRef<HTMLDivElement>(null)
   const localInputRef = useRef<HTMLInputElement>(null)
@@ -26,6 +27,21 @@ export default function OperationPicker({ currentValue, onSelect }: OperationPic
   const [settledRevision, setSettledRevision] = useState(-1)
   const [error, setError] = useState('')
   const loading = settledRevision !== revision
+  const onMissingRef = useRef(onMissing)
+  useEffect(() => { onMissingRef.current = onMissing }, [onMissing])
+
+  // A value restored from preferences or server defaults may name an operation
+  // that is not saved; clear it. If the check fails, keep the value.
+  useEffect(() => {
+    if (!currentValue) return
+    let ignore = false
+    operationsApi.list()
+      .then(result => {
+        if (!ignore && !result.items.some(operation => operation.name === currentValue)) onMissingRef.current()
+      })
+      .catch(() => {})
+    return () => { ignore = true }
+  }, [currentValue])
 
   useEffect(() => {
     if (!open) return

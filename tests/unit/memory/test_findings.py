@@ -20,7 +20,7 @@ from pyrit.memory.memory_models import (
     PromptMemoryEntry,
     ScoreEntry,
 )
-from pyrit.models import Finding, FindingCreate, FindingEvidence, Operation
+from pyrit.models import Finding, FindingCreate, FindingEvidence, FindingSeverity, Operation
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -261,6 +261,19 @@ async def test_one_conversation_can_support_multiple_findings_and_counts(sqlite_
         findings[1].id: 1,
     }
     assert await sqlite_instance.get_finding_evidence_counts_async(finding_ids=[]) == {}
+
+
+async def test_finding_severity_counts_group_by_operation(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Counted"))
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    await sqlite_instance.add_operation_async(Operation(name="Empty"))
+    for severity in ["critical", "critical", "low"]:
+        await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="A", severity=severity))
+    await sqlite_instance.add_finding_async(Finding(operation_id=other.id, title="B", severity="informational"))
+    assert await sqlite_instance.get_finding_severity_counts_async() == {
+        operation.id: {FindingSeverity.CRITICAL: 2, FindingSeverity.LOW: 1},
+        other.id: {FindingSeverity.INFORMATIONAL: 1},
+    }
 
 
 async def test_delete_finding_removes_evidence_without_deleting_source(sqlite_instance: SQLiteMemory) -> None:

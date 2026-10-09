@@ -41,6 +41,7 @@ def test_operations_create_list_and_get(compatibility_headers: dict[str, str]) -
     assert operation["name"] == "Red team / α%"
     client.post("/api/operations", json={"name": "Alpha"})
     assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Alpha", "Red team / α%"]
+    assert all(item["finding_counts"] == {} for item in client.get("/api/operations").json()["items"])
     assert client.get(f"/api/operations/{operation['id']}").json() == operation
     assert client.get(f"/api/operations/{MISSING_ID}").status_code == 404
 
@@ -68,6 +69,8 @@ def test_findings_are_created_and_listed_under_an_operation(compatibility_header
     client.post(f"/api/operations/{other_id}/findings", json={"title": "Elsewhere", "severity": "low"})
     listed = client.get(f"/api/operations/{operation_id}/findings", params={"limit": 1}).json()
     assert listed == {"items": [{**finding, "evidence_count": 0}], "has_more": False, "next_offset": None}
+    counts = {item["name"]: item["finding_counts"] for item in client.get("/api/operations").json()["items"]}
+    assert counts == {"Case": {"informational": 1}, "Other": {"low": 1}}
 
 
 def test_finding_options_exposes_canonical_harm_types(compatibility_headers: dict[str, str]) -> None:

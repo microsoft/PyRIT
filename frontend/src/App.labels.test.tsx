@@ -91,6 +91,12 @@ const SCENARIO: RegisteredScenario = {
 const TARGET = makeTarget({ target_registry_name: 'test_target', identifier_hash: 'test_hash' })
 const DEFAULT_LABELS = { operator: 'config_user', operation: 'config_op', team: 'config_team' }
 const SAVED_LABELS = { operator: 'original_user', operation: 'original_op', team: 'original_team' }
+const SAVED_OPERATIONS = {
+  items: [
+    'config_op', 'config_op_v2', 'config_op_v3', 'new_default', 'original_op', 'test_op', 'remembered_op',
+    'signed_in_op', 'early_choice', 'future_op', 'user_op',
+  ].map(name => ({ id: `operation-${name}`, name, created_at: '2026-10-07T16:00:00Z' })),
+}
 const SCENARIO_PATH = '/scanner/test.scenario'
 
 function renderApp(path = SCENARIO_PATH) {
@@ -106,9 +112,6 @@ function currentLabels(): HTMLElement {
 }
 
 async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {
-  jest.mocked(operationsApi.list).mockResolvedValue({
-    items: [{ id: 'operation-id', name: operation, created_at: '2026-10-07T16:00:00Z' }],
-  })
   await user.click(within(currentLabels()).getByRole('combobox', { name: 'Operation' }))
   await user.paste(operation)
   await user.keyboard('{ArrowDown}')
@@ -134,7 +137,7 @@ describe('Shared new run labels', () => {
     jest.mocked(versionApi.getVersion).mockReset()
     jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
     jest.mocked(labelsApi.getLabels).mockResolvedValue({ source: 'attacks', labels: {} })
-    jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
+    jest.mocked(operationsApi.list).mockResolvedValue(SAVED_OPERATIONS)
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
       items: [TARGET], pagination: { limit: 200, has_more: false },
     })

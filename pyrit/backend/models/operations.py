@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pyrit.models import Finding, FindingEvidence, Operation
+from pyrit.models import Finding, FindingEvidence, FindingSeverity, Operation
 from pyrit.models.harm_category import HarmCategory
 
 
@@ -16,10 +16,16 @@ class FindingOptionsResponse(BaseModel):
     harm_types: list[HarmCategory]
 
 
+class OperationListItem(Operation):
+    """An operation with its findings counted by severity, omitting severities without findings."""
+
+    finding_counts: dict[FindingSeverity, int]
+
+
 class OperationListResponse(BaseModel):
     """All operations available as homes for findings."""
 
-    items: list[Operation]
+    items: list[OperationListItem]
 
 
 class FindingListItem(Finding):

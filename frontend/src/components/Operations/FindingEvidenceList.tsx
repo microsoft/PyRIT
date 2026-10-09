@@ -4,6 +4,7 @@ import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Text,
 } from '@fluentui/react-components'
+import { ChevronLeftRegular, ChevronRightRegular, DeleteRegular } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
 import { operationsApi } from '@/services/api'
@@ -83,7 +84,7 @@ export default function FindingEvidenceList({ operationId, findingId, count, onD
     <div className={styles.root}>
       <Button ref={triggerRef} className={styles.button} aria-expanded={expanded}
         onClick={() => { setExpanded(value => !value) }}>Evidence ({count})</Button>
-      {expanded && <div role="region" aria-label="Finding evidence">
+      {expanded && <div role="region" aria-label="Finding evidence" className={styles.region}>
         {settledKey !== requestKey ? <Spinner label="Loading evidence" /> : error ? (
           <MessageBar intent="error"><MessageBarBody>Could not load evidence: {error}{' '}
             <Button onClick={() => { setRevision(value => value + 1) }}>Retry evidence</Button>
@@ -99,17 +100,21 @@ export default function FindingEvidenceList({ operationId, findingId, count, onD
                     Open conversation
                   </Link>
                 ) : <Text>Evidence unavailable</Text>}
-                <Button className={styles.button} aria-label={`Remove link: ${item.conversation_id}`}
-                  onClick={() => { setRemoving(item); setRemoveError('') }}>Remove link</Button>
+                <Button className={styles.button} icon={<DeleteRegular />} title="Remove link"
+                  aria-label={`Remove link: ${item.conversation_id}`}
+                  onClick={() => { setRemoving(item); setRemoveError('') }} />
               </div>
             </li>
           ))}</ul>
         )}
         <div className={styles.actions}>
-          <Button className={styles.button} disabled={offset === 0 || busy}
-            onClick={() => { setOffset(value => Math.max(0, value - PAGE_SIZE)) }}>Previous evidence</Button>
-          <Button className={styles.button} disabled={settledKey !== requestKey || !page?.has_more || Boolean(error) || busy}
-            onClick={() => { setOffset(page?.next_offset ?? 0) }}>Next evidence</Button>
+          <Button className={styles.button} icon={<ChevronLeftRegular />} title="Previous evidence"
+            aria-label="Previous evidence" disabled={offset === 0 || busy}
+            onClick={() => { setOffset(value => Math.max(0, value - PAGE_SIZE)) }} />
+          <Button className={styles.button} icon={<ChevronRightRegular />} title="Next evidence"
+            aria-label="Next evidence"
+            disabled={settledKey !== requestKey || !page?.has_more || Boolean(error) || busy}
+            onClick={() => { setOffset(page?.next_offset ?? 0) }} />
         </div>
       </div>}
       <Dialog open={removing !== null} onOpenChange={(_, data) => {

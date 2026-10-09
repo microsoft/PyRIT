@@ -11,6 +11,7 @@ from pyrit.backend.models.operations import (
     FindingEvidenceListResponse,
     FindingListItem,
     FindingListResponse,
+    OperationListItem,
 )
 from pyrit.memory import CentralMemory
 from pyrit.models import Finding, FindingCreate, FindingEvidence, Operation, OperationCreate
@@ -61,14 +62,20 @@ class OperationService:
             raise DuplicateOperationError(saved)
         return saved
 
-    async def list_async(self) -> list[Operation]:
+    async def list_async(self) -> list[OperationListItem]:
         """
-        Read every operation in name order.
+        Read every operation in name order with its finding counts by severity.
 
         Returns:
-            list[Operation]: All operations.
+            list[OperationListItem]: All operations.
         """
-        return await CentralMemory.get_memory_instance().get_operations_async()
+        memory = CentralMemory.get_memory_instance()
+        operations = await memory.get_operations_async()
+        counts = await memory.get_finding_severity_counts_async()
+        return [
+            OperationListItem(**operation.model_dump(), finding_counts=counts.get(operation.id, {}))
+            for operation in operations
+        ]
 
     async def get_async(self, operation_id: UUID) -> Operation:
         """

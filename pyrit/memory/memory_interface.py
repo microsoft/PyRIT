@@ -829,6 +829,22 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return dict((await session.execute(statement)).all())
 
+    async def get_finding_severity_counts_async(self) -> dict[uuid.UUID, dict[FindingSeverity, int]]:
+        """
+        Count every operation's findings by severity in one query.
+
+        Returns:
+            dict[uuid.UUID, dict[FindingSeverity, int]]: Counts for operations with findings.
+        """
+        statement = select(FindingEntry.operation_id, FindingEntry.severity, func.count()).group_by(
+            FindingEntry.operation_id, FindingEntry.severity
+        )
+        counts: dict[uuid.UUID, dict[FindingSeverity, int]] = {}
+        async with await self.get_session_async() as session:
+            for operation_id, severity, count in (await session.execute(statement)).all():
+                counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
+        return counts
+
     def _uses_legacy_memory_override(self) -> bool:
         return any(
             not name.startswith("_")

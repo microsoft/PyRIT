@@ -99,16 +99,30 @@ describe('saved operation workflow', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
   })
 
-  it('does not offer a legacy selection as a saved choice and allows removing it', async () => {
-    const user = userEvent.setup()
+  it('silently clears a loaded operation that is not saved', async () => {
     renderBar({ operator: 'alice', operation: 'Legacy / LABEL' })
-    await user.click(screen.getByRole('combobox', { name: 'Operation' }))
-    await screen.findByRole('option', { name: SAVED.name })
-    expect(screen.queryByRole('option', { name: 'Legacy / LABEL' })).not.toBeInTheDocument()
-    await user.keyboard('{Escape}')
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ operator: 'alice' }))
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('keeps a loaded saved operation and allows removing it', async () => {
+    const user = userEvent.setup()
+    renderBar({ operator: 'alice', operation: SAVED.name })
+    await waitFor(() => expect(operationsApi.list).toHaveBeenCalled())
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue(SAVED.name)
+    expect(onChange).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Remove operation label' }))
     expect(onChange).toHaveBeenLastCalledWith({ operator: 'alice' })
-    expect(screen.getByRole('combobox', { name: 'Operation' })).toBeInTheDocument()
+  })
+
+  it('keeps a loaded operation when saved operations cannot be checked', async () => {
+    jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('List unavailable'))
+    renderBar({ operator: 'alice', operation: 'Legacy / LABEL' })
+    await waitFor(() => expect(operationsApi.list).toHaveBeenCalled())
+    await act(async () => {})
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('Legacy / LABEL')
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('creates inline, immediately selects the saved response, and restores focus', async () => {

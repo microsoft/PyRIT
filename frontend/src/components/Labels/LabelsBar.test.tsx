@@ -1092,7 +1092,7 @@ describe('LabelsBar', () => {
   describe('operation picker', () => {
     const OPERATIONS = ['op_2026_07_grok_45', 'op_2026_08_probe', 'validate-button-test']
 
-    function renderWithOperations(onChange: jest.Mock, operations: string[] = OPERATIONS) {
+    function renderWithOperations(onChange: jest.Mock, operations: string[] = OPERATIONS, operation?: string) {
       jest.mocked(operationsApi.list).mockResolvedValue({
         items: operations.map((name, index) => ({ id: `operation-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
       })
@@ -1104,7 +1104,7 @@ describe('LabelsBar', () => {
       })
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS, ...(operation ? { operation } : {}) }} onLabelsChange={onChange} />
         </TestWrapper>
       )
     }
@@ -1230,7 +1230,7 @@ describe('LabelsBar', () => {
 
     it('should dismiss the picker on Escape without committing', async () => {
       const onChange = jest.fn()
-      renderWithOperations(onChange)
+      renderWithOperations(onChange, OPERATIONS, 'op_2026_08_probe')
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
       fireEvent.click(screen.getByTestId('edit-label-operation'))
@@ -1239,7 +1239,7 @@ describe('LabelsBar', () => {
 
       await waitFor(() => {
         expect(input).toHaveAttribute('aria-expanded', 'false')
-        expect(input).toHaveValue(DEFAULT_GLOBAL_LABELS.operation)
+        expect(input).toHaveValue('op_2026_08_probe')
       })
       expect(onChange).not.toHaveBeenCalled()
     })
@@ -1295,13 +1295,13 @@ describe('LabelsBar', () => {
     it('should move focus into the picker so it can be driven by keyboard', async () => {
       const user = userEvent.setup()
       const onChange = jest.fn()
-      renderWithOperations(onChange)
+      renderWithOperations(onChange, OPERATIONS, 'op_2026_08_probe')
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
       // The permanent combobox remains focusable while closed.
       const chip = screen.getByTestId('edit-label-operation')
       expect(chip).toHaveAttribute('role', 'combobox')
-      expect(chip).toHaveValue(DEFAULT_GLOBAL_LABELS.operation)
+      expect(chip).toHaveValue('op_2026_08_probe')
       chip.focus()
       expect(chip).toHaveFocus()
       await user.keyboard('{ArrowDown}')
@@ -1415,7 +1415,7 @@ describe('LabelsBar', () => {
       jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={onChange} />
         </TestWrapper>
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
@@ -1459,38 +1459,6 @@ describe('LabelsBar', () => {
       expect(screen.queryByRole('option', { name: 'Create "op_2026_09_fresh"' })).not.toBeInTheDocument()
     })
 
-    it('should not add the operation in use to the saved choices', async () => {
-      const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockResolvedValue({
-        source: 'attacks',
-        labels: { operation: OPERATIONS, operator: ['alice'] },
-      })
-      jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
-      render(
-        <TestWrapper>
-          <LabelsBar
-            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_chosen_elsewhere' }}
-            onLabelsChange={onChange}
-          />
-        </TestWrapper>
-      )
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
-
-      fireEvent.click(screen.getByTestId('edit-label-operation'))
-
-      await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
-      expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
-      expect(screen.queryByRole('option', { name: 'op_chosen_elsewhere' })).not.toBeInTheDocument()
-
-      // Typing it must not offer to create the name that is already set.
-      fireEvent.change(screen.getByTestId('edit-label-operation'), {
-        target: { value: 'op_chosen_elsewhere' },
-      })
-      expect(
-        screen.queryByRole('option', { name: 'Create "op_chosen_elsewhere"' })
-      ).not.toBeInTheDocument()
-    })
-
     it('should allow removing a legacy selected operation', async () => {
       const onChange = jest.fn()
       mockedLabelsApi.getLabels.mockResolvedValue({
@@ -1512,30 +1480,6 @@ describe('LabelsBar', () => {
       expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
     })
 
-    it('should offer only New operation when the saved list is empty and a legacy operation is selected', async () => {
-      const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockResolvedValue({
-        source: 'attacks',
-        labels: { operation: [], operator: ['alice'] },
-      })
-      jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
-      render(
-        <TestWrapper>
-          <LabelsBar
-            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_only_one' }}
-            onLabelsChange={onChange}
-          />
-        </TestWrapper>
-      )
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
-
-      fireEvent.click(screen.getByTestId('edit-label-operation'))
-
-      await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
-      expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
-      expect(screen.queryByRole('option', { name: 'op_only_one' })).not.toBeInTheDocument()
-    })
-
     it('should not accept a typed name while the saved list is loading or failed', async () => {
       const onChange = jest.fn()
       let rejectLabels: (reason: Error) => void = () => {}
@@ -1544,7 +1488,7 @@ describe('LabelsBar', () => {
       )
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={onChange} />
         </TestWrapper>
       )
 
@@ -1566,7 +1510,7 @@ describe('LabelsBar', () => {
 
     it('should still say the operations could not be loaded when one is already set', async () => {
       const onChange = jest.fn()
-      jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
+      jest.mocked(operationsApi.list).mockRejectedValue(new Error('boom'))
       render(
         <TestWrapper>
           <LabelsBar
@@ -1583,33 +1527,6 @@ describe('LabelsBar', () => {
         await screen.findByRole('option', { name: /Could not load saved operations/ })
       ).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: 'op_already_set' })).not.toBeInTheDocument()
-    })
-
-    it('should not inject a legacy operation into a capped saved list', async () => {
-      const onChange = jest.fn()
-      const many = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
-      mockedLabelsApi.getLabels.mockResolvedValue({
-        source: 'attacks',
-        labels: { operation: many, operator: ['alice'] },
-      })
-      jest.mocked(operationsApi.list).mockResolvedValue({
-        items: many.map((name, index) => ({ id: `op-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
-      })
-      render(
-        <TestWrapper>
-          <LabelsBar
-            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_chosen_elsewhere' }}
-            onLabelsChange={onChange}
-          />
-        </TestWrapper>
-      )
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
-
-      fireEvent.click(screen.getByTestId('edit-label-operation'))
-
-      await screen.findByRole('option', { name: /type to narrow/i })
-      expect(screen.queryByRole('option', { name: 'op_chosen_elsewhere' })).not.toBeInTheDocument()
-      expect(onChange).not.toHaveBeenCalled()
     })
 
     it('should keep the operation in use on a capped list that already contains it', async () => {
@@ -1707,7 +1624,7 @@ describe('LabelsBar', () => {
       jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={onChange} />
         </TestWrapper>
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
@@ -1735,7 +1652,7 @@ describe('LabelsBar', () => {
       jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={onChange} />
         </TestWrapper>
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
@@ -1763,7 +1680,7 @@ describe('LabelsBar', () => {
       jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={onChange} />
         </TestWrapper>
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
@@ -1795,7 +1712,7 @@ describe('LabelsBar', () => {
       )
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={onChange} />
         </TestWrapper>
       )
 

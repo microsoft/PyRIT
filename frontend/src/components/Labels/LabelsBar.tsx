@@ -657,7 +657,8 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
             }
           }}>
             <Text size={200} weight="semibold">Operation:</Text>
-            <OperationPicker currentValue={labels.operation ?? ''} onSelect={handleSelectOperation} />
+            <OperationPicker currentValue={labels.operation ?? ''} onSelect={handleSelectOperation}
+              onMissing={() => handleRemoveLabel('operation')} />
             {labels.operation && <Button appearance="transparent" size="small" className={styles.removeBtn}
               icon={<DismissRegular fontSize={12} />} aria-label="Remove operation label"
               data-testid="remove-label-operation" onClick={() => handleRemoveLabel('operation')} />}
