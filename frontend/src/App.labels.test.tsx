@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { attacksApi, labelsApi, runtimeApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
+import { attacksApi, labelsApi, operationsApi, runtimeApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RegisteredScenario } from '@/types'
 import { exportConversation } from '@/utils/conversationExport'
@@ -41,6 +41,7 @@ jest.mock('@/services/api', () => ({
   authApi: { getAccess: jest.fn().mockResolvedValue({ isAdmin: false }) },
   versionApi: { getVersion: jest.fn() },
   labelsApi: { getLabels: jest.fn() },
+  operationsApi: { list: jest.fn(), create: jest.fn() },
   attacksApi: {
     listAttacks: jest.fn(),
     getAttack: jest.fn(),
@@ -105,12 +106,14 @@ function currentLabels(): HTMLElement {
 }
 
 async function chooseOperation(user: ReturnType<typeof userEvent.setup>, operation: string): Promise<void> {
-  await user.click(within(currentLabels()).getByRole('button', { name: /^Edit operation, currently / }))
-  await user.click(screen.getByRole('combobox', { name: 'Operation' }))
+  jest.mocked(operationsApi.list).mockResolvedValue({
+    items: [{ id: 'operation-id', name: operation, created_at: '2026-10-07T16:00:00Z' }],
+  })
+  await user.click(within(currentLabels()).getByRole('combobox', { name: 'Operation' }))
   await user.paste(operation)
   await user.keyboard('{ArrowDown}')
-  await user.click(await screen.findByRole('option', { name: `Create "${operation}"` }))
-  expect(within(currentLabels()).getByRole('button', { name: `Edit operation, currently ${operation}` }))
+  await user.click(await screen.findByRole('option', { name: operation, exact: true }))
+  expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' }))
     .toBeInTheDocument()
 }
 
@@ -131,6 +134,7 @@ describe('Shared new run labels', () => {
     jest.mocked(versionApi.getVersion).mockReset()
     jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
     jest.mocked(labelsApi.getLabels).mockResolvedValue({ source: 'attacks', labels: {} })
+    jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
       items: [TARGET], pagination: { limit: 200, has_more: false },
     })
@@ -175,8 +179,8 @@ describe('Shared new run labels', () => {
   it('edits operator, operation, and custom labels during scenario setup and sends them on launch', async () => {
     const user = userEvent.setup()
     renderApp()
-    await user.click(await screen.findByRole('button', { name: 'Edit operator, currently config_user' }))
-    const operator = screen.getByRole('textbox', { name: 'Value for operator label' })
+    await user.click(await screen.findByRole('textbox', { name: 'Operator' }))
+    const operator = screen.getByRole('textbox', { name: 'Operator' })
     await user.clear(operator)
     await user.paste('test_user')
     await user.keyboard('{Enter}')
@@ -200,7 +204,7 @@ describe('Shared new run labels', () => {
   it('keeps one editor through navigation and restores choices without pinning backend defaults', async () => {
     const user = userEvent.setup()
     const app = renderApp()
-    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+    await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
@@ -208,7 +212,7 @@ describe('Shared new run labels', () => {
       await user.click(screen.getByRole('button', { name: destination, exact: true }))
       expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
       expect(currentLabels()).toBe(bar)
-      expect(within(bar).getByRole('button', { name: /currently remembered_op$/ })).toBeInTheDocument()
+      expect(within(bar).getByRole('combobox', { name: 'Operation' })).toHaveValue('remembered_op')
     }
     await user.click(await screen.findByRole('link', { name: 'test.scenario' }))
     await screen.findByRole('combobox', { name: 'Objective Target' })
@@ -222,7 +226,7 @@ describe('Shared new run labels', () => {
     })
     renderApp()
     await screen.findByRole('button', { name: 'Edit team label, currently new_team' })
-    expect(screen.getByRole('button', { name: /currently remembered_op$/ })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('remembered_op')
   })
 
   it('uses the signed-in alias ahead of stored and backend operators when launching', async () => {
@@ -235,8 +239,9 @@ describe('Shared new run labels', () => {
       username: 'Signed.In@contoso.com', tenantId: 'tenant', homeAccountId: 'signed-in',
     })
     renderApp()
-    const operator = await screen.findByRole('button', { name: 'Signed-in operator: signed.in' })
-    expect(operator).toHaveAttribute('aria-disabled', 'true')
+    const operator = await screen.findByRole('textbox', { name: 'Signed-in operator' })
+    expect(operator).toHaveValue('signed.in')
+    expect(operator).toHaveAttribute('readonly')
     await user.click(operator)
     expect(screen.queryByRole('textbox', { name: 'Value for operator label' })).not.toBeInTheDocument()
     await chooseOperation(user, 'signed_in_op')
@@ -281,15 +286,15 @@ describe('Shared new run labels', () => {
     renderApp()
     await chooseOperation(user, 'early_choice')
     await act(async () => { resolveVersion({ version: '1.0.0', default_labels: DEFAULT_LABELS }) })
-    await screen.findByRole('button', { name: 'Edit operator, currently config_user' })
-    expect(screen.getByRole('button', { name: /currently early_choice$/ })).toBeInTheDocument()
+    await screen.findByRole('textbox', { name: 'Operator' })
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('early_choice')
   })
 
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
     renderApp('/scanner-history/saved_run')
     const saved = screen.getByRole('region', { name: 'Run configuration' })
-    await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+    await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_user')
     expect(saved).toHaveTextContent('original_op')
@@ -347,7 +352,7 @@ describe('Shared new run labels', () => {
     await user.click(within(toolbar).getByRole('button', { name: 'New Attack' }))
     expect(await screen.findByRole('button', { name: 'New Attack' })).toBeDisabled()
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
-    expect(within(currentLabels()).getByRole('button', { name: /currently future_op$/ })).toBeInTheDocument()
+    expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue('future_op')
   })
 
   describe('runtime generation defaults', () => {
@@ -374,18 +379,16 @@ describe('Shared new run labels', () => {
 
       await screen.findByText(/PyRIT runtime: unavailable/)
       expect(screen.getByRole('button', { name: 'Home', exact: true })).toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Edit operation, currently config_op' }))
-        .not.toBeInTheDocument()
+      expect(screen.queryByDisplayValue('config_op')).not.toBeInTheDocument()
 
       await pollGeneration('gen-1')
-      expect(await screen.findByRole('button', { name: 'Edit operation, currently config_op' }))
-        .toBeInTheDocument()
+      expect(await screen.findByDisplayValue('config_op')).toBeInTheDocument()
     })
 
     it('refetches once per generation and keeps user overrides on launch', async () => {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
       renderApp()
-      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await screen.findByDisplayValue('config_op')
       await chooseOperation(user, 'user_op')
       const callsAfterFirstLoad = jest.mocked(versionApi.getVersion).mock.calls.length
 
@@ -396,7 +399,7 @@ describe('Shared new run labels', () => {
       await pollGeneration('gen-2')
 
       expect(versionApi.getVersion).toHaveBeenCalledTimes(callsAfterFirstLoad + 1)
-      expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('user_op')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
         labels: { ...DEFAULT_LABELS, operation: 'user_op' },
@@ -407,7 +410,7 @@ describe('Shared new run labels', () => {
       const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
       let resolveVersion: (value: VersionResponse) => void = () => {}
       renderApp()
-      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await screen.findByDisplayValue('config_op')
       await user.selectOptions(screen.getByRole('combobox', { name: 'Objective Target' }), 'test_target')
       expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
 
@@ -421,7 +424,7 @@ describe('Shared new run labels', () => {
         resolveVersion({ version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' } })
       })
 
-      expect(screen.getByRole('button', { name: 'Edit operation, currently config_op_v2' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('config_op_v2')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
         labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
@@ -439,7 +442,7 @@ describe('Shared new run labels', () => {
       }
       renderApp()
       if (phase === 'generation refresh') {
-        await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+        await screen.findByDisplayValue('config_op')
         jest.mocked(versionApi.getVersion).mockRejectedValue(failure)
         await pollGeneration('gen-2')
       }
@@ -465,7 +468,7 @@ describe('Shared new run labels', () => {
       })
 
       expect(screen.queryByText(/Could not load default labels/)).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('user_op')
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
         labels: { ...DEFAULT_LABELS, operation: 'user_op', team: 'new_team' },
@@ -477,7 +480,7 @@ describe('Shared new run labels', () => {
       let resolveVersion: (value: VersionResponse) => void = () => {}
       let rejectVersion: (error: Error) => void = () => {}
       renderApp()
-      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await screen.findByDisplayValue('config_op')
       jest.mocked(versionApi.getVersion).mockReturnValueOnce(new Promise((resolve, reject) => {
         resolveVersion = resolve
         rejectVersion = reject
@@ -496,7 +499,7 @@ describe('Shared new run labels', () => {
         }
       })
 
-      expect(screen.getByRole('button', { name: 'Edit operation, currently config_op_v3' })).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('config_op_v3')
       expect(screen.queryByText(/Could not load default labels/)).not.toBeInTheDocument()
       await launchScenario(user)
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({

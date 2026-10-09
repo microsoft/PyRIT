@@ -25,9 +25,57 @@ import {
   attacksApi,
   labelsApi,
   scenariosApi,
+  operationsApi,
 } from "./api";
 
 describe("api service", () => {
+  describe("operationsApi", () => {
+    it("reads canonical harm categories without copying the taxonomy into the frontend", async () => {
+      const options = { harm_types: ["Malware", "Other"] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: options });
+      expect(await operationsApi.getFindingOptions()).toEqual(options);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/finding-options");
+    });
+    it("encodes evidence scope, searches literally, and preserves duplicate feedback", async () => {
+      const page = { items: [], has_more: false, next_offset: null };
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
+      expect(await operationsApi.searchFindings("a/b", { limit: 20, offset: 0, title: "%_" })).toEqual(page);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0, title: "%_" },
+      });
+      const request = { attack_result_id: "attack", conversation_id: "conversation" };
+      const result = { item: { id: "evidence" }, created: false };
+      (apiClient.post as jest.Mock).mockResolvedValue({ data: result });
+      expect(await operationsApi.attachFindingEvidence("a/b", "c/d", request)).toEqual(result);
+      expect(apiClient.post).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence", request);
+      expect(await operationsApi.listFindingEvidence("a/b", "c/d", { limit: 20, offset: 20 })).toEqual(page);
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence", {
+        params: { limit: 20, offset: 20 },
+      });
+      await operationsApi.detachFindingEvidence("a/b", "c/d", "e/f");
+      expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd/evidence/e%2Ff");
+    });
+    it("nests finding requests under an encoded operation ID", async () => {
+      const request = { title: "Assessment", description: "", severity: "low" as const };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: { name: "Case" } });
+      await operationsApi.create({ name: " Case / α% " });
+      expect(apiClient.post).toHaveBeenCalledWith("/operations", { name: " Case / α% " });
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: request });
+      expect(await operationsApi.createFinding("a/b", request)).toEqual(request);
+      expect(apiClient.post).toHaveBeenCalledWith("/operations/a%2Fb/findings", request);
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [], has_more: false, next_offset: null } });
+      await operationsApi.listFindings("a/b", { limit: 20, offset: 0 });
+      expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
+        params: { limit: 20, offset: 0 },
+      });
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({ data: request });
+      expect(await operationsApi.updateFinding("a/b", "c/d", request)).toEqual(request);
+      expect(apiClient.put).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd", request);
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({ data: undefined });
+      expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
+      expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
+    });
+  });
   // Interceptor functions are registered at module-load time.
   // Capture them before beforeEach's clearAllMocks wipes the call records.
   const requestInterceptor = (apiClient.interceptors.request.use as jest.Mock).mock.calls[0]?.[0];

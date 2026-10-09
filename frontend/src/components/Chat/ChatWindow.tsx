@@ -30,6 +30,7 @@ import MessageList from './MessageList'
 import ChatInputArea from './ChatInputArea'
 import MultiSendProgress from './MultiSendProgress'
 import ConversationPanel from './ConversationPanel'
+import FindingEvidenceDialog from './FindingEvidenceDialog'
 import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
 import ChatTargetPicker from './ChatTargetPicker'
@@ -298,6 +299,7 @@ interface ChatWindowProps {
   lastResponseMessagePieceId?: string | null
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
   scenarioResultId?: string | null
+  findingEvidenceId?: string | null
 }
 
 export default function ChatWindow({
@@ -333,11 +335,15 @@ export default function ChatWindow({
   humanScore,
   lastResponseMessagePieceId,
   scenarioResultId,
+  findingEvidenceId,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const [messages, setMessages] = useState<Message[]>([])
+  const [conversationLoadIssue, setConversationLoadIssue] = useState<{
+    conversationId: string; unavailable: boolean; detail: string;
+  } | null>(null)
   const [pendingObjective, setPendingObjective] = useState('')
   const currentObjective = attackResultId ? objective : pendingObjective
   const runtime = useRuntime()
@@ -392,6 +398,10 @@ export default function ChatWindow({
       discardEditor()
     }
   }, [editDraft, viewedConversationId, attackResultId, discardEditor])
+  const isEvidenceUnavailable = Boolean(
+    findingEvidenceId && conversationLoadIssue?.conversationId === viewedConversationId
+    && conversationLoadIssue?.unavailable,
+  )
   const savedRecovery = viewedConversationId
     ? recoverableSends[viewedConversationId]
     : undefined
@@ -519,7 +529,7 @@ export default function ChatWindow({
     && !targetInfoMatchesTarget(attackTarget, activeTarget),
   )
   // Any failed invariant keeps all mutation controls and handlers read-only.
-  const isMutationLocked = isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked
+  const isMutationLocked = isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked || isEvidenceUnavailable
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
@@ -559,6 +569,11 @@ export default function ChatWindow({
       const response = await attacksApi.getMessages(arId, convId)
       // Discard superseded loads and responses invalidated by a send.
       if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
+      setConversationLoadIssue(
+        findingEvidenceId && response.messages.length === 0
+          ? { conversationId: convId, unavailable: true, detail: 'Evidence unavailable' }
+          : null,
+      )
       const frontendMessages = backendMessagesToFrontend(response.messages)
       const savedUserIds = userPieceIds(response)
       loadedUserPieceIdsRef.current.set(convId, savedUserIds)
@@ -611,8 +626,15 @@ export default function ChatWindow({
       }
       setMessages(frontendMessages)
       markConversationLoaded(convId)
-    } catch {
+    } catch (cause: unknown) {
       if (!isCurrentLoad() || viewedConvRef.current !== convId) { return }
+      if (findingEvidenceId) {
+        const error = toApiError(cause)
+        setConversationLoadIssue({
+          conversationId: convId, unavailable: error.status === 404,
+          detail: error.status === 404 ? 'Evidence unavailable' : `Could not load conversation: ${error.detail}`,
+        })
+      }
       // Initial-load failures must not show another conversation's transcript.
       // Refresh failures keep the already-loaded transcript and recovery aligned.
       if (loadedConversationIdRef.current !== convId) {
@@ -628,7 +650,7 @@ export default function ChatWindow({
         setIsLoadingMessages(false)
       }
     }
-  }, [markConversationLoaded])
+  }, [markConversationLoaded, findingEvidenceId])
 
   // Reload messages when activeConversationId changes
   useEffect(() => {
@@ -656,7 +678,8 @@ export default function ChatWindow({
     activeConversationId && activeConversationId !== loadedConversationId
     && !sendingConversations.has(activeConversationId)
   )
-  const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages || awaitingConversationLoad
+  const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
+    || awaitingConversationLoad || isEvidenceUnavailable
 
   // Handle conversation selection from the panel
   // For a different ID the useEffect handles loading; for same ID force a refresh
@@ -1630,51 +1653,57 @@ export default function ChatWindow({
             data-testid="global-markdown-toggle"
           />
         </Tooltip>
-        <Menu>
-          <MenuTrigger disableButtonEnhancement>
-            <Tooltip content="Export conversation" relationship="label">
-              <Button
-                appearance="subtle"
-                className={styles.ribbonAction}
-                icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
-                disabled={!canExportConversation}
-                aria-label="Export conversation"
-                data-testid="export-conversation-btn"
-              />
-            </Tooltip>
-          </MenuTrigger>
-          <MenuPopover>
-            <MenuList>
-              <MenuItem
-                onClick={() => handleExport('markdown')}
-                disabled={isExporting}
-                data-testid="export-markdown-item"
-              >
-                Export as Markdown (.md)
-              </MenuItem>
-              <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
-                Export as JSON (.json)
-              </MenuItem>
-              <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
-                Export as HTML (.html)
-              </MenuItem>
-            </MenuList>
-          </MenuPopover>
-        </Menu>
-        <Tooltip content="Toggle conversations panel" relationship="label">
-          <Button
-            {...restoreFocusTargetAttributes}
-            appearance="subtle"
-            className={styles.ribbonAction}
-            icon={<PanelRightRegular />}
-            onClick={() => setIsPanelOpen((open) => !open)}
-            disabled={!attackResultId}
-            data-testid="toggle-panel-btn"
-            aria-label="Toggle conversations panel"
-            aria-expanded={isPanelOpen}
-            aria-controls="conversation-panel"
-          />
-        </Tooltip>
+        <div role="group" aria-label="Conversation actions" className={styles.conversationActions}>
+          <FindingEvidenceDialog
+            attackResultId={isEvidenceUnavailable ? '' : attackResultId ?? ''} conversationId={activeConversationId ?? ''}
+            disabled={Boolean(editDraft !== null || !attackResultId || !activeConversationId || isEvidenceUnavailable
+              || isLoadingAttack || isLoadingMessages || awaitingConversationLoad)} />
+          <Menu>
+            <MenuTrigger disableButtonEnhancement>
+              <Tooltip content="Export conversation" relationship="label">
+                <Button
+                  appearance="subtle"
+                  className={styles.ribbonAction}
+                  icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
+                  disabled={!canExportConversation}
+                  aria-label="Export conversation"
+                  data-testid="export-conversation-btn"
+                />
+              </Tooltip>
+            </MenuTrigger>
+            <MenuPopover>
+              <MenuList>
+                <MenuItem
+                  onClick={() => handleExport('markdown')}
+                  disabled={isExporting}
+                  data-testid="export-markdown-item"
+                >
+                  Export as Markdown (.md)
+                </MenuItem>
+                <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
+                  Export as JSON (.json)
+                </MenuItem>
+                <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                  Export as HTML (.html)
+                </MenuItem>
+              </MenuList>
+            </MenuPopover>
+          </Menu>
+          <Tooltip content="Toggle conversations panel" relationship="label">
+            <Button
+              {...restoreFocusTargetAttributes}
+              appearance="subtle"
+              className={styles.ribbonAction}
+              icon={<PanelRightRegular />}
+              onClick={() => setIsPanelOpen((open) => !open)}
+              disabled={!attackResultId}
+              data-testid="toggle-panel-btn"
+              aria-label="Toggle conversations panel"
+              aria-expanded={isPanelOpen}
+              aria-controls="conversation-panel"
+            />
+          </Tooltip>
+        </div>
         <Tooltip content={editDraft !== null ? 'Save to new attack' : 'New Attack'} relationship="label">
           <Button
             appearance="primary"
@@ -1772,8 +1801,19 @@ export default function ChatWindow({
           newAttackDisabledReason={newAttackDisabledReason}
           onSaved={handleEditorSaved}
         />}
+        {editDraft === null && conversationLoadIssue?.conversationId === viewedConversationId && (
+          <MessageBar intent={conversationLoadIssue.unavailable ? 'warning' : 'error'}>
+            <MessageBarBody>{conversationLoadIssue.detail}{' '}
+              {!conversationLoadIssue.unavailable && attackResultId && viewedConversationId && (
+                <Button onClick={() => { void loadConversation(attackResultId, viewedConversationId) }}>
+                  Retry conversation load
+                </Button>
+              )}
+            </MessageBarBody>
+          </MessageBar>
+        )}
         {editDraft === null && <MessageList
-          messages={messages}
+          messages={isEvidenceUnavailable ? [] : messages}
           onCopyToInput={handleCopyToInput}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}
           onCopyToNewAttack={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack') }}

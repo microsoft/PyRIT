@@ -141,10 +141,24 @@ describe("Navigation", () => {
       "Home",
       "Chat",
       "History",
+      "Operations",
       "Scanner",
       "Registry",
       "Configuration",
     ]);
+  });
+
+  it("marks Operations current and navigates to its view", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(
+      <Navigation {...defaultProps} currentView="operations" onNavigate={onNavigate} />,
+    );
+
+    const button = screen.getByRole("button", { name: "Operations" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("operations");
   });
 
   it("marks History current and navigates to its tabbed view", async () => {

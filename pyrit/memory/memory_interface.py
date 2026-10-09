@@ -26,6 +26,7 @@ from sqlalchemy import (
     Unicode,
     and_,
     case,
+    delete,
     exists,
     false,
     func,
@@ -37,6 +38,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy import cast as sql_cast
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -61,8 +63,11 @@ from pyrit.memory.memory_models import (
     ConversationEntry,
     ConverterIdentifierEntry,
     EmbeddingDataEntry,
+    FindingEntry,
+    FindingEvidenceEntry,
     ObservationEntry,
     ObservationMessagePieceEntry,
+    OperationEntry,
     PromptConverterIdentifierEntry,
     PromptMemoryEntry,
     ScenarioIdentifierEntry,
@@ -99,12 +104,17 @@ from pyrit.models import (
     ConversationRetryReason,
     ConversationStats,
     ConverterIdentifier,
+    Finding,
+    FindingCreate,
+    FindingEvidence,
+    FindingSeverity,
     IdentifierFilter,
     IdentifierType,
     Message,
     MessagePiece,
     MessageScorable,
     Observation,
+    Operation,
     PromptDataType,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -129,6 +139,7 @@ from pyrit.models import (
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
+from pyrit.models.operation import operation_name_key
 from pyrit.models.results.attack_result import ATTRIBUTION_FIELDS, ATTRIBUTION_VALUE_MAX_LENGTH
 
 if TYPE_CHECKING:
@@ -551,6 +562,272 @@ class MemoryInterface(abc.ABC):
             raise
         finally:
             self._initialization_lock.release()
+
+    async def add_operation_async(self, operation: Operation) -> Operation:
+        """
+        Persist an operation whose trimmed, case-folded name is unique.
+
+        Returns:
+            Operation: The saved operation, or the existing one when the name is taken.
+
+        Raises:
+            IntegrityError: If the insert fails for a reason other than a taken name.
+        """
+        entry = OperationEntry(operation)
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                session.add(entry)
+                await session.flush()
+                return entry.get_operation()
+        except IntegrityError:
+            existing = await self.get_operations_async(name=operation.name)
+            if not existing:
+                raise
+            return existing[0]
+
+    async def get_operations_async(
+        self, *, operation_id: uuid.UUID | None = None, name: str | None = None
+    ) -> list[Operation]:
+        """
+        Read operations ordered by name, optionally matching an ID or a name regardless of case and spacing.
+
+        Returns:
+            list[Operation]: The matching operations.
+        """
+        statement = select(OperationEntry).order_by(OperationEntry.name_key)
+        if operation_id is not None:
+            statement = statement.where(OperationEntry.id == operation_id)
+        if name is not None:
+            statement = statement.where(OperationEntry.name_key == operation_name_key(name))
+        async with await self.get_session_async() as session:
+            return [entry.get_operation() for entry in (await session.scalars(statement)).all()]
+
+    async def add_finding_async(self, finding: Finding) -> Finding:
+        """
+        Persist an assessment atomically, without changing attacks or scores.
+
+        Returns:
+            Finding: The saved assessment.
+        """
+        entry = FindingEntry(finding)
+        async with await self.get_session_async() as session, session.begin():
+            session.add(entry)
+            await session.flush()
+            return entry.get_finding()
+
+    async def update_finding_async(
+        self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
+    ) -> Finding:
+        """
+        Replace a finding's editable fields without changing identity or creation time.
+
+        Returns:
+            Finding: The updated assessment.
+
+        Raises:
+            LookupError: If the finding does not belong to the operation.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        validated = FindingCreate.model_validate(request.model_dump())
+        async with await self.get_session_async() as session, session.begin():
+            result = await session.execute(
+                update(FindingEntry)
+                .where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+                .values(**validated.model_dump(mode="json"))
+            )
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Finding update did not return a database cursor result.")
+            if result.rowcount == 0:
+                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            entry = await session.get(FindingEntry, finding_id)
+            if entry is None:
+                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            return entry.get_finding()
+
+    async def delete_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> None:
+        """
+        Permanently remove a finding within its operation.
+
+        Raises:
+            LookupError: If the finding does not belong to the operation.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        async with await self.get_session_async() as session, session.begin():
+            owner = await session.scalar(
+                select(FindingEntry.id).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+            )
+            if owner is None:
+                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            await session.execute(delete(FindingEvidenceEntry).where(FindingEvidenceEntry.finding_id == finding_id))
+            result = await session.execute(
+                delete(FindingEntry).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+            )
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Finding deletion did not return a database cursor result.")
+            if result.rowcount == 0:
+                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+
+    async def get_findings_async(
+        self,
+        *,
+        operation_id: uuid.UUID | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        title_query: str | None = None,
+    ) -> list[Finding]:
+        """
+        Read a bounded page ordered by severity, recency, and stable identity.
+
+        Returns:
+            list[Finding]: Assessments in descending severity and recency order.
+
+        Raises:
+            ValueError: If the page bounds are invalid.
+        """
+        if limit < 1 or offset < 0:
+            raise ValueError("Finding limit must be positive and offset must be nonnegative.")
+        severity_order = case(
+            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+            value=FindingEntry.severity,
+        )
+        statement = select(FindingEntry)
+        if operation_id is not None:
+            statement = statement.where(FindingEntry.operation_id == operation_id)
+        if title_query:
+            # SQL Server also treats "[" as a LIKE wildcard.
+            escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
+            statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
+        statement = (
+            statement.order_by(severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        async with await self.get_session_async() as session:
+            return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
+
+    async def get_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> Finding | None:
+        """
+        Read a finding only within its owning operation.
+
+        Returns:
+            Finding | None: The matching finding, if present.
+        """
+        async with await self.get_session_async() as session:
+            entry = await session.scalar(
+                select(FindingEntry).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+            )
+            return entry.get_finding() if entry else None
+
+    async def add_finding_evidence_async(self, *, evidence: FindingEvidence) -> FindingEvidence:
+        """
+        Persist a unique association only while its finding exists.
+
+        The insert runs before the existence check so the write lock is held
+        when the finding is checked, and a concurrent delete can't leave an orphan.
+
+        Returns:
+            FindingEvidence: The saved association, or the existing one for the same finding and conversation.
+
+        Raises:
+            LookupError: If the finding does not exist.
+            IntegrityError: If the insert fails for a reason other than a duplicate source.
+        """
+        entry = FindingEvidenceEntry(evidence)
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                session.add(entry)
+                await session.flush()
+                if await session.scalar(select(FindingEntry.id).where(FindingEntry.id == evidence.finding_id)) is None:
+                    raise LookupError(f"Finding '{evidence.finding_id}' not found.")
+                return entry.get_evidence()
+        except IntegrityError as exc:
+            async with await self.get_session_async() as session:
+                if await session.scalar(select(FindingEntry.id).where(FindingEntry.id == evidence.finding_id)) is None:
+                    raise LookupError(f"Finding '{evidence.finding_id}' not found.") from exc
+            existing = await self.get_finding_evidence_by_source_async(
+                finding_id=evidence.finding_id, conversation_id=evidence.conversation_id
+            )
+            if existing is None:
+                raise
+            return existing
+
+    async def get_finding_evidence_async(
+        self, *, finding_id: uuid.UUID, limit: int, offset: int
+    ) -> list[FindingEvidence]:
+        """
+        Read a bounded page ordered by attachment time and identity.
+
+        Returns:
+            list[FindingEvidence]: Associations in descending attachment order.
+
+        Raises:
+            ValueError: If the page bounds are invalid.
+        """
+        if limit < 1 or offset < 0:
+            raise ValueError("Evidence limit must be positive and offset must be nonnegative.")
+        statement = (
+            select(FindingEvidenceEntry)
+            .where(FindingEvidenceEntry.finding_id == finding_id)
+            .order_by(FindingEvidenceEntry.attached_at.desc(), FindingEvidenceEntry.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        async with await self.get_session_async() as session:
+            return [entry.get_evidence() for entry in (await session.scalars(statement)).all()]
+
+    async def get_finding_evidence_by_source_async(
+        self, *, finding_id: uuid.UUID, conversation_id: str
+    ) -> FindingEvidence | None:
+        """
+        Read the unique association for a finding and conversation.
+
+        Returns:
+            FindingEvidence | None: The matching association, if present.
+        """
+        async with await self.get_session_async() as session:
+            entry = await session.scalar(
+                select(FindingEvidenceEntry).where(
+                    FindingEvidenceEntry.finding_id == finding_id,
+                    FindingEvidenceEntry.conversation_id == conversation_id,
+                )
+            )
+            return entry.get_evidence() if entry else None
+
+    async def delete_finding_evidence_async(self, *, finding_id: uuid.UUID, evidence_id: uuid.UUID) -> None:
+        """
+        Detach an association without changing its source.
+
+        Raises:
+            LookupError: If the association does not belong to the finding.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        async with await self.get_session_async() as session, session.begin():
+            result = await session.execute(
+                delete(FindingEvidenceEntry).where(
+                    FindingEvidenceEntry.finding_id == finding_id, FindingEvidenceEntry.id == evidence_id
+                )
+            )
+            if not isinstance(result, CursorResult):
+                raise RuntimeError("Evidence deletion did not return a database cursor result.")
+            if result.rowcount == 0:
+                raise LookupError(f"Evidence '{evidence_id}' not found in finding '{finding_id}'.")
+
+    async def get_finding_evidence_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """
+        Count associations for a page of findings in one query.
+
+        Returns:
+            dict[uuid.UUID, int]: Counts for findings with associations.
+        """
+        if not finding_ids:
+            return {}
+        statement = (
+            select(FindingEvidenceEntry.finding_id, func.count())
+            .where(FindingEvidenceEntry.finding_id.in_(finding_ids))
+            .group_by(FindingEvidenceEntry.finding_id)
+        )
+        async with await self.get_session_async() as session:
+            return dict((await session.execute(statement)).all())
 
     def _uses_legacy_memory_override(self) -> bool:
         return any(

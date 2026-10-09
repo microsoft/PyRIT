@@ -3,13 +3,17 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import LabelsBar from './LabelsBar'
-import { DEFAULT_GLOBAL_LABELS } from './labelDefaults'
-import { labelsApi } from '../../services/api'
+import { DEFAULT_GLOBAL_LABELS as FRESH_GLOBAL_LABELS } from './labelDefaults'
+import { labelsApi, operationsApi } from '@/services/api'
+
+// These regressions also exercise preferences saved before operations were persistent records.
+const DEFAULT_GLOBAL_LABELS = { ...FRESH_GLOBAL_LABELS, operation: 'op_trash_panda' }
 
 jest.mock('../../services/api', () => ({
   labelsApi: {
     getLabels: jest.fn(),
   },
+  operationsApi: { list: jest.fn(), create: jest.fn() },
 }))
 
 const mockedLabelsApi = labelsApi as jest.Mocked<typeof labelsApi>
@@ -22,9 +26,10 @@ describe('LabelsBar', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockedLabelsApi.getLabels.mockImplementation(() => new Promise(() => {}))
+    jest.mocked(operationsApi.list).mockImplementation(() => new Promise(() => {}))
   })
 
-  it('should render default labels', () => {
+  it('should render legacy default labels', () => {
     const onChange = jest.fn()
     render(
       <TestWrapper>
@@ -36,8 +41,8 @@ describe('LabelsBar', () => {
     // also has an aria-hidden "measure" row with mirrored chips used
     // purely to compute available width — query by data-testid so we
     // don't accidentally match the hidden mirror.
-    expect(screen.getByTestId('label-operator')).toHaveTextContent('roakey')
-    expect(screen.getByTestId('label-operation')).toHaveTextContent('op_trash_panda')
+    expect(screen.getByTestId('edit-label-operator')).toHaveValue('roakey')
+    expect(screen.getByTestId('edit-label-operation')).toHaveValue('op_trash_panda')
   })
 
   it('should show warning icon for dummy values', () => {
@@ -58,15 +63,15 @@ describe('LabelsBar', () => {
         <LabelsBar labels={{ operator: 'alice', operation: 'op_demo' }} onLabelsChange={onChange} operatorReadOnly />
       </TestWrapper>,
     )
-    const operator = screen.getByRole('button', { name: 'Signed-in operator: alice' })
-    expect(operator).toHaveAttribute('aria-disabled', 'true')
+    const operator = screen.getByRole('textbox', { name: 'Signed-in operator' })
+    expect(operator).toHaveAttribute('readonly')
     await user.click(operator)
-    expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
+    expect(operator).toHaveValue('alice')
     await user.click(screen.getByTestId('labels-icon-btn'))
     expect(await screen.findByRole('heading', { name: 'Default Labels' })).toBeInTheDocument()
     expect(screen.queryByTestId('popover-metadata-operator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('popover-label-operator')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('edit-label-operator')).toHaveAttribute('readonly')
     expect(onChange).not.toHaveBeenCalled()
   })
 
@@ -130,16 +135,15 @@ describe('LabelsBar', () => {
     expect(warning).toHaveFocus()
   })
 
-  it('should not allow removing required labels (operator, operation)', () => {
+  it('should allow removing the operation but not the operator', () => {
     render(
       <TestWrapper>
         <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={jest.fn()} />
       </TestWrapper>
     )
 
-    // operator and operation should not have remove buttons
     expect(screen.queryByTestId('remove-label-operator')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('remove-label-operation')).not.toBeInTheDocument()
+    expect(screen.getByTestId('remove-label-operation')).toBeInTheDocument()
   })
 
   it('should allow removing custom labels', () => {
@@ -169,7 +173,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    expect(screen.getByTestId('label-operation')).toHaveAttribute('aria-describedby')
+    expect(screen.getByRole('combobox', { name: 'Operation' })).toBeInTheDocument()
   })
 
   it('should keep the remove button out of the edit control', async () => {
@@ -189,7 +193,7 @@ describe('LabelsBar', () => {
     expect(edit).not.toContainElement(remove)
     expect(remove).toHaveAccessibleName('Remove team label')
     // Required labels have nothing to nest in the first place.
-    expect(screen.getByTestId('label-operator')).toHaveAttribute('role', 'button')
+    expect(screen.getByRole('textbox', { name: 'Operator' })).toBeInTheDocument()
   })
 
   it('should start an edit when the chip is clicked beside the edit control', async () => {
@@ -314,7 +318,7 @@ describe('LabelsBar', () => {
     )
 
     // Click on operator label to edit
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
 
     await waitFor(() => {
       expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
@@ -353,7 +357,7 @@ describe('LabelsBar', () => {
     await waitFor(() => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
-    expect(screen.getByTestId('label-operator')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
   })
 
   it('should reject empty key when adding a label', async () => {
@@ -407,7 +411,7 @@ describe('LabelsBar', () => {
     )
 
     // Click on operator label to start editing
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
 
     await waitFor(() => {
       expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
@@ -435,19 +439,20 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
     fireEvent.change(operatorInput, { target: { value: 'alice' } })
 
     // Leaving the operator schedules its save; the click starts the next edit.
     fireEvent.blur(operatorInput)
-    fireEvent.click(screen.getByTestId('label-operation'))
+    fireEvent.focus(screen.getByTestId('edit-label-operation'))
+    fireEvent.click(screen.getByTestId('edit-label-operation'))
     await screen.findByTestId('edit-label-operation')
 
     await act(async () => { await new Promise(r => setTimeout(r, 400)) })
 
     expect(screen.getByTestId('edit-label-operation')).toBeInTheDocument()
-    expect(screen.queryByTestId('edit-label-operator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('edit-label-operator')).toHaveValue(DEFAULT_GLOBAL_LABELS.operator)
     // The operator edit still went in; only its clean-up was skipped.
     expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS, operator: 'alice' })
   })
@@ -461,10 +466,10 @@ describe('LabelsBar', () => {
     )
 
     // Leaving the operation picker for the operator, the other way round.
-    fireEvent.click(screen.getByTestId('label-operation'))
+    fireEvent.click(screen.getByTestId('edit-label-operation'))
     const operationInput = await screen.findByTestId('edit-label-operation')
     fireEvent.blur(operationInput)
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
 
     await act(async () => { await new Promise(r => setTimeout(r, 400)) })
@@ -484,11 +489,11 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     fireEvent.blur(await screen.findByTestId('edit-label-operator'))
-    fireEvent.click(screen.getByTestId('label-operation'))
+    fireEvent.click(screen.getByTestId('edit-label-operation'))
     await screen.findByTestId('edit-label-operation')
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     await screen.findByTestId('edit-label-operator')
 
     await act(async () => { await new Promise(r => setTimeout(r, 400)) })
@@ -505,11 +510,12 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
     fireEvent.change(operatorInput, { target: { value: '' } })
     fireEvent.blur(operatorInput)
-    fireEvent.click(screen.getByTestId('label-operation'))
+    fireEvent.focus(screen.getByTestId('edit-label-operation'))
+    fireEvent.click(screen.getByTestId('edit-label-operation'))
     await screen.findByTestId('edit-label-operation')
 
     await act(async () => { await new Promise(r => setTimeout(r, 400)) })
@@ -529,7 +535,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
     fireEvent.change(operatorInput, { target: { value: 'dana' } })
     fireEvent.blur(operatorInput)
@@ -568,7 +574,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
     fireEvent.change(operatorInput, { target: { value: 'al' } })
 
@@ -608,7 +614,7 @@ describe('LabelsBar', () => {
 
     // Wait for the suggestions once, then run the sequence without awaiting
     // anything: both edits have to finish inside the same save delay.
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
     fireEvent.change(operatorInput, { target: { value: 'al' } })
     const alice = await screen.findByText('alice')
@@ -639,7 +645,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     const operatorInput = await screen.findByTestId('edit-label-operator')
     fireEvent.change(operatorInput, { target: { value: 'dana' } })
     fireEvent.blur(operatorInput)
@@ -690,7 +696,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
 
     await waitFor(() => {
       expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
@@ -703,7 +709,7 @@ describe('LabelsBar', () => {
     expect(onChange).not.toHaveBeenCalled()
     // Edit mode should be closed - the original label should reappear
     await waitFor(() => {
-      expect(screen.getByTestId('label-operator')).toBeInTheDocument()
+      expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
     })
   })
 
@@ -715,7 +721,7 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
 
     await waitFor(() => {
       expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
@@ -867,7 +873,7 @@ describe('LabelsBar', () => {
     })
 
     // Click on operator to edit
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
 
     await waitFor(() => {
       expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
@@ -903,7 +909,7 @@ describe('LabelsBar', () => {
       expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
 
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
 
     await waitFor(() => {
       expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
@@ -933,9 +939,8 @@ describe('LabelsBar', () => {
       </TestWrapper>
     )
 
-    // operator and operation should not have remove buttons (already tested)
     expect(screen.queryByTestId('remove-label-operator')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('remove-label-operation')).not.toBeInTheDocument()
+    expect(screen.getByTestId('remove-label-operation')).toBeInTheDocument()
 
     // team should have a remove button
     expect(screen.getByTestId('remove-label-team')).toBeInTheDocument()
@@ -1033,6 +1038,10 @@ describe('LabelsBar', () => {
     const root = container.querySelector('[data-testid="labels-bar"]') as HTMLElement | null
     if (!root) throw new Error('labels-bar not found')
     Object.defineProperty(root, 'clientWidth', { configurable: true, value: 250 })
+    const metadata = screen.getByRole('combobox', { name: 'Operation' }).closest('[data-testid="labels-bar"]')
+      ?.querySelector('[data-testid="edit-label-operator"]')?.parentElement?.parentElement?.parentElement?.parentElement
+    if (!metadata) throw new Error('metadata controls not found')
+    Object.defineProperty(metadata, 'offsetWidth', { configurable: true, value: 240 })
     // Only one 100 px chip fits after reserving room for the icon button.
     const measure = root.querySelector('[aria-hidden="true"]') as HTMLElement | null
     if (measure) {
@@ -1060,8 +1069,8 @@ describe('LabelsBar', () => {
     })
 
     // Metadata remains in the scrollable bar; custom labels stay in the popover.
-    expect(screen.getByTestId('label-operator')).toBeInTheDocument()
-    expect(screen.getByTestId('label-operation')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-label-operator')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-label-operation')).toBeInTheDocument()
     expect(screen.queryByTestId('label-team')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('labels-icon-btn'))
     await waitFor(() => {
@@ -1072,11 +1081,11 @@ describe('LabelsBar', () => {
     expect(screen.queryByTestId('popover-metadata-operator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('popover-metadata-operation')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('labels-icon-btn'))
-    fireEvent.click(screen.getByTestId('label-operator'))
+    fireEvent.click(screen.getByTestId('edit-label-operator'))
     expect(await screen.findByTestId('edit-label-operator')).toBeInTheDocument()
     fireEvent.keyDown(screen.getByTestId('edit-label-operator'), { key: 'Enter' })
 
-    fireEvent.click(screen.getByTestId('label-operation'))
+    fireEvent.click(screen.getByTestId('edit-label-operation'))
     expect(await screen.findByTestId('edit-label-operation')).toBeInTheDocument()
   })
 
@@ -1084,6 +1093,9 @@ describe('LabelsBar', () => {
     const OPERATIONS = ['op_2026_07_grok_45', 'op_2026_08_probe', 'validate-button-test']
 
     function renderWithOperations(onChange: jest.Mock, operations: string[] = OPERATIONS) {
+      jest.mocked(operationsApi.list).mockResolvedValue({
+        items: operations.map((name, index) => ({ id: `operation-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
+      })
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         operators: ['alice'],
@@ -1102,12 +1114,12 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
       expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
       expect(screen.getByRole('option', { name: 'op_2026_07_grok_45' })).toBeInTheDocument()
       const input = screen.getByTestId('edit-label-operation') as HTMLInputElement
-      expect(input.placeholder).toBe(DEFAULT_GLOBAL_LABELS.operation)
+      expect(input.placeholder).toBe('Search operations')
       expect(input.value).toBe('')
     })
 
@@ -1116,7 +1128,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.click(await screen.findByRole('option', { name: 'op_2026_08_probe' }))
 
       expect(onChange).toHaveBeenCalledWith({
@@ -1130,7 +1142,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.click(await screen.findByRole('option', { name: 'validate-button-test' }))
 
       expect(onChange).toHaveBeenCalledWith({
@@ -1144,7 +1156,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       await screen.findByRole('option', { name: 'op_2026_08_probe' })
       fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'grok' } })
 
@@ -1152,52 +1164,45 @@ describe('LabelsBar', () => {
       expect(screen.queryByRole('option', { name: 'op_2026_08_probe' })).not.toBeInTheDocument()
     })
 
-    it('should create a new operation from typed text', async () => {
+    it('should not create a new operation from typed text', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       await screen.findByRole('option', { name: 'op_2026_08_probe' })
       fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'op_2026_09_new' } })
-      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_2026_09_new"' }))
-
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'op_2026_09_new',
-      })
+      expect(screen.queryByRole('option', { name: 'Create "op_2026_09_new"' })).not.toBeInTheDocument()
+      expect(onChange).not.toHaveBeenCalled()
     })
 
-    it('should refuse to create a new operation that breaks the value rules', async () => {
+    it('should treat arbitrary punctuation as search, not creation', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       await screen.findByRole('option', { name: 'op_2026_08_probe' })
       fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'bad name!' } })
 
-      // The rules are stated while typing instead of offering a create that fails.
-      expect(
-        await screen.findByRole('option', { name: 'Only lowercase letters, numbers, underscores' })
-      ).toBeInTheDocument()
+      expect(await screen.findByRole('option', { name: 'No matching saved operations.' })).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: 'Create "bad name!"' })).not.toBeInTheDocument()
       expect(onChange).not.toHaveBeenCalled()
     })
 
-    it('should drop the rules note once the typed name becomes valid', async () => {
+    it('should restore saved matches when the search changes', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
       fireEvent.change(input, { target: { value: 'bad name!' } })
-      await screen.findByRole('option', { name: 'Only lowercase letters, numbers, underscores' })
+      await screen.findByRole('option', { name: 'No matching saved operations.' })
 
-      fireEvent.change(input, { target: { value: 'op_2026_09_ok' } })
+      fireEvent.change(input, { target: { value: 'probe' } })
 
-      expect(await screen.findByRole('option', { name: 'Create "op_2026_09_ok"' })).toBeInTheDocument()
+      expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
       expect(
         screen.queryByRole('option', { name: 'Only lowercase letters, numbers, underscores' })
       ).not.toBeInTheDocument()
@@ -1208,11 +1213,13 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
       // Narrow to a single option so the active option is unambiguous.
       fireEvent.change(input, { target: { value: 'grok' } })
       await screen.findByRole('option', { name: 'op_2026_07_grok_45' })
+      fireEvent.keyDown(input, { key: 'ArrowDown' })
+      fireEvent.keyDown(input, { key: 'ArrowDown' })
       fireEvent.keyDown(input, { key: 'Enter' })
 
       expect(onChange).toHaveBeenCalledWith({
@@ -1226,28 +1233,32 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
       fireEvent.keyDown(input, { key: 'Escape' })
 
       await waitFor(() => {
-        expect(screen.queryByTestId('edit-label-operation')).not.toBeInTheDocument()
+        expect(input).toHaveAttribute('aria-expanded', 'false')
+        expect(input).toHaveValue(DEFAULT_GLOBAL_LABELS.operation)
       })
       expect(onChange).not.toHaveBeenCalled()
     })
 
-    it('should offer creation when no operations exist yet', async () => {
+    it('should direct users to explicit creation when no saved operations exist', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange, [])
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
-      expect(await screen.findByRole('option', { name: /type a name to create one/i })).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
+      await waitFor(() => {
+        expect(screen.getAllByRole('option')).toHaveLength(1)
+        expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
+      })
 
       fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: 'op_first' } })
-      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_first"' }))
-
-      expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_GLOBAL_LABELS, operation: 'op_first' })
+      expect(screen.queryByRole('option', { name: 'Create "op_first"' })).not.toBeInTheDocument()
+      expect(screen.getAllByRole('option')[0]).toHaveTextContent('New operation')
+      expect(onChange).not.toHaveBeenCalled()
     })
 
     it('should show a loading option while operations are still being fetched', async () => {
@@ -1259,7 +1270,7 @@ describe('LabelsBar', () => {
         </TestWrapper>
       )
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
       expect(await screen.findByRole('option', { name: /loading operations/i })).toBeInTheDocument()
     })
@@ -1270,13 +1281,13 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      await user.click(screen.getByTestId('label-operation'))
+      await user.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByRole('combobox', { name: 'Operation' })
       await waitFor(() => expect(input).toHaveFocus())
       await user.click(document.body)
 
       await waitFor(() => {
-        expect(input).not.toBeInTheDocument()
+        expect(input).toHaveAttribute('aria-expanded', 'false')
       })
       expect(onChange).not.toHaveBeenCalled()
     })
@@ -1287,13 +1298,13 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      // The chip must be a real, focusable control before it can be activated.
-      const chip = screen.getByTestId('label-operation')
-      expect(chip).toHaveAttribute('role', 'button')
-      expect(chip).toHaveAttribute('aria-label', expect.stringContaining(DEFAULT_GLOBAL_LABELS.operation))
+      // The permanent combobox remains focusable while closed.
+      const chip = screen.getByTestId('edit-label-operation')
+      expect(chip).toHaveAttribute('role', 'combobox')
+      expect(chip).toHaveValue(DEFAULT_GLOBAL_LABELS.operation)
       chip.focus()
       expect(chip).toHaveFocus()
-      await user.keyboard('{Enter}')
+      await user.keyboard('{ArrowDown}')
 
       const input = await screen.findByTestId('edit-label-operation')
       expect(await screen.findByRole('option', { name: 'op_2026_08_probe' })).toBeInTheDocument()
@@ -1306,7 +1317,8 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.keyDown(screen.getByTestId('label-operation'), { key: 'Enter' })
+      fireEvent.focus(screen.getByTestId('edit-label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       await screen.findByTestId('edit-label-operation')
       await user.tab()
 
@@ -1327,8 +1339,9 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.keyDown(screen.getByTestId('label-operation'), { key: 'Enter' })
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
+      input.focus()
       await waitFor(() => expect(input).toHaveFocus())
       const nextButton = screen.getByRole('button', { name: 'after' })
 
@@ -1337,7 +1350,7 @@ describe('LabelsBar', () => {
       fireEvent.keyDown(input, { key: 'Tab' })
       nextButton.focus()
 
-      await waitFor(() => expect(input).not.toBeInTheDocument())
+      await waitFor(() => expect(input).toHaveAttribute('aria-expanded', 'false'))
       expect(onChange).not.toHaveBeenCalled()
       expect(nextButton).toHaveFocus()
     })
@@ -1347,7 +1360,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange, ['op_Legacy_Run'])
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
 
       // A partial match still finds the differently-cased operation.
@@ -1399,7 +1412,7 @@ describe('LabelsBar', () => {
 
     it('should say so when the operations could not be loaded', async () => {
       const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
           <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
@@ -1407,57 +1420,52 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
       expect(
-        await screen.findByRole('option', { name: /could not load existing operations/i })
+        await screen.findByRole('option', { name: /could not load saved operations/i })
       ).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: /no operations yet/i })).not.toBeInTheDocument()
     })
 
-    it('should create a typed name with the keyboard', async () => {
+    it('should not select an unsaved typed name with the keyboard', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
       fireEvent.change(input, { target: { value: 'op_2026_09_typed' } })
-      await screen.findByRole('option', { name: 'Create "op_2026_09_typed"' })
+      await screen.findByRole('option', { name: 'No matching saved operations.' })
       fireEvent.keyDown(input, { key: 'Enter' })
 
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'op_2026_09_typed',
-      })
+      expect(onChange).not.toHaveBeenCalled()
     })
 
-    it('should keep a newly created operation in the list', async () => {
+    it('should refresh saved operations when reopening the picker', async () => {
       const onChange = jest.fn()
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
-      fireEvent.change(await screen.findByTestId('edit-label-operation'), {
-        target: { value: 'op_2026_09_fresh' },
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
+      fireEvent.keyDown(await screen.findByTestId('edit-label-operation'), { key: 'Escape' })
+      jest.mocked(operationsApi.list).mockResolvedValue({
+        items: [{ id: 'fresh', name: 'op_2026_09_fresh', created_at: '2026-10-07T16:00:00Z' }],
       })
-      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_2026_09_fresh"' }))
 
-      // Reopen: the name it just created has to still be selectable.
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
       expect(await screen.findByRole('option', { name: 'op_2026_09_fresh' })).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: 'Create "op_2026_09_fresh"' })).not.toBeInTheDocument()
     })
 
-    it('should list the operation in use even when the saved list has not caught up', async () => {
-      // The labels bar in the ribbon and the one on Home each fetch their own
-      // list, so a name chosen in the other one is not in this response yet.
+    it('should not add the operation in use to the saved choices', async () => {
       const onChange = jest.fn()
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         labels: { operation: OPERATIONS, operator: ['alice'] },
       })
+      jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
       render(
         <TestWrapper>
           <LabelsBar
@@ -1468,9 +1476,11 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
-      expect(await screen.findByRole('option', { name: 'op_chosen_elsewhere' })).toBeInTheDocument()
+      await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
+      expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_chosen_elsewhere' })).not.toBeInTheDocument()
 
       // Typing it must not offer to create the name that is already set.
       fireEvent.change(screen.getByTestId('edit-label-operation'), {
@@ -1481,9 +1491,7 @@ describe('LabelsBar', () => {
       ).not.toBeInTheDocument()
     })
 
-    it('should let you re-select the operation in use even if it breaks the naming rules', async () => {
-      // A legacy name can be in use without being in the labels API — from a
-      // config file, or a session where nothing was stored under it yet.
+    it('should allow removing a legacy selected operation', async () => {
       const onChange = jest.fn()
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
@@ -1499,21 +1507,18 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
-      fireEvent.click(await screen.findByRole('option', { name: 'legacy-op-name.2024' }))
-
-      expect(onChange).toHaveBeenCalledWith(
-        expect.objectContaining({ operation: 'legacy-op-name.2024' })
-      )
+      fireEvent.click(screen.getByTestId('remove-label-operation'))
+      expect(onChange).toHaveBeenCalledWith({ operator: FRESH_GLOBAL_LABELS.operator })
       expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
     })
 
-    it('should not say there are no operations while showing the one in use', async () => {
+    it('should offer only New operation when the saved list is empty and a legacy operation is selected', async () => {
       const onChange = jest.fn()
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         labels: { operation: [], operator: ['alice'] },
       })
+      jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
       render(
         <TestWrapper>
           <LabelsBar
@@ -1524,18 +1529,17 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
-      expect(await screen.findByRole('option', { name: 'op_only_one' })).toBeInTheDocument()
-      expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(1))
+      expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_only_one' })).not.toBeInTheDocument()
     })
 
-    it('should keep saying the operations could not be loaded after one is created', async () => {
-      // A name created while the request was still in flight is a local
-      // value, not proof that the list arrived.
+    it('should not accept a typed name while the saved list is loading or failed', async () => {
       const onChange = jest.fn()
       let rejectLabels: (reason: Error) => void = () => {}
-      mockedLabelsApi.getLabels.mockReturnValue(
+      jest.mocked(operationsApi.list).mockReturnValueOnce(
         new Promise((_resolve, reject) => { rejectLabels = reject })
       )
       render(
@@ -1544,28 +1548,25 @@ describe('LabelsBar', () => {
         </TestWrapper>
       )
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.change(await screen.findByTestId('edit-label-operation'), {
         target: { value: 'op_made_during_load' },
       })
-      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_made_during_load"' }))
+      expect(onChange).not.toHaveBeenCalled()
 
       await act(async () => {
         rejectLabels(new Error('boom'))
       })
 
-      fireEvent.click(screen.getByTestId('label-operation'))
-
       expect(
-        await screen.findByRole('option', { name: /Could not load existing operations/ })
+        await screen.findByRole('option', { name: /Could not load saved operations/ })
       ).toBeInTheDocument()
-      expect(screen.getByRole('option', { name: 'op_made_during_load' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_made_during_load' })).not.toBeInTheDocument()
     })
 
     it('should still say the operations could not be loaded when one is already set', async () => {
-      // The value in use is listed, but that must not read as a loaded list.
       const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
           <LabelsBar
@@ -1576,22 +1577,23 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
       expect(
-        await screen.findByRole('option', { name: /Could not load existing operations/ })
+        await screen.findByRole('option', { name: /Could not load saved operations/ })
       ).toBeInTheDocument()
-      expect(screen.getByRole('option', { name: 'op_already_set' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_already_set' })).not.toBeInTheDocument()
     })
 
-    it('should keep the operation in use on the list when the list is capped', async () => {
-      // The value in use is put at the front of whatever the API returned, so
-      // a cap applied to the end of the list is exactly what would drop it.
+    it('should not inject a legacy operation into a capped saved list', async () => {
       const onChange = jest.fn()
       const many = Array.from({ length: 250 }, (_, i) => `op_2026_08_run_${String(i).padStart(4, '0')}`)
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         labels: { operation: many, operator: ['alice'] },
+      })
+      jest.mocked(operationsApi.list).mockResolvedValue({
+        items: many.map((name, index) => ({ id: `op-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
       })
       render(
         <TestWrapper>
@@ -1603,17 +1605,11 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
-      const inUse = await screen.findByRole('option', { name: 'op_chosen_elsewhere' })
-      expect(inUse).toBeInTheDocument()
-
-      // And it is still selectable, not just present.
-      fireEvent.click(inUse)
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'op_chosen_elsewhere',
-      })
+      await screen.findByRole('option', { name: /type to narrow/i })
+      expect(screen.queryByRole('option', { name: 'op_chosen_elsewhere' })).not.toBeInTheDocument()
+      expect(onChange).not.toHaveBeenCalled()
     })
 
     it('should keep the operation in use on a capped list that already contains it', async () => {
@@ -1625,6 +1621,9 @@ describe('LabelsBar', () => {
         source: 'attacks',
         labels: { operation: many, operator: ['alice'] },
       })
+      jest.mocked(operationsApi.list).mockResolvedValue({
+        items: many.map((name, index) => ({ id: `op-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
+      })
       render(
         <TestWrapper>
           <LabelsBar
@@ -1635,7 +1634,7 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
 
       // Listed once, not twice, even though it is also in the saved list.
       expect(await screen.findAllByRole('option', { name: 'op_2026_08_run_0240' })).toHaveLength(1)
@@ -1650,7 +1649,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange, [...decoys, 'run_042'].sort())
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.change(await screen.findByTestId('edit-label-operation'), {
         target: { value: 'run_042' },
       })
@@ -1673,10 +1672,10 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange, many)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       await screen.findByRole('option', { name: 'op_2026_08_run_0000' })
 
-      expect(screen.getAllByRole('option')).toHaveLength(201)
+      expect(screen.getAllByRole('option')).toHaveLength(202)
       expect(screen.getByText('Showing 200 of 250 — type to narrow')).toBeInTheDocument()
       expect(screen.queryByRole('option', { name: 'op_2026_08_run_0249' })).not.toBeInTheDocument()
 
@@ -1694,7 +1693,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange, many)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const note = await screen.findByRole('option', { name: /type to narrow/ })
 
       expect(note).toHaveAttribute('aria-disabled', 'true')
@@ -1705,7 +1704,7 @@ describe('LabelsBar', () => {
     it('should keep saying the operations could not be loaded while a name is typed', async () => {
       // The note answers "why is this list empty"; typing does not answer it.
       const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
           <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
@@ -1713,19 +1712,19 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const input = await screen.findByTestId('edit-label-operation')
 
       fireEvent.change(input, { target: { value: 'op_2026_09_typed' } })
-      expect(await screen.findByRole('option', { name: 'Create "op_2026_09_typed"' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Create "op_2026_09_typed"' })).not.toBeInTheDocument()
       expect(
-        screen.getByRole('option', { name: /Could not load existing operations/ })
+        await screen.findByRole('option', { name: /Could not load saved operations/ })
       ).toBeInTheDocument()
 
       fireEvent.change(input, { target: { value: 'op bad' } })
-      expect(await screen.findByText(/Only lowercase letters/)).toBeInTheDocument()
+      expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
       expect(
-        screen.getByRole('option', { name: /Could not load existing operations/ })
+        screen.getByRole('option', { name: /Could not load saved operations/ })
       ).toBeInTheDocument()
     })
 
@@ -1733,7 +1732,7 @@ describe('LabelsBar', () => {
       // The notes share the option list with real values, so they have to be
       // unselectable or one of them becomes the operation.
       const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockRejectedValue(new Error('boom'))
+      jest.mocked(operationsApi.list).mockRejectedValueOnce(new Error('boom'))
       render(
         <TestWrapper>
           <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
@@ -1741,29 +1740,27 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       const failed = await screen.findByRole('option', {
-        name: /Could not load existing operations/,
+        name: /Could not load saved operations/,
       })
       expect(failed).toHaveAttribute('aria-disabled', 'true')
 
       fireEvent.change(await screen.findByTestId('edit-label-operation'), {
         target: { value: 'op bad' },
       })
-      const invalid = await screen.findByRole('option', { name: /Only lowercase letters/ })
-      expect(invalid).toHaveAttribute('aria-disabled', 'true')
-
       fireEvent.click(failed)
-      fireEvent.click(invalid)
       expect(onChange).not.toHaveBeenCalled()
     })
 
-    it('should not say there are no operations while offering to create one', async () => {
+    it('should offer only New operation for an empty saved list, including while typing', async () => {
+      const user = userEvent.setup()
       const onChange = jest.fn()
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         labels: { operation: [], operator: ['alice'] },
       })
+      jest.mocked(operationsApi.list).mockResolvedValue({ items: [] })
       render(
         <TestWrapper>
           <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
@@ -1771,24 +1768,29 @@ describe('LabelsBar', () => {
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operation'))
-      const input = await screen.findByTestId('edit-label-operation')
-      expect(await screen.findByText(/No operations yet/)).toBeInTheDocument()
+      const input = screen.getByRole('combobox', { name: 'Operation' })
+      await user.click(input)
+      await waitFor(() => {
+        expect(screen.getAllByRole('option')).toHaveLength(1)
+        expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
+      })
 
-      fireEvent.change(input, { target: { value: 'op_2026_09_first' } })
-      expect(await screen.findByRole('option', { name: 'Create "op_2026_09_first"' })).toBeInTheDocument()
-      expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
+      await user.type(input, 'op_2026_09_first')
+      expect(screen.queryByRole('option', { name: 'Create "op_2026_09_first"' })).not.toBeInTheDocument()
+      expect(screen.getAllByRole('option')).toHaveLength(1)
 
-      // Same while the typed name is one that cannot be created.
-      fireEvent.change(input, { target: { value: 'op bad' } })
-      expect(await screen.findByText(/Only lowercase letters/)).toBeInTheDocument()
-      expect(screen.queryByText(/No operations yet/)).not.toBeInTheDocument()
+      await user.clear(input)
+      await user.type(input, 'op bad')
+      expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
+      expect(screen.getAllByRole('option')).toHaveLength(1)
+      expect(screen.getByRole('option', { name: 'New operation…' })).toBeInTheDocument()
+      expect(onChange).not.toHaveBeenCalled()
     })
 
-    it('should keep an operation created while the list was still loading', async () => {
+    it('should not select a typed name when a delayed saved list arrives', async () => {
       const onChange = jest.fn()
-      let resolveLabels: (value: { source: string; labels: Record<string, string[]> }) => void = () => {}
-      mockedLabelsApi.getLabels.mockReturnValue(
+      let resolveLabels: (value: { items: Array<{ id: string; name: string; created_at: string }> }) => void = () => {}
+      jest.mocked(operationsApi.list).mockReturnValueOnce(
         new Promise(resolve => { resolveLabels = resolve })
       )
       render(
@@ -1797,21 +1799,18 @@ describe('LabelsBar', () => {
         </TestWrapper>
       )
 
-      fireEvent.click(screen.getByTestId('label-operation'))
+      fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.change(await screen.findByTestId('edit-label-operation'), {
         target: { value: 'op_made_while_loading' },
       })
-      fireEvent.click(await screen.findByRole('option', { name: 'Create "op_made_while_loading"' }))
 
-      // The response was in flight and cannot know about the name just created.
       await act(async () => {
-        resolveLabels({ source: 'attacks', labels: { operation: ['op_from_server'] } })
+        resolveLabels({ items: [{ id: 'server', name: 'op_from_server', created_at: '2026-10-07T16:00:00Z' }] })
       })
-
-      fireEvent.click(screen.getByTestId('label-operation'))
-
-      expect(await screen.findByRole('option', { name: 'op_made_while_loading' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'op_made_while_loading' })).not.toBeInTheDocument()
+      fireEvent.change(screen.getByTestId('edit-label-operation'), { target: { value: '' } })
       expect(screen.getByRole('option', { name: 'op_from_server' })).toBeInTheDocument()
+      expect(onChange).not.toHaveBeenCalled()
     })
 
     it('should keep the plain input for labels other than operation', async () => {
@@ -1819,7 +1818,7 @@ describe('LabelsBar', () => {
       renderWithOperations(onChange)
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('label-operator'))
+      fireEvent.click(screen.getByTestId('edit-label-operator'))
 
       expect(await screen.findByTestId('edit-label-operator')).toBeInTheDocument()
       expect(screen.queryByRole('option')).not.toBeInTheDocument()

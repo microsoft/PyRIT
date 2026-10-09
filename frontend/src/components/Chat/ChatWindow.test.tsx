@@ -29,6 +29,15 @@ import {
 import { attacksApi, convertersApi, scoresApi } from "../../services/api";
 import * as messageMapper from "../../utils/messageMapper";
 
+jest.mock("./FindingEvidenceDialog", () => ({
+  __esModule: true,
+  default: ({ attackResultId, conversationId, disabled }: {
+    attackResultId: string; conversationId: string; disabled: boolean;
+  }) => attackResultId && conversationId ? <button disabled={disabled} data-attack={attackResultId} data-conversation={conversationId}>
+    Link to finding
+  </button> : null,
+}));
+
 const buildCapabilities = (
   overrides: Partial<TargetCapabilities> = {}
 ): TargetCapabilities => ({
@@ -419,6 +428,60 @@ describe("ChatWindow Integration", () => {
     }
     await user.keyboard("{Escape}");
   }
+
+  it("provides the persisted viewed identity to the attachment action, not the toolbar Operation", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="related" labels={{ operation: "Different toolbar Operation" }} /></TestWrapper>);
+    const action = await screen.findByRole("button", { name: "Link to finding" });
+    await waitFor(() => { expect(action).toBeEnabled(); });
+    expect(action).toHaveAttribute("data-attack", "owner");
+    expect(action).toHaveAttribute("data-conversation", "related");
+    const conversationActions = screen.getByRole("group", { name: "Conversation actions" });
+    expect(within(conversationActions).getByRole("button", { name: "Link to finding" })).toBe(action);
+    expect(within(conversationActions).getByRole("button", { name: "Export conversation" })).toBeInTheDocument();
+    expect(within(conversationActions).getByRole("button", { name: "Toggle conversations panel" })).toBeInTheDocument();
+    expect(within(conversationActions).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(conversationActions).queryByRole("button", { name: "New Attack" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the attachment workflow mounted across viewed conversation changes so pending creation can recover", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="related" /></TestWrapper>);
+    const action = await screen.findByRole("button", { name: "Link to finding" });
+    await waitFor(() => { expect(action).toBeEnabled(); });
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="another" /></TestWrapper>);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Link to finding" })).toHaveAttribute("data-conversation", "another");
+    });
+    expect(screen.getByRole("button", { name: "Link to finding" })).toBe(action);
+  });
+
+  it.each([404, 503])("distinguishes evidence-origin message load status %s", async (status: number) => {
+    mockedAttacksApi.getMessages.mockRejectedValue({ isAxiosError: true, response: { status, data: { detail: "source load failed" } } });
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
+    if (status === 404) {
+      expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    } else {
+      expect(await screen.findByText(/Could not load conversation/)).toBeInTheDocument();
+      expect(screen.queryByText("Evidence unavailable")).not.toBeInTheDocument();
+    }
+  });
+
+  it("reports an evidence-origin successfully empty transcript as unavailable", async () => {
+    mockedAttacksApi.getMessages.mockResolvedValue({ conversation_id: "main", messages: [], target_response_status: null });
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
+      activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
+    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Link to finding" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeDisabled();
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();

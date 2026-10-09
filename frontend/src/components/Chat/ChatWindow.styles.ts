@@ -127,6 +127,18 @@ export const useChatWindowStyles = makeStyles({
   ribbonAction: {
     ...mobileTouchTarget,
   },
+  conversationActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    paddingInline: tokens.spacingHorizontalS,
+    borderInlineStartWidth: '1px',
+    borderInlineStartStyle: 'solid',
+    borderInlineStartColor: tokens.colorNeutralStroke2,
+    borderInlineEndWidth: '1px',
+    borderInlineEndStyle: 'solid',
+    borderInlineEndColor: tokens.colorNeutralStroke2,
+  },
   newAttackButton: {
     flexShrink: 0,
     [NARROW_VIEWPORT_QUERY]: {

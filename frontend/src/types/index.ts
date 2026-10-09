@@ -1267,3 +1267,76 @@ export interface RuntimeStatus {
   outcome: string
   message: string
 }
+export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
+
+export interface OperationCreate {
+  name: string
+}
+
+export interface Operation extends OperationCreate {
+  id: string
+  created_at: string
+}
+
+export interface OperationListResponse {
+  items: Operation[]
+}
+
+export interface FindingCreate {
+  title: string
+  description: string
+  severity: FindingSeverity
+  severity_other?: string | null
+  harm_type?: string | null
+  harm_type_other?: string | null
+}
+
+export interface FindingOptionsResponse {
+  harm_types: string[]
+}
+
+export interface Finding extends FindingCreate {
+  id: string
+  operation_id: string
+  created_at: string
+}
+
+export interface FindingListResponse {
+  items: FindingListItem[]
+  has_more: boolean
+  next_offset: number | null
+}
+
+export interface FindingListItem extends Finding {
+  evidence_count: number
+}
+
+export interface FindingEvidenceCreateRequest {
+  attack_result_id: string
+  conversation_id: string
+}
+
+export interface FindingEvidence {
+  id: string
+  finding_id: string
+  conversation_id: string
+  attack_result_id: string
+  attached_at: string
+}
+
+export interface FindingEvidenceAttachResponse {
+  item: FindingEvidence
+  created: boolean
+}
+
+export interface FindingEvidenceItem {
+  item: FindingEvidence
+  availability: 'available' | 'unavailable'
+  scenario_result_id: string | null
+}
+
+export interface FindingEvidenceListResponse {
+  items: FindingEvidenceItem[]
+  has_more: boolean
+  next_offset: number | null
+}
