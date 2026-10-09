@@ -218,9 +218,12 @@ request values before using them:
   preview with an `image_path`, `audio_path`, `video_path`, or `binary_path` type. The server
   downloads it once into managed storage (10 second connect, 30 second read, and 60 second
   total limits, 100 MiB limit, at most 3 redirects, no request credentials forwarded) and
-  stores it under the declared type. Converters and targets then see only the stored copy,
+  stores it under the declared type without format conversion. The format extension comes
+  from the response MIME type, the caller MIME type if the response is missing or generic,
+  or the URL suffix. Unknown formats use `.bin`, not a modality default such as `.wav`.
+  Converters and targets then see only the stored copy,
   and the piece's prompt metadata records the source URL, without credentials or query
-  string, and the reported content type. A preview that imports returns the stored copy and
+  string, and the resolved content type. A preview that imports returns the stored copy and
   that metadata, so sending them reuses the same bytes. Set `allow_media_url_import: false`
   in `.pyrit_conf` to turn imports off. Converter file parameters given a URL are downloaded
   the same way.

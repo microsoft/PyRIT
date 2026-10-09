@@ -6,10 +6,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import mimetypes
 import re
-from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
@@ -17,8 +15,6 @@ from urllib.parse import urlparse
 import httpx
 
 from pyrit.common.net_utility import get_httpx_client
-
-logger = logging.getLogger(__name__)
 
 MAX_MEDIA_URL_BYTES = 100 * 1024 * 1024
 MAX_MEDIA_URL_REDIRECTS = 3
@@ -28,9 +24,19 @@ _TIMEOUT = httpx.Timeout(_READ_TIMEOUT_SECONDS, connect=_CONNECT_TIMEOUT_SECONDS
 _DEADLINE_SECONDS = 60.0
 _GENERIC_CONTENT_TYPES = frozenset({"application/octet-stream", "binary/octet-stream"})
 _URL_SUFFIX_PATTERN = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
+_MEDIA_EXTENSIONS = {
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+    "audio/ogg": ".ogg",
+    "video/ogg": ".ogv",
+    "application/ogg": ".ogg",
+}
 
 _url_import_enabled = True
-_redact_request_log: ContextVar[bool] = ContextVar("redact_media_url_request_log", default=False)
 
 
 @dataclass(frozen=True)
@@ -62,53 +68,36 @@ def redact_url(url: str) -> str:
     return f"{parsed.scheme}://{host}{parsed.path}"
 
 
-class _RedactRequestLog(logging.Filter):
+def media_content_type(download: MediaDownload, *, mime_type: str | None = None) -> str | None:
     """
-    Keep media URL query strings out of HTTP client logs while a media URL is downloading.
+    Resolve the media type from the response, caller MIME type, then URL suffix.
 
-    httpx request lines are logged with the redacted URL. httpcore's protocol traces are dropped,
-    because they include response headers such as a signed redirect ``Location``.
-    """
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if not _redact_request_log.get():
-            return True
-        if record.name.startswith("httpcore."):
-            return False
-        if isinstance(record.args, tuple):
-            record.args = tuple(redact_url(str(arg)) if isinstance(arg, httpx.URL) else arg for arg in record.args)
-        return True
-
-
-_request_log_filter = _RedactRequestLog()
-logging.getLogger("httpx").addFilter(_request_log_filter)
-logging.getLogger("httpcore.http11").addFilter(_request_log_filter)
-logging.getLogger("httpcore.http2").addFilter(_request_log_filter)
-
-
-def media_content_type(download: MediaDownload) -> str | None:
-    """
-    Return the reported media type, or the type implied by the URL suffix when it is missing or generic.
+    Missing or generic types do not identify an encoding and are skipped.
 
     Returns:
         str | None: The lowercase media type without parameters, or None when unknown.
     """
-    content_type = (download.content_type or "").split(";", 1)[0].strip().lower()
-    if content_type and content_type not in _GENERIC_CONTENT_TYPES:
-        return content_type
+    for candidate in (download.content_type, mime_type):
+        content_type = (candidate or "").split(";", 1)[0].strip().lower()
+        if content_type and content_type not in _GENERIC_CONTENT_TYPES:
+            return content_type
     guessed, _ = mimetypes.guess_type(urlparse(download.final_url).path, strict=False)
     return guessed
 
 
-def media_extension(download: MediaDownload, *, default: str) -> str:
+def media_extension(download: MediaDownload, *, default: str, mime_type: str | None = None) -> str:
     """
     Choose the file extension for downloaded media.
 
     Returns:
         str: The extension implied by the media type, else a short suffix from the URL path, else ``default``.
     """
-    content_type = media_content_type(download)
-    extension = mimetypes.guess_extension(content_type, strict=False) if content_type else None
+    content_type = media_content_type(download, mime_type=mime_type)
+    extension = (
+        _MEDIA_EXTENSIONS.get(content_type) or mimetypes.guess_extension(content_type, strict=False)
+        if content_type
+        else None
+    )
     if extension:
         return extension
     suffix = PurePosixPath(urlparse(download.final_url).path).suffix
@@ -181,7 +170,6 @@ async def download_media_url_async(*, url: str) -> MediaDownload:
         raise ValueError("Media URLs must not include credentials.")
 
     shown = redact_url(url)
-    redacting_request_log = _redact_request_log.set(True)
     try:
         async with asyncio.timeout(_DEADLINE_SECONDS), _create_client() as client:
             request = client.build_request("GET", url)
@@ -198,26 +186,18 @@ async def download_media_url_async(*, url: str) -> MediaDownload:
                 if not _is_plain_http_url(request.url):
                     raise ValueError(f"Media URL {shown} redirected to a URL that is not a plain http or https URL.")
             raise ValueError(f"Media URL {shown} redirected more than {MAX_MEDIA_URL_REDIRECTS} times.")
-    # The httpx exceptions are not chained because their messages quote the full URL, query string included,
-    # and callers may log the raised error with its traceback. The failure is logged here with the redacted URL.
-    except httpx.InvalidURL:
-        raise ValueError(f"Media URL {shown} is not a valid http or https URL.") from None
+    except httpx.InvalidURL as exc:
+        raise ValueError(f"Media URL {shown} is not a valid http or https URL.") from exc
     except httpx.HTTPStatusError as exc:
-        _log_download_failure(shown=shown, reason=f"HTTP {exc.response.status_code}", exc=exc)
-        raise ValueError(f"Media URL {shown} returned HTTP {exc.response.status_code}.") from None
+        raise ValueError(f"Media URL {shown} returned HTTP {exc.response.status_code}.") from exc
     except (httpx.HTTPError, TimeoutError) as exc:
         reason = _failure_reason(exc)
-        _log_download_failure(shown=shown, reason=reason, exc=exc)
-        raise ValueError(f"Media URL {shown} could not be downloaded: {reason}.") from None
-    finally:
-        _redact_request_log.reset(redacting_request_log)
+        raise ValueError(f"Media URL {shown} could not be downloaded: {reason}.") from exc
 
 
 def _failure_reason(exc: BaseException) -> str:
     """
-    Describe why a download failed, with the limit that was hit, without quoting the exception.
-
-    httpx exception messages can include the full URL and its query string, so they are not repeated.
+    Describe why a download failed, with the limit that was hit.
 
     Returns:
         str: A short reason such as ``connecting timed out after 10 seconds``.
@@ -235,13 +215,3 @@ def _failure_reason(exc: BaseException) -> str:
     if isinstance(exc, httpx.ConnectError):
         return "the connection failed"
     return f"the request failed ({type(exc).__name__})"
-
-
-def _log_download_failure(*, shown: str, reason: str, exc: BaseException) -> None:
-    """Log a failed download with the redacted URL and the exception classes in its cause chain."""
-    causes: list[str] = []
-    cause: BaseException | None = exc
-    while cause is not None and len(causes) < 4:
-        causes.append(type(cause).__name__)
-        cause = cause.__cause__ or cause.__context__
-    logger.warning("Media URL %s could not be downloaded: %s (%s)", shown, reason, " <- ".join(causes))

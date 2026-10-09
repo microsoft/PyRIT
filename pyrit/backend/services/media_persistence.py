@@ -18,9 +18,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.backend.services.media_url_import import (
-    MediaDownload,
     download_media_url_async,
     media_content_type,
+    media_extension,
     redact_url,
 )
 from pyrit.common.azure_storage import is_azure_blob_uri, redact_url_credentials
@@ -254,27 +254,11 @@ async def _write_owned_media_async(
         raise
 
 
-def _imported_extension(*, download: MediaDownload, data_type: PromptDataType) -> str:
-    """
-    Choose the file extension for imported media of a declared path type.
-
-    Returns:
-        str: The extension of the reported (or URL-implied) media type when it fits the declared
-            type, else the declared type's default extension.
-    """
-    content_type = media_content_type(download)
-    expected_family = _MEDIA_FAMILIES.get(data_type)
-    if content_type and expected_family in (None, content_type.split("/", 1)[0]):
-        extension = mimetypes.guess_extension(content_type, strict=False)
-        if extension:
-            return extension
-    return DEFAULT_MEDIA_EXTENSIONS.get(str(data_type), ".bin")
-
-
 async def _import_media_url_async(
     *,
     url: str,
     data_type: PromptDataType,
+    mime_type: str | None,
     serializer_factory: SerializerFactory,
     created_paths: list[str] | None,
 ) -> MediaPersistenceResult:
@@ -282,7 +266,8 @@ async def _import_media_url_async(
     Download a media URL once and store the bytes in managed media storage under the declared type.
 
     A missing or generic reported content type is accepted, since the caller declared the type;
-    content of a different media family than the declared type is rejected.
+    content of a different media family than the declared type is rejected. Format is resolved
+    separately from the response, caller MIME type, or URL suffix; unknown formats use ``.bin``.
 
     Returns:
         MediaPersistenceResult: The managed reference to the stored copy and its redacted source URL.
@@ -291,12 +276,12 @@ async def _import_media_url_async(
         ValueError: If the download fails or the content does not match the declared media type.
     """
     download = await download_media_url_async(url=url)
-    content_type = media_content_type(download)
+    content_type = media_content_type(download, mime_type=mime_type)
     expected_family = _MEDIA_FAMILIES.get(data_type)
     family = (content_type or "").split("/", 1)[0]
     if expected_family and family in _CHECKED_FAMILIES and family != expected_family:
         raise ValueError(f"Media URL {redact_url(url)} returned {content_type}, not {expected_family} content.")
-    extension = _imported_extension(download=download, data_type=data_type)
+    extension = media_extension(download, mime_type=mime_type, default=".bin")
     serializer = serializer_factory(
         category="prompt-memory-entries",
         data_type=data_type,
@@ -375,7 +360,11 @@ async def persist_media_value_async(
             )
         if import_url:
             return await _import_media_url_async(
-                url=value, data_type=data_type, serializer_factory=serializer_factory, created_paths=created_paths
+                url=value,
+                data_type=data_type,
+                mime_type=mime_type,
+                serializer_factory=serializer_factory,
+                created_paths=created_paths,
             )
         if _is_read_from_result_storage(value):
             raise ValueError(
@@ -469,7 +458,7 @@ def media_source_metadata(result: MediaPersistenceResult, *, prefix: str = "medi
         prefix (str): Key prefix, so a piece can record its original and converted sources apart.
 
     Returns:
-        dict[str, str]: The redacted source URL and the content type the server reported, or an
+        dict[str, str]: The redacted source URL and the resolved content type, or an
             empty dict when the value was not imported.
     """
     if result.source is None:

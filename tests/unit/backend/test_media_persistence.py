@@ -3,10 +3,13 @@
 
 """Tests for shared backend media persistence."""
 
+import base64
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import quote
 
+import aiofiles
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -19,8 +22,11 @@ from pyrit.backend.services.media_persistence import (
     require_managed_blob_url,
 )
 from pyrit.backend.services.media_url_import import MediaDownload
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.storage.storage import AzureBlobStorageIO
+from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import HTTPXAPITarget
+from pyrit.prompt_target.common.chat_completions_message_builder import build_audio_content_entry_async
 
 _BLOB_ROOT = "https://account.blob.core.windows.net/results"
 
@@ -182,10 +188,10 @@ async def test_import_of_managed_blob_url_keeps_the_reference() -> None:
 @pytest.mark.parametrize(
     ("data_type", "content_type", "final_url", "expected_extension"),
     [
-        ("image_path", "application/octet-stream", "https://example.test/a", ".png"),
-        ("image_path", None, "https://example.test/a", ".png"),
+        ("image_path", "application/octet-stream", "https://example.test/a", ".bin"),
+        ("image_path", None, "https://example.test/a", ".bin"),
         ("image_path", "application/octet-stream", "https://example.test/a/photo.jpg", ".jpg"),
-        ("audio_path", "application/ogg", "https://example.test/a", ".wav"),
+        ("audio_path", "application/ogg", "https://example.test/a", ".ogg"),
         ("binary_path", "application/pdf", "https://example.test/a", ".pdf"),
         ("binary_path", "image/png", "https://example.test/a", ".png"),
     ],
@@ -201,6 +207,74 @@ async def test_import_stores_the_declared_type(
         )
 
     factory.assert_called_once_with(category="prompt-memory-entries", data_type=data_type, extension=expected_extension)
+
+
+@pytest.mark.parametrize(
+    ("content_type", "mime_type", "final_url", "content", "extension", "upload_type", "chat_format"),
+    [
+        ("application/octet-stream", "audio/mpeg", "https://example.test/a", b"ID3-MP3", ".mp3", "audio/mpeg", "mp3"),
+        (None, " AUDIO/MPEG; charset=binary ", "https://example.test/a", b"ID3-MP3", ".mp3", "audio/mpeg", "mp3"),
+        ("audio/mpeg", "audio/wav", "https://example.test/a", b"ID3-MP3", ".mp3", "audio/mpeg", "mp3"),
+        ("application/octet-stream", None, "https://example.test/a.MP3", b"ID3-MP3", ".mp3", "audio/mpeg", "mp3"),
+        ("audio/x-wav", None, "https://example.test/a", b"RIFF-WAV", ".wav", "audio/wav", "wav"),
+        ("application/ogg", None, "https://example.test/a", b"OggS", ".ogg", "audio/ogg", None),
+        ("audio/ogg", None, "https://example.test/a", b"OggS", ".ogg", "audio/ogg", None),
+        (
+            "application/octet-stream",
+            None,
+            "https://example.test/a",
+            b"UNKNOWN",
+            ".bin",
+            "application/octet-stream",
+            None,
+        ),
+        (None, "binary/octet-stream", "https://example.test/a", b"UNKNOWN", ".bin", "application/octet-stream", None),
+    ],
+)
+async def test_imported_audio_bytes_extension_and_downstream_format_async(
+    *,
+    sqlite_instance: SQLiteMemory,
+    content_type: str | None,
+    mime_type: str | None,
+    final_url: str,
+    content: bytes,
+    extension: str,
+    upload_type: str,
+    chat_format: str | None,
+) -> None:
+    request_piece = MessagePieceRequest(
+        data_type="audio_path", original_value=final_url, mime_type=mime_type, import_url=True
+    )
+    with _download(content_type=content_type, final_url=final_url, content=content):
+        await persist_message_pieces_async(pieces=[request_piece])
+
+    stored_path = Path(request_piece.original_value)
+    assert stored_path.suffix == extension
+    assert request_piece.data_type == "audio_path"
+    assert request_piece.converted_value == request_piece.original_value
+    async with aiofiles.open(stored_path, "rb") as stored_file:
+        assert await stored_file.read() == content
+
+    piece = MessagePiece(
+        role="user", original_value=request_piece.original_value, original_value_data_type="audio_path"
+    )
+    if chat_format is None:
+        with pytest.raises(ValueError, match="Unsupported audio format"):
+            await build_audio_content_entry_async(message_piece=piece)
+    else:
+        entry = await build_audio_content_entry_async(message_piece=piece)
+        assert entry["input_audio"]["format"] == chat_format
+        assert base64.b64decode(entry["input_audio"]["data"]) == content
+
+    target = HTTPXAPITarget(
+        http_url="https://provider.test/upload", allowed_upload_directory=sqlite_instance.results_path
+    )
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.request = AsyncMock(return_value=httpx.Response(200, text="ok"))
+    with patch("pyrit.prompt_target.http_target.httpx_api_target.httpx.AsyncClient") as client_factory:
+        client_factory.return_value.__aenter__.return_value = client
+        await target._send_prompt_to_target_async(normalized_conversation=[Message(message_pieces=[piece])])
+    assert client.request.call_args.kwargs["files"]["file"] == (stored_path.name, content, upload_type)
 
 
 @pytest.mark.parametrize(

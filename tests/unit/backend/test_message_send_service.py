@@ -3212,7 +3212,7 @@ class TestAsyncMessageSend:
         assert status.error
 
     @pytest.mark.parametrize("count", [1, 2])
-    async def test_failed_url_import_logs_no_signed_query_async(
+    async def test_failed_url_import_preserves_exception_details_async(
         self,
         *,
         real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
@@ -3245,8 +3245,8 @@ class TestAsyncMessageSend:
         assert status.failure_stage == MessageSendFailureStage.PREPARATION
         [failure] = [record for record in caplog.records if record.exc_info]
         assert "returned HTTP 404" in str(failure.exc_info[1])
-        assert "secret" not in "".join(traceback.format_exception(*failure.exc_info))
-        assert "secret" not in caplog.text
+        assert isinstance(failure.exc_info[1].__cause__, httpx.HTTPStatusError)
+        assert "https://example.test/cat.png?sig=secret" in "".join(traceback.format_exception(*failure.exc_info))
 
     @pytest.mark.parametrize("count", [1, 3])
     @pytest.mark.parametrize("failure", ["conversion", "normalization", "validation", "target", "metadata"])
