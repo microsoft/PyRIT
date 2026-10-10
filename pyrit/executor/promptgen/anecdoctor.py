@@ -9,10 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
-import yaml
-
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.common.utils import combine_dict, get_kwarg_param
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.executor.core.config import StrategyConverterConfig
 from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategy,
@@ -115,7 +114,7 @@ class AnecdoctorGenerator(
             processing_model (PromptTarget | None): The model used for knowledge graph extraction.
                 If provided, the generator will extract a knowledge graph from the examples before generation.
                 If None, the generator will use few-shot examples directly.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
         """
         # Initialize base class
@@ -215,10 +214,10 @@ class AnecdoctorGenerator(
         system_prompt = self._system_prompt_template.format(language=context.language, type=context.content_type)
 
         # Configure the target with the system prompt
-        self._objective_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=context.conversation_id,
-            labels=context.memory_labels,  # deprecated
+        (
+            await self._objective_target.set_system_prompt_async(
+                system_prompt=system_prompt, conversation_id=context.conversation_id
+            )
         )
 
     async def _perform_async(self, *, context: AnecdoctorContext) -> AnecdoctorResult:
@@ -310,7 +309,6 @@ class AnecdoctorGenerator(
             conversation_id=context.conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            labels=context.memory_labels,
         )
 
     def _load_prompt_from_yaml(self, *, yaml_filename: str) -> str:
@@ -333,7 +331,7 @@ class AnecdoctorGenerator(
         """
         prompt_path = Path(EXECUTOR_SEED_PROMPT_PATH, self._ANECDOCTOR_PROMPT_PATH, yaml_filename)
         prompt_data = prompt_path.read_text(encoding="utf-8")
-        yaml_data = yaml.safe_load(prompt_data)
+        yaml_data = safe_load_yaml(prompt_data)
         return str(yaml_data["value"])
 
     def _format_few_shot_examples(self, *, evaluation_data: list[str]) -> str:
@@ -376,10 +374,10 @@ class AnecdoctorGenerator(
         kg_conversation_id = str(uuid.uuid4())
 
         # Set system prompt on processing model
-        self._processing_model.set_system_prompt(
-            system_prompt=kg_system_prompt,
-            conversation_id=kg_conversation_id,
-            labels=self._memory_labels,  # deprecated
+        (
+            await self._processing_model.set_system_prompt_async(
+                system_prompt=kg_system_prompt, conversation_id=kg_conversation_id
+            )
         )
 
         # Format examples for knowledge graph extraction using few-shot format
@@ -395,7 +393,6 @@ class AnecdoctorGenerator(
             conversation_id=kg_conversation_id,
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
-            labels=self._memory_labels,
         )
 
         if not kg_response:

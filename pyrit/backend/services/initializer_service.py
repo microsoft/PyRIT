@@ -2,21 +2,20 @@
 # Licensed under the MIT license.
 
 """
-Initializer service for listing, registering, and removing initializers.
-
-Provides access to the InitializerRegistry, exposing initializer
-metadata through the REST API.
+Initializer service for catalog and registration operations.
 """
 
+import asyncio
 import logging
 from functools import lru_cache
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.initializers import (
-    InitializerParameterSummary,
+    CustomInitializerListResponse,
+    CustomInitializerResponse,
     ListRegisteredInitializersResponse,
-    RegisteredInitializer,
 )
+from pyrit.models.catalog.initializer import RegisteredInitializer
 from pyrit.registry import InitializerMetadata, InitializerRegistry
 
 logger = logging.getLogger(__name__)
@@ -24,35 +23,26 @@ logger = logging.getLogger(__name__)
 
 def _metadata_to_registered_initializer(metadata: InitializerMetadata) -> RegisteredInitializer:
     """
-    Convert an InitializerMetadata dataclass to a RegisteredInitializer Pydantic model.
+    Convert initializer metadata into a response model.
 
     Args:
         metadata: The registry metadata for an initializer.
 
     Returns:
-        RegisteredInitializer Pydantic model.
+        RegisteredInitializer: The response model representation.
     """
     return RegisteredInitializer(
         initializer_name=metadata.registry_name,
         initializer_type=metadata.class_name,
         description=metadata.class_description,
         required_env_vars=list(metadata.required_env_vars),
-        supported_parameters=[
-            InitializerParameterSummary(
-                name=name,
-                description=desc,
-                default=default,
-            )
-            for name, desc, default in metadata.supported_parameters
-        ],
+        supported_parameters=list(metadata.supported_parameters),
     )
 
 
 class InitializerService:
     """
-    Service for listing, registering, and removing initializers.
-
-    Uses InitializerRegistry as the source of truth for initializer metadata.
+    Service for listing and registering initializers.
     """
 
     def __init__(self) -> None:
@@ -73,9 +63,9 @@ class InitializerService:
             cursor: Pagination cursor (initializer_name to start after).
 
         Returns:
-            ListRegisteredInitializersResponse with paginated initializer summaries.
+            ListRegisteredInitializersResponse: Paginated initializer summaries.
         """
-        all_metadata = self._registry.list_metadata()
+        all_metadata = self._registry.get_all_registered_class_metadata()
         all_summaries = [_metadata_to_registered_initializer(m) for m in all_metadata]
 
         page, has_more = self._paginate(items=all_summaries, cursor=cursor, limit=limit)
@@ -91,16 +81,13 @@ class InitializerService:
         Get a single initializer by registry name.
 
         Args:
-            initializer_name: The registry key of the initializer (e.g., 'target').
+            initializer_name: The registry key of the initializer.
 
         Returns:
-            RegisteredInitializer if found, None otherwise.
+            RegisteredInitializer | None: The matching initializer, if found.
         """
-        all_metadata = self._registry.list_metadata()
-        for metadata in all_metadata:
-            if metadata.registry_name == initializer_name:
-                return _metadata_to_registered_initializer(metadata)
-        return None
+        metadata = self._get_metadata_by_name().get(initializer_name)
+        return _metadata_to_registered_initializer(metadata) if metadata else None
 
     async def register_initializer_async(
         self,
@@ -116,29 +103,47 @@ class InitializerService:
             script_content: Python source code containing a PyRITInitializer subclass.
 
         Returns:
-            The newly registered initializer summary.
-
-        Raises:
-            ValueError: If the script is invalid or contains no initializer class.
+            RegisteredInitializer: The newly registered initializer summary.
         """
-        self._registry.register_from_content(name=name, script_content=script_content)
+        await asyncio.to_thread(self._registry.register_from_content, name=name, script_content=script_content)
 
         initializer = await self.get_initializer_async(initializer_name=name)
         if not initializer:
             raise ValueError(f"Initializer '{name}' was registered but metadata could not be retrieved.")
         return initializer
 
+    async def list_custom_initializers_async(self) -> CustomInitializerListResponse:
+        """
+        List custom initializer scripts from the registry's configured storage.
+
+        Returns:
+            CustomInitializerListResponse: The configured source and stored scripts.
+        """
+        source, scripts = await asyncio.to_thread(self._registry.list_stored_initializer_sources)
+        return CustomInitializerListResponse(
+            source=source,
+            items=[
+                CustomInitializerResponse(
+                    initializer_name=name,
+                    script_content=script_content,
+                    source=script_source,
+                )
+                for name, script_content, script_source in scripts
+            ],
+        )
+
     async def unregister_initializer_async(self, *, initializer_name: str) -> None:
         """
         Remove a custom initializer from the registry.
 
-        Built-in initializers cannot be removed.
-
         Args:
             initializer_name: The registry name to remove.
         """
-        self._registry.unregister_and_cleanup(initializer_name)
-        logger.info(f"Unregistered initializer: {initializer_name}")
+        await asyncio.to_thread(self._registry.unregister_and_cleanup, initializer_name)
+        logger.info("Unregistered initializer: %s", initializer_name)
+
+    def _get_metadata_by_name(self) -> dict[str, InitializerMetadata]:
+        return {metadata.registry_name: metadata for metadata in self._registry.get_all_registered_class_metadata()}
 
     @staticmethod
     def _paginate(
@@ -156,13 +161,13 @@ class InitializerService:
             limit: Maximum items per page.
 
         Returns:
-            Tuple of (paginated items, has_more flag).
+            tuple[list[RegisteredInitializer], bool]: Paginated items and has-more flag.
         """
         start_idx = 0
         if cursor:
-            for i, item in enumerate(items):
+            for index, item in enumerate(items):
                 if item.initializer_name == cursor:
-                    start_idx = i + 1
+                    start_idx = index + 1
                     break
 
         page = items[start_idx : start_idx + limit]
@@ -176,6 +181,6 @@ def get_initializer_service() -> InitializerService:
     Get the global initializer service instance.
 
     Returns:
-        The singleton InitializerService instance.
+        InitializerService: The singleton initializer service instance.
     """
     return InitializerService()

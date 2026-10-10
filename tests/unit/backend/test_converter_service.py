@@ -5,29 +5,86 @@
 Tests for backend converter service.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import asyncio
+import base64
+import codecs
+from collections.abc import AsyncGenerator
+from io import BytesIO
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from fastapi import HTTPException
+from PIL import Image
+from pydantic import ValidationError
 
-from pyrit import prompt_converter
+from pyrit import converter
 from pyrit.backend.models.converters import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
+from pyrit.backend.routes import converters as converter_routes
 from pyrit.backend.services.converter_service import (
     ConverterService,
-    _serialize_type,
     get_converter_service,
 )
-from pyrit.models import ComponentIdentifier
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     Base64Converter,
+    BinaryConverter,
     CaesarConverter,
     RepeatTokenConverter,
+    ROT13Converter,
+    SelectiveTextConverter,
     SuffixAppendConverter,
+    TokenSelectionStrategy,
+    TranslationConverter,
 )
-from pyrit.prompt_converter.prompt_converter import get_converter_modalities
+from pyrit.converter.converter import get_converter_modalities
+from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.models import ComponentIdentifier, PromptDataType
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
+from unit.mocks import MockPromptTarget
+
+_TOKEN_BIJECTION_VOCAB = (
+    "cat",
+    "dog",
+    "fox",
+    "run",
+    "jump",
+    "tree",
+    "fish",
+    "bird",
+    "rock",
+    "sand",
+    "moon",
+    "star",
+    "rain",
+    "wind",
+    "fire",
+    "lake",
+    "hill",
+    "road",
+    "farm",
+    "town",
+    "book",
+    "door",
+    "hand",
+    "face",
+    "mind",
+    "body",
+)
+
+
+class _MockTokenizerWithVocab:
+    def get_vocab(self) -> dict[str, int]:
+        """Return enough valid whole-word tokens for TokenBijectionConverter."""
+        return {word: i for i, word in enumerate(_TOKEN_BIJECTION_VOCAB)}
+
+
+def _make_data_uri(*, mime_type: str, content: bytes) -> str:
+    """Build a base64 data URI for constructor-upload tests."""
+    return f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
 
 
 @pytest.fixture(autouse=True)
@@ -36,6 +93,69 @@ def reset_registry():
     ConverterRegistry.reset_registry_singleton()
     yield
     ConverterRegistry.reset_registry_singleton()
+
+
+@pytest.fixture
+async def upload_service() -> AsyncGenerator[ConverterService, None]:
+    service = ConverterService()
+    try:
+        yield service
+    finally:
+        await service.close_async()
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"bits_per_char": "invalid"},
+        {"bits_per_char": 12},
+        {"word_selection_strategy": {"type": "random"}},
+        {"word_selection_strategy": {"type": "regex", "parameters": {"pattern": "["}}},
+    ],
+)
+async def test_converter_input_errors_return_400_async(
+    upload_service: ConverterService, params: dict[str, object]
+) -> None:
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(
+                CreateConverterRequest(name="invalid_binary", type="BinaryConverter", params=params)
+            )
+    assert exc.value.status_code == 400
+    assert next(iter(params)) in exc.value.detail
+
+
+async def test_binary_creation_from_metadata_and_selection_async(upload_service: ConverterService) -> None:
+    types = await upload_service.list_converter_types_async()
+    binary = next(item for item in types.items if item.converter_type == "BinaryConverter")
+    bits = next(param for param in binary.parameters if param.name == "bits_per_char").model_dump(mode="json")
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        result = await converter_routes.create_converter(
+            CreateConverterRequest(
+                type="BinaryConverter",
+                name="selected_binary",
+                params={
+                    "bits_per_char": bits["default"],
+                    "word_selection_strategy": {"type": "indices", "parameters": {"indices": [1]}},
+                },
+            )
+        )
+    instance = upload_service.get_converter_object(converter_id=result.converter_id)
+    converted = await instance.convert_async(prompt="a b")
+    assert converted.output_text == "a 0000000000100000 0000000001100010"
+
+
+async def test_unexpected_constructor_type_error_returns_500_async(upload_service: ConverterService) -> None:
+    class BrokenBinary(BinaryConverter):
+        def __init__(self) -> None:
+            raise TypeError("constructor bug")
+
+    upload_service._registry.register_class(BrokenBinary)
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(CreateConverterRequest(name="broken_binary", type="BrokenBinary"))
+    assert exc.value.status_code == 500
+    assert "constructor bug" in exc.value.detail
 
 
 class TestListConverters:
@@ -53,7 +173,7 @@ class TestListConverters:
         """Test that list_converters returns converters from registry with full params."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -71,88 +191,210 @@ class TestListConverters:
 
         assert len(result.items) == 1
         assert result.items[0].converter_id == "conv-1"
-        assert result.items[0].converter_type == "MockConverter"
-        assert result.items[0].supported_input_types == ["text"]
-        assert result.items[0].supported_output_types == ["text"]
-        assert result.items[0].converter_specific_params == {"param1": "value1", "param2": 42}
+        assert result.items[0].identifier.class_name == "MockConverter"
+        assert result.items[0].identifier.supported_input_types == ["text"]
+        assert result.items[0].identifier.supported_output_types == ["text"]
+        assert result.items[0].identifier.params["param1"] == "value1"
+        assert result.items[0].identifier.params["param2"] == 42
 
 
-class TestListConverterCatalog:
-    """Tests for ConverterService.list_converter_catalog_async method."""
+class TestListConverterTypes:
+    """Tests for ConverterService.list_converter_types_async method."""
 
-    async def test_list_converter_catalog_returns_known_converter_types(self) -> None:
-        """Test that the converter catalog exposes available converter classes."""
+    async def test_list_converter_types_returns_known_converter_types(self) -> None:
+        """Test that the converter type projection exposes available converter classes."""
         service = ConverterService()
 
-        result = await service.list_converter_catalog_async()
+        result = await service.list_converter_types_async()
 
         converter_types = [item.converter_type for item in result.items]
         assert "Base64Converter" in converter_types
         assert "CaesarConverter" in converter_types
 
-    async def test_list_converter_catalog_includes_supported_types(self) -> None:
-        """Test that catalog entries include supported input and output types."""
+    async def test_list_converter_types_includes_supported_types(self) -> None:
+        """Test that type entries include supported input and output types."""
         service = ConverterService()
 
-        result = await service.list_converter_catalog_async()
+        result = await service.list_converter_types_async()
 
         base64_entry = next(item for item in result.items if item.converter_type == "Base64Converter")
         assert "text" in base64_entry.supported_input_types
         assert "text" in base64_entry.supported_output_types
 
-    async def test_catalog_includes_all_constructible_converters(self) -> None:
-        """The catalog surfaces every constructible converter, including base/helper classes.
-
-        Whether to display a given converter is left to the caller (e.g. the frontend),
-        so the service no longer hides anything.
-        """
+    async def test_types_omit_converters_that_need_python_objects(self) -> None:
+        """Converters whose required parameters take Python objects cannot be built from the API."""
         service = ConverterService()
 
-        result = await service.list_converter_catalog_async()
+        result = await service.list_converter_types_async()
 
         converter_types = [item.converter_type for item in result.items]
         assert "Base64Converter" in converter_types
-        assert "SelectiveTextConverter" in converter_types
+        assert "SearchReplaceConverter" in converter_types
+        assert "SelectiveTextConverter" not in converter_types
+        assert "TextJailbreakConverter" not in converter_types
 
-    async def test_catalog_serializes_parameter_type(self) -> None:
-        """Catalog renders the raw annotation into a human-readable type_name."""
+    async def test_types_serialize_parameter_type(self) -> None:
+        """Type entries render the raw annotation into a human-readable type_name."""
         service = ConverterService()
 
-        result = await service.list_converter_catalog_async()
+        result = await service.list_converter_types_async()
 
         caesar_entry = next(item for item in result.items if item.converter_type == "CaesarConverter")
         caesar_param = next(p for p in caesar_entry.parameters if p.name == "caesar_offset")
         assert caesar_param.type_name == "int"
 
-    async def test_catalog_excludes_non_coercible_params(self) -> None:
-        """Catalog only surfaces params that can be set from a string (e.g. not the LLM target)."""
+    async def test_types_expose_video_input_without_output_path(self) -> None:
+        """The video converter accepts a local path or URL but no caller-controlled destination."""
         service = ConverterService()
 
-        result = await service.list_converter_catalog_async()
+        result = await service.list_converter_types_async()
+
+        video_entry = next(item for item in result.items if item.converter_type == "AddImageVideoConverter")
+        video_path_param = next(parameter for parameter in video_entry.parameters if parameter.name == "video_path")
+        assert video_path_param.type_name == "Path | str"
+        assert all(parameter.name != "output_path" for parameter in video_entry.parameters)
+
+    async def test_types_include_registry_reference_params(self) -> None:
+        """Type entries surface target references for registry-backed selection."""
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
 
         persuasion_entry = next(item for item in result.items if item.converter_type == "PersuasionConverter")
         assert persuasion_entry.is_llm_based is True
-        assert all("Target" not in p.type_name for p in persuasion_entry.parameters)
+        target_param = next(param for param in persuasion_entry.parameters if param.name == "converter_target")
+        assert target_param.reference_type == "target"
 
+    async def test_types_expose_component_external_inputs(self, upload_service: ConverterService) -> None:
+        result = await upload_service.list_converter_types_async()
+        parameters = {
+            entry.converter_type: {parameter.name for parameter in entry.parameters} for entry in result.items
+        }
 
-class TestSerializeType:
-    """Tests for the _serialize_type presentation helper."""
+        assert {
+            "GridCompositeConverter",
+            "SelectiveTextConverter",
+            "TextJailbreakConverter",
+            "TokenBijectionConverter",
+        }.isdisjoint(parameters)
+        assert "font_size" in parameters["AddImageTextConverter"]
+        assert {"stopwords", "candidate_words"} <= parameters["SATAMaskingConverter"]
+        assert {"existing_docx", "placeholder"} <= parameters["WordDocConverter"]
+        assert "existing_pdf" in parameters["PDFConverter"]
+        assert "font_color" not in parameters["PDFConverter"]
 
-    def test_empty_annotation(self) -> None:
-        import inspect
+    async def test_registry_metadata_keeps_parameters_the_api_cannot_set(
+        self, upload_service: ConverterService
+    ) -> None:
+        metadata = upload_service._registry.get_registered_class_metadata("PDFConverter")
+        assert metadata is not None
+        registry_parameters = {parameter.name: parameter for parameter in metadata.parameters}
 
-        assert _serialize_type(inspect.Parameter.empty) == "Any"
+        assert registry_parameters["font_color"].type_name == "tuple[int, int, int]"
+        assert not registry_parameters["font_color"].is_external_input
 
-    def test_plain_type(self) -> None:
-        assert _serialize_type(int) == "int"
+    async def test_types_describe_parameters_in_the_form_callers_send(self, upload_service: ConverterService) -> None:
+        result = await upload_service.list_converter_types_async()
+        serialized = {
+            (entry.converter_type, parameter["name"]): {
+                key: parameter[key] for key in ("type_name", "is_list", "choices", "default", "required")
+            }
+            for entry in result.items
+            for parameter in entry.model_dump(mode="json")["parameters"]
+        }
 
-    def test_optional_pep604(self) -> None:
-        assert _serialize_type(str | None) == "Optional[str]"
+        assert serialized[("AddImageTextConverter", "font_size")] == {
+            "type_name": "int",
+            "is_list": False,
+            "choices": None,
+            "default": "15",
+            "required": False,
+        }
+        for name in ("stopwords", "candidate_words"):
+            assert serialized[("SATAMaskingConverter", name)] == {
+                "type_name": "list[str]",
+                "is_list": True,
+                "choices": None,
+                "default": None,
+                "required": False,
+            }
+        registry = {
+            (metadata.class_name, parameter.name): parameter.type_name
+            for metadata in upload_service._registry.get_all_registered_class_metadata()
+            for parameter in metadata.parameters
+        }
+        assert registry[("AddImageTextConverter", "font_size")] == "int | tuple[int, int]"
+        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str]"
 
-    def test_literal(self) -> None:
-        from typing import Literal
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name", "type_name", "required", "is_list"),
+        [
+            ("SearchReplaceConverter", "replace", "str", True, False),
+            ("DenylistConverter", "denylist", "list[str]", False, True),
+        ],
+    )
+    async def test_types_expose_structured_parameters(
+        self,
+        upload_service: ConverterService,
+        converter_type: str,
+        parameter_name: str,
+        type_name: str,
+        required: bool,
+        is_list: bool,
+    ) -> None:
+        types_result = await upload_service.list_converter_types_async()
+        types_entry = next(entry for entry in types_result.items if entry.converter_type == converter_type)
+        parameter = next(param for param in types_entry.parameters if param.name == parameter_name)
 
-        assert _serialize_type(Literal["a", "b"]) == "Literal['a', 'b']"
+        assert parameter.type_name == type_name
+        assert parameter.required is required
+        assert parameter.is_list is is_list
+
+    async def test_types_include_path_parameters(self) -> None:
+        """Path parameters derived by the registry remain available through REST."""
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
+
+        transparency_entry = next(item for item in result.items if item.converter_type == "TransparencyAttackConverter")
+        path_param = next(param for param in transparency_entry.parameters if param.name == "benign_image_path")
+        assert path_param.required is True
+        assert path_param.type_name == "Path"
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name"),
+        [
+            ("AddImageTextConverter", "img_to_add"),
+            ("AddImageTextConverter", "font_name"),
+            ("AddTextImageConverter", "font_name"),
+            ("ColloquialWordswapConverter", "wordswap_path"),
+            ("ImagePromptStyleConverter", "filter_path"),
+            ("PDFConverter", "existing_pdf"),
+            ("TransparencyAttackConverter", "benign_image_path"),
+        ],
+    )
+    async def test_local_constructor_files_use_path_parameters(self, converter_type: str, parameter_name: str) -> None:
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
+
+        entry = next(item for item in result.items if item.converter_type == converter_type)
+        parameter = next(item for item in entry.parameters if item.name == parameter_name)
+        assert parameter.is_path is True
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name"),
+        [("AddImageVideoConverter", "video_path"), ("ImageOverlayConverter", "base_image")],
+    )
+    async def test_types_include_path_or_str_parameters(self, converter_type: str, parameter_name: str) -> None:
+        service = ConverterService()
+
+        result = await service.list_converter_types_async()
+
+        entry = next(item for item in result.items if item.converter_type == converter_type)
+        parameter = next(item for item in entry.parameters if item.name == parameter_name)
+        assert parameter.type_name == "Path | str"
+        assert parameter.is_path_or_str is True
 
 
 class TestGetConverter:
@@ -170,7 +412,7 @@ class TestGetConverter:
         """Test that get_converter returns converter built from registry object."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_identifier = ComponentIdentifier(
             class_name="MockConverter",
             class_module="tests.unit.backend.test_converter_service",
@@ -187,7 +429,7 @@ class TestGetConverter:
 
         assert result is not None
         assert result.converter_id == "conv-1"
-        assert result.converter_type == "MockConverter"
+        assert result.identifier.class_name == "MockConverter"
 
 
 class TestGetConverterObject:
@@ -204,7 +446,7 @@ class TestGetConverterObject:
     def test_get_converter_object_returns_object_from_registry(self) -> None:
         """Test that get_converter_object returns the actual converter object."""
         service = ConverterService()
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         result = service.get_converter_object(converter_id="conv-1")
@@ -220,6 +462,7 @@ class TestCreateConverter:
         service = ConverterService()
 
         request = CreateConverterRequest(
+            name="invalid",
             type="NonExistentConverter",
             params={},
         )
@@ -227,27 +470,69 @@ class TestCreateConverter:
         with pytest.raises(ValueError, match="not found"):
             await service.create_converter_async(request=request)
 
+    async def test_create_converter_rejects_parameters_that_take_python_objects(self) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="jailbreak", type="TextJailbreakConverter", params={"jailbreak_template": {"name": "x"}}
+        )
+
+        with pytest.raises(ValueError, match="'jailbreak_template' of 'TextJailbreakConverter' cannot be set"):
+            await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="jailbreak") is None
+
+    async def test_create_converter_accepts_string_for_string_union_parameter(self) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="replace", type="SearchReplaceConverter", params={"pattern": "a", "replace": "b"}
+        )
+
+        result = await service.create_converter_async(request=request)
+
+        assert result.converter_id == "replace"
+
     async def test_create_converter_success(self) -> None:
         """Test successful converter creation."""
         service = ConverterService()
 
         request = CreateConverterRequest(
+            name="my-base64",
             type="Base64Converter",
-            display_name="My Base64",
             params={},
         )
 
         result = await service.create_converter_async(request=request)
 
-        assert result.converter_id is not None
-        assert result.converter_type == "Base64Converter"
-        assert result.display_name == "My Base64"
+        assert result.converter_id == "my-base64"
+        assert result.identifier.class_name == "Base64Converter"
+        assert result.is_llm_based is False
+
+    async def test_create_converter_supports_deprecated_task_framing_converter(self) -> None:
+        """Deprecated TaskFramingConverter stays creatable by type until its removal in 1.4.0."""
+        service = ConverterService()
+
+        request = CreateConverterRequest(
+            name="task-framing",
+            type="TaskFramingConverter",
+            params={"task_template": "Example {{ prompt }}"},
+        )
+
+        with pytest.warns(
+            DeprecationWarning, match=r"TaskFramingConverter is deprecated and will be removed in 1\.4\.0"
+        ):
+            result = await service.create_converter_async(request=request)
+
+        assert result.identifier.class_name == "TaskFramingConverter"
+        converter_obj = service.get_converter_object(converter_id=result.converter_id)
+        converted = await converter_obj.convert_async(prompt="x")
+        assert converted.output_text == "Example x"
 
     async def test_create_converter_registers_in_registry(self) -> None:
         """Test that create_converter registers object in registry."""
         service = ConverterService()
 
         request = CreateConverterRequest(
+            name="base64",
             type="Base64Converter",
             params={},
         )
@@ -258,54 +543,574 @@ class TestCreateConverter:
         converter_obj = service.get_converter_object(converter_id=result.converter_id)
         assert converter_obj is not None
 
+    async def test_create_converter_requires_a_registry_name(self) -> None:
+        with pytest.raises(ValidationError):
+            CreateConverterRequest(type="Base64Converter", params={})  # type: ignore[call-arg]
 
-class TestResolveConverterParams:
-    """Tests for ConverterService._resolve_converter_params method."""
-
-    def test_resolve_converter_params_returns_params_unchanged_when_no_converter_ref(self) -> None:
-        """Test that params without converter reference are returned unchanged."""
+    async def test_create_converter_rejects_duplicate_name(self) -> None:
         service = ConverterService()
-        params = {"key": "value", "number": 42}
+        original = Base64Converter()
+        service._registry.instances.register(original, name="shared-name")
+        request = CreateConverterRequest(name="shared-name", type="CaesarConverter", params={})
 
-        result = service._resolve_converter_params(params=params)
+        with pytest.raises(ValueError, match="already exists"):
+            await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="shared-name") is original
+
+    @pytest.mark.parametrize("name", ["preview", "types"])
+    async def test_create_converter_rejects_reserved_route_name(self, name: str) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(name=name, type="Base64Converter", params={})
+
+        with pytest.raises(ValueError, match="reserved"):
+            await service.create_converter_async(request=request)
+
+
+class TestDeleteConverter:
+    """Tests for ConverterService.delete_converter_async."""
+
+    async def test_delete_converter_removes_registered_instance(self) -> None:
+        service = ConverterService()
+        converter_obj = Base64Converter()
+        service._registry.instances.register(converter_obj, name="conv-1")
+
+        assert await service.delete_converter_async(converter_id="conv-1") is True
+        assert service.get_converter_object(converter_id="conv-1") is None
+
+    async def test_delete_converter_returns_false_when_missing(self) -> None:
+        service = ConverterService()
+
+        assert await service.delete_converter_async(converter_id="missing") is False
+
+    async def test_delete_converter_preserves_replacement_registered_during_cleanup(self) -> None:
+        service = ConverterService()
+        original = Base64Converter()
+        replacement = Base64Converter()
+        service._registry.instances.register(original, name="converter")
+
+        async def replace_during_cleanup_async(*, paths: list[Path]) -> None:
+            assert paths == []
+            original_entry = service._registry.instances.get_entry("converter")
+            assert original_entry is not None
+            service._registry.instances.unregister("converter", expected_entry=original_entry)
+            service._registry.instances.register(replacement, name="converter")
+
+        with patch.object(service, "_remove_owned_artifacts_async", side_effect=replace_during_cleanup_async):
+            removed = await service.delete_converter_async(converter_id="converter")
+
+        assert removed is False
+        assert service._registry.instances.get("converter") is replacement
+
+    async def test_delete_converter_removes_only_explicitly_owned_uploads(
+        self, upload_service: ConverterService
+    ) -> None:
+        service = upload_service
+        data_uri = _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")
+        request = CreateConverterRequest(name="pdf", type="PDFConverter", params={"existing_pdf": data_uri})
+
+        await service.create_converter_async(request=request)
+        entry = service._registry.instances.get_entry("pdf")
+        assert entry is not None
+        owned_path = Path(entry.metadata["owned_artifact_paths"][0])
+        assert owned_path.is_file()
+
+        assert await service.delete_converter_async(converter_id="pdf") is True
+
+        assert not owned_path.exists()
+        assert service._upload_path.is_dir()
+
+    async def test_delete_converter_does_not_infer_ownership_from_instance_paths(self, tmp_path: Path) -> None:
+        service = ConverterService()
+        existing_pdf = tmp_path / "caller-owned.pdf"
+        existing_pdf.write_bytes(b"%PDF-1.4\n")
+        service._registry.create_named_instance(
+            name="pdf",
+            type_name="PDFConverter",
+            params={"existing_pdf": existing_pdf},
+        )
+
+        assert await service.delete_converter_async(converter_id="pdf") is True
+        assert existing_pdf.is_file()
+
+
+class TestPersistDataUriParams:
+    """Tests for ConverterService._persist_data_uri_params_async (registry-metadata driven)."""
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name", "mime_type", "extension"),
+        [
+            ("AddImageVideoConverter", "video_path", "video/mp4", ".mp4"),
+            ("ImageOverlayConverter", "base_image", "image/png", ".png"),
+        ],
+    )
+    async def test_create_with_path_or_str_upload(
+        self,
+        upload_service: ConverterService,
+        converter_type: str,
+        parameter_name: str,
+        mime_type: str,
+        extension: str,
+    ) -> None:
+        content = b"uploaded content"
+        response = await upload_service.create_converter_async(
+            request=CreateConverterRequest(
+                name="uploaded",
+                type=converter_type,
+                params={parameter_name: _make_data_uri(mime_type=mime_type, content=content)},
+            )
+        )
+
+        entry = upload_service._registry.instances.get_entry(response.converter_id)
+        assert entry is not None
+        path = Path(entry.instance.get_identifier().params[parameter_name])
+        assert path.parent == upload_service._upload_path
+        assert path.suffix == extension
+        assert path.read_bytes() == content
+        assert entry.metadata["owned_artifact_paths"] == [str(path)]
+        assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+        assert not path.exists()
+
+    @pytest.mark.parametrize(
+        ("converter_type", "parameter_name", "extension"),
+        [("AddImageVideoConverter", "video_path", "mp4"), ("ImageOverlayConverter", "base_image", "png")],
+    )
+    async def test_create_with_path_or_str_url(
+        self, upload_service: ConverterService, converter_type: str, parameter_name: str, extension: str
+    ) -> None:
+        url = f"https://account.blob.core.windows.net/container/input.{extension}"
+        response = await upload_service.create_converter_async(
+            request=CreateConverterRequest(name="remote", type=converter_type, params={parameter_name: url})
+        )
+
+        entry = upload_service._registry.instances.get_entry(response.converter_id)
+        assert entry is not None
+        assert entry.instance.get_identifier().params[parameter_name] == url
+        assert entry.metadata["owned_artifact_paths"] == []
+        assert list(upload_service._upload_path.iterdir()) == []
+        assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+
+    @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
+    async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
+        self, upload_service: ConverterService, value: object
+    ) -> None:
+        with pytest.raises(ValueError, match="data URI or supplied as an Azure Blob URL"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(
+                    name="invalid", type="AddImageVideoConverter", params={"video_path": value}
+                )
+            )
+        assert upload_service._registry.instances.get_entry("invalid") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_plain_string_does_not_enable_upload_handling(self, upload_service: ConverterService) -> None:
+        value = _make_data_uri(mime_type="text/plain", content=b"literal suffix")
+        result, owned_paths = await upload_service._persist_data_uri_params_async(
+            converter_type="SuffixAppendConverter", params={"suffix": value}
+        )
+        assert result == {"suffix": value}
+        assert owned_paths == []
+
+    async def test_persist_data_uri_materializes_path_in_managed_local_directory(
+        self, upload_service: ConverterService
+    ) -> None:
+        """A ``Path`` upload stays local even when CentralMemory storage is not local."""
+        service = upload_service
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = "https://account.blob.core.windows.net/results"
+        params = {"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")}
+
+        with (
+            patch.object(CentralMemory, "get_memory_instance", return_value=memory),
+            patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory,
+        ):
+            result, owned_paths = await service._persist_data_uri_params_async(
+                converter_type="PDFConverter",
+                params=params,
+            )
+
+        assert result["existing_pdf"].is_absolute()
+        assert result["existing_pdf"].parent == service._upload_path
+        assert result["existing_pdf"].suffix == ".pdf"
+        assert result["existing_pdf"].read_bytes() == b"%PDF-1.4\n"
+        assert owned_paths == [result["existing_pdf"]]
+        mock_factory.assert_not_called()
+
+    async def test_persist_data_uri_handles_optional_path_parameters(self) -> None:
+        service = ConverterService()
+        data_uri = _make_data_uri(mime_type="text/yaml", content=b"hello")
+        params = {"wordswap_path": data_uri}
+
+        result, owned_paths = await service._persist_data_uri_params_async(
+            converter_type="ColloquialWordswapConverter", params=params
+        )
+        assert result["wordswap_path"] == owned_paths[0]
+        assert owned_paths[0].read_bytes() == b"hello"
+
+    async def test_persist_data_uri_ignores_param_not_on_converter(self) -> None:
+        """A data-URI value under a name that is not a constructor param is left unchanged."""
+        service = ConverterService()
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result, owned_paths = await service._persist_data_uri_params_async(
+                converter_type="PDFConverter",
+                params={"not_a_param": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+            )
+
+        assert result["not_a_param"].startswith("data:application/pdf")
+        assert owned_paths == []
+        mock_factory.assert_not_called()
+
+    async def test_persist_data_uri_noop_for_unregistered_type(self) -> None:
+        """When the converter type has no registry metadata, params pass through untouched."""
+        service = ConverterService()
+
+        params = {"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")}
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result, owned_paths = await service._persist_data_uri_params_async(
+                converter_type="NonExistentConverter", params=params
+            )
 
         assert result == params
+        assert owned_paths == []
+        mock_factory.assert_not_called()
 
-    def test_resolve_converter_params_resolves_converter_id_reference(self) -> None:
-        """Test that converter_id reference is resolved to actual object."""
+    async def test_persist_data_uri_ignores_non_data_uri_values(self) -> None:
+        """Non-upload values remain unchanged for non-Path parameters."""
         service = ConverterService()
 
-        # Register a mock converter
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
-        service._registry.instances.register(mock_converter, name="inner-conv")
+        params = {"font_size": 12}
 
-        params = {"converter": {"converter_id": "inner-conv"}}
-
-        result = service._resolve_converter_params(params=params)
-
-        assert result["converter"] is mock_converter
-
-    def test_resolve_converter_params_raises_for_nonexistent_reference(self) -> None:
-        """Test that referencing a non-existent converter raises ValueError."""
-        service = ConverterService()
-
-        params = {"converter": {"converter_id": "nonexistent"}}
-
-        with pytest.raises(ValueError, match="not found"):
-            service._resolve_converter_params(params=params)
-
-    def test_resolve_converter_params_ignores_non_dict_converter(self) -> None:
-        """Test that non-dict converter values are not modified."""
-        service = ConverterService()
-        params = {"converter": "some_string_value"}
-
-        result = service._resolve_converter_params(params=params)
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result, owned_paths = await service._persist_data_uri_params_async(
+                converter_type="PDFConverter", params=params
+            )
 
         assert result == params
+        assert owned_paths == []
+        mock_factory.assert_not_called()
+
+    async def test_persist_data_uri_keeps_optional_path_none(self) -> None:
+        service = ConverterService()
+
+        result, owned_paths = await service._persist_data_uri_params_async(
+            converter_type="PDFConverter",
+            params={"existing_pdf": None},
+        )
+
+        assert result == {"existing_pdf": None}
+        assert owned_paths == []
+
+    async def test_persist_data_uri_rejects_server_path_for_path_parameter(self) -> None:
+        service = ConverterService()
+
+        with pytest.raises(ValueError, match="must be uploaded as a data URI"):
+            await service._persist_data_uri_params_async(
+                converter_type="PDFConverter",
+                params={"existing_pdf": "C:\\sensitive\\input.pdf"},
+            )
+
+    @pytest.mark.parametrize(
+        ("mime_type", "expected_suffix"),
+        [("text/html", ".html"), ("image/svg+xml", ".svg"), ("application/x-not-real", ".bin")],
+    )
+    async def test_persist_data_uri_stores_any_content_type(
+        self, mime_type: str, expected_suffix: str, upload_service: ConverterService
+    ) -> None:
+        """Uploads are stored verbatim; restricting content is the media route's job."""
+        service = upload_service
+        params = {"existing_pdf": _make_data_uri(mime_type=mime_type, content=b"<script>alert(1)</script>")}
+
+        result, owned_paths = await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
+
+        assert result["existing_pdf"].suffix == expected_suffix
+        assert result["existing_pdf"].read_bytes() == b"<script>alert(1)</script>"
+        assert owned_paths == [result["existing_pdf"]]
+
+    async def test_persist_data_uri_rejects_invalid_base64(self, upload_service: ConverterService) -> None:
+        service = upload_service
+        params = {"existing_pdf": "data:application/pdf;base64,not-base64!!"}
+
+        with pytest.raises(ValueError, match="invalid base64 data"):
+            await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
+
+        assert list(service._upload_path.iterdir()) == []
+
+    async def test_persist_data_uri_rejects_non_base64_data_uri(self, upload_service: ConverterService) -> None:
+        service = upload_service
+        params = {"existing_pdf": "data:text/plain,hello"}
+
+        with pytest.raises(ValueError, match="must be a base64 data URI"):
+            await service._persist_data_uri_params_async(converter_type="PDFConverter", params=params)
+
+        assert list(service._upload_path.iterdir()) == []
+
+    async def test_create_converter_cleans_upload_when_creation_fails(self, upload_service: ConverterService) -> None:
+        service = upload_service
+        params = {
+            "existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n"),
+            "font_color": [256, 0, 0],
+        }
+        request = CreateConverterRequest(name="invalid-pdf", type="PDFConverter", params=params)
+
+        with pytest.raises(ValueError, match="'font_color' of 'PDFConverter' cannot be set through the API"):
+            await service.create_converter_async(request=request)
+
+        assert service._registry.instances.get("invalid-pdf") is None
+        assert list(service._upload_path.iterdir()) == []
+
+    async def test_create_converter_cleans_upload_when_constructor_rejects_value(
+        self, upload_service: ConverterService
+    ) -> None:
+        docx_mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        request = CreateConverterRequest(
+            name="invalid-word-doc",
+            type="WordDocConverter",
+            params={
+                "existing_docx": _make_data_uri(mime_type=docx_mime_type, content=b"PK\x03\x04"),
+                "placeholder": "",
+            },
+        )
+
+        with pytest.raises(ValueError, match="Placeholder must be a non-empty string"):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("invalid-word-doc") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_accepts_scalar_alternative_of_union(self, upload_service: ConverterService) -> None:
+        image = BytesIO()
+        Image.new("RGB", (8, 8)).save(image, format="PNG")
+        request = CreateConverterRequest(
+            name="sized-text",
+            type="AddImageTextConverter",
+            params={"img_to_add": _make_data_uri(mime_type="image/png", content=image.getvalue()), "font_size": 24},
+        )
+
+        response = await upload_service.create_converter_async(request=request)
+
+        converter = upload_service.get_converter_object(converter_id=response.converter_id)
+        assert converter._font_size == 24
+
+    async def test_create_converter_accepts_word_lists(self, upload_service: ConverterService) -> None:
+        request = CreateConverterRequest(
+            name="masked",
+            type="SATAMaskingConverter",
+            params={"stopwords": ["the", "a"], "candidate_words": ["bomb"]},
+        )
+
+        response = await upload_service.create_converter_async(request=request)
+
+        strategy_params = upload_service.get_converter_object(
+            converter_id=response.converter_id
+        )._selection_strategy.get_identifier_params()
+        assert strategy_params["stopwords"] == ["a", "the"]
+        assert strategy_params["candidate_words"] == ["bomb"]
+
+    @pytest.mark.parametrize("innocuous_image", ["/etc/hosts", "https://example.com/cat.png"])
+    async def test_create_converter_rejects_file_collections(
+        self, upload_service: ConverterService, innocuous_image: str
+    ) -> None:
+        request = CreateConverterRequest(
+            name="grid",
+            type="GridCompositeConverter",
+            params={"innocuous_images": [innocuous_image]},
+        )
+
+        with pytest.raises(ValueError, match="'innocuous_images' of 'GridCompositeConverter' cannot be set"):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("grid") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_registers_nothing_when_response_mapping_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="unmapped-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch(
+                "pyrit.backend.services.converter_service.converter_object_to_instance",
+                side_effect=RuntimeError("mapping failed"),
+            ),
+            pytest.raises(RuntimeError, match="mapping failed"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("unmapped-pdf") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_rechecks_name_after_upload(self, upload_service: ConverterService) -> None:
+        persist_async = upload_service._persist_data_uri_params_async
+
+        async def persist_then_take_name_async(**kwargs: object) -> object:
+            result = await persist_async(**kwargs)
+            upload_service._registry.instances.register(Base64Converter(), name="taken")
+            return result
+
+        request = CreateConverterRequest(
+            name="taken",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        with (
+            patch.object(upload_service, "_persist_data_uri_params_async", side_effect=persist_then_take_name_async),
+            patch.object(upload_service._registry, "create_instance") as create_instance,
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        create_instance.assert_not_called()
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_removes_upload_when_registration_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="raced-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch.object(
+                upload_service._registry.instances, "register", side_effect=ValueError("'raced-pdf' already exists")
+            ),
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    @pytest.mark.parametrize("error", [OSError("write failed"), asyncio.CancelledError()])
+    async def test_persist_data_uri_cleans_partial_write(
+        self, upload_service: ConverterService, error: BaseException
+    ) -> None:
+        async def fail_write_async(content: bytes) -> None:
+            file_path = mock_open.call_args.args[0]
+            await asyncio.to_thread(file_path.write_bytes, content[:3])
+            raise error
+
+        request = CreateConverterRequest(
+            name="failed-upload",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        with patch("pyrit.backend.services.converter_service.aiofiles.open") as mock_open:
+            mock_file = mock_open.return_value.__aenter__.return_value
+            mock_file.write.side_effect = fail_write_async
+            with pytest.raises(type(error)):
+                await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("failed-upload") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_concurrent_uploads_share_one_temporary_directory(self, upload_service: ConverterService) -> None:
+        params = {"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")}
+        results = await asyncio.gather(
+            upload_service._persist_data_uri_params_async(converter_type="PDFConverter", params=params),
+            upload_service._persist_data_uri_params_async(converter_type="PDFConverter", params=params),
+        )
+        paths = [result["existing_pdf"] for result, _ in results]
+        assert paths[0] != paths[1]
+        assert all(path.parent == upload_service._upload_path for path in paths)
+        assert all(path.read_bytes() == b"%PDF-1.4\n" for path in paths)
 
 
+class TestConverterServiceCleanup:
+    async def test_close_removes_only_owned_inputs(self, upload_service: ConverterService, tmp_path: Path) -> None:
+        service = upload_service
+        caller_file = tmp_path / "caller-owned.pdf"
+        caller_file.write_bytes(b"%PDF-1.4\n")
+        service._registry.create_named_instance(
+            name="caller-owned",
+            type_name="PDFConverter",
+            params={"existing_pdf": caller_file},
+        )
+        service._registry.create_named_instance(name="no-upload", type_name="Base64Converter")
+        request = CreateConverterRequest(
+            name="owned",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        await service.create_converter_async(request=request)
+        await service.close_async()
+
+        assert not service._upload_path.exists()
+        assert service._registry.instances.get("owned") is None
+        assert service._registry.instances.get("caller-owned") is not None
+        assert service._registry.instances.get("no-upload") is not None
+        assert caller_file.read_bytes() == b"%PDF-1.4\n"
+
+    async def test_close_keeps_other_service_uploads(self, upload_service: ConverterService) -> None:
+        other_service = ConverterService()
+        try:
+            assert upload_service._upload_path != other_service._upload_path
+            await other_service.create_converter_async(
+                request=CreateConverterRequest(
+                    name="other",
+                    type="PDFConverter",
+                    params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+                )
+            )
+            entry = other_service._registry.instances.get_entry("other")
+            assert entry is not None
+            owned_path = Path(entry.metadata["owned_artifact_paths"][0])
+
+            await upload_service.close_async()
+
+            assert owned_path.read_bytes() == b"%PDF-1.4\n"
+            assert other_service._registry.instances.get("other") is entry.instance
+        finally:
+            await other_service.close_async()
+
+    async def test_close_propagates_cleanup_errors(self, upload_service: ConverterService) -> None:
+        with patch.object(upload_service._upload_directory, "cleanup", side_effect=PermissionError("file in use")):
+            with pytest.raises(PermissionError, match="file in use"):
+                await upload_service.close_async()
+
+        assert upload_service._upload_path.is_dir()
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestPreviewConversion:
     """Tests for ConverterService.preview_conversion method."""
+
+    @pytest.mark.parametrize(
+        ("start_token", "end_token"),
+        [("<<", ">>"), ("[", "]"), ("<|pyrit_start_8f3a|>", "<|pyrit_end_8f3a|>")],
+    )
+    async def test_preview_conversion_custom_markers_async(
+        self, *, upload_service: ConverterService, start_token: str, end_token: str
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = (
+            f"keep ⟪literal⟫ {start_token}{start_token}test{end_token}{end_token} "
+            f"/ {start_token}{start_token}test2{end_token}{end_token}"
+        )
+        partial = f"keep ⟪literal⟫ {start_token}dGVzdA=={end_token} / {start_token}dGVzdDI={end_token}"
+        expected = f"keep ⟪literal⟫ {codecs.encode('dGVzdA==', 'rot_13')} / {codecs.encode('dGVzdDI=', 'rot_13')}"
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                converter_ids=["base64", "rot13"],
+                start_token=start_token,
+                end_token=end_token,
+            )
+        )
+        assert result.original_value == original
+        assert [step.output_value for step in result.steps] == [partial, expected]
+        assert result.converted_value == expected
+
+    @pytest.mark.parametrize("field", ["start_token", "end_token"])
+    def test_preview_conversion_rejects_empty_markers(self, *, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            ConverterPreviewRequest(original_value="test", converter_ids=[], **{field: ""})
 
     async def test_preview_conversion_raises_for_nonexistent_converter(self) -> None:
         """Test that preview raises ValueError for non-existent converter ID."""
@@ -324,11 +1129,11 @@ class TestPreviewConversion:
         """Test preview with converter IDs."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_result = MagicMock()
         mock_result.output_text = "encoded_value"
         mock_result.output_type = "text"
-        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        mock_converter.convert_tokens_async = AsyncMock(return_value=mock_result)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         request = ConverterPreviewRequest(
@@ -344,21 +1149,46 @@ class TestPreviewConversion:
         assert len(result.steps) == 1
         assert result.steps[0].converter_id == "conv-1"
 
+    @pytest.mark.parametrize(
+        ("value", "resolved_value"),
+        [
+            ("https://example.test/image.png", "https://example.test/image.png"),
+            ("/api/media?path=%2Ftmp%2Fimage.png", "/tmp/image.png"),
+        ],
+    )
+    async def test_preview_conversion_resolves_reference_without_persistence(
+        self, value: str, resolved_value: str
+    ) -> None:
+        """Remote and local media references bypass serializer persistence."""
+        service = ConverterService()
+        request = ConverterPreviewRequest(
+            original_value=value,
+            original_value_data_type="image_path",
+            converter_ids=[],
+        )
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as factory:
+            result = await service.preview_conversion_async(request=request)
+
+        assert result.original_value == value
+        assert result.converted_value == resolved_value
+        factory.assert_not_called()
+
     async def test_preview_conversion_chains_multiple_converters(self) -> None:
         """Test that preview chains multiple converters."""
         service = ConverterService()
 
-        mock_converter1 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter1 = MagicMock(spec=converter.Converter)
         mock_result1 = MagicMock()
         mock_result1.output_text = "step1_output"
         mock_result1.output_type = "text"
-        mock_converter1.convert_async = AsyncMock(return_value=mock_result1)
+        mock_converter1.convert_tokens_async = AsyncMock(return_value=mock_result1)
 
-        mock_converter2 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter2 = MagicMock(spec=converter.Converter)
         mock_result2 = MagicMock()
         mock_result2.output_text = "step2_output"
         mock_result2.output_type = "text"
-        mock_converter2.convert_async = AsyncMock(return_value=mock_result2)
+        mock_converter2.convert_tokens_async = AsyncMock(return_value=mock_result2)
 
         service._registry.instances.register(mock_converter1, name="conv-1")
         service._registry.instances.register(mock_converter2, name="conv-2")
@@ -373,17 +1203,253 @@ class TestPreviewConversion:
 
         assert result.converted_value == "step2_output"
         assert len(result.steps) == 2
-        mock_converter2.convert_async.assert_called_with(prompt="step1_output", input_type="text")
+        mock_converter2.convert_tokens_async.assert_awaited_once_with(
+            prompt="step1_output", input_type="text", start_token="⟪", end_token="⟫"
+        )
+
+    @pytest.mark.parametrize(
+        ("original", "initial_type", "intermediate", "intermediate_type", "final", "final_type"),
+        [
+            (" source \n", "text", "", "text", " transformed \n", "text"),
+            (" source \n", "text", "generated.png", "image_path", "edited.png", "image_path"),
+            ("https://example.test/image.png", "image_path", "converted.wav", "audio_path", "caption", "text"),
+        ],
+    )
+    async def test_preview_uses_normalizer_without_sending_or_storing_async(
+        self,
+        *,
+        upload_service: ConverterService,
+        original: str,
+        initial_type: PromptDataType,
+        intermediate: str,
+        intermediate_type: PromptDataType,
+        final: str,
+        final_type: PromptDataType,
+    ) -> None:
+        first, second = Base64Converter(), Base64Converter()
+        upload_service._registry.instances.register(first, name="first")
+        upload_service._registry.instances.register(second, name="second")
+        memory = MagicMock(spec=MemoryInterface)
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            normalizer = PromptNormalizer()
+        request = ConverterPreviewRequest(
+            original_value=original,
+            original_value_data_type=initial_type,
+            converter_ids=["first", "second"],
+        )
+
+        with (
+            patch("pyrit.backend.services.converter_service.PromptNormalizer", return_value=normalizer),
+            patch.object(normalizer, "convert_values_async", wraps=normalizer.convert_values_async) as convert,
+            patch.object(normalizer, "send_prompt_async", new_callable=AsyncMock) as send,
+            patch.object(
+                first,
+                "convert_async",
+                new_callable=AsyncMock,
+                return_value=converter.ConverterResult(output_text=intermediate, output_type=intermediate_type),
+            ),
+            patch.object(
+                second,
+                "convert_async",
+                new_callable=AsyncMock,
+                return_value=converter.ConverterResult(output_text=final, output_type=final_type),
+            ) as convert_second,
+        ):
+            result = await upload_service.preview_conversion_async(request=request)
+
+        assert convert.await_count == 2
+        first_call, second_call = convert.await_args_list
+        assert first_call.kwargs["converter_configurations"][0].converters == [first]
+        assert second_call.kwargs["converter_configurations"][0].converters == [second]
+        assert first_call.kwargs["message"] is second_call.kwargs["message"]
+        piece = first_call.kwargs["message"].message_pieces[0]
+        assert piece.not_in_memory
+        assert piece.original_value == original
+        assert piece.original_value_data_type == initial_type
+        assert [step.converter_id for step in result.steps] == ["first", "second"]
+        assert [(step.input_value, step.input_data_type) for step in result.steps] == [
+            (original, initial_type),
+            (intermediate, intermediate_type),
+        ]
+        assert [(step.output_value, step.output_data_type) for step in result.steps] == [
+            (intermediate, intermediate_type),
+            (final, final_type),
+        ]
+        assert result.original_value == original
+        assert result.original_value_data_type == initial_type
+        assert result.converted_value == final
+        assert result.converted_value_data_type == final_type
+        convert_second.assert_awaited_once_with(prompt=intermediate, input_type=intermediate_type)
+        send.assert_not_awaited()
+        assert memory.mock_calls == []
+
+    async def test_preview_conversion_consumes_selection_in_first_step_async(
+        self, upload_service: ConverterService
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="first")
+        upload_service._registry.instances.register(Base64Converter(), name="second")
+        original = " keep ⟪test⟫\nthen ⟪test2⟫ "
+        partial = " keep dGVzdA==\nthen dGVzdDI= "
+        request = ConverterPreviewRequest(
+            original_value=original,
+            original_value_data_type="text",
+            converter_ids=["first", "second"],
+        )
+
+        result = await upload_service.preview_conversion_async(request=request)
+
+        assert result.original_value == original
+        assert result.steps[0].input_value == original
+        assert result.steps[0].output_value == partial
+        assert result.steps[1].input_value == partial
+        assert result.converted_value == base64.b64encode(partial.encode()).decode()
+        assert result.converted_value_data_type == "text"
+
+    async def test_preview_conversion_nested_translation_encoding_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        translation = TranslationConverter(converter_target=MockPromptTarget(), language="French")
+        upload_service._registry.instances.register(translation, name="translate")
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        messages = [
+            "This is a hidden message to say hello, if you can decode it, respond with the sum of 3+3.",
+            "Say goodbye.",
+        ]
+        translated = [
+            (
+                "Ceci est un message cach\u00e9 pour dire bonjour, si vous pouvez le d\u00e9coder, "
+                "r\u00e9pondez avec la somme de 3+3."
+            ),
+            "Dites au revoir.",
+        ]
+        encoded = [base64.b64encode(text.encode()).decode() for text in translated]
+        rotated = [codecs.encode(text, "rot_13") for text in encoded]
+        original = f"Decode this recursively: ⟪⟪⟪{messages[0]}⟫⟫⟫ and ⟪⟪⟪{messages[1]}⟫⟫⟫"
+        expected_steps = [
+            f"Decode this recursively: ⟪⟪{translated[0]}⟫⟫ and ⟪⟪{translated[1]}⟫⟫",
+            f"Decode this recursively: ⟪{encoded[0]}⟫ and ⟪{encoded[1]}⟫",
+            f"Decode this recursively: {rotated[0]} and {rotated[1]}",
+        ]
+        with patch.object(
+            translation,
+            "convert_async",
+            new_callable=AsyncMock,
+            side_effect=[converter.ConverterResult(output_text=text, output_type="text") for text in translated],
+        ) as translate:
+            result = await upload_service.preview_conversion_async(
+                request=ConverterPreviewRequest(
+                    original_value=original,
+                    original_value_data_type="text",
+                    converter_ids=["translate", "base64", "rot13"],
+                )
+            )
+
+        assert translate.await_args_list == [call(prompt=text, input_type="text") for text in messages]
+        assert result.original_value == original
+        assert [step.input_value for step in result.steps] == [original, *expected_steps[:-1]]
+        assert [step.output_value for step in result.steps] == expected_steps
+        assert result.converted_value == expected_steps[-1]
+        assert result.converted_value_data_type == "text"
+
+    async def test_preview_conversion_nested_remaining_markers_async(self, *, upload_service: ConverterService) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫",
+                original_value_data_type="text",
+                converter_ids=["base64"],
+            )
+        )
+        assert result.converted_value == "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
+
+    @pytest.mark.parametrize("preserve_tokens", [False, True])
+    async def test_preview_conversion_token_selection_matches_direct_async(
+        self, *, upload_service: ConverterService, preserve_tokens: bool
+    ) -> None:
+        selected = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=TokenSelectionStrategy(),
+            preserve_tokens=preserve_tokens,
+        )
+        upload_service._registry.instances.register(selected, name="selected")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = "keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫"
+        direct = await selected.convert_async(prompt=original)
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                original_value_data_type="text",
+                converter_ids=["selected", "rot13"],
+            )
+        )
+        rotated = [codecs.encode(text, "rot_13") for text in ("dGVzdA==", "dGVzdDI=")]
+        expected_first = "keep ⟪⟪dGVzdA==⟫⟫ and ⟪⟪dGVzdDI=⟫⟫" if preserve_tokens else "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
+        expected_final = (
+            f"keep ⟪{rotated[0]}⟫ and ⟪{rotated[1]}⟫" if preserve_tokens else f"keep {rotated[0]} and {rotated[1]}"
+        )
+        assert result.original_value == original
+        assert result.steps[0].output_value == direct.output_text == expected_first
+        assert result.steps[1].input_value == expected_first
+        assert result.converted_value == expected_final
+
+    async def test_preview_conversion_accepts_empty_marked_region_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="selected")
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="before ⟪⟫ after",
+                original_value_data_type="text",
+                converter_ids=["selected"],
+            )
+        )
+        assert result.converted_value == "before  after"
+
+    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫", "⟪⟪inner⟫⟫⟫"])
+    async def test_preview_conversion_rejects_invalid_selection_before_conversion_async(
+        self, *, upload_service: ConverterService, prompt: str
+    ) -> None:
+        instance = Base64Converter()
+        upload_service._registry.instances.register(instance, name="selected")
+        request = ConverterPreviewRequest(
+            original_value=prompt,
+            original_value_data_type="text",
+            converter_ids=["selected"],
+        )
+        with patch.object(instance, "convert_async", new_callable=AsyncMock) as convert:
+            with pytest.raises(ValueError):
+                await upload_service.preview_conversion_async(request=request)
+        convert.assert_not_awaited()
+
+    async def test_preview_conversion_unmarked_media_retains_result_type_async(
+        self, upload_service: ConverterService
+    ) -> None:
+        instance = Base64Converter()
+        upload_service._registry.instances.register(instance, name="media")
+        request = ConverterPreviewRequest(
+            original_value="https://example.test/image.png",
+            original_value_data_type="image_path",
+            converter_ids=["media"],
+        )
+        with patch.object(instance, "convert_async", new_callable=AsyncMock) as convert:
+            convert.return_value = converter.ConverterResult(output_text="converted.wav", output_type="audio_path")
+            result = await upload_service.preview_conversion_async(request=request)
+        convert.assert_awaited_once_with(prompt=request.original_value, input_type="image_path")
+        assert result.converted_value == "converted.wav"
+        assert result.converted_value_data_type == "audio_path"
+        assert result.steps[0].input_data_type == "image_path"
+        assert result.steps[0].output_data_type == "audio_path"
 
     async def test_preview_conversion_persists_data_uri_for_image_path(self) -> None:
         """Data URIs on *_path types are decoded via the DEFAULT_MEDIA_EXTENSIONS map and persisted."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.png"
         mock_result.output_type = "image_path"
-        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        mock_converter.convert_tokens_async = AsyncMock(return_value=mock_result)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         mock_serializer = MagicMock()
@@ -412,18 +1478,18 @@ class TestPreviewConversion:
         """Values that aren't URLs/data URIs/existing files are treated as raw base64 and persisted."""
         service = ConverterService()
 
-        mock_converter = MagicMock(spec=prompt_converter.PromptConverter)
+        mock_converter = MagicMock(spec=converter.Converter)
         mock_result = MagicMock()
         mock_result.output_text = "/tmp/persisted.wav"
         mock_result.output_type = "audio_path"
-        mock_converter.convert_async = AsyncMock(return_value=mock_result)
+        mock_converter.convert_tokens_async = AsyncMock(return_value=mock_result)
         service._registry.instances.register(mock_converter, name="conv-1")
 
         mock_serializer = MagicMock()
         mock_serializer.value = "/tmp/persisted.wav"
         mock_serializer.save_b64_image_async = AsyncMock()
 
-        raw_b64 = "UklGRiQAAABXQVZF"
+        raw_b64 = base64.b64encode(b"RIFF" + b"\0" * 5000).decode()
         request = ConverterPreviewRequest(
             original_value=raw_b64,
             original_value_data_type="audio_path",
@@ -434,13 +1500,98 @@ class TestPreviewConversion:
             "pyrit.backend.services.converter_service.data_serializer_factory",
             return_value=mock_serializer,
         ) as mock_factory:
-            await service.preview_conversion_async(request=request)
+            result = await service.preview_conversion_async(request=request)
 
         mock_factory.assert_called_once()
         # ext is the audio_path mapping from DEFAULT_MEDIA_EXTENSIONS
         assert mock_factory.call_args.kwargs["extension"] == ".wav"
         assert mock_factory.call_args.kwargs["data_type"] == "audio_path"
         mock_serializer.save_b64_image_async.assert_awaited_once_with(data=raw_b64)
+        assert result.model_dump(mode="json")["original_value"] == raw_b64
+
+    @pytest.mark.parametrize("path_error", [OSError("path inspection failed"), ValueError("invalid path")])
+    async def test_preview_conversion_persists_raw_base64_when_path_inspection_fails(
+        self, path_error: OSError | ValueError
+    ) -> None:
+        """Filesystem inspection failures classify the value as raw base64."""
+        service = ConverterService()
+        mock_serializer = MagicMock()
+        mock_serializer.value = "/tmp/persisted.wav"
+        mock_serializer.save_b64_image_async = AsyncMock()
+        raw_b64 = "UklGRiQAAABXQVZF"
+        request = ConverterPreviewRequest(
+            original_value=raw_b64,
+            original_value_data_type="audio_path",
+            converter_ids=[],
+        )
+
+        with (
+            patch.object(Path, "is_file", side_effect=path_error),
+            patch(
+                "pyrit.backend.services.converter_service.data_serializer_factory",
+                return_value=mock_serializer,
+            ),
+        ):
+            result = await service.preview_conversion_async(request=request)
+
+        mock_serializer.save_b64_image_async.assert_awaited_once_with(data=raw_b64)
+        assert result.converted_value == "/tmp/persisted.wav"
+
+    async def test_preview_conversion_propagates_non_base64_path_inspection_error(self) -> None:
+        """Filesystem errors for non-base64 values remain visible to callers."""
+        service = ConverterService()
+        request = ConverterPreviewRequest(
+            original_value="not raw base64!",
+            original_value_data_type="audio_path",
+            converter_ids=[],
+        )
+
+        with (
+            patch.object(Path, "is_file", side_effect=PermissionError("permission denied")),
+            patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory,
+            pytest.raises(PermissionError, match="permission denied"),
+        ):
+            await service.preview_conversion_async(request=request)
+
+        mock_factory.assert_not_called()
+
+    async def test_preview_conversion_propagates_invalid_base64_error_after_path_failure(self) -> None:
+        """Errors from raw base64 persistence are not mistaken for path inspection failures."""
+        service = ConverterService()
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock(side_effect=ValueError("invalid base64"))
+        request = ConverterPreviewRequest(
+            original_value="UklGRiQAAABXQVZF",
+            original_value_data_type="audio_path",
+            converter_ids=[],
+        )
+
+        with (
+            patch.object(Path, "is_file", side_effect=ValueError("invalid path")),
+            patch(
+                "pyrit.backend.services.converter_service.data_serializer_factory",
+                return_value=mock_serializer,
+            ),
+            pytest.raises(ValueError, match="invalid base64"),
+        ):
+            await service.preview_conversion_async(request=request)
+
+    async def test_preview_conversion_preserves_existing_file(self, tmp_path: Path) -> None:
+        """Existing local media paths pass through without being persisted again."""
+        service = ConverterService()
+        media_path = tmp_path / "input.wav"
+        media_path.write_bytes(b"RIFF")
+        request = ConverterPreviewRequest(
+            original_value=str(media_path),
+            original_value_data_type="audio_path",
+            converter_ids=[],
+        )
+
+        with patch("pyrit.backend.services.converter_service.data_serializer_factory") as mock_factory:
+            result = await service.preview_conversion_async(request=request)
+
+        mock_factory.assert_not_called()
+        assert result.converted_value == str(media_path)
 
 
 class TestGetConverterObjectsForIds:
@@ -457,8 +1608,8 @@ class TestGetConverterObjectsForIds:
         """Test that method returns converter objects in order."""
         service = ConverterService()
 
-        mock1 = MagicMock(spec=prompt_converter.PromptConverter)
-        mock2 = MagicMock(spec=prompt_converter.PromptConverter)
+        mock1 = MagicMock(spec=converter.Converter)
+        mock2 = MagicMock(spec=converter.Converter)
         service._registry.instances.register(mock1, name="conv-1")
         service._registry.instances.register(mock2, name="conv-2")
 
@@ -495,8 +1646,8 @@ def _get_all_converter_names() -> list[str]:
     """
     Dynamically collect all converter class names from the codebase.
 
-    Uses get_converter_modalities() which reads from prompt_converter.__all__
-    and filters to only actual PromptConverter subclasses.
+    Uses get_converter_modalities() which reads from converter.__all__
+    and filters to only actual Converter subclasses.
     """
     return [name for name, _, _ in get_converter_modalities()]
 
@@ -505,7 +1656,7 @@ def _try_instantiate_converter(converter_name: str):
     """
     Try to instantiate a converter with minimal representative arguments.
 
-    Uses mock objects for complex dependencies (PromptTarget, PromptConverter)
+    Uses mock objects for complex dependencies (PromptTarget, Converter)
     and provides minimal valid values for simple required parameters so that the
     identifier extraction test covers ALL converters without skipping.
 
@@ -537,12 +1688,15 @@ def _try_instantiate_converter(converter_name: str):
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
+        "PromptTemplateConverter": {"template": "Test {{ prompt }}"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
+        "VigenereConverter": {"key": "testvalue"},
+        "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
     }
 
-    converter_cls = getattr(prompt_converter, converter_name, None)
+    converter_cls = getattr(converter, converter_name, None)
     if converter_cls is None:
-        return None, f"Converter {converter_name} not found in prompt_converter module"
+        return None, f"Converter {converter_name} not found in converter module"
 
     if converter_name in skip_converters:
         return None, None  # Signal to skip without failure
@@ -575,7 +1729,6 @@ def _try_instantiate_converter(converter_name: str):
             (isinstance(ann, type) and issubclass(ann, PromptTarget)) or "PromptTarget" in ann_str
         ):
             mock_target = MagicMock(spec=PromptTarget)
-            mock_target.__class__.__name__ = "MockChatTarget"
             # Configure get_identifier() to return a real identifier so that
             # _create_identifier can promote it into the typed child slot.
             mock_id = ComponentIdentifier(
@@ -585,14 +1738,17 @@ def _try_instantiate_converter(converter_name: str):
             )
             mock_target.get_identifier.return_value = mock_id
             kwargs[pname] = mock_target
-        # PromptConverter — use a real simple converter to avoid JSON serialization issues
-        elif "PromptConverter" in ann_str:
+        # Converter — use a real simple converter to avoid JSON serialization issues
+        elif "Converter" in ann_str:
             kwargs[pname] = Base64Converter()
-        # TextSelectionStrategy — use a real concrete strategy
+        # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
-            from pyrit.prompt_converter.text_selection_strategy import AllWordsSelectionStrategy
+            from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
+        # Tokenizer protocol — use a representative vocab object
+        elif "Tokenizer" in ann_str or "WithVocab" in ann_str:
+            kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
             from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
@@ -649,8 +1805,8 @@ class TestBuildInstanceFromObjectWithRealConverters:
         Instantiates every converter with minimal representative arguments
         (using mocks for complex dependencies like PromptTarget) and verifies:
         - converter_id is set correctly
-        - converter_type matches the class name
-        - supported_input_types and supported_output_types are lists
+        - identifier.class_name matches the class name
+        - identifier supported input/output types are lists or None
         """
         # Try to instantiate the converter
         converter_instance, error = _try_instantiate_converter(converter_name)
@@ -666,14 +1822,19 @@ class TestBuildInstanceFromObjectWithRealConverters:
 
         # Verify the result
         assert result.converter_id == "test-id"
-        assert result.converter_type == converter_name
-        assert isinstance(result.supported_input_types, list)
-        assert isinstance(result.supported_output_types, list)
+        assert result.identifier.class_name == converter_name
+        assert result.identifier.supported_input_types is None or isinstance(
+            result.identifier.supported_input_types, list
+        )
+        assert result.identifier.supported_output_types is None or isinstance(
+            result.identifier.supported_output_types, list
+        )
 
 
 class TestConverterParamsExtraction:
     """
-    Tests that verify converter_specific_params are correctly extracted.
+    Tests that verify converter-specific params are correctly extracted onto the
+    identifier.
 
     Uses converters with known parameters to verify the params are properly
     captured from the identifier.
@@ -685,9 +1846,8 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "CaesarConverter"
-        assert result.converter_specific_params is not None
-        assert result.converter_specific_params.get("caesar_offset") == 13
+        assert result.identifier.class_name == "CaesarConverter"
+        assert result.identifier.params.get("caesar_offset") == 13
 
     def test_suffix_append_converter_params(self) -> None:
         """Test that SuffixAppendConverter params are extracted correctly."""
@@ -695,9 +1855,8 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "SuffixAppendConverter"
-        assert result.converter_specific_params is not None
-        assert result.converter_specific_params.get("suffix") == "test suffix"
+        assert result.identifier.class_name == "SuffixAppendConverter"
+        assert result.identifier.params.get("suffix") == "test suffix"
 
     def test_repeat_token_converter_params(self) -> None:
         """Test that RepeatTokenConverter params are extracted correctly."""
@@ -705,10 +1864,9 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "RepeatTokenConverter"
-        assert result.converter_specific_params is not None
-        assert result.converter_specific_params.get("token_to_repeat") == "x"
-        assert result.converter_specific_params.get("times_to_repeat") == 5
+        assert result.identifier.class_name == "RepeatTokenConverter"
+        assert result.identifier.params.get("token_to_repeat") == "x"
+        assert result.identifier.params.get("times_to_repeat") == 5
 
     def test_base64_converter_default_params(self) -> None:
         """Test that Base64Converter default params are captured."""
@@ -716,7 +1874,7 @@ class TestConverterParamsExtraction:
         service = ConverterService()
         result = service._build_instance_from_object(converter_id="test-id", converter_obj=converter)
 
-        assert result.converter_type == "Base64Converter"
+        assert result.identifier.class_name == "Base64Converter"
         # Verify type info is populated from identifier
-        assert isinstance(result.supported_input_types, list)
-        assert isinstance(result.supported_output_types, list)
+        assert isinstance(result.identifier.supported_input_types, list)
+        assert isinstance(result.identifier.supported_output_types, list)

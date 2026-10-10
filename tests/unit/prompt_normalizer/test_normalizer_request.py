@@ -74,12 +74,12 @@ class TestNormalizerRequestWithMessage:
 
     def test_normalizer_request_with_converter_configurations(self):
         """Test that NormalizerRequest stores converter configurations."""
-        from pyrit.prompt_converter import Base64Converter
-        from pyrit.prompt_normalizer import PromptConverterConfiguration
+        from pyrit.converter import Base64Converter
+        from pyrit.prompt_normalizer import ConverterConfiguration
 
         message = Message.from_prompt(prompt="Test", role="user")
-        request_converters = [PromptConverterConfiguration(converters=[Base64Converter()])]
-        response_converters = [PromptConverterConfiguration(converters=[Base64Converter()])]
+        request_converters = [ConverterConfiguration(converters=[Base64Converter()])]
+        response_converters = [ConverterConfiguration(converters=[Base64Converter()])]
 
         request = NormalizerRequest(
             message=message,

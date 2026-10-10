@@ -5,6 +5,7 @@
 FastAPI application entry point for PyRIT backend.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
@@ -19,21 +20,31 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 import pyrit
+from pyrit import _compatibility
 from pyrit.backend.middleware import RequestIdMiddleware, SecurityHeadersMiddleware, register_error_handlers
 from pyrit.backend.middleware.auth import EntraAuthMiddleware
+from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
+from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
+from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
     attacks,
     auth,
+    configuration,
     converters,
+    datasets,
     health,
     initializers,
     labels,
     media,
+    message_sends,
     scenarios,
+    scorers,
+    scores,
     targets,
     version,
 )
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -47,38 +58,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Initialize PyRIT on startup using the config file, then yield.
 
     Config resolution order:
-    1. ``PYRIT_CONFIG_FILE`` env var (if set)
-    2. ``~/.pyrit/.pyrit_conf`` (if it exists)
-    3. Built-in defaults (SQLite, no initializers)
+    1. Built-in defaults
+    2. ``~/.pyrit/.pyrit_conf`` when present
+    3. ``PYRIT_CONFIG_FILE`` local path or Azure Blob URI when set
     """
-    config_file_env = os.getenv("PYRIT_CONFIG_FILE")
-    config_file = Path(config_file_env) if config_file_env else None
-
-    config = ConfigurationLoader.load_with_overrides(config_file=config_file)
-    await config.initialize_pyrit_async()
-
-    # Expose config values to route handlers via app.state
-    default_labels: dict[str, str] = {}
-    if config.operator:
-        default_labels["operator"] = config.operator
-    if config.operation:
-        default_labels["operation"] = config.operation
-    app.state.default_labels = default_labels
-    app.state.max_concurrent_scenario_runs = config.max_concurrent_scenario_runs
-    app.state.allow_custom_initializers = config.allow_custom_initializers
-
-    if config.allow_custom_initializers:
-        logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
+    app.state.compatibility_id = await asyncio.to_thread(_compatibility.get_compatibility_id)
+    configuration_file_service = ConfigurationFileService(config_file_value=os.getenv("PYRIT_CONFIG_FILE"))
+    app.state.configuration_file_service = configuration_file_service
+    runtime = RuntimeLifecycle(app=app, source=configuration_file_service)
+    app.state.runtime_lifecycle = runtime
+    await runtime.startup_async()
 
     # Mount the bundled frontend (or print a dev/missing-frontend notice).
     # Done here rather than at module load so test imports of `pyrit.backend.main`
     # don't emit noise and don't perform filesystem side effects.
     setup_frontend()
 
-    yield
+    try:
+        yield
+    finally:
+        await runtime.shutdown_async()
 
 
-app = FastAPI(
+app = CompatibilityAPI(
     title="PyRIT API",
     description="Python Risk Identification Tool for LLMs - REST API",
     version=pyrit.__version__,
@@ -91,16 +93,15 @@ app = FastAPI(
 # Register RFC 7807 error handlers
 register_error_handlers(app)
 
-# Security response headers (CSP, HSTS, X-Frame-Options, etc.)
-# Registered first so headers are applied even on early returns (e.g. auth 401s)
-app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
+# Innermost so route handlers read the body directly through its size check; a BaseHTTPMiddleware
+# between them would turn the 413 raised while streaming into a body-parsing error.
+app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(RuntimeAdmissionMiddleware)
 
-# Attach X-Request-ID to every request/response for log correlation
-app.add_middleware(RequestIdMiddleware)
-
-# Entra ID JWT validation (PKCE — no client secrets needed)
-# Disabled automatically if ENTRA_TENANT_ID / ENTRA_CLIENT_ID are not set
+# Microsoft Graph-backed authentication (PKCE — no client secrets needed)
+# Disabled if tenant/client configuration is absent; enabled deployments require allowed groups.
 app.add_middleware(EntraAuthMiddleware)
+app.add_middleware(CompatibilityMiddleware)
 
 
 # Configure CORS
@@ -111,21 +112,28 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", _compatibility.COMPATIBILITY_HEADER],
 )
+app.add_middleware(RequestIdMiddleware)
+app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 
 # Include API routes
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
+app.include_router(message_sends.router, prefix="/api", tags=["attacks"])
+app.include_router(configuration.router, prefix="/api", tags=["config"])
 app.include_router(targets.router, prefix="/api", tags=["targets"])
+app.include_router(scorers.router, prefix="/api", tags=["scorers"])
 app.include_router(converters.router, prefix="/api", tags=["converters"])
+app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(scenarios.router, prefix="/api", tags=["scenarios"])
 app.include_router(initializers.router, prefix="/api", tags=["initializers"])
 app.include_router(labels.router, prefix="/api", tags=["labels"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(media.router, prefix="/api", tags=["media"])
+app.include_router(scores.router, prefix="/api", tags=["scores"])
 app.include_router(version.router, tags=["version"])
 
 
@@ -162,5 +170,5 @@ def setup_frontend() -> None:
         print("⚠️ WARNING: Frontend not found!")
         print(f"   Expected location: {frontend_path}")
         print("   The frontend must be built and included in the package.")
-        print("   Run: python build_scripts/prepare_package.py")
+        print("   Run: python -m build_scripts.prepare_package")
         print("   API endpoints will still work but the UI won't be available.")

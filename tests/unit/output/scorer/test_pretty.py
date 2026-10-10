@@ -3,10 +3,14 @@
 
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
+from pyrit.score import FloatScaleScorer
+from pyrit.score.scorer_evaluation.scorer_evaluator import HarmScorerEvaluator
 from pyrit.score.scorer_evaluation.scorer_metrics import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
@@ -92,7 +96,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
     identifier = _make_scorer_identifier(class_name="MyScorer")
 
     mock_eval_id_cls.return_value = MagicMock(eval_hash="abc123")
-    mock_find.return_value = _make_objective_metrics()
+    mock_find.return_value = _make_objective_metrics(num_responses=1, num_input_responses=2)
 
     await printer.write_async(scorer_identifier=identifier)
     output = capsys.readouterr().out
@@ -100,6 +104,7 @@ async def test_write_async_objective_with_metrics(mock_find, mock_eval_id_cls, c
     assert "Scorer Information" in output
     assert "MyScorer" in output
     assert "Accuracy" in output
+    assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "F1 Score" in output
     assert "Precision" in output
     assert "Recall" in output
@@ -147,16 +152,84 @@ async def test_write_async_objective_no_metrics(mock_find, mock_eval_id_cls, cap
 async def test_write_async_harm_with_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="harm_hash")
-    mock_find.return_value = _make_harm_metrics()
+    mock_find.return_value = _make_harm_metrics(num_responses=1, num_input_responses=2)
 
     await printer.write_async(scorer_identifier=_make_scorer_identifier(class_name="HarmScorer"), harm_category="hate")
     output = capsys.readouterr().out
 
     assert "HarmScorer" in output
     assert "Mean Absolute Error" in output
+    assert "Scored Responses: 1/2 (50.0% coverage)" in output
     assert "Krippendorff Alpha (Combined)" in output
     assert "Krippendorff Alpha (Model)" in output
     mock_find.assert_called_once_with(eval_hash="harm_hash", harm_category="hate")
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_shows_baseline_when_beaten(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(mean_absolute_error=0.16, baseline_mean_absolute_error=0.31)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline MAE: 0.3100" in output
+    assert "does not beat it" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_flags_scorer_that_does_not_beat_baseline(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(mean_absolute_error=0.37, baseline_mean_absolute_error=0.29)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="privacy")
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline MAE: 0.2900 (scorer does not beat it)" in output
+
+
+def _harm_metrics_from_evaluator(*, human_scores: list[list[float]], model_scores: list[list[float]]):
+    scorer = MagicMock(spec=FloatScaleScorer)
+    scorer._memory = MagicMock(spec=MemoryInterface)
+    evaluator = HarmScorerEvaluator(scorer=scorer)
+    return evaluator._compute_metrics(
+        all_human_scores=np.array(human_scores), all_model_scores=np.array(model_scores), num_scorer_trials=1
+    )
+
+
+def test_render_harm_metrics_treats_a_floating_point_tie_with_the_baseline_as_not_beating_it():
+    # An all-zero scorer has the same MAE as the constant-guess baseline, but the two are computed
+    # differently and come out 0.15 and 0.15000000000000002.
+    metrics = _harm_metrics_from_evaluator(human_scores=[[0.0, 0.0, 0.1, 0.5]], model_scores=[[0.0, 0.0, 0.0, 0.0]])
+    assert metrics.mean_absolute_error != metrics.baseline_mean_absolute_error
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_harm_metrics(metrics)
+
+    assert "Constant-Guess Baseline MAE: 0.1500 (scorer does not beat it)" in output
+
+
+def test_render_harm_metrics_keeps_a_small_real_improvement_over_the_baseline():
+    # Both values print as 0.1500, but the scorer is genuinely better and must not be flagged.
+    metrics = _make_harm_metrics(mean_absolute_error=0.14999, baseline_mean_absolute_error=0.15)
+
+    output = PrettyScorerMemoryPrinter(enable_colors=False)._render_harm_metrics(metrics)
+
+    assert "Constant-Guess Baseline MAE: 0.1500" in output
+    assert "does not beat it" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_omits_baseline_for_older_results(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics()
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "Constant-Guess Baseline" not in output
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
@@ -179,6 +252,39 @@ async def test_write_async_harm_omits_optional_fields(mock_find, mock_eval_id_cl
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_prints_agreement_split_when_present(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(
+        num_human_raters=3,
+        contested_threshold=0.5,
+        num_unanimous_responses=40,
+        num_contested_responses=10,
+        mean_absolute_error_unanimous=0.05,
+        mean_absolute_error_contested=0.2,
+    )
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "MAE on unanimous rows: 0.0500 (n=40)" in output
+    assert "MAE on contested rows: 0.2000 (n=10)" in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
+async def test_write_async_harm_omits_agreement_split_for_single_rater(mock_find, mock_eval_id_cls, capsys):
+    printer = PrettyScorerMemoryPrinter(enable_colors=False)
+    mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
+    mock_find.return_value = _make_harm_metrics(num_human_raters=1)
+
+    await printer.write_async(scorer_identifier=_make_scorer_identifier(), harm_category="violence")
+    output = capsys.readouterr().out
+    assert "MAE on unanimous rows" not in output
+    assert "MAE on contested rows" not in output
+
+
+@patch("pyrit.models.ScorerEvaluationIdentifier")
+@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash")
 async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="no_data")
@@ -194,9 +300,7 @@ async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
 @patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
-async def test_write_async_renders_composite_scorer_with_target_and_filtered_params(
-    mock_find, mock_eval_id_cls, capsys
-):
+async def test_write_async_renders_compact_projected_component_tree(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
     mock_find.return_value = _make_objective_metrics()
@@ -204,27 +308,44 @@ async def test_write_async_renders_composite_scorer_with_target_and_filtered_par
     target_id = ComponentIdentifier(
         class_name="OpenAIChatTarget",
         class_module="pyrit.prompt_target",
-        params={"model_name": "gpt-4", "temperature": "0.0", "extra": "hidden"},
+        params={
+            "endpoint": "https://example.com",
+            "model_name": "gpt-4",
+            "temperature": "0.0",
+            "top_p": 0.9,
+            "extra": "hidden",
+        },
     )
     sub1 = _make_scorer_identifier(class_name="SubScorer1")
     sub2 = _make_scorer_identifier(class_name="SubScorer2")
     identifier = _make_scorer_identifier(
         class_name="CompositeScorer",
-        params={"scorer_type": "likert", "score_aggregator": "mean", "hidden_param": "ignore"},
+        params={
+            "scorer_type": "likert",
+            "score_aggregator": "mean",
+            "system_prompt": "verbose " * 100 + "tail-marker",
+        },
         children={"prompt_target": target_id, "sub_scorers": [sub1, sub2]},
     )
 
     await printer.write_async(scorer_identifier=identifier)
     output = capsys.readouterr().out
 
-    assert "Composite of 2 scorer(s)" in output
-    assert "SubScorer1" in output
-    assert "SubScorer2" in output
+    assert "▸ sub_scorers (2 components)" in output
+    assert "          • Component 1: SubScorer1\n" in output
+    assert "          • Component 2: SubScorer2\n" in output
     assert "gpt-4" in output
-    assert "scorer_type" in output
-    assert "score_aggregator" in output
-    # Non-display params and non-display target params are filtered out.
-    assert "hidden_param" not in output
+    assert (
+        "      • Scorer Type: CompositeScorer\n"
+        "        Configuration:\n"
+        "          score_aggregator=mean\n"
+        "          scorer_type=likert\n"
+        "          system_prompt=<811 chars>\n"
+    ) in output
+    assert "top_p=0.9" in output
+    assert "system_prompt=<" in output
+    assert "tail-marker" not in output
+    assert "example.com" not in output
     assert "hidden" not in output
 
 

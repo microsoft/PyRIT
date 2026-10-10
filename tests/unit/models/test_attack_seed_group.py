@@ -1,0 +1,113 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+
+import pytest
+
+from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
+from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
+from pyrit.models.seeds.seed_objective import SeedObjective
+from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+
+def _make_prompt(*, value="test prompt", sequence=0):
+    return SeedPrompt(value=value, data_type="text", role="user", sequence=sequence)
+
+
+def _make_objective(*, value="test objective"):
+    return SeedObjective(value=value)
+
+
+def test_attack_seed_group_valid_init():
+    objective = _make_objective()
+    prompt = _make_prompt()
+    group = AttackSeedGroup(seeds=[objective, prompt])
+    assert group.objective is objective
+    assert len(group.seeds) == 2
+
+
+def test_attack_seed_group_objective_property():
+    objective = _make_objective(value="achieve goal")
+    group = AttackSeedGroup(seeds=[objective, _make_prompt()])
+    assert group.objective.value == "achieve goal"
+
+
+def test_attack_seed_group_no_objective_raises():
+    prompt = _make_prompt()
+    with pytest.raises(ValueError, match="exactly one objective"):
+        AttackSeedGroup(seeds=[prompt])
+
+
+def test_attack_seed_group_two_objectives_raises():
+    obj1 = _make_objective(value="obj1")
+    obj2 = _make_objective(value="obj2")
+    prompt = _make_prompt()
+    with pytest.raises(ValueError, match="one objective"):
+        AttackSeedGroup(seeds=[obj1, obj2, prompt])
+
+
+def test_attack_seed_group_empty_seeds_raises():
+    with pytest.raises(ValueError):
+        AttackSeedGroup(seeds=[])
+
+
+def test_attack_seed_group_consistent_group_id():
+    objective = _make_objective()
+    prompt = _make_prompt()
+    group = AttackSeedGroup(seeds=[objective, prompt])
+    group_ids = {s.prompt_group_id for s in group.seeds}
+    assert len(group_ids) == 1
+    assert None not in group_ids
+
+
+def test_logical_id_ignores_random_prompt_group_id_and_round_trips() -> None:
+    first = AttackSeedGroup(seeds=[_make_objective(value="goal"), _make_prompt(value="context")])
+    second = AttackSeedGroup(seeds=[_make_objective(value="goal"), _make_prompt(value="context")])
+
+    assert first.seeds[0].prompt_group_id != second.seeds[0].prompt_group_id
+    assert first.logical_id == second.logical_id
+
+    identifier = AtomicAttackIdentifier.build(
+        attack_identifier=ComponentIdentifier(class_name="Attack", class_module="tests"),
+        seed_group=first,
+    )
+    restored = AtomicAttackIdentifier.model_validate(identifier.model_dump(mode="json"))
+    assert restored.logical_seed_group_id == first.logical_id
+
+
+def test_logical_id_preserves_canonical_seed_order() -> None:
+    first = AttackSeedGroup(
+        seeds=[
+            _make_objective(value="goal"),
+            _make_prompt(value="first", sequence=0),
+            _make_prompt(value="second", sequence=1),
+        ]
+    )
+    second = AttackSeedGroup(
+        seeds=[
+            _make_objective(value="goal"),
+            _make_prompt(value="second", sequence=0),
+            _make_prompt(value="first", sequence=1),
+        ]
+    )
+
+    assert first.logical_id != second.logical_id
+
+
+def test_attack_seed_group_with_multiple_prompts():
+    objective = _make_objective()
+    p1 = _make_prompt(value="p1", sequence=0)
+    p2 = _make_prompt(value="p2", sequence=1)
+    group = AttackSeedGroup(seeds=[objective, p1, p2])
+    assert len(group.prompts) == 2
+
+
+def test_attack_seed_group_objective_raises_when_get_objective_returns_none():
+    from unittest.mock import patch
+
+    prompt = _make_prompt()
+    objective = _make_objective()
+    group = AttackSeedGroup(seeds=[objective, prompt])
+    with patch.object(type(group), "_get_objective", return_value=None):
+        with pytest.raises(ValueError, match="AttackSeedGroup should always have an objective"):
+            _ = group.objective

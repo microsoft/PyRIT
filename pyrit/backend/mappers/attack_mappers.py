@@ -11,13 +11,12 @@ constructs local media endpoint URLs for media content.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlparse
 
 from azure.identity.aio import DefaultAzureCredential
@@ -33,7 +32,6 @@ from pyrit.backend.models.attacks import (
     MessageView,
     ScoreView,
 )
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
@@ -41,11 +39,12 @@ from pyrit.models import (
     ChatMessageRole,
     Message,
     MessagePiece,
-    PromptDataType,
     Score,
 )
 
 logger = logging.getLogger(__name__)
+
+_LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
 
 if TYPE_CHECKING:
     from pyrit.models.conversation_stats import ConversationStats
@@ -68,8 +67,8 @@ def _is_azure_blob_url(value: str) -> bool:
     # Azure Blob Storage enforces HTTPS; rejecting HTTP also limits SSRF surface.
     if parsed.scheme != "https":
         return False
-    host = parsed.netloc.split(":")[0]  # strip port
-    return host.endswith(".blob.core.windows.net") and bool(host.split(".")[0])
+    host = parsed.hostname
+    return bool(host) and host.endswith(".blob.core.windows.net") and bool(host.split(".")[0])
 
 
 async def _get_sas_for_container_async(*, container_url: str) -> str:
@@ -97,7 +96,7 @@ async def _get_sas_for_container_async(*, container_url: str) -> str:
     container_name = parsed.path.strip("/")
     storage_account_name = parsed.netloc.split(".")[0]
 
-    start_time = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
+    start_time = datetime.now(tz=UTC) - timedelta(minutes=5)
     expiry_time = start_time + timedelta(hours=1)
 
     credential = DefaultAzureCredential()
@@ -188,6 +187,21 @@ def _resolve_media_url(*, value: str | None, data_type: str) -> str | None:
     return value
 
 
+def _normalize_summary_objective(ar: AttackResult) -> str:
+    """
+    Normalize the placeholder only for legacy unnamed manual attacks.
+
+    Returns:
+        The summary objective, with legacy manual placeholders converted to an empty string.
+    """
+    identifier = ar.get_attack_strategy_identifier()
+    is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
+    has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True
+    if ar.objective == _LEGACY_MANUAL_ATTACK_PLACEHOLDER and (is_manual_attack or has_placeholder_metadata):
+        return ""
+    return ar.objective
+
+
 async def attack_result_to_summary_async(
     ar: AttackResult,
     *,
@@ -210,12 +224,18 @@ async def attack_result_to_summary_async(
     """
     labels = dict(ar.labels) if ar.labels else {}
     labels.update(stats.labels or {})
+    labels.pop("operator", None)
+    labels.pop("operation", None)
     created_at, updated_at = _resolve_summary_timestamps(ar)
 
     data = {name: getattr(ar, name) for name in AttackResult.model_fields}
     data.update(
+        objective=_normalize_summary_objective(ar),
         last_response=await _summary_last_response_async(ar.last_response),
-        last_score=ScoreView.from_domain(ar.last_score) if ar.last_score else None,
+        automated_score=(
+            ScoreView.from_domain(ar.automated_score, is_objective_score=True) if ar.automated_score else None
+        ),
+        human_score=ScoreView.from_domain(ar.human_score, is_objective_score=True) if ar.human_score else None,
         labels=labels,
         message_count=stats.message_count,
         last_message_preview=format_last_message_preview(
@@ -232,23 +252,31 @@ def _resolve_summary_timestamps(ar: AttackResult) -> tuple[datetime, datetime]:
     """
     Resolve ``created_at`` / ``updated_at`` for a summary.
 
-    Resolution order for ``created_at``: explicit metadata override, then the
-    persisted ``AttackResult.timestamp``, and finally ``datetime.now`` as a
-    last-resort fallback for never-persisted results.
+    ``updated_at`` is the persisted ``AttackResult.timestamp`` — the single indexed recency
+    key that manual edits (add message, branch, promote conversation) bump. ``created_at``
+    comes from the display-only ``metadata.created_at`` override, falling back to
+    ``AttackResult.timestamp`` and finally ``datetime.now`` for never-persisted results.
 
     Returns:
         A ``(created_at, updated_at)`` tuple.
     """
-    created_str = ar.metadata.get("created_at")
-    updated_str = ar.metadata.get("updated_at")
+    return _resolve_timestamps(created_str=ar.metadata.get("created_at"), timestamp=ar.timestamp)
+
+
+def _resolve_timestamps(*, created_str: str | None, timestamp: datetime | None) -> tuple[datetime, datetime]:
+    """
+    Resolve display times, retaining fallbacks for unpersisted mutable results.
+
+    Returns:
+        tuple[datetime, datetime]: Creation and last-update timestamps.
+    """
     if created_str:
         created_at = datetime.fromisoformat(created_str)
-    elif ar.timestamp is not None:
-        created_at = ar.timestamp
+    elif timestamp is not None:
+        created_at = timestamp
     else:
-        created_at = datetime.now(timezone.utc)
-    updated_at = datetime.fromisoformat(updated_str) if updated_str else created_at
-    return created_at, updated_at
+        created_at = datetime.now(UTC)
+    return created_at, timestamp if timestamp is not None else created_at
 
 
 async def _summary_last_response_async(piece: MessagePiece | None) -> MessagePieceView | None:
@@ -316,7 +344,7 @@ async def _fetch_scores_by_piece_async(
         return {}
 
     memory = CentralMemory.get_memory_instance()
-    fetched = await asyncio.to_thread(memory.get_prompt_scores, prompt_ids=score_lookup_ids)
+    fetched = await memory.get_prompt_scores_async(prompt_ids=score_lookup_ids)
 
     grouped: dict[str, list[Score]] = {}
     for score in fetched:
@@ -326,6 +354,8 @@ async def _fetch_scores_by_piece_async(
 
 async def pyrit_messages_to_dto_async(
     pyrit_messages: list[Message],
+    *,
+    objective_score_id: uuid.UUID | str | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
@@ -339,7 +369,8 @@ async def pyrit_messages_to_dto_async(
 
     Scores are fetched from ``CentralMemory`` (``MessagePiece`` no longer carries
     them) via a single batched ``get_prompt_scores`` call and attached to their
-    originating piece.
+    originating piece. When ``objective_score_id`` is provided, the matching
+    score is marked as the attack's canonical objective score.
 
     Returns:
         List of MessageView responses for the API.
@@ -361,6 +392,7 @@ async def pyrit_messages_to_dto_async(
                 MessagePieceView.from_domain(
                     p,
                     scores=piece_scores,
+                    objective_score_id=objective_score_id,
                     original_value_url=original_value_url,
                     converted_value_url=converted_value_url,
                 )
@@ -380,7 +412,6 @@ def request_piece_to_pyrit_message_piece(
     role: ChatMessageRole,
     conversation_id: str,
     sequence: int,
-    labels: dict[str, str] | None = None,  # deprecated
 ) -> MessagePiece:
     """
     Convert a single request piece DTO to a PyRIT MessagePiece domain object.
@@ -390,21 +421,10 @@ def request_piece_to_pyrit_message_piece(
         role: The message role.
         conversation_id: The conversation/attack ID.
         sequence: The message sequence number.
-        labels: Optional labels to attach to the piece.
-            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         MessagePiece domain object.
     """
-    # Only a truthy value counts as "passed"; an empty/falsy ``labels`` (e.g. {}
-    # forwarded on the happy path) is treated as not supplied to avoid a spurious
-    # warning. Matches MessagePiece's deprecated-kwarg guard.
-    if labels:
-        print_deprecation_message(
-            old_item="request_piece_to_pyrit_message_piece(..., labels=...)",
-            new_item="request_piece_to_pyrit_message_piece(...)",
-            removed_in="0.16.0",
-        )
     metadata: dict[str, str | int] = {}
     if piece.prompt_metadata:
         metadata = dict(piece.prompt_metadata)
@@ -414,13 +434,12 @@ def request_piece_to_pyrit_message_piece(
     return MessagePiece(
         role=role,
         original_value=piece.original_value,
-        original_value_data_type=cast("PromptDataType", piece.data_type),
-        converted_value=piece.converted_value or piece.original_value,
-        converted_value_data_type=cast("PromptDataType", piece.data_type),
+        original_value_data_type=piece.data_type,
+        converted_value=piece.converted_value if piece.converted_value is not None else piece.original_value,
+        converted_value_data_type=piece.converted_value_data_type or piece.data_type,
         conversation_id=conversation_id,
         sequence=sequence,
         prompt_metadata=metadata,
-        labels=labels or {},  # deprecated
         original_prompt_id=original_prompt_id,
     )
 
@@ -430,7 +449,6 @@ def request_to_pyrit_message(
     request: AddMessageRequest,
     conversation_id: str,
     sequence: int,
-    labels: dict[str, str] | None = None,  # deprecated
 ) -> Message:
     """
     Build a PyRIT Message from an AddMessageRequest DTO.
@@ -439,28 +457,16 @@ def request_to_pyrit_message(
         request: The inbound API request.
         conversation_id: The conversation/attack ID.
         sequence: The message sequence number.
-        labels: Optional labels to attach to each piece.
-            Deprecated: This parameter will be removed in a release 0.16.0.
 
     Returns:
         Message ready to send to the target.
     """
-    # Only a truthy value counts as "passed"; an empty/falsy ``labels`` (e.g. {}
-    # forwarded on the happy path) is treated as not supplied to avoid a spurious
-    # warning. Matches MessagePiece's deprecated-kwarg guard.
-    if labels:
-        print_deprecation_message(
-            old_item="request_to_pyrit_message(..., labels=...)",
-            new_item="request_to_pyrit_message(...)",
-            removed_in="0.16.0",
-        )
     pieces = [
         request_piece_to_pyrit_message_piece(
             piece=p,
             role=request.role,
             conversation_id=conversation_id,
             sequence=sequence,
-            labels=labels,  # deprecated
         )
         for p in request.pieces
     ]

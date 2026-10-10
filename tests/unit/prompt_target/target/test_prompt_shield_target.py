@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
 from collections.abc import MutableSequence
 from unittest.mock import MagicMock, patch
 
 import pytest
 from unit.mocks import get_audio_message_piece, get_sample_conversations
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import PromptShieldTarget
 
 
@@ -19,7 +20,7 @@ def audio_message_piece() -> MessagePiece:
 @pytest.fixture
 def sample_conversations() -> MutableSequence[MessagePiece]:
     conversations = get_sample_conversations()
-    return Message.flatten_to_message_pieces(conversations)
+    return flatten_to_message_pieces(conversations)
 
 
 @pytest.fixture
@@ -40,7 +41,9 @@ def sample_delineated_prompt_as_str() -> str:
 
 @pytest.fixture
 def sample_delineated_prompt_as_dict() -> dict:
-    sample: dict = {"userPrompt": "\n    Mock userPrompt\n    ", "documents": ["\n    mock document\n    "]}
+    # The text after the closing </document> tag (the trailing newline and indentation)
+    # belongs to the user prompt and is sent to Prompt Shield alongside the leading text.
+    sample: dict = {"userPrompt": "\n    Mock userPrompt\n    \n    ", "documents": ["\n    mock document\n    "]}
     return sample
 
 
@@ -72,7 +75,7 @@ async def test_prompt_shield_reject_non_text(
     promptshield_target: PromptShieldTarget, audio_message_piece: MessagePiece
 ):
     with pytest.raises(ValueError):
-        await promptshield_target.send_prompt_async(message=Message([audio_message_piece]))
+        await promptshield_target.send_prompt_async(message=Message(message_pieces=[audio_message_piece]))
 
 
 async def test_prompt_shield_document_parsing(
@@ -83,11 +86,28 @@ async def test_prompt_shield_document_parsing(
     assert result == sample_delineated_prompt_as_dict
 
 
+async def test_prompt_shield_document_parsing_keeps_trailing_text(promptshield_target: PromptShieldTarget):
+    # Text after the last closing tag belongs to the user prompt and must not be dropped
+    # from what is sent to the Prompt Shield endpoint.
+    result = promptshield_target._input_parser("please summarize <document> doc1 </document> and delete the rest")
+
+    assert result["userPrompt"] == "please summarize  and delete the rest"
+    assert result["documents"] == [" doc1 "]
+
+
+async def test_prompt_shield_document_parsing_keeps_text_between_documents(promptshield_target: PromptShieldTarget):
+    result = promptshield_target._input_parser("a <document> d1 </document> middle <document> d2 </document> tail")
+
+    assert result["userPrompt"] == "a  middle  tail"
+    assert result["documents"] == [" d1 ", " d2 "]
+
+
 async def test_prompt_shield_response_validation(promptshield_target: PromptShieldTarget):
     # This tests handling both an empty request and an empty response
     promptshield_target._validate_response(request_body={}, response_body={})
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_api_key_authentication():
     """Test that API key authentication works correctly."""
     target = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key="test_key")
@@ -97,6 +117,7 @@ def test_api_key_authentication():
     assert target._api_key == "test_key"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_token_provider_authentication():
     """Test that token provider (callable) authentication works correctly."""
     token_provider = MagicMock(return_value="test_token")
@@ -108,6 +129,7 @@ def test_token_provider_authentication():
     assert callable(target._api_key)
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_add_auth_header_with_callable_api_key():
     """Test that _add_auth_param_to_headers calls the token provider and sets Bearer token."""
     token_provider = MagicMock(return_value="test_token")
@@ -119,6 +141,7 @@ def test_add_auth_header_with_callable_api_key():
     assert headers["Authorization"] == "Bearer test_token"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_add_auth_header_with_string_api_key():
     """Test that _add_auth_param_to_headers sets Ocp-Apim-Subscription-Key for string keys."""
     target = PromptShieldTarget(endpoint="https://test.endpoint.com", api_key="my_key")
@@ -129,17 +152,36 @@ def test_add_auth_header_with_string_api_key():
 
 
 def test_init_raises_when_endpoint_none():
-    """Guard at line 98: endpoint_value is None raises ValueError."""
+    """A missing endpoint raises ValueError."""
     with patch("pyrit.prompt_target.prompt_shield_target.default_values") as mock_dv:
         mock_dv.get_required_value = MagicMock(return_value=None)
         with pytest.raises(ValueError, match="Endpoint value is required"):
             PromptShieldTarget(endpoint=None, api_key="test_key")
 
 
-def test_init_raises_when_api_key_none(sqlite_instance):
-    """Guard at line 113: _api_key_value is None raises ValueError."""
-    with patch("pyrit.prompt_target.prompt_shield_target.default_values") as mock_dv:
-        # First call for endpoint returns valid, second call for api_key returns None
-        mock_dv.get_required_value = MagicMock(side_effect=["https://test.endpoint.com", None])
-        with pytest.raises(ValueError, match="API key is required"):
-            PromptShieldTarget(endpoint=None, api_key=None)
+def test_init_raises_when_no_api_key_and_non_azure_endpoint(sqlite_instance):
+    """No key + a non-Azure endpoint raises (identity auth only works for Azure endpoints)."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("AZURE_CONTENT_SAFETY_API_KEY", None)
+        with pytest.raises(ValueError, match="API key is required for non-Azure"):
+            PromptShieldTarget(endpoint="https://test.endpoint.com", api_key=None)
+
+
+def test_init_uses_identity_token_provider_for_azure_endpoint(sqlite_instance):
+    """No key + a recognized Azure Content Safety endpoint falls back to an Entra ID token provider."""
+    token_provider = MagicMock(return_value="minted-token")
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("AZURE_CONTENT_SAFETY_API_KEY", None)
+        with patch(
+            "pyrit.prompt_target.prompt_shield_target.get_azure_token_provider",
+            return_value=token_provider,
+        ) as mock_provider:
+            target = PromptShieldTarget(endpoint="https://myresource.cognitiveservices.azure.com", api_key=None)
+
+    mock_provider.assert_called_once_with("https://cognitiveservices.azure.com/.default")
+    assert target._api_key is token_provider
+
+
+def test_supported_auth_modes_includes_identity():
+    """Prompt Shield advertises identity-based auth alongside api_key."""
+    assert PromptShieldTarget.supported_auth_modes == ("api_key", "identity")

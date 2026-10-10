@@ -47,6 +47,9 @@ The `eval_hash` allows us to easily look up metrics associated with a specific s
 
 Here is a diagram of the full end-to-end process of our scorer evaluation framework.
 
+:::{div}
+:class: col-page-right
+
 ```{mermaid}
 flowchart TB
  subgraph INPUT["📁 Input: Human-Labeled CSV Datasets"]
@@ -97,6 +100,7 @@ flowchart TB
     FIND --> PRINTER
     FIND --> BEST
 ```
+:::
 
 1. It begins by loading human-labeled datasets from saved `.csv` files, parsing version metadata, and creating a `HumanLabeledDataset` object that can be ingested by our evaluation methods.
 2. The second step builds the scorer evaluation identifier from the scoring configuration; we can optionally check whether an entry already exists in our JSONL-formatted metrics registry by checking the eval hash.

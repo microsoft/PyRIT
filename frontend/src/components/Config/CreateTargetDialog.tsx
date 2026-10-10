@@ -7,48 +7,128 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Dropdown,
   Input,
   Label,
   Link,
+  Option,
   Radio,
   RadioGroup,
   Select,
+  Spinner,
   Switch,
   Text,
   tokens,
   Field,
   MessageBar,
   MessageBarBody,
+  Tooltip,
 } from '@fluentui/react-components'
 import { DeleteRegular } from '@fluentui/react-icons'
+
+import ParameterField from '@/components/Parameters/ParameterField'
+import {
+  buildParametersFromForm,
+  type ParameterFormValue,
+} from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance } from '@/types'
+import type { TargetInstance, TargetTypeEntry } from '@/types'
+import {
+  targetIdentifierHash,
+  targetModelName,
+  targetType as getTargetType,
+  targetUnderlyingModelName,
+} from '@/utils/targetIdentity'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
+import {
+  canConfigureTargetType,
+  getTargetParameterPolicy,
+  isMetadataDrivenTargetParameter,
+} from './targetParameterPolicy'
 import { MAX_WEIGHT, parseWeight } from './weightValidation'
 
-interface TargetTypeConfig {
-  readonly kind: 'openai' | 'azureml' | 'roundrobin'
-  readonly supportsEntra: boolean
+const FALLBACK_TARGET_TYPES = [
+  'OpenAIChatTarget',
+  'OpenAICompletionTarget',
+  'OpenAIImageTarget',
+  'OpenAIVideoTarget',
+  'OpenAITTSTarget',
+  'OpenAIResponseTarget',
+  'AzureMLChatTarget',
+  'RoundRobinTarget',
+]
+
+const FALLBACK_IDENTITY_TARGET_TYPES = new Set([
+  'OpenAIChatTarget',
+  'OpenAICompletionTarget',
+  'OpenAIImageTarget',
+  'OpenAIVideoTarget',
+  'OpenAITTSTarget',
+  'OpenAIResponseTarget',
+  'AzureMLChatTarget',
+])
+
+const TARGET_DISPLAY_NAMES: Record<string, string> = {
+  AzureMLChatTarget: 'Azure Machine Learning chat',
+  OpenAIChatTarget: 'OpenAI chat',
+  OpenAICompletionTarget: 'OpenAI text completion',
+  OpenAIImageTarget: 'OpenAI image',
+  OpenAIResponseTarget: 'OpenAI Responses API',
+  OpenAITTSTarget: 'OpenAI text to speech',
+  OpenAIVideoTarget: 'OpenAI video',
+  RoundRobinTarget: 'Weighted round robin',
 }
 
-const TARGET_TYPE_CONFIG: Record<string, TargetTypeConfig> = {
-  OpenAIChatTarget: { kind: 'openai', supportsEntra: true },
-  OpenAICompletionTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIImageTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIVideoTarget: { kind: 'openai', supportsEntra: true },
-  OpenAITTSTarget: { kind: 'openai', supportsEntra: true },
-  OpenAIResponseTarget: { kind: 'openai', supportsEntra: true },
-  AzureMLChatTarget: { kind: 'azureml', supportsEntra: true },
-  RoundRobinTarget: { kind: 'roundrobin', supportsEntra: false },
+const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = FALLBACK_TARGET_TYPES.map((targetType) => ({
+  target_type: targetType,
+  parameters: [],
+  supported_auth_modes: [],
+  description: null,
+}))
+
+type AuthMode = 'api_key' | 'identity'
+type TypeMetadataStatus = 'loading' | 'loaded' | 'error'
+
+function getTargetDisplayName(targetType: string): string {
+  return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
 
-const SUPPORTED_TARGET_TYPES = Object.keys(TARGET_TYPE_CONFIG)
+function getAuthDescription(authModes: TargetTypeEntry['supported_auth_modes']): string | null {
+  if (authModes.length === 0) return null
 
-type AuthMode = 'api_key' | 'entra'
+  const labels = authModes.map((mode) => (
+    mode === 'identity' ? 'Microsoft Entra ID' : 'API key'
+  ))
+  return `Supported authentication: ${labels.join(' or ')}`
+}
+
+/**
+ * Fallback for identity-based auth while registry metadata is unavailable.
+ */
+function defaultSupportsIdentity(targetType: string): boolean {
+  return FALLBACK_IDENTITY_TARGET_TYPES.has(targetType)
+}
+
+function getParameterLabel(name: string): string {
+  return name
+    .split('_')
+    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
+    .join(' ')
+}
+
+function isParameterValueSet(value: ParameterFormValue | undefined): boolean {
+  if (typeof value === 'string') {
+    return value.trim().length > 0
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0
+  }
+  return value !== undefined && value.type.length > 0
+}
 
 // Mirrors backend's hostname-suffix check (list in target_service.py).
-// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects Microsoft Entra authentication with a non-Azure OpenAI endpoint.
+// The backend still does the check and will reject unsupported endpoints, but this allows us to show a warning in the UI if the user selects identity-based authentication with a non-Azure OpenAI endpoint.
 const AZURE_OPENAI_HOSTNAME_SUFFIXES = [
   '.openai.azure.com',
   '.ai.azure.com',
@@ -115,7 +195,7 @@ interface SelectedInnerTarget {
  * TestFrontendBackendCompatibilitySync test guards against drift.
  */
 function effectiveUnderlyingModel(t: TargetInstance): string | null {
-  return t.underlying_model_name || t.model_name || null
+  return targetUnderlyingModelName(t) || targetModelName(t) || null
 }
 
 /**
@@ -131,10 +211,10 @@ function effectiveUnderlyingModel(t: TargetInstance): string | null {
  */
 function isCompatible(a: TargetInstance, b: TargetInstance): boolean {
   return (
-    a.target_type === b.target_type &&
+    getTargetType(a) === getTargetType(b) &&
     effectiveUnderlyingModel(a) === effectiveUnderlyingModel(b) &&
-    (a.temperature ?? null) === (b.temperature ?? null) &&
-    (a.top_p ?? null) === (b.top_p ?? null)
+    (a.identifier.temperature ?? null) === (b.identifier.temperature ?? null) &&
+    (a.identifier.top_p ?? null) === (b.identifier.top_p ?? null)
   )
 }
 
@@ -147,13 +227,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [underlyingModel, setUnderlyingModel] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
-  const [maxNewTokens, setMaxNewTokens] = useState('400')
-  const [temperature, setTemperature] = useState('1.0')
-  const [topP, setTopP] = useState('1.0')
-  const [repetitionPenalty, setRepetitionPenalty] = useState('1.0')
+  const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<{ targetType?: string; endpoint?: string }>({})
+  const [fieldErrors, setFieldErrors] = useState<{
+    targetType?: string
+    endpoint?: string
+    modelName?: string
+    underlyingModel?: string
+    apiKey?: string
+  }>({})
 
   // --- RoundRobin-specific state ---
   // The list of targets available for selection (fetched once when dialog opens).
@@ -161,24 +244,117 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   // Targets the user has picked for the RoundRobinTarget, with their weights.
   const [selectedInnerTargets, setSelectedInnerTargets] = useState<SelectedInnerTarget[]>([])
 
-  const targetConfig = TARGET_TYPE_CONFIG[targetType]
-  const isRoundRobin = targetConfig?.kind === 'roundrobin'
-  const isAzureML = targetConfig?.kind === 'azureml'
-  const isOpenAi = targetConfig?.kind === 'openai'
-  const supportsEntra = targetConfig?.supportsEntra ?? false
-  const showAuthField = targetType !== '' && supportsEntra
-  const isEntra = showAuthField && authMode === 'entra'
-  const entraEndpointError: string | null = (() => {
-    if (!isEntra || endpoint === '') return null
+  // --- Target type metadata state ---
+  // Available target types + their auth facts, fetched from the backend registry.
+  const [targetTypeEntries, setTargetTypeEntries] = useState<TargetTypeEntry[]>([])
+  const [typeMetadataStatus, setTypeMetadataStatus] = useState<TypeMetadataStatus>('loading')
+  const targetTypeByName = useMemo(
+    () => new Map(targetTypeEntries.map((entry) => [entry.target_type, entry])),
+    [targetTypeEntries],
+  )
+
+  // Reset the type metadata back to its loading state whenever the dialog is
+  // opened, so a stale error/entries from a previous session isn't shown while
+  // the refetch is in flight. Adjusted during render (rather than in the effect
+  // below) to avoid a cascading render.
+  const [seenOpen, setSeenOpen] = useState(open)
+  if (open !== seenOpen) {
+    setSeenOpen(open)
+    if (open) {
+      setTargetTypeEntries([])
+      setTypeMetadataStatus('loading')
+    }
+  }
+
+  // Fetch the target type metadata once when the dialog opens. The registry is
+  // the authority on which types exist and which auth modes they support.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    targetsApi.listTargetTypes()
+      .then((res) => {
+        if (!cancelled) {
+          setTargetTypeEntries(res.items)
+          setTypeMetadataStatus('loaded')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTargetTypeEntries([])
+          setTypeMetadataStatus('error')
+        }
+      })
+    return () => { cancelled = true }
+  }, [open])
+
+  const registeredTargetTypeOptions = useMemo(() => {
+    return targetTypeEntries.filter(canConfigureTargetType)
+  }, [targetTypeEntries])
+  const typeMetadataAvailable = registeredTargetTypeOptions.length > 0
+  const typeMetadataUnavailable = typeMetadataStatus !== 'loading' && !typeMetadataAvailable
+  const targetTypeOptions = typeMetadataAvailable
+    ? registeredTargetTypeOptions
+    : FALLBACK_TARGET_TYPE_ENTRIES
+
+  const isRoundRobin = targetType === 'RoundRobinTarget'
+  const isAzureML = targetType === 'AzureMLChatTarget'
+  const isOpenAi = targetType.startsWith('OpenAI') || targetType === 'RealtimeTarget'
+  const targetTypeEntry = targetTypeByName.get(targetType)
+  const metadataDrivenParameters = useMemo(
+    () => targetTypeEntry?.parameters.filter(
+      (parameter) => isMetadataDrivenTargetParameter(targetType, parameter),
+    ) ?? [],
+    [targetType, targetTypeEntry],
+  )
+  const requiredMetadataParameters = metadataDrivenParameters.filter((parameter) => parameter.required)
+  const optionalMetadataParameters = metadataDrivenParameters.filter((parameter) => !parameter.required)
+  const requiredMetadataParameterMissing = requiredMetadataParameters.some(
+    (parameter) => !isParameterValueSet(parameterValues[parameter.name]),
+  )
+  const parameterByName = useMemo(
+    () => new Map(targetTypeEntry?.parameters.map((parameter) => [parameter.name, parameter]) ?? []),
+    [targetTypeEntry],
+  )
+  const endpointParameter = parameterByName.get('endpoint')
+  const modelNameParameter = parameterByName.get('model_name')
+  const underlyingModelParameter = parameterByName.get('underlying_model')
+    ?? parameterByName.get('underlying_model_name')
+  const apiKeyParameter = parameterByName.get('api_key')
+  const customFunctionsParameter = parameterByName.get('custom_functions')
+  const customFunctionsReason = customFunctionsParameter
+    ? getTargetParameterPolicy(targetType, customFunctionsParameter.name)?.reason
+    : null
+  const metadataUnavailableForSelection = targetType !== '' && !targetTypeEntry
+  const hasField = (name: string) => parameterByName.has(name)
+    || (metadataUnavailableForSelection && !isRoundRobin)
+  const hasEndpointField = hasField('endpoint')
+  const hasModelNameField = hasField('model_name')
+  const hasUnderlyingModelField = hasField('underlying_model') || hasField('underlying_model_name')
+  const hasApiKeyField = hasField('api_key')
+  const selectedTargetDisplayName = getTargetDisplayName(targetType)
+  const selectedTargetAuthDescription = targetTypeEntry
+    ? getAuthDescription(targetTypeEntry.supported_auth_modes)
+    : null
+  const supportsIdentity = targetTypeEntry
+    ? targetTypeEntry.supported_auth_modes.includes('identity')
+    : defaultSupportsIdentity(targetType)
+  const showAuthField = targetType !== '' && supportsIdentity
+  const isIdentity = showAuthField && authMode === 'identity'
+  const endpointRequired = hasEndpointField
+  const modelNameRequired = Boolean(modelNameParameter?.required)
+  const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity
+  const identityEndpointError: string | null = (() => {
+    if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
-      return 'Entra auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
+      return 'Identity-based auth only works with Azure OpenAI / AI Foundry endpoints (for example, *.openai.azure.com or *.ai.azure.com).'
     }
     if (isAzureML && !isAzureMlEndpoint(endpoint)) {
-      return 'Entra auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
+      return 'Identity-based auth for AzureMLChatTarget only works with Azure ML managed online endpoints (for example, *.inference.ml.azure.com).'
     }
     return null
   })()
-  const showEntraEndpointError = entraEndpointError !== null
+  const showIdentityEndpointError = identityEndpointError !== null
 
   // Fetch the available targets when the dialog opens with RoundRobin selected.
   // If the parent already passed targets, derive availableTargets from them
@@ -219,14 +395,17 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     const selectedNames = new Set(selectedInnerTargets.map((t) => t.registryName))
     const selectedHashes = new Set(
       selectedInnerTargets
-        .map((sel) => availableTargets.find((t) => t.target_registry_name === sel.registryName)?.identifier_hash)
+        .map((sel) => {
+          const t = availableTargets.find((t) => t.target_registry_name === sel.registryName)
+          return t ? targetIdentifierHash(t) : null
+        })
         .filter((h): h is string => Boolean(h)),
     )
     const candidates = availableTargets.filter(
       (t) =>
-        t.target_type !== 'RoundRobinTarget' &&
+        getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
-        !(t.identifier_hash && selectedHashes.has(t.identifier_hash)),
+        !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
     )
     // If nothing is selected yet, all non-RRT candidates are eligible
     if (selectedInnerTargets.length === 0) return candidates
@@ -260,10 +439,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     setUnderlyingModel('')
     setAuthMode('api_key')
     setApiKey('')
-    setMaxNewTokens('400')
-    setTemperature('1.0')
-    setTopP('1.0')
-    setRepetitionPenalty('1.0')
+    setParameterValues({})
     setError(null)
     setFieldErrors({})
     setSelectedInnerTargets([])
@@ -301,7 +477,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         await targetsApi.createTarget({
           type: 'RoundRobinTarget',
           params: {
-            target_registry_names: selectedInnerTargets.map((t) => t.registryName),
+            targets: selectedInnerTargets.map((t) => t.registryName),
             weights: parsedWeights,
           },
         })
@@ -317,42 +493,61 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       return
     }
 
-    const errors: { targetType?: string; endpoint?: string } = {}
+    const errors: {
+      targetType?: string
+      endpoint?: string
+      modelName?: string
+      underlyingModel?: string
+      apiKey?: string
+    } = {}
     if (!targetType) errors.targetType = 'Please select a target type'
-    if (!endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (endpointRequired && !endpoint) errors.endpoint = 'Please provide an endpoint URL'
+    if (modelNameRequired && !modelName) errors.modelName = 'Please provide a model name'
+    if (underlyingModelRequired && !underlyingModel) {
+      errors.underlyingModel = 'Please provide the underlying model'
+    }
+    if (apiKeyRequired && !apiKey) errors.apiKey = 'Please provide an API key'
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors)
       return
     }
     setFieldErrors({})
 
+    const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
+    if (!metadataParams.ok) {
+      setError(metadataParams.error)
+      return
+    }
+
     setSubmitting(true)
     setError(null)
 
     try {
-      const params: Record<string, unknown> = {
-        endpoint,
+      const params: Record<string, unknown> = { ...(metadataParams.parameters ?? {}) }
+      // Identity-based auth must be enforceable: strip any metadata-driven
+      // parameter (e.g. AzureBlobStorageTarget's sas_token) that would let the
+      // backend authenticate a different way than the selected identity.
+      if (isIdentity) {
+        for (const parameter of metadataDrivenParameters) {
+          if (parameter.identity_conflicting) delete params[parameter.name]
+        }
       }
-      if (modelName) params.model_name = modelName
-      if (!isEntra && apiKey) params.api_key = apiKey
+      if (hasEndpointField && endpoint) params.endpoint = endpoint
+      if (hasModelNameField && modelName) params.model_name = modelName
+      if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
 
-      if (hasDifferentUnderlying && underlyingModel) params.underlying_model = underlyingModel
-
-      if (isAzureML) {
-        const parsedMaxNewTokens = parseInt(maxNewTokens, 10)
-        if (!isNaN(parsedMaxNewTokens)) params.max_new_tokens = parsedMaxNewTokens
-        const parsedTemperature = parseFloat(temperature)
-        if (!isNaN(parsedTemperature)) params.temperature = parsedTemperature
-        const parsedTopP = parseFloat(topP)
-        if (!isNaN(parsedTopP)) params.top_p = parsedTopP
-        const parsedRepetitionPenalty = parseFloat(repetitionPenalty)
-        if (!isNaN(parsedRepetitionPenalty)) params.repetition_penalty = parsedRepetitionPenalty
+      if (
+        (underlyingModelRequired || hasDifferentUnderlying)
+        && underlyingModel
+        && hasUnderlyingModelField
+      ) {
+        params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
       }
 
       await targetsApi.createTarget({
         type: targetType,
         params,
-        ...(isEntra ? { auth_mode: 'entra' as const } : {}),
+        ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
       })
 
       resetForm()
@@ -368,45 +563,136 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
   return (
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) handleClose() }}>
-      <DialogSurface>
+      <DialogSurface className={styles.dialogSurface}>
         <DialogBody>
           <DialogTitle>Create New Target</DialogTitle>
-          <DialogContent>
-            <form className={styles.form} onSubmit={(e) => { e.preventDefault(); handleSubmit() }}>
+          <DialogContent className={styles.dialogContent}>
+            <form
+              className={styles.form}
+              data-testid="create-target-form"
+              onSubmit={(e) => { e.preventDefault(); handleSubmit() }}
+            >
               {error && (
                 <MessageBar intent="error">
                   <MessageBarBody>{error}</MessageBarBody>
                 </MessageBar>
               )}
 
+              {typeMetadataStatus === 'loading' && (
+                <Spinner size="tiny" label="Loading target details..." labelPosition="after" />
+              )}
+
+              {typeMetadataUnavailable && (
+                <MessageBar intent="warning">
+                  <MessageBarBody>
+                    Target details could not be loaded. You can still select a supported target type,
+                    but its registry description and authentication options are unavailable.
+                  </MessageBarBody>
+                </MessageBar>
+              )}
+
               <Field
+                className={styles.formField}
                 label="Target Type"
+                hint="Each option shows what the target does, its implementation class, and how it authenticates."
                 required
                 validationMessage={fieldErrors.targetType}
                 validationState={fieldErrors.targetType ? 'error' : 'none'}
               >
-                <Select
-                  value={targetType}
-                  onChange={(_, data) => {
-                    const next = data.value
+                <Dropdown
+                  aria-label="Target Type"
+                  className={styles.fullWidthSelect}
+                  listbox={{ className: styles.targetTypeListbox }}
+                  placeholder="Select a target type"
+                  positioning={{ matchTargetSize: 'width' }}
+                  selectedOptions={targetType ? [targetType] : []}
+                  value={targetType ? selectedTargetDisplayName : ''}
+                  onOptionSelect={(_, data) => {
+                    const next = data.optionValue
+                    if (!next) return
                     setTargetType(next)
-                    if (!(TARGET_TYPE_CONFIG[next]?.supportsEntra ?? false)) {
+                    setParameterValues({})
+                    const nextEntry = targetTypeByName.get(next)
+                    const nextSupportsIdentity = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('identity')
+                      : defaultSupportsIdentity(next)
+                    if (!nextSupportsIdentity) {
                       setAuthMode('api_key')
                     }
                   }}
                 >
-                  <option value="">Select a target type</option>
-                  {SUPPORTED_TARGET_TYPES.map((type) => (
-                    <option key={type} value={type}>{type}</option>
-                  ))}
-                </Select>
+                  {targetTypeOptions.map((entry) => {
+                    const displayName = getTargetDisplayName(entry.target_type)
+                    const authDescription = getAuthDescription(entry.supported_auth_modes)
+                    const accessibleDescription = [
+                      displayName,
+                      entry.description,
+                      `Implementation: ${entry.target_type}`,
+                      authDescription,
+                    ].filter((value): value is string => Boolean(value)).join('. ')
+
+                    return (
+                      <Option
+                        aria-label={accessibleDescription}
+                        key={entry.target_type}
+                        text={displayName}
+                        value={entry.target_type}
+                      >
+                        <div className={styles.targetTypeOption}>
+                          <div className={styles.targetTypeOptionHeader}>
+                            <Text weight="semibold">{displayName}</Text>
+                            <code className={styles.targetTypeIdentifier}>{entry.target_type}</code>
+                          </div>
+                          {entry.description && (
+                            <Text size={200} className={styles.targetTypeDescription}>
+                              {entry.description}
+                            </Text>
+                          )}
+                          {authDescription && (
+                            <Text size={200} className={styles.targetTypeAuth}>
+                              {authDescription}
+                            </Text>
+                          )}
+                        </div>
+                      </Option>
+                    )
+                  })}
+                </Dropdown>
               </Field>
+
+              {targetType && (
+                <section
+                  aria-label="Selected target details"
+                  aria-live="polite"
+                  className={styles.selectedTargetDetails}
+                >
+                  <div className={styles.targetTypeOptionHeader}>
+                    <Text weight="semibold">{selectedTargetDisplayName}</Text>
+                    <code className={styles.targetTypeIdentifier}>{targetType}</code>
+                  </div>
+                  {targetTypeEntry?.description ? (
+                    <Text size={200} className={styles.targetTypeDescription}>
+                      {targetTypeEntry.description}
+                    </Text>
+                  ) : (
+                    <Text size={200} className={styles.targetTypeDescription}>
+                      Registry details are unavailable for this target.
+                    </Text>
+                  )}
+                  {selectedTargetAuthDescription && (
+                    <Text size={200} className={styles.targetTypeAuth}>
+                      {selectedTargetAuthDescription}
+                    </Text>
+                  )}
+                </section>
+              )}
 
               {/* === RoundRobinTarget form: select existing targets === */}
               {isRoundRobin && (
                 <>
-                  <Field label="Add Target">
+                  <Field className={styles.formField} label="Add Target">
                     <Select
+                      className={styles.fullWidthSelect}
                       value=""
                       onChange={(_, data) => {
                         if (data.value) addInnerTarget(data.value)
@@ -420,16 +706,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       </option>
                       {eligibleTargets.map((t) => (
                         <option key={t.target_registry_name} value={t.target_registry_name}>
-                          {t.target_registry_name} — {t.target_type}
-                          {t.model_name ? ` (${t.model_name})` : ''}
+                          {t.target_registry_name} — {getTargetType(t)}
+                          {targetModelName(t) ? ` (${targetModelName(t)})` : ''}
                         </option>
                       ))}
                     </Select>
                   </Field>
 
                   {selectedInnerTargets.length > 0 && (
-                    <div>
-                      <Label size="small" style={{ marginBottom: '4px', display: 'block' }}>
+                    <div className={styles.selectedTargetsSection}>
+                      <Label size="small" className={styles.selectedTargetsLabel}>
                         Selected Targets ({selectedInnerTargets.length})
                         {selectedInnerTargets.length < 2 && (
                           <Text size={200} style={{ color: tokens.colorPaletteRedForeground1, marginLeft: '8px' }}>
@@ -442,49 +728,57 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           const target = availableTargets.find(
                             (t) => t.target_registry_name === sel.registryName,
                           )
+                          const selectedTargetLabel = `${target?.target_registry_name ?? sel.registryName}${
+                            target && targetModelName(target) ? ` (${targetModelName(target)})` : ''
+                          }`
                           const weightParse = parseWeight(sel.weightInput)
                           const weightError = weightParse.ok ? null : weightParse.error
                           return (
                             <div key={sel.registryName} className={styles.selectedTargetRow}>
-                              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <Text size={200} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {target?.target_registry_name ?? sel.registryName}
-                                    {target?.model_name ? ` (${target.model_name})` : ''}
-                                  </Text>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <Label size="small">Weight:</Label>
-                                    <Input
-                                      type="number"
-                                      value={sel.weightInput}
-                                      min="1"
-                                      max={String(MAX_WEIGHT)}
-                                      step="1"
-                                      aria-invalid={weightError !== null}
-                                      aria-label={`Weight for ${sel.registryName}`}
-                                      style={{ width: '70px' }}
-                                      onChange={(_, data) =>
-                                        setInnerTargetWeightInput(sel.registryName, data.value)
-                                      }
-                                    />
-                                    <Button
-                                      appearance="subtle"
-                                      size="small"
-                                      icon={<DeleteRegular />}
-                                      aria-label={`Remove ${sel.registryName}`}
-                                      onClick={() => removeInnerTarget(sel.registryName)}
-                                    />
-                                  </div>
+                              <Tooltip
+                                content={<span className={styles.targetNameTooltip}>{selectedTargetLabel}</span>}
+                                relationship="description"
+                              >
+                                <Text
+                                  as="span"
+                                  size={200}
+                                  className={styles.selectedTargetName}
+                                  tabIndex={0}
+                                  aria-label={`Selected target: ${selectedTargetLabel}`}
+                                >
+                                  {selectedTargetLabel}
+                                </Text>
+                              </Tooltip>
+                              <div className={styles.selectedTargetControlGroup}>
+                                <div className={styles.selectedTargetControls}>
+                                  <Label size="small">Weight:</Label>
+                                  <Input
+                                    className={styles.weightInput}
+                                    type="number"
+                                    value={sel.weightInput}
+                                    min="1"
+                                    max={String(MAX_WEIGHT)}
+                                    step="1"
+                                    aria-invalid={weightError !== null}
+                                    aria-label={`Weight for ${sel.registryName}`}
+                                    onChange={(_, data) =>
+                                      setInnerTargetWeightInput(sel.registryName, data.value)
+                                    }
+                                  />
+                                  <Button
+                                    appearance="subtle"
+                                    size="small"
+                                    icon={<DeleteRegular />}
+                                    aria-label={`Remove ${sel.registryName}`}
+                                    onClick={() => removeInnerTarget(sel.registryName)}
+                                    className={styles.touchTarget}
+                                  />
                                 </div>
                                 {weightError && (
                                   <Text
                                     size={100}
                                     role="alert"
-                                    style={{
-                                      color: tokens.colorPaletteRedForeground1,
-                                      marginTop: '2px',
-                                      alignSelf: 'flex-end',
-                                    }}
+                                    className={styles.weightError}
                                   >
                                     {weightError}
                                   </Text>
@@ -502,138 +796,208 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
               {/* === Standard target form fields (hidden for RoundRobin) === */}
               {!isRoundRobin && (
                 <>
-              <Field
-                label="Endpoint URL"
-                required
-                validationMessage={fieldErrors.endpoint}
-                validationState={fieldErrors.endpoint ? 'error' : 'none'}
-              >
-                <Input
-                  placeholder={isAzureML
-                    ? 'https://your-model.region.inference.ml.azure.com/score'
-                    : 'https://your-resource.openai.azure.com/'}
-                  value={endpoint}
-                  onChange={(_, data) => setEndpoint(data.value)}
-                />
-              </Field>
+                  {hasEndpointField && (
+                    <Field
+                      label="Endpoint URL"
+                      hint={endpointParameter?.description || undefined}
+                      required={endpointRequired}
+                      validationMessage={fieldErrors.endpoint}
+                      validationState={fieldErrors.endpoint ? 'error' : 'none'}
+                    >
+                      <Input
+                        placeholder={isAzureML
+                          ? 'https://your-model.region.inference.ml.azure.com/score'
+                          : isOpenAi
+                            ? 'https://your-resource.openai.azure.com/'
+                            : 'https://example.com/'}
+                        value={endpoint}
+                        onChange={(_, data) => setEndpoint(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              <Field label="Model / Deployment Name">
-                <Input
-                  placeholder={isAzureML ? 'e.g. Llama-3.2-3B-Instruct' : 'e.g. gpt-4o, my-deployment'}
-                  value={modelName}
-                  onChange={(_, data) => setModelName(data.value)}
-                />
-              </Field>
+                  {hasModelNameField && (
+                    <Field
+                      label="Model / Deployment Name"
+                      hint={modelNameParameter?.description || undefined}
+                      required={modelNameRequired}
+                      validationMessage={fieldErrors.modelName}
+                      validationState={fieldErrors.modelName ? 'error' : 'none'}
+                    >
+                      <Input
+                        placeholder={isAzureML
+                          ? 'e.g. Llama-3.2-3B-Instruct'
+                          : 'e.g. gpt-4o, my-deployment'}
+                        value={modelName}
+                        onChange={(_, data) => setModelName(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              <div>
-                <Switch
-                  checked={hasDifferentUnderlying}
-                  onChange={(_, data) => {
-                    setHasDifferentUnderlying(data.checked)
-                    if (!data.checked) setUnderlyingModel('')
-                  }}
-                  label="Underlying model differs from deployment name"
-                />
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3, display: 'block', marginTop: '2px' }}>
-                  On Azure, the deployment name (e.g. my-gpt4-deployment) may differ from the actual model (e.g. gpt-4o).
-                </Text>
-              </div>
+                  {hasUnderlyingModelField && !underlyingModelRequired && (
+                    <div>
+                      <Switch
+                        checked={hasDifferentUnderlying}
+                        onChange={(_, data) => {
+                          setHasDifferentUnderlying(data.checked)
+                          if (!data.checked) setUnderlyingModel('')
+                        }}
+                        label="Underlying model differs from deployment name"
+                      />
+                      <Text
+                        size={200}
+                        style={{
+                          color: tokens.colorNeutralForeground3,
+                          display: 'block',
+                          marginTop: '2px',
+                        }}
+                      >
+                        On Azure, the deployment name may differ from the actual model.
+                      </Text>
+                    </div>
+                  )}
 
-              {hasDifferentUnderlying && (
-                <Field label="Underlying Model">
-                  <Input
-                    placeholder="e.g. gpt-4o-2024-08-06"
-                    value={underlyingModel}
-                    onChange={(_, data) => setUnderlyingModel(data.value)}
-                  />
-                </Field>
-              )}
+                  {hasUnderlyingModelField && (underlyingModelRequired || hasDifferentUnderlying) && (
+                    <Field
+                      label="Underlying Model"
+                      hint={underlyingModelParameter?.description || undefined}
+                      required={underlyingModelRequired}
+                      validationMessage={fieldErrors.underlyingModel}
+                      validationState={fieldErrors.underlyingModel ? 'error' : 'none'}
+                    >
+                      <Input
+                        placeholder="e.g. gpt-4o-2024-08-06"
+                        value={underlyingModel}
+                        onChange={(_, data) => setUnderlyingModel(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              {isAzureML && (
-                <>
-                  <Field label="Max New Tokens">
-                    <Input
-                      type="number"
-                      placeholder="400"
-                      value={maxNewTokens}
-                      onChange={(_, data) => setMaxNewTokens(data.value)}
-                    />
-                  </Field>
+                  {requiredMetadataParameters.map((parameter) => {
+                    const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
+                    return (
+                      <ParameterField
+                        key={parameter.name}
+                        parameter={parameter}
+                        value={parameterValues[parameter.name] ?? ''}
+                        disabled={submitting || identityConflict}
+                        label={getParameterLabel(parameter.name)}
+                        showDefaultHint
+                        allowEmptyList
+                        testIdPrefix="target-param"
+                        extraHint={identityConflict
+                          ? 'Ignored with Identity-based authentication.'
+                          : undefined}
+                        onChange={(name, value) => setParameterValues((current) => ({
+                          ...current,
+                          [name]: value,
+                        }))}
+                      />
+                    )
+                  })}
 
-                  <Field label="Temperature">
-                    <Input
-                      type="number"
-                      placeholder="1.0"
-                      value={temperature}
-                      onChange={(_, data) => setTemperature(data.value)}
-                    />
-                  </Field>
+                  {showAuthField && (
+                    <Field label="Authentication">
+                      <RadioGroup
+                        value={authMode}
+                        onChange={(_, data) => {
+                          const next = data.value as AuthMode
+                          setAuthMode(next)
+                          if (next === 'identity') {
+                            setApiKey('')
+                            setParameterValues((current) => {
+                              const cleared = { ...current }
+                              for (const parameter of metadataDrivenParameters) {
+                                  if (parameter.identity_conflicting) delete cleared[parameter.name]
+                              }
+                              return cleared
+                            })
+                          }
+                        }}
+                      >
+                        <Radio value="api_key" label="API Key" />
+                        <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
+                      </RadioGroup>
+                    </Field>
+                  )}
 
-                  <Field label="Top P">
-                    <Input
-                      type="number"
-                      placeholder="1.0"
-                      value={topP}
-                      onChange={(_, data) => setTopP(data.value)}
-                    />
-                  </Field>
+                  {showIdentityEndpointError && (
+                    <MessageBar intent="error" className={styles.warningMessage}>
+                      <MessageBarBody className={styles.warningMessageBody}>
+                        {identityEndpointError}
+                      </MessageBarBody>
+                    </MessageBar>
+                  )}
 
-                  <Field label="Repetition Penalty">
-                    <Input
-                      type="number"
-                      placeholder="1.0"
-                      value={repetitionPenalty}
-                      onChange={(_, data) => setRepetitionPenalty(data.value)}
-                    />
-                  </Field>
-                </>
-              )}
+                  {hasApiKeyField && !isIdentity && (
+                    <Field
+                      label="API Key"
+                      hint={apiKeyParameter?.description || undefined}
+                      required={apiKeyRequired}
+                      validationMessage={fieldErrors.apiKey}
+                      validationState={fieldErrors.apiKey ? 'error' : 'none'}
+                    >
+                      <Input
+                        type="password"
+                        placeholder="API key (stored in memory only)"
+                        value={apiKey}
+                        onChange={(_, data) => setApiKey(data.value)}
+                      />
+                    </Field>
+                  )}
 
-              {showAuthField && (
-                <Field label="Authentication">
-                  <RadioGroup
-                    value={authMode}
-                    onChange={(_, data) => {
-                      const next = data.value as AuthMode
-                      setAuthMode(next)
-                      if (next === 'entra') setApiKey('')
-                    }}
-                  >
-                    <Radio value="api_key" label="API Key" />
-                    <Radio value="entra" label="Microsoft Entra Authentication" />
-                  </RadioGroup>
-                </Field>
-              )}
-
-              {showEntraEndpointError && (
-                <MessageBar intent="error" className={styles.warningMessage}>
-                  <MessageBarBody className={styles.warningMessageBody}>
-                    {entraEndpointError}
-                  </MessageBarBody>
-                </MessageBar>
-              )}
-
-              {!isEntra && (
-                <Field label="API Key">
-                  <Input
-                    type="password"
-                    placeholder="API key (stored in memory only)"
-                    value={apiKey}
-                    onChange={(_, data) => setApiKey(data.value)}
-                  />
-                </Field>
-              )}
-
-              {/* Close the !isRoundRobin conditional wrapper */}
+                  {(optionalMetadataParameters.length > 0 || customFunctionsReason) && (
+                    <details className={styles.advancedSettings}>
+                      <summary className={styles.advancedSettingsSummary}>
+                        Advanced settings
+                      </summary>
+                      <div className={styles.advancedSettingsFields}>
+                        {optionalMetadataParameters.map((parameter) => {
+                          const identityConflict = isIdentity && Boolean(parameter.identity_conflicting)
+                          return (
+                            <ParameterField
+                              key={parameter.name}
+                              parameter={parameter}
+                              value={parameterValues[parameter.name] ?? ''}
+                              disabled={submitting || identityConflict}
+                              label={getParameterLabel(parameter.name)}
+                              showDefaultHint
+                              allowEmptyList
+                              testIdPrefix="target-param"
+                              extraHint={identityConflict
+                                ? 'Ignored with Identity-based authentication.'
+                                : undefined}
+                              onChange={(name, value) => setParameterValues((current) => ({
+                                ...current,
+                                [name]: value,
+                              }))}
+                            />
+                          )
+                        })}
+                        {customFunctionsReason && (
+                          <MessageBar intent="info">
+                            <MessageBarBody>
+                              <strong>Custom Functions:</strong> {customFunctionsReason}
+                            </MessageBarBody>
+                          </MessageBar>
+                        )}
+                      </div>
+                    </details>
+                  )}
                 </>
               )}
 
               {!isRoundRobin && (
               <Label size="small" style={{ color: tokens.colorNeutralForeground3 }}>
-                Targets can also be auto-populated by adding an initializer (e.g. <code>airt</code>) to your{' '}
-                <code>~/.pyrit/.pyrit_conf</code> file, which reads endpoints from your <code>.env</code> and{' '}
-                <code>.env.local</code> files. See{' '}
-                <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+                Targets can also be auto-populated by adding the <code>target</code> initializer to your{' '}
+                <code>~/.pyrit/.pyrit_conf</code> file, which registers available prompt targets from endpoints in{' '}
+                your <code>.env</code> and <code>.env.local</code> files. See{' '}
+                <Link
+                  href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  inline
+                >
                   .pyrit_conf_example
                 </Link>.
               </Label>
@@ -653,7 +1017,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 (isRoundRobin
                   ? selectedInnerTargets.length < 2 ||
                     selectedInnerTargets.some((t) => !parseWeight(t.weightInput).ok)
-                  : !endpoint || showEntraEndpointError)
+                  : (endpointRequired && !endpoint) || showIdentityEndpointError)
+                  || (modelNameRequired && !modelName)
+                  || (underlyingModelRequired && !underlyingModel)
+                  || (apiKeyRequired && !apiKey)
+                  || requiredMetadataParameterMissing
               }
             >
               {submitting ? 'Creating...' : 'Create Target'}

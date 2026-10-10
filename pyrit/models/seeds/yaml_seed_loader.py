@@ -21,8 +21,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import yaml
 
 from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_dataset import SeedDataset
+from pyrit.models.seeds.seed_origin import SeedOrigin
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 if TYPE_CHECKING:
@@ -79,7 +81,7 @@ def _read_yaml(file: str | Path) -> dict[str, Any]:
     """
     file = verify_and_resolve_path(file)
     try:
-        data = yaml.safe_load(file.read_text("utf-8"))
+        data = safe_load_yaml(file.read_text("utf-8"))
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid YAML file '{file}': {exc}") from exc
 
@@ -90,6 +92,20 @@ def _read_yaml(file: str | Path) -> dict[str, Any]:
     return data
 
 
+def _set_local_origin(*, seed: Seed, file: str | Path) -> None:
+    """
+    Assign local origin unless the YAML explicitly declares a conflicting origin.
+
+    Raises:
+        ValueError: If an explicit origin is not local.
+    """
+    if "origin" in seed.model_fields_set and seed.origin is not SeedOrigin.LOCAL:
+        raise ValueError(
+            f"Seed in YAML file '{file}' declares origin '{seed.origin.value}'; local YAML requires 'local'."
+        )
+    seed.origin = SeedOrigin.LOCAL
+
+
 def load_seed_from_yaml(file: str | Path, *, cls: type[T]) -> T:
     """
     Load a single seed of type ``cls`` from a YAML file.
@@ -98,7 +114,8 @@ def load_seed_from_yaml(file: str | Path, *, cls: type[T]) -> T:
     as a trusted, vetted local template at this boundary. Bare-string values
     for known list-typed fields (``authors``, ``harm_categories``, ``groups``,
     ``parameters``) are wrapped into single-element lists so the model itself
-    can stay strict about its shape.
+    can stay strict about its shape. Omitted origin defaults to LOCAL; an explicit
+    conflicting origin raises an error.
 
     Args:
         file: Path to the YAML file containing the seed definition.
@@ -109,11 +126,14 @@ def load_seed_from_yaml(file: str | Path, *, cls: type[T]) -> T:
 
     Raises:
         FileNotFoundError: If the path does not resolve to an existing file.
-        ValueError: If the YAML is malformed, empty, or fails validation for ``cls``.
+        ValueError: If the YAML is malformed, empty, fails validation for ``cls``,
+            or declares an origin other than local.
     """
     data = _canonicalize_scalar_lists(_read_yaml(file))
     data["is_jinja_template"] = True
-    return cls(**data)
+    seed = cls(**data)
+    _set_local_origin(seed=seed, file=file)
+    return seed
 
 
 def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
@@ -122,6 +142,7 @@ def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
 
     Nested seeds inherit the ``is_jinja_template=True`` trust marker set at this
     boundary; per-seed overrides in the YAML are intentionally ignored.
+    Omitted origins default to LOCAL; explicit conflicting origins raise an error.
 
     Args:
         file: Path to the YAML file containing the dataset definition.
@@ -131,11 +152,15 @@ def load_seed_dataset_from_yaml(file: str | Path) -> SeedDataset:
 
     Raises:
         FileNotFoundError: If the path does not resolve to an existing file.
-        ValueError: If the YAML is malformed, empty, or fails dataset validation.
+        ValueError: If the YAML is malformed, empty, fails dataset validation,
+            or a seed declares an origin other than local.
     """
     data = _canonicalize_scalar_lists(_read_yaml(file))
     data["is_jinja_template"] = True
-    return SeedDataset.from_dict(data)
+    dataset = SeedDataset.from_dict(data)
+    for seed in dataset.seeds:
+        _set_local_origin(seed=seed, file=file)
+    return dataset
 
 
 def load_seed_prompt_from_yaml_with_required_parameters(

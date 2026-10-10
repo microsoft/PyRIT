@@ -259,3 +259,28 @@ async def test_fetch_dataset_extracts_zip_when_target_missing(tmp_path):
 
     assert extracted.exists() and (extracted / image_rel).exists()
     assert len(dataset.seeds) == 3
+
+
+async def test_fetch_dataset_extract_raises_total_size_cap(tmp_path):
+    """The full JailBreakV_28K.zip (~15 GiB, ratio ~1x) exceeds safe_extract_zip's 5 GiB
+    default total-size cap, so the loader must forward a raised max_total_size."""
+    image_rel = "llm_transfer_attack/img_001.png"
+    (tmp_path / "JailBreakV_28K.zip").write_bytes(b"fake")
+    loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
+    rows = [_row(image_path=image_rel)]
+
+    def _fake_extract(*, source, dest_dir, max_total_size, **kwargs):
+        target = pathlib.Path(dest_dir) / "JailBreakV_28k" / image_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"\x89PNG")
+
+    with patch(
+        "pyrit.datasets.seed_datasets.remote.jailbreakv_28k_dataset.safe_extract_zip",
+        side_effect=_fake_extract,
+    ) as mock_extract:
+        with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
+            await loader.fetch_dataset_async()
+
+    forwarded = mock_extract.call_args.kwargs["max_total_size"]
+    assert forwarded == _JailbreakV28KDataset._EXTRACT_MAX_TOTAL_SIZE
+    assert forwarded > 15 * 1024**3  # accommodates the real ~15 GiB bundle

@@ -1,9 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+import codecs
 import os
 import tempfile
 import wave
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -11,6 +15,16 @@ from uuid import uuid4
 import pytest
 from unit.mocks import MockPromptTarget, get_image_message_piece, get_mock_attack_identifier, get_mock_target_identifier
 
+from pyrit.converter import (
+    Base64Converter,
+    Converter,
+    ConverterResult,
+    ROT13Converter,
+    SelectiveTextConverter,
+    StringJoinConverter,
+    SuffixAppendConverter,
+    TokenSelectionStrategy,
+)
 from pyrit.exceptions import (
     ComponentRole,
     EmptyResponseException,
@@ -18,7 +32,11 @@ from pyrit.exceptions import (
     execution_context,
     get_execution_context,
 )
-from pyrit.memory import CentralMemory
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
+)
+from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -26,17 +44,13 @@ from pyrit.models import (
     SeedGroup,
     SeedPrompt,
 )
-from pyrit.prompt_converter import (
-    Base64Converter,
-    ConverterResult,
-    PromptConverter,
-    StringJoinConverter,
-)
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
-from pyrit.prompt_normalizer.prompt_converter_configuration import (
-    PromptConverterConfiguration,
+from pyrit.prompt_normalizer.converter_configuration import (
+    ConverterConfiguration,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture
@@ -71,12 +85,12 @@ def seed_group() -> SeedGroup:
 @pytest.fixture
 def mock_memory_instance():
     """Fixture to mock CentralMemory.get_memory_instance"""
-    memory = MagicMock()
+    memory = MagicMock(spec=MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         yield memory
 
 
-class MockPromptConverter(PromptConverter):
+class MockConverter(Converter):
     SUPPORTED_INPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
     SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
 
@@ -93,6 +107,22 @@ class MockPromptConverter(PromptConverter):
         return output_type == "text"
 
 
+class ContextFailingConverter(Converter):
+    SUPPORTED_INPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
+    SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
+
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        raise ValueError("conversion failed")
+
+
+@pytest.mark.parametrize(("start_token", "end_token"), [("", "⟫"), ("⟪", ""), ("", "")])
+def test_prompt_normalizer_rejects_empty_markers_before_memory_lookup(*, start_token: str, end_token: str) -> None:
+    with patch.object(CentralMemory, "get_memory_instance") as memory:
+        with pytest.raises(ValueError, match="tokens must be non-empty"):
+            PromptNormalizer(start_token=start_token, end_token=end_token)
+    memory.assert_not_called()
+
+
 def assert_message_piece_hashes_set(request: Message):
     assert request
     assert request.message_pieces
@@ -101,11 +131,60 @@ def assert_message_piece_hashes_set(request: Message):
         assert piece.converted_value_sha256
 
 
+@pytest.mark.parametrize("split_configurations", [False, True])
+async def test_convert_values_nested_markers_async(
+    *, mock_memory_instance: MagicMock, split_configurations: bool
+) -> None:
+    converters = [Base64Converter(), ROT13Converter(), SuffixAppendConverter(suffix="tail")]
+    configurations = (
+        [ConverterConfiguration(converters=[converter]) for converter in converters]
+        if split_configurations
+        else [ConverterConfiguration(converters=converters)]
+    )
+    original = "keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫"
+    message = Message.from_prompt(prompt=original, role="user")
+    await PromptNormalizer().convert_values_async(converter_configurations=configurations, message=message)
+
+    assert message.message_pieces[0].original_value == original
+    assert message.message_pieces[0].converted_value == (
+        f"keep {codecs.encode('dGVzdA==', 'rot_13')} and {codecs.encode('dGVzdDI=', 'rot_13')} tail"
+    )
+    assert message.message_pieces[0].converted_value_data_type == "text"
+    assert mock_memory_instance.mock_calls == []
+
+
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+@pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
+async def test_convert_values_token_selection_matches_direct_async(
+    *, mock_memory_instance: MagicMock, preserve_tokens: bool, start_token: str, end_token: str
+) -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+        start_token=start_token,
+        end_token=end_token,
+    )
+    prompt = f"keep {start_token}{start_token}test{end_token}{end_token} / {start_token}test2{end_token}"
+    direct = await converter.convert_async(prompt=prompt)
+    message = Message.from_prompt(prompt=prompt, role="user")
+    normalizer = PromptNormalizer(start_token=start_token, end_token=end_token)
+    await normalizer.convert_values_async(
+        converter_configurations=[ConverterConfiguration(converters=[converter])], message=message
+    )
+    expected = (
+        f"keep {start_token}{start_token}dGVzdA=={end_token}{end_token} / {start_token}dGVzdDI={end_token}"
+        if preserve_tokens
+        else f"keep {start_token}dGVzdA=={end_token} / dGVzdDI="
+    )
+    assert direct.output_text == message.message_pieces[0].converted_value == expected
+    assert message.message_pieces[0].original_value == prompt
+    assert mock_memory_instance.mock_calls == []
+
+
 async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_group):
     prompt_target = MockPromptTarget()
-    request_converters = [
-        PromptConverterConfiguration(converters=[Base64Converter(), StringJoinConverter(join_value="_")])
-    ]
+    request_converters = [ConverterConfiguration(converters=[Base64Converter(), StringJoinConverter(join_value="_")])]
 
     normalizer = PromptNormalizer()
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
@@ -117,6 +196,183 @@ async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_
     assert prompt_target.prompt_sent == ["S_G_V_s_b_G_8_="]
 
 
+async def test_send_prompt_async_forwards_normalizer_overrides_and_context(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(
+        return_value=[MessagePiece(role="assistant", original_value="first").to_message()]
+    )
+    normalizer = PromptNormalizer()
+    conversation_id = "prepended-conversation"
+    message_normalizer = MagicMock(spec=MessageListNormalizer)
+    normalizer_overrides = {CapabilityName.EDITABLE_HISTORY: message_normalizer}
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+
+    await normalizer.send_prompt_async(
+        message=Message.from_prompt(prompt="first request", role="user"),
+        target=prompt_target,
+        conversation_id=conversation_id,
+        normalizer_overrides=normalizer_overrides,
+        send_context=target_context,
+    )
+
+    call = prompt_target.send_prompt_async.await_args
+    assert call.kwargs["normalizer_overrides"] == normalizer_overrides
+    assert call.kwargs["send_context"] is target_context
+
+
+async def test_send_prompt_async_conversion_failure_does_not_call_target(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock()
+    conversation_id = "prepended-conversation"
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+    converter_config = ConverterConfiguration.from_converters(converters=[ContextFailingConverter()])
+
+    with pytest.raises(ValueError, match="conversion failed"):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=prompt_target,
+            conversation_id=conversation_id,
+            request_converter_configurations=converter_config,
+            send_context=target_context,
+        )
+
+    prompt_target.send_prompt_async.assert_not_awaited()
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
+
+
+async def test_send_prompt_async_target_failure_is_persisted(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(side_effect=ValueError("normalization failed"))
+    conversation_id = "prepended-conversation"
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(uuid4(),),
+        replay_seed_each_send=False,
+    )
+
+    with pytest.raises(Exception, match="Error normalizing prompt with conversation ID"):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=prompt_target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == 0
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
+
+
+async def test_child_task_target_failure_is_persisted(mock_memory_instance):
+    class ChildTaskTarget(MockPromptTarget):
+        async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+            async def fail_in_child_task_async() -> list[Message]:
+                raise RuntimeError("provider failed")
+
+            return await asyncio.create_task(fail_in_child_task_async())
+
+    conversation_id = "prepended-conversation"
+    seed = Message.from_prompt(prompt="seed", role="user")
+    seed.get_piece().conversation_id = conversation_id
+    mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=[seed])
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+
+    with pytest.raises(Exception, match="Error sending prompt with conversation ID"):
+        await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="request", role="user"),
+            target=ChildTaskTarget(),
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    assert target_context.target_invocation_count == 1
+    assert not target_context.is_seed_consumed
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
+    persisted_values = [
+        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory_async.call_args_list
+    ]
+    assert "request" in persisted_values
+
+
+async def test_concurrent_rejection_is_not_misclassified_as_target_invocation(mock_memory_instance):
+    conversation_id = "prepended-conversation"
+    seed = Message.from_prompt(prompt="seed", role="user")
+    seed.get_piece().conversation_id = conversation_id
+    mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=[seed])
+    target = MockPromptTarget()
+    target._configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
+    target_started = asyncio.Event()
+    target_release = asyncio.Event()
+
+    async def wait_in_target(*, normalized_conversation: list[Message]) -> list[Message]:
+        target_started.set()
+        await target_release.wait()
+        raise RuntimeError("provider failed")
+
+    target._send_prompt_to_target_async = AsyncMock(side_effect=wait_in_target)  # type: ignore[method-assign]
+    target_context = PrependedHistorySendContext(
+        conversation_id=conversation_id,
+        seed_message_ids=(seed.get_piece().id,),
+        replay_seed_each_send=False,
+    )
+    normalizer = PromptNormalizer()
+    first_send = asyncio.create_task(
+        normalizer.send_prompt_async(
+            message=Message.from_prompt(prompt="first request", role="user"),
+            target=target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+    )
+    await target_started.wait()
+
+    with pytest.raises(Exception, match="Error normalizing prompt"):
+        await normalizer.send_prompt_async(
+            message=Message.from_prompt(prompt="concurrent request", role="user"),
+            target=target,
+            conversation_id=conversation_id,
+            send_context=target_context,
+        )
+
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
+    target_release.set()
+    with pytest.raises(Exception, match="Error sending prompt"):
+        await first_send
+    persisted_values = [
+        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory_async.call_args_list
+    ]
+    assert "concurrent request" not in persisted_values
+
+
+async def test_send_prompt_async_empty_response_exception_is_persisted(mock_memory_instance):
+    prompt_target = MagicMock(spec=PromptTarget)
+    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
+    prompt_target.send_prompt_async = AsyncMock(side_effect=EmptyResponseException(message="normalization failed"))
+    conversation_id = "prepended-conversation"
+    response = await PromptNormalizer().send_prompt_async(
+        message=Message.from_prompt(prompt="request", role="user"),
+        target=prompt_target,
+        conversation_id=conversation_id,
+    )
+
+    assert response.get_piece().response_error == "empty"
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
+
+
 async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, seed_group):
     prompt_target = MagicMock()
     prompt_target.send_prompt_async = AsyncMock(return_value=None)
@@ -126,48 +382,14 @@ async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, s
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
     response = await normalizer.send_prompt_async(message=message, target=prompt_target)
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
-    request = mock_memory_instance.add_message_to_memory.call_args[1]["request"]
+    request = mock_memory_instance.add_message_to_memory_async.call_args[1]["request"]
     assert_message_piece_hashes_set(request)
     assert response.message_pieces[0].response_error == "empty"
     assert response.message_pieces[0].original_value == ""
     assert response.message_pieces[0].original_value_data_type == "text"
     assert_message_piece_hashes_set(response)
-
-
-async def test_send_prompt_async_labels_emit_deprecation_warning(mock_memory_instance, seed_group):
-    prompt_target = MagicMock()
-    prompt_target.send_prompt_async = AsyncMock(
-        return_value=[MessagePiece(role="assistant", original_value="ok", conversation_id="conv-1").to_message()]
-    )
-    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
-
-    normalizer = PromptNormalizer()
-    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
-
-    with patch("pyrit.prompt_normalizer.prompt_normalizer.print_deprecation_message") as mock_deprecation:
-        await normalizer.send_prompt_async(message=message, target=prompt_target, labels={"env": "prod"})
-
-    mock_deprecation.assert_called_once()
-
-
-async def test_send_prompt_async_attack_identifier_emits_deprecation_warning(mock_memory_instance, seed_group):
-    prompt_target = MagicMock()
-    prompt_target.send_prompt_async = AsyncMock(
-        return_value=[MessagePiece(role="assistant", original_value="ok", conversation_id="conv-1").to_message()]
-    )
-    prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
-
-    normalizer = PromptNormalizer()
-    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
-
-    with patch("pyrit.prompt_normalizer.prompt_normalizer.print_deprecation_message") as mock_deprecation:
-        await normalizer.send_prompt_async(
-            message=message, target=prompt_target, attack_identifier=get_mock_attack_identifier("TestAttack")
-        )
-
-    mock_deprecation.assert_called_once()
 
 
 async def test_send_prompt_async_empty_response_exception_handled(mock_memory_instance, seed_group):
@@ -181,7 +403,7 @@ async def test_send_prompt_async_empty_response_exception_handled(mock_memory_in
 
     response = await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
     assert response.message_pieces[0].response_error == "empty"
     assert response.message_pieces[0].original_value == ""
@@ -204,20 +426,26 @@ async def test_send_prompt_async_request_response_added_to_memory(mock_memory_in
 
     await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
     seed_prompt_value = seed_group.prompts[0].value
     # Validate that first request is added to memory, then response is added to memory
     assert (
         seed_prompt_value
-        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+        == mock_memory_instance.add_message_to_memory_async.call_args_list[0][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
     assert (
-        mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        mock_memory_instance.add_message_to_memory_async.call_args_list[1][1]["request"]
+        .message_pieces[0]
+        .original_value
         == "test_response"
     )
 
-    assert mock_memory_instance.add_message_to_memory.call_args_list[1].called_after(prompt_target.send_prompt_async)
+    assert mock_memory_instance.add_message_to_memory_async.call_args_list[1].called_after(
+        prompt_target.send_prompt_async
+    )
 
 
 async def test_send_prompt_async_exception(mock_memory_instance, seed_group):
@@ -233,16 +461,20 @@ async def test_send_prompt_async_exception(mock_memory_instance, seed_group):
     with pytest.raises(Exception, match="Error sending prompt with conversation ID"):
         await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
     # Validate that first request is added to memory, then exception is added to memory
     assert (
         seed_prompt_value
-        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+        == mock_memory_instance.add_message_to_memory_async.call_args_list[0][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
     assert (
         "test_exception"
-        in mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        in mock_memory_instance.add_message_to_memory_async.call_args_list[1][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
 
 
@@ -289,7 +521,7 @@ async def test_send_prompt_async_adds_memory_twice(mock_memory_instance, seed_gr
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
     response = await normalizer.send_prompt_async(message=message, target=prompt_target)
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
 
 async def test_send_prompt_async_no_converters_response(mock_memory_instance, seed_group, response: Message):
@@ -310,7 +542,7 @@ async def test_send_prompt_async_converters_response(mock_memory_instance, seed_
     prompt_target.get_identifier.return_value = get_mock_target_identifier("MockTarget")
     prompt_target.send_prompt_async = AsyncMock(return_value=[response])
 
-    response_converter = PromptConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
+    response_converter = ConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
 
     normalizer = PromptNormalizer()
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
@@ -331,7 +563,7 @@ async def test_send_prompt_async_image_converter(mock_memory_instance):
         return_value=[MessagePiece(role="assistant", original_value="response").to_message()]
     )
 
-    mock_image_converter = MagicMock(PromptConverter)
+    mock_image_converter = MagicMock(Converter)
 
     filename = ""
 
@@ -346,7 +578,7 @@ async def test_send_prompt_async_image_converter(mock_memory_instance):
             )
         )
 
-        prompt_converters = PromptConverterConfiguration(converters=[mock_image_converter])
+        converters = ConverterConfiguration(converters=[mock_image_converter])
 
         prompt_text = "Hello"
 
@@ -360,7 +592,7 @@ async def test_send_prompt_async_image_converter(mock_memory_instance):
         response = await normalizer.send_prompt_async(
             message=message,
             target=prompt_target,
-            request_converter_configurations=[prompt_converters],
+            request_converter_configurations=[converters],
         )
 
         # verify the prompt target received the correct arguments from the normalizer
@@ -379,9 +611,7 @@ async def test_prompt_normalizer_send_prompt_batch_async_throws(
 ):
     prompt_target = MockPromptTarget(rpm=max_requests_per_minute)
 
-    request_converters = PromptConverterConfiguration(
-        converters=[Base64Converter(), StringJoinConverter(join_value="_")]
-    )
+    request_converters = ConverterConfiguration(converters=[Base64Converter(), StringJoinConverter(join_value="_")])
 
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
     normalizer_request = NormalizerRequest(
@@ -409,6 +639,21 @@ async def test_prompt_normalizer_send_prompt_batch_async_throws(
 
             assert "S_G_V_s_b_G_8_=" in prompt_target.prompt_sent
             assert len(results) == 1
+
+
+async def test_prompt_normalizer_send_prompt_batch_async_applies_labels(mock_memory_instance, seed_group):
+    prompt_target = MockPromptTarget()
+    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
+    normalizer_request = NormalizerRequest(message=message)
+
+    normalizer = PromptNormalizer()
+    results = await normalizer.send_prompt_batch_to_target_async(
+        requests=[normalizer_request],
+        target=prompt_target,
+        batch_size=1,
+    )
+
+    assert len(results) == 1
 
 
 async def test_prompt_normalizer_send_prompt_batch_async_preserves_empty_response_alignment(
@@ -468,7 +713,7 @@ async def test_build_message(mock_memory_instance, seed_group):
 
 
 async def test_convert_response_values_index(mock_memory_instance, response: Message):
-    response_converter = PromptConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
+    response_converter = ConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
 
     normalizer = PromptNormalizer()
 
@@ -478,15 +723,87 @@ async def test_convert_response_values_index(mock_memory_instance, response: Mes
 
 
 async def test_convert_response_values_type(mock_memory_instance, response: Message):
-    response_converter = PromptConverterConfiguration(
-        converters=[Base64Converter()], prompt_data_types_to_apply=["text"]
-    )
+    response_converter = ConverterConfiguration(converters=[Base64Converter()], prompt_data_types_to_apply=["text"])
 
     normalizer = PromptNormalizer()
 
     await normalizer.convert_values_async(converter_configurations=[response_converter], message=response)
     assert response.get_value() == "SGVsbG8="
     assert response.get_value(1) == "cGFydCAy"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("stage", ["request", "response"])
+async def test_converter_guard_covers_only_selected_conversions_async(
+    *, mock_memory_instance: MagicMock, stage: str
+) -> None:
+    converter, skipped = Base64Converter(), Base64Converter()
+    guarded: list[Converter] = []
+    active: set[Converter] = set()
+    target = MockPromptTarget()
+    convert = converter.convert_async
+    send = target._send_prompt_to_target_async
+
+    @asynccontextmanager
+    async def guard_async(value: Converter) -> AsyncGenerator[None, None]:
+        guarded.append(value)
+        active.add(value)
+        try:
+            yield
+        finally:
+            active.remove(value)
+
+    async def convert_async(*, prompt: str, input_type: PromptDataType) -> ConverterResult:
+        assert active == {converter}
+        return await convert(prompt=prompt, input_type=input_type)
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        assert not active
+        return await send(normalized_conversation=normalized_conversation)
+
+    configurations = [
+        ConverterConfiguration(converters=[skipped], indexes_to_apply=[9]),
+        ConverterConfiguration(converters=[skipped], prompt_data_types_to_apply=["image_path"]),
+        ConverterConfiguration(converters=[converter]),
+    ]
+    with (
+        patch.object(converter, "convert_async", side_effect=convert_async),
+        patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
+    ):
+        await PromptNormalizer(converter_guard=guard_async).send_prompt_async(
+            message=Message.from_prompt(prompt="Hello", role="user"),
+            target=target,
+            request_converter_configurations=configurations if stage == "request" else None,
+            response_converter_configurations=configurations if stage == "response" else None,
+        )
+    assert guarded == [converter]
+    assert not active
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [RuntimeError("conversion failed"), asyncio.CancelledError()])
+async def test_converter_guard_releases_on_failure_async(
+    *, mock_memory_instance: MagicMock, error: BaseException
+) -> None:
+    active = False
+    converter = Base64Converter()
+
+    @asynccontextmanager
+    async def guard_async(value: Converter) -> AsyncGenerator[None, None]:
+        nonlocal active
+        assert value is converter
+        active = True
+        try:
+            yield
+        finally:
+            active = False
+
+    with patch.object(converter, "convert_async", side_effect=error), pytest.raises(type(error)):
+        await PromptNormalizer(converter_guard=guard_async).convert_values_async(
+            converter_configurations=[ConverterConfiguration(converters=[converter])],
+            message=Message.from_prompt(prompt="Hello", role="user"),
+        )
+    assert not active
 
 
 async def test_send_prompt_async_exception_conv_id(mock_memory_instance, seed_group):
@@ -503,18 +820,22 @@ async def test_send_prompt_async_exception_conv_id(mock_memory_instance, seed_gr
     # Validate that first request is added to memory, then exception is added to memory
     assert (
         seed_group.prompts[0].value
-        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+        == mock_memory_instance.add_message_to_memory_async.call_args_list[0][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
     assert (
         "Test Exception"
-        in mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        in mock_memory_instance.add_message_to_memory_async.call_args_list[1][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
 
 
 # Tests for execution context in converter operations (used for error message handling)
 
 
-class ContextCapturingConverter(PromptConverter):
+class ContextCapturingConverter(Converter):
     """A converter that captures the execution context during conversion."""
 
     SUPPORTED_INPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
@@ -536,7 +857,7 @@ class ContextCapturingConverter(PromptConverter):
         return output_type == "text"
 
 
-class FailingConverter(PromptConverter):
+class FailingConverter(Converter):
     """A converter that raises an exception during conversion."""
 
     SUPPORTED_INPUT_TYPES: tuple[PromptDataType, ...] = ("text",)
@@ -568,7 +889,7 @@ class TestPromptNormalizerConverterContext:
         normalizer = PromptNormalizer()
         message = Message.from_prompt(prompt="test", role="user")
 
-        converter_config = PromptConverterConfiguration(converters=[ContextCapturingConverter()])
+        converter_config = ConverterConfiguration(converters=[ContextCapturingConverter()])
 
         await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
 
@@ -582,7 +903,7 @@ class TestPromptNormalizerConverterContext:
         normalizer = PromptNormalizer()
         message = Message.from_prompt(prompt="test", role="user")
 
-        converter_config = PromptConverterConfiguration(converters=[ContextCapturingConverter()])
+        converter_config = ConverterConfiguration(converters=[ContextCapturingConverter()])
 
         # Set an outer execution context (simulating being called from an attack)
         with execution_context(
@@ -605,7 +926,7 @@ class TestPromptNormalizerConverterContext:
         normalizer = PromptNormalizer()
         message = Message.from_prompt(prompt="test", role="user")
 
-        converter_config = PromptConverterConfiguration(converters=[FailingConverter()])
+        converter_config = ConverterConfiguration(converters=[FailingConverter()])
 
         with pytest.raises(RuntimeError, match="Converter failed"):
             await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
@@ -616,7 +937,7 @@ class TestPromptNormalizerConverterContext:
         message = Message.from_prompt(prompt="test", role="user")
 
         converter = ContextCapturingConverter()
-        converter_config = PromptConverterConfiguration(converters=[converter])
+        converter_config = ConverterConfiguration(converters=[converter])
 
         await normalizer.convert_values_async(converter_configurations=[converter_config], message=message)
 
@@ -650,24 +971,7 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     assert result is not None
     assert len(result) == 1
     assert result[0].message_pieces[0].conversation_id == conv_id
-    mock_memory_instance.add_message_to_memory.assert_called_once()
-
-
-async def test_add_prepended_conversation_to_memory_attack_identifier_emits_deprecation_warning(mock_memory_instance):
-    normalizer = PromptNormalizer()
-
-    piece = MessagePiece(role="user", original_value="prepended text", conversation_id="old-id")
-    message = Message(message_pieces=[piece])
-
-    with patch("pyrit.prompt_normalizer.prompt_normalizer.print_deprecation_message") as mock_deprecation:
-        await normalizer.add_prepended_conversation_to_memory_async(
-            conversation_id="test-conv-id",
-            should_convert=False,
-            prepended_conversation=[message],
-            attack_identifier=get_mock_attack_identifier("TestAttack"),
-        )
-
-    mock_deprecation.assert_called_once()
+    mock_memory_instance.add_message_to_memory_async.assert_called_once()
 
 
 _AUDIO_SAMPLE_RATE_HZ = 24000
@@ -692,13 +996,13 @@ def sample_pcm() -> bytes:
 
 
 @pytest.fixture
-def dummy_audio_converter_config() -> PromptConverterConfiguration:
-    return PromptConverterConfiguration(converters=[MagicMock(spec=PromptConverter)])
+def dummy_audio_converter_config() -> ConverterConfiguration:
+    return ConverterConfiguration(converters=[MagicMock(spec=Converter)])
 
 
 async def test_convert_audio_async_no_converters_returns_input_unchanged(mock_memory_instance, sample_pcm):
     normalizer = PromptNormalizer()
-    with patch.object(normalizer, "convert_values", new_callable=AsyncMock) as mock_convert:
+    with patch.object(normalizer, "convert_values_async", new_callable=AsyncMock) as mock_convert:
         result = await normalizer.convert_audio_async(
             raw_pcm=sample_pcm,
             converter_configurations=[],
@@ -714,7 +1018,7 @@ async def test_convert_audio_async_no_op_converter_round_trips_pcm(
     mock_memory_instance, sample_pcm, dummy_audio_converter_config
 ):
     normalizer = PromptNormalizer()
-    with patch.object(normalizer, "convert_values", new_callable=AsyncMock):
+    with patch.object(normalizer, "convert_values_async", new_callable=AsyncMock):
         result = await normalizer.convert_audio_async(
             raw_pcm=sample_pcm,
             converter_configurations=[dummy_audio_converter_config],
@@ -741,7 +1045,7 @@ async def test_convert_audio_async_returns_pcm_from_converted_value(
 
     normalizer = PromptNormalizer()
     try:
-        with patch.object(normalizer, "convert_values", side_effect=swap_converted_value):
+        with patch.object(normalizer, "convert_values_async", side_effect=swap_converted_value):
             result = await normalizer.convert_audio_async(
                 raw_pcm=sample_pcm,
                 converter_configurations=[dummy_audio_converter_config],
@@ -763,7 +1067,7 @@ async def test_convert_audio_async_cleans_up_temp_file_on_success(
         captured_paths.append(message.message_pieces[0].converted_value)
 
     normalizer = PromptNormalizer()
-    with patch.object(normalizer, "convert_values", side_effect=capture_input_path):
+    with patch.object(normalizer, "convert_values_async", side_effect=capture_input_path):
         await normalizer.convert_audio_async(
             raw_pcm=sample_pcm,
             converter_configurations=[dummy_audio_converter_config],
@@ -785,7 +1089,7 @@ async def test_convert_audio_async_cleans_up_temp_file_on_converter_failure(
         raise RuntimeError("converter blew up")
 
     normalizer = PromptNormalizer()
-    with patch.object(normalizer, "convert_values", side_effect=capture_then_raise):
+    with patch.object(normalizer, "convert_values_async", side_effect=capture_then_raise):
         with pytest.raises(RuntimeError, match="converter blew up"):
             await normalizer.convert_audio_async(
                 raw_pcm=sample_pcm,
@@ -813,7 +1117,7 @@ async def test_convert_audio_async_raises_on_sample_rate_mismatch(
 
     normalizer = PromptNormalizer()
     try:
-        with patch.object(normalizer, "convert_values", side_effect=swap_to_wrong_rate):
+        with patch.object(normalizer, "convert_values_async", side_effect=swap_to_wrong_rate):
             with pytest.raises(ValueError, match="format mismatch"):
                 await normalizer.convert_audio_async(
                     raw_pcm=sample_pcm,
@@ -842,7 +1146,7 @@ async def test_convert_audio_async_raises_on_channel_mismatch(
 
     normalizer = PromptNormalizer()
     try:
-        with patch.object(normalizer, "convert_values", side_effect=swap_to_stereo):
+        with patch.object(normalizer, "convert_values_async", side_effect=swap_to_stereo):
             with pytest.raises(ValueError, match="format mismatch"):
                 await normalizer.convert_audio_async(
                     raw_pcm=sample_pcm,
@@ -853,36 +1157,3 @@ async def test_convert_audio_async_raises_on_channel_mismatch(
                 )
     finally:
         Path(wrong_channels_path).unlink(missing_ok=True)
-
-
-async def test_convert_values_emits_deprecation_warning_and_delegates(mock_memory_instance, response: Message):
-    normalizer = PromptNormalizer()
-    response_converter = PromptConverterConfiguration(converters=[Base64Converter()], indexes_to_apply=[0])
-    with patch.object(normalizer, "convert_values_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="convert_values_async"):
-            await normalizer.convert_values(converter_configurations=[response_converter], message=response)
-    mock_async.assert_awaited_once_with(converter_configurations=[response_converter], message=response)
-
-
-async def test_add_prepended_conversation_to_memory_emits_deprecation_warning_and_delegates(mock_memory_instance):
-    normalizer = PromptNormalizer()
-    with patch.object(
-        normalizer, "add_prepended_conversation_to_memory_async", new=AsyncMock(return_value=None)
-    ) as mock_async:
-        with pytest.warns(DeprecationWarning, match="add_prepended_conversation_to_memory_async"):
-            result = await normalizer.add_prepended_conversation_to_memory(
-                conversation_id="conv-1",
-                should_convert=False,
-                converter_configurations=None,
-                attack_identifier=None,
-                prepended_conversation=None,
-            )
-    assert result is None
-    mock_async.assert_awaited_once_with(
-        conversation_id="conv-1",
-        should_convert=False,
-        converter_configurations=None,
-        attack_identifier=None,
-        prepended_conversation=None,
-        target_identifier=None,
-    )

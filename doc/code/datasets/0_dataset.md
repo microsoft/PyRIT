@@ -55,3 +55,82 @@ A `SeedDataset` is a collection of related `SeedGroups` that you want to test to
 - `airt_*`: Various harm categories from AI Red Team
 
 Datasets can be loaded from local YAML files or fetched remotely from sources like HuggingFace, making it easy to share and version test cases across teams.
+
+## Generated Datasets
+
+A generation provider uses a configured `PromptTarget` to create a dataset. Store the result
+explicitly in memory, then select it by name in a scenario. Generation providers are excluded
+from discovery and bulk loading, so listing datasets cannot trigger model calls. Generation
+checks structure and count, not semantic quality.
+
+The mechanism is not limited to one seed type. The first provider,
+[`TargetObjectiveProvider`](./6_generated_datasets.ipynb), generates text objectives only.
+Other seed types, such as prompts, multimodal groups, and simulated conversations, can use
+the same boundary later.
+
+The provider accepts a `SeedPrompt` as its `system_prompt`. The default generation rules
+and JSON response schema are defined in a bundled YAML file, using the same
+`response_json_schema` header as scorer prompts. Load a custom YAML with
+`SeedPrompt.from_yaml_file(...)` to change the generation rules.
+The header is the response schema source for both target requests and local validation;
+the prompt body contains generation guidance and examples, not a second format definition.
+Custom schemas must require an `objectives` array of strings. Count, non-empty values, and
+uniqueness after trimming are checked separately by the strategy.
+
+For direct strategy use, call `TargetObjectiveGenerator.execute_async` with `instructions`,
+`count`, and optional `harm_categories`. Each call creates a fresh context. Advanced callers
+can use `execute_with_context_async`, but each context permits only one execution attempt.
+Conversation cleanup releases target-side resources without deleting stored evidence.
+Cleanup has a five-second timeout and can extend past the execution deadline by up to
+five seconds. Cleanup failures are logged without replacing the original outcome.
+Each generated seed stores only `generation_conversation_id` in its generation metadata.
+Use that ID to retrieve the generation conversation from memory.
+
+Seeds record their provider or entry category in `origin`: `LOCAL`, `REMOTE`, `GENERATED`,
+`USER`, or `UNKNOWN`. Local YAML loading assigns `LOCAL` when origin is omitted and rejects
+an explicit origin other than `local`. Remote dataset providers assign
+`REMOTE`, even when reading an explicit source file or cached download. Generated datasets
+use `GENERATED`. Origin does not describe upstream authorship. Use `origin=SeedOrigin.USER`
+for explicit user entries. Unspecified and legacy origins remain `UNKNOWN`, while edits
+preserve the recorded origin.
+
+## Browse stored seeds
+
+The seed browser reads stored seeds from memory only. It does not load providers, open
+media or template files, render templates, or generate conversations. Members are
+`SeedRecord` projections, not reconstructed execution-ready seeds. Simulated-conversation
+configurations remain unchanged in `value`, including legacy file references and
+configurations that cannot be executed. Missing files do not remove members or examples.
+Stored IDs, hashes, nullable roles and sequences, parameters, objective conditions, and
+provenance are retained. Existing `get_seeds_async()` reconstruction is unchanged.
+
+- `GET /api/datasets/seeds?selection_key=<key>` lists one page of logical examples.
+- `GET /api/datasets/seeds/{example_id}?selection_key=<key>` returns all members of one example
+  as stored records, identified by `seed_type`. Configuration fields such as `num_turns`
+  remain in the stored JSON `value`; browsing does not resolve them into live seed objects.
+
+Get the `selection_key` from `GET /api/datasets`. The unnamed key `dataset:unnamed` includes
+NULL and empty dataset names. The example ID is the `prompt_group_id`, or the seed ID when
+the seed has no group. Only members in the selected dataset are returned.
+
+The list accepts `limit` (1 to 100), `cursor`, `search`, and repeated `modality`,
+`seed_type`, and `harm_category` parameters. Values of one parameter use OR. Different
+parameters use AND, and different members of an example can match different parameters.
+Harm categories match complete values without case sensitivity. `search` finds literal
+text in the values of text prompts and objectives; `%`, `_`, and `[` are not patterns.
+SQLite ignores case for ASCII characters only. `search` does not look in
+simulated-conversation configurations, because their stored value is JSON. Use
+`seed_type=simulated_conversation` to find them.
+
+Examples sort by the earliest member `date_added`, newest first, then by canonical textual
+example ID, descending. SQLite and Azure SQL use the same UUID order. A
+cursor is valid only for the same `selection_key` and filters. Other cursors return 400.
+
+Each list item has a preview of the first text member: at most 100 characters, with `...`
+and `preview_truncated` when it is shortened. Media members show only the file name.
+HTTP(S) media URLs are recognized regardless of scheme case or leading whitespace;
+their authority, query, and fragment are excluded from the preview.
+Standalone absolute paths and URLs stored as text show `[Text reference]` rather than
+paths or credentials; detail retains the full stored value. Other types show a type label.
+The browser does not render templates or run
+simulated conversations.

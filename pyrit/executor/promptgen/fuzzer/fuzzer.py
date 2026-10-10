@@ -14,6 +14,9 @@ import numpy as np
 from colorama import Fore, Style
 from pydantic import Field
 
+from pyrit.common.async_compatibility import legacy_sync_override
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.text_helper import escape_control_characters
 from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
 from pyrit.executor.core.config import (
@@ -29,9 +32,12 @@ from pyrit.models import (
     ComponentIdentifier,
     Identifiable,
     Message,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     SeedGroup,
     SeedPrompt,
+    UndeterminedScoreError,
 )
 from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
 from pyrit.score import FloatScaleThresholdScorer, Scorer, SelfAskScaleScorer
@@ -229,28 +235,23 @@ class FuzzerResult(PromptGeneratorStrategyResult):
 
     def __str__(self) -> str:
         """
-        Return a formatted string representation of the fuzzer result.
+        Return a summary without reading memory.
 
-        This method creates a FuzzerResultPrinter instance and captures its output
-        to return as a string, allowing for convenient printing with print(result).
+        Use ``print_formatted_async`` to include stored conversations and scores.
 
         Returns:
-            str: Formatted string representation of the result.
+            str: Execution statistics and successful templates.
         """
-        import io
-        from contextlib import redirect_stdout
-
-        # Capture the printer output
-        output_buffer = io.StringIO()
-
-        # Create printer with colors disabled for string output
-        printer = FuzzerResultPrinter(enable_colors=False)
-
-        # Redirect stdout to capture the printer output
-        with redirect_stdout(output_buffer):
-            printer.print_result(self)
-
-        return output_buffer.getvalue()
+        return "\n".join(
+            [
+                "FuzzerResult",
+                f"Total Queries: {self.total_queries}",
+                f"Templates Explored: {self.templates_explored}",
+                f"Successful Templates: {len(self.successful_templates)}",
+                f"Jailbreak Conversations: {len(self.jailbreak_conversation_ids)}",
+                *(escape_control_characters(template) for template in self.successful_templates),
+            ]
+        )
 
     def __repr__(self) -> str:
         """
@@ -276,8 +277,25 @@ class FuzzerResult(PromptGeneratorStrategyResult):
             enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
             width (int): Maximum width for text wrapping. Defaults to 100.
         """
+        print_deprecation_message(
+            old_item="FuzzerResult.print_formatted",
+            new_item="FuzzerResult.print_formatted_async",
+            removed_in="1.4.0",
+        )
         printer = FuzzerResultPrinter(enable_colors=enable_colors, width=width)
         printer.print_result(self)
+
+    @legacy_sync_override(lambda: FuzzerResult.print_formatted)
+    async def print_formatted_async(self, *, enable_colors: bool = True, width: int = 100) -> None:
+        """
+        Print the result using FuzzerResultPrinter with custom formatting options.
+
+        Args:
+            enable_colors (bool): Whether to enable ANSI color output. Defaults to True.
+            width (int): Maximum width for text wrapping. Defaults to 100.
+        """
+        printer = FuzzerResultPrinter(enable_colors=enable_colors, width=width)
+        (await printer.print_result_async(self))
 
     def print_templates(self) -> None:
         """
@@ -318,6 +336,8 @@ class FuzzerResultPrinter:
             text (str): The text to print.
             *colors: Variable number of colorama color constants to apply.
         """
+        # Escape the target's control characters before adding our own color codes.
+        text = escape_control_characters(text)
         if self._enable_colors and colors:
             color_prefix = "".join(colors)
             print(f"{color_prefix}{text}{Style.RESET_ALL}")
@@ -332,8 +352,9 @@ class FuzzerResultPrinter:
             text (str): The text to wrap and print.
             color (str): The color to apply to the text.
         """
-        # Split by existing newlines first to preserve line breaks
-        text_lines = text.split("\n")
+        # Split by existing newlines first to preserve line breaks. Escaping happens before
+        # wrapping so escaped sequences count toward the width and textwrap drops none of them.
+        text_lines = escape_control_characters(text.replace("\r\n", "\n")).split("\n")
 
         for text_line in text_lines:
             if text_line.strip():  # Only wrap non-empty lines
@@ -363,10 +384,29 @@ class FuzzerResultPrinter:
         Args:
             result (FuzzerResult): The fuzzer result to print.
         """
+        print_deprecation_message(
+            old_item="FuzzerResultPrinter.print_result",
+            new_item="FuzzerResultPrinter.print_result_async",
+            removed_in="1.4.0",
+        )
         self._print_header(result)
         self._print_summary(result)
         self._print_templates(result)
         self._print_conversations(result)
+        self._print_footer()
+
+    @legacy_sync_override(lambda: FuzzerResultPrinter.print_result)
+    async def print_result_async(self, result: FuzzerResult) -> None:
+        """
+        Print the complete fuzzer result to console.
+
+        Args:
+            result (FuzzerResult): The fuzzer result to print.
+        """
+        self._print_header(result)
+        self._print_summary(result)
+        self._print_templates(result)
+        (await self._print_conversations_async(result))
         self._print_footer()
 
     def _print_header(self, result: FuzzerResult) -> None:
@@ -467,9 +507,60 @@ class FuzzerResultPrinter:
                 scores = self._memory.get_prompt_scores(prompt_ids=[str(message.id)])
                 if scores:
                     score = scores[0]
-                    self._print_colored(
-                        f"{self._indent * 3} Score: {score.get_value()} | {score.score_rationale}", Fore.CYAN
-                    )
+                    try:
+                        score_value = str(score.get_value())
+                    except UndeterminedScoreError:
+                        score_value = "undetermined"
+                    self._print_colored(f"{self._indent * 3} Score: {score_value} | {score.score_rationale}", Fore.CYAN)
+                print()
+
+    async def _print_conversations_async(self, result: FuzzerResult) -> None:
+        """
+        Print the conversations from successful jailbreaks.
+
+        Args:
+            result (FuzzerResult): The fuzzer result containing conversation IDs.
+        """
+        self._print_section_header("Jailbreak Conversations")
+
+        if not result.jailbreak_conversation_ids:
+            self._print_colored(f"{self._indent}❌ No jailbreak conversations found.", Fore.RED)
+            return
+
+        self._print_colored(
+            f"{self._indent} Found {len(result.jailbreak_conversation_ids)} jailbreak conversation(s):",
+            Style.BRIGHT,
+            Fore.GREEN,
+        )
+
+        for i, conversation_id in enumerate(result.jailbreak_conversation_ids, 1):
+            print()
+            self._print_colored(f"{self._indent}Conversation {i} (ID: {conversation_id}):", Style.BRIGHT, Fore.MAGENTA)
+            self._print_colored("─" * (self._width - len(self._indent)), Fore.MAGENTA)
+
+            target_messages = await self._memory.get_message_pieces_async(conversation_id=str(conversation_id))
+
+            if not target_messages:
+                self._print_colored(f"{self._indent * 2}No conversation data found", Fore.YELLOW)
+                continue
+
+            for message in target_messages:
+                if message.api_role == "user":
+                    self._print_colored(f"{self._indent * 2} USER:", Style.BRIGHT, Fore.BLUE)
+                    self._print_wrapped_text(message.converted_value, Fore.BLUE)
+                else:
+                    self._print_colored(f"{self._indent * 2} {message.api_role.upper()}:", Style.BRIGHT, Fore.YELLOW)
+                    self._print_wrapped_text(message.converted_value, Fore.YELLOW)
+
+                # Print scores if available
+                scores = await self._memory.get_prompt_scores_async(prompt_ids=[str(message.id)])
+                if scores:
+                    score = scores[0]
+                    try:
+                        score_value = str(score.get_value())
+                    except UndeterminedScoreError:
+                        score_value = "undetermined"
+                    self._print_colored(f"{self._indent * 3} Score: {score_value} | {score.score_rationale}", Fore.CYAN)
                 print()
 
     def _print_footer(self) -> None:
@@ -491,7 +582,7 @@ class FuzzerResultPrinter:
         if result.successful_templates:
             print("Successful Templates:")
             for template in result.successful_templates:
-                print(f"---\n{template}")
+                print(f"---\n{escape_control_characters(template)}")
         else:
             print("No successful templates found.")
 
@@ -564,7 +655,7 @@ class FuzzerGenerator(
             objective_target (PromptTarget): The target to send the prompts to.
             template_converters (list[FuzzerConverter]): The converters to apply on the selected jailbreak template.
             scoring_target (PromptTarget): The chat target to use for scoring responses.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use.
             frequency_weight (float): Constant that balances between high reward and selection frequency.
             reward_penalty (float): Penalty that diminishes reward as path length increases.
@@ -577,11 +668,7 @@ class FuzzerGenerator(
             FuzzerGenerator: A configured FuzzerGenerator instance with default scoring.
         """
         # Create default scorer using the provided scoring target
-        scale_scorer = SelfAskScaleScorer(
-            chat_target=scoring_target,
-            scale_arguments_path=SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value,
-            system_prompt_path=SelfAskScaleScorer.SystemPaths.GENERAL_SYSTEM_PROMPT.value,
-        )
+        scale_scorer = SelfAskScaleScorer.from_scale(chat_target=scoring_target)
 
         objective_scorer = FloatScaleThresholdScorer(
             scorer=scale_scorer,
@@ -626,7 +713,7 @@ class FuzzerGenerator(
             objective_target (PromptTarget): The target to send the prompts to.
             template_converters (list[FuzzerConverter]): The converters to apply on the selected jailbreak template.
                 In each iteration, one converter is chosen at random.
-            converter_config (StrategyConverterConfig | None): Configuration for prompt converters.
+            converter_config (StrategyConverterConfig | None): Configuration for converters.
                 Defaults to None.
             scorer (Scorer | None): Configuration for scoring responses. Defaults to None.
             scoring_success_threshold (float): The score threshold to consider a jailbreak successful.
@@ -840,7 +927,7 @@ class FuzzerGenerator(
         jailbreak_prompts = self._generate_prompts_from_template(template=target_template, prompts=context.prompts)
 
         # Send prompts to target
-        responses = await self._send_prompts_to_target_async(context=context, prompts=jailbreak_prompts)
+        responses = await self._send_prompts_to_target_async(prompts=jailbreak_prompts)
 
         # Score responses
         scores = await self._score_responses_async(responses=responses, tasks=context.prompts)
@@ -986,12 +1073,11 @@ class FuzzerGenerator(
 
         return [template.render_template_value(prompt=prompt) for prompt in prompts]
 
-    async def _send_prompts_to_target_async(self, *, context: FuzzerContext, prompts: list[str]) -> list[Message]:
+    async def _send_prompts_to_target_async(self, *, prompts: list[str]) -> list[Message]:
         """
         Send prompts to the target in batches.
 
         Args:
-            context (FuzzerContext): The generation context.
             prompts (list[str]): The prompts to send.
 
         Returns:
@@ -1002,7 +1088,6 @@ class FuzzerGenerator(
         return await self._prompt_normalizer.send_prompt_batch_to_target_async(
             requests=requests,
             target=self._objective_target,
-            labels=context.memory_labels,
             batch_size=self._batch_size,
         )
 
@@ -1052,8 +1137,9 @@ class FuzzerGenerator(
         response_pieces = [response.message_pieces[0] for response in responses]
 
         # Score with objective scorer
-        return await self._scorer.score_prompts_batch_async(
-            messages=[piece.to_message() for piece in response_pieces], objectives=tasks
+        return await self._scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(piece.to_message()) for piece in response_pieces],
+            expectations=[ScoringExpectation(objective=task) for task in tasks],
         )
 
     def _process_scoring_results(
@@ -1112,7 +1198,10 @@ class FuzzerGenerator(
         Returns:
             True if this is a successful jailbreak.
         """
-        score_value = score.get_value()
+        try:
+            score_value = score.get_value()
+        except UndeterminedScoreError:
+            return False
         # For true_false scores (like from FloatScaleThresholdScorer), check for boolean True
         if score.score_type == "true_false":
             return score_value is True

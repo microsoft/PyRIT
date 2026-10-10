@@ -5,12 +5,17 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
+from pyrit.score import NumericRange, NumericRubric
 from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
     SelfAskGeneralFloatScaleScorer,
 )
+
+DEFAULT_RANGE = NumericRange(minimum_value=0, maximum_value=100, category="test_category")
 
 
 @pytest.fixture
@@ -30,14 +35,14 @@ def general_float_scorer_response() -> Message:
 
 
 async def test_general_float_scorer_score_async(patch_central_database, general_float_scorer_response: Message):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
-        category="test_category",
+        scale=DEFAULT_RANGE,
     )
     assert scorer
 
@@ -53,7 +58,7 @@ async def test_general_float_scorer_score_async(patch_central_database, general_
 async def test_general_float_scorer_score_async_with_prompt_f_string(
     general_float_scorer_response: Message, patch_central_database
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
@@ -61,7 +66,7 @@ async def test_general_float_scorer_score_async_with_prompt_f_string(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
         prompt_format_string="Rate this: {prompt}",
-        category="test_category",
+        scale=DEFAULT_RANGE,
     )
 
     score = await scorer.score_text_async(text="this is a test prompt", objective="test objective")
@@ -78,7 +83,7 @@ async def test_general_float_scorer_score_async_with_prompt_f_string(
 async def test_general_float_scorer_forwards_response_json_schema(
     patch_central_database, general_float_scorer_response: Message
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
@@ -95,7 +100,7 @@ async def test_general_float_scorer_forwards_response_json_schema(
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
-        category="test_category",
+        scale=DEFAULT_RANGE,
         response_json_schema=schema,
     )
 
@@ -110,14 +115,14 @@ async def test_general_float_scorer_forwards_response_json_schema(
 async def test_general_float_scorer_omits_schema_when_not_provided(
     patch_central_database, general_float_scorer_response: Message
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
 
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
-        category="test_category",
+        scale=DEFAULT_RANGE,
     )
 
     await scorer.score_text_async(text="test prompt", objective="test objective")
@@ -129,7 +134,7 @@ async def test_general_float_scorer_omits_schema_when_not_provided(
 
 
 async def test_general_float_scorer_score_async_handles_custom_keys(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     assert chat_target
 
@@ -151,12 +156,10 @@ async def test_general_float_scorer_score_async_handles_custom_keys(patch_centra
         chat_target=chat_target,
         system_prompt_format_string="This is a system prompt.",
         prompt_format_string="This is a prompt format string.",
-        category="test_category",
+        scale=DEFAULT_RANGE,
         score_value_output_key="score_custom",
         rationale_output_key="rationale_custom",
         description_output_key="description_custom",
-        min_value=0,
-        max_value=100,
     )
     score = await scorer.score_text_async(text="this is a test prompt", objective="test objective")
     assert len(score) == 1
@@ -165,8 +168,8 @@ async def test_general_float_scorer_score_async_handles_custom_keys(patch_centra
     assert "This is the description." in score[0].score_value_description
 
 
-async def test_general_float_scorer_score_async_min_max_scale(patch_central_database):
-    chat_target = MagicMock()
+async def test_general_float_scorer_score_async_min_max_range(patch_central_database):
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     json_response = (
         dedent(
@@ -185,9 +188,7 @@ async def test_general_float_scorer_score_async_min_max_scale(patch_central_data
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="Prompt.",
-        category="cat",
-        min_value=0,
-        max_value=10,
+        scale=NumericRange(minimum_value=0, maximum_value=10, category="cat"),
     )
     score = await scorer.score_text_async(text="prompt", objective="obj")
     assert len(score) == 1
@@ -197,16 +198,54 @@ async def test_general_float_scorer_score_async_min_max_scale(patch_central_data
     assert "Description." in score[0].score_value_description
 
 
-def test_general_float_scorer_init_invalid_min_max():
-    chat_target = MagicMock()
-    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
-    with pytest.raises(ValueError):
-        SelfAskGeneralFloatScaleScorer(
-            chat_target=chat_target,
-            system_prompt_format_string="Prompt.",
-            min_value=10,
-            max_value=5,
+async def test_general_float_scorer_retries_out_of_range_score(patch_central_database):
+    def _response(score_value: int) -> Message:
+        return Message(
+            message_pieces=[
+                MessagePiece(role="assistant", original_value=f'{{"score_value": {score_value}, "rationale": "r"}}')
+            ]
         )
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(150)], [_response(40)]])
+
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+    )
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert chat_target.send_prompt_async.call_count == 2
+    assert abs(float(score[0].score_value) - 0.4) < 1e-6
+
+
+def test_general_float_scorer_init_invalid_min_max():
+    with pytest.raises(ValueError):
+        NumericRange(minimum_value=10, maximum_value=5, category="test")
+
+
+@pytest.mark.parametrize(
+    "bounds",
+    [
+        {"minimum_value": True, "maximum_value": 10},
+        {"minimum_value": 0, "maximum_value": True},
+    ],
+)
+def test_numeric_range_rejects_bool_bounds(bounds):
+    # `bool` is a subclass of `int`, so a bool bound has to be rejected rather than coerced to 0 or 1.
+    with pytest.raises(ValidationError, match="not a bool"):
+        NumericRange(**bounds)
+
+
+def test_numeric_rubric_from_yaml_rejects_bool_bounds(tmp_path):
+    # The YAML path is how a user actually supplies these bounds.
+    rubric = tmp_path / "rubric.yaml"
+    rubric.write_text("category: test\nminimum_value: true\nmaximum_value: 10\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="not a bool"):
+        NumericRubric.from_yaml(rubric)
 
 
 def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_database):
@@ -215,13 +254,13 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
 
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskGeneralFloatScaleScorer(
         chat_target=chat_target,
         system_prompt_format_string="Prompt.",
-        category="test_category",
+        scale=DEFAULT_RANGE,
     )
     # Set evaluation_file_mapping with harm_category so the early return before eval_hash is bypassed
     scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
@@ -235,3 +274,91 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
     with _patch.object(scorer, "get_identifier", return_value=mock_identifier):
         result = scorer.get_scorer_metrics()
     assert result is None
+
+
+def test_get_scorer_metrics_uses_configured_result_file(patch_central_database, tmp_path):
+    from unittest.mock import patch as _patch
+
+    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+    )
+    scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
+        human_labeled_datasets_files=["harm/*.csv"],
+        result_file="harm/representational_metrics.jsonl",
+        harm_category="REPRESENTATIONAL",
+    )
+    result_file = tmp_path / "harm" / "representational_metrics.jsonl"
+    result_file.parent.mkdir()
+    result_file.touch()
+    mock_identifier = MagicMock(eval_hash="abc123")
+    mock_metrics = MagicMock()
+
+    with (
+        _patch.object(scorer, "get_identifier", return_value=mock_identifier),
+        _patch("pyrit.common.path.SCORER_EVALS_PATH", tmp_path),
+        _patch(
+            "pyrit.score.scorer_evaluation.scorer_metrics_io.find_harm_metrics_by_eval_hash",
+            return_value=mock_metrics,
+        ) as mock_find,
+    ):
+        result = scorer.get_scorer_metrics()
+
+    assert result is mock_metrics
+    mock_find.assert_called_once_with(eval_hash="abc123", file_path=result_file)
+
+
+def test_general_float_scale_no_chat_target_raises():
+    with pytest.raises(ValueError, match="A chat_target must be provided"):
+        SelfAskGeneralFloatScaleScorer(
+            chat_target=None,
+            system_prompt_format_string="prompt",
+            scale=DEFAULT_RANGE,
+        )
+
+
+def _response(body: str) -> Message:
+    return Message(message_pieces=[MessagePiece(role="assistant", original_value=body)])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("body", "configured_category", "expected_category"),
+    [
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": "test_category"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r"}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": null}', "test_category", ["test_category"]),
+        ('{"score_value": 50, "rationale": "r", "category": "violence"}', None, ["violence"]),
+    ],
+    ids=[
+        "configured_category_wins",
+        "matching_categories",
+        "no_response_category",
+        "null_response_category",
+        "no_configured_category",
+    ],
+)
+async def test_general_float_scorer_category_precedence_async(
+    body: str, configured_category: str | None, expected_category: list[str]
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.set_system_prompt_async = AsyncMock()
+    chat_target.send_prompt_async = AsyncMock(return_value=[_response(body)])
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=NumericRange(minimum_value=0, maximum_value=100, category=configured_category),
+    )
+
+    score = await scorer.score_text_async(text="prompt", objective="obj")
+
+    assert score[0].score_category == expected_category
+    assert score[0].score_value == "0.5"
+    chat_target.send_prompt_async.assert_awaited_once()

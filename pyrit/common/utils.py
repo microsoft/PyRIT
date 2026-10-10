@@ -8,9 +8,19 @@ import logging
 import math
 import random
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeGuard, TypeVar
 
 logger = logging.getLogger(__name__)
+
+
+def is_numeric_value(value: object) -> TypeGuard[int | float]:
+    """
+    Check a runtime value without coercing strings or other numeric-like objects.
+
+    Returns:
+        bool: Whether the value is an int or float (including bool).
+    """
+    return isinstance(value, (int, float))
 
 
 def verify_and_resolve_path(path: str | Path) -> Path:
@@ -56,24 +66,34 @@ def combine_dict(existing_dict: dict[str, Any] | None = None, new_dict: dict[str
     return result
 
 
-def combine_list(list1: str | list[str], list2: str | list[str]) -> list[str]:
+def combine_list(
+    list1: str | list[str] | None,
+    list2: str | list[str] | None,
+) -> list[str]:
     """
     Combine two lists or strings into a single list with unique values.
 
+    Order is preserved: items appear in first-occurrence order, taking ``list1``
+    before ``list2``. ``None`` is treated as empty and a bare string (including
+    ``""``) as a single-element list.
+
     Args:
-        list1 (str | list[str]): First list or string to combine.
-        list2 (str | list[str]): Second list or string to combine.
+        list1 (str | list[str] | None): First list or string to combine.
+        list2 (str | list[str] | None): Second list or string to combine.
 
     Returns:
-        list: Combined list containing unique values from both inputs.
+        list: Combined list containing unique values from both inputs, in
+            first-occurrence order.
     """
-    if isinstance(list1, str):
-        list1 = [list1]
-    if isinstance(list2, str):
-        list2 = [list2]
 
-    # Merge and keep only unique values
-    return list(set(list1 + list2))
+    def _as_list(value: str | list[str] | None) -> list[str]:
+        if value is None:
+            return []
+        return [value] if isinstance(value, str) else list(value)
+
+    # dict.fromkeys deduplicates while preserving insertion order; set() would
+    # make the result vary across processes under hash randomization.
+    return list(dict.fromkeys(_as_list(list1) + _as_list(list2)))
 
 
 def get_random_indices(*, start: int, size: int, proportion: float) -> list[int]:
@@ -193,14 +213,21 @@ def get_kwarg_param(
 
     value = kwargs.pop(param_name)
 
-    if not value:
+    if value is None:
         if not required:
             return default_value
         raise ValueError(f"Parameter '{param_name}' must be provided and non-empty")
 
+    # Type checked before emptiness so a falsy value of the wrong type still raises
+    # TypeError rather than silently falling back to the default.
     if not isinstance(value, expected_type):
         raise TypeError(
             f"Parameter '{param_name}' must be of type {expected_type.__name__}, got {type(value).__name__}"
         )
+
+    if not value:
+        if not required:
+            return default_value
+        raise ValueError(f"Parameter '{param_name}' must be provided and non-empty")
 
     return value

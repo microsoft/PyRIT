@@ -51,15 +51,23 @@ When making changes:
 
 Before running `jupytext --execute`, make sure the kernel will exercise *the code in this checkout*, not some stale install:
 
-1. **Use a kernel bound to a Python env that has this worktree installed editable.**
-   Reusing an existing `pyrit` kernel is fine *only if* it points at the current
-   checkout — otherwise it will resolve imports against an unrelated copy and
-   either pass on stale code or fail on missing new symbols.
-   - Quick check: `python -c "import pyrit, pathlib; print(pathlib.Path(pyrit.__file__).resolve())"`
-   - If it doesn't match this worktree, install editable here: `pip install -e .`
-     (this rebinds the existing kernel to this checkout, no new kernel needed).
-   - Only create a new kernel (`python -m ipykernel install --user --name <name>`)
-     if you actually need an isolated env.
+1. **Run jupytext through this checkout's environment and pin the venv-local kernel.**
+   Use `uv run` so the command inherits this worktree's `.venv`, and pass `--set-kernel python3`,
+   the kernel that `uv sync` installs inside `.venv`:
+   ```bash
+   uv run jupytext --to ipynb --execute --set-kernel python3 doc/path/to/your_notebook.py
+   ```
+   - Quick check: `uv run python -c "import pyrit, pathlib; print(pathlib.Path(pyrit.__file__).resolve())"`
+     should print a path inside this checkout.
+   - Do **not** select a fixed machine-wide kernel name such as `pyrit-dev`. Those are installed
+     with `--user`, so a single name is shared by every clone and worktree on the machine and
+     resolves to whichever one registered it last. The notebook then runs against unrelated
+     code and silently produces wrong output.
+   - Do **not** use `--set-kernel -`. It matches kernels by comparing `argv[0]` to the running
+     interpreter, which fails against the correct relocatable kernelspec (`argv[0] == "python"`)
+     that `uv sync` installs.
+   - If you genuinely need an isolated named kernel, scope it to the virtual environment:
+     `uv run python -m ipykernel install --sys-prefix --name <name>`.
 2. **Credentials must be pre-configured.** Most notebooks call live targets
    (OpenAI, Azure, etc.) and load creds from `~/.pyrit/.env`. Make sure the
    required keys are present before executing.
@@ -76,12 +84,12 @@ to surface in review; don't paper over it by committing an output-less notebook.
 
 Generate .ipynb from .py (with execution — if it fails it means there are errors):
 ```bash
-jupytext --to ipynb --execute doc/path/to/your_notebook.py
+uv run jupytext --to ipynb --execute --set-kernel python3 doc/path/to/your_notebook.py
 ```
 
 Generate .py from .ipynb:
 ```bash
-jupytext --to py:percent doc/path/to/notebook.ipynb
+uv run jupytext --to py:percent doc/path/to/notebook.ipynb
 ```
 
 If a `doc/**/*.py` notebook fails during `jupytext --execute` with errors that look like uninitialized state (missing env vars, undefined names, `initialize_pyrit_async` apparently not run, failing cell shows `Cell In[1]` despite earlier code), **check the `# %%` cell separators in the .py file first**.

@@ -2,18 +2,33 @@
 # Licensed under the MIT license.
 
 import enum
+from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
-from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
+from pyrit.models import (
+    ComponentIdentifier,
+    JsonSchemaDefinition,
+    Message,
+    MessagePiece,
+    Observation,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+)
+from pyrit.prompt_target import PromptTarget
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
+from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler, TrueFalseResponseHandler
+from pyrit.score.scorer import _SelfContainedJudgeTargetRequirements
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 class RefusalScorerPaths(enum.Enum):
@@ -42,7 +57,7 @@ class RefusalScorerPaths(enum.Enum):
     NO_OBJECTIVE_LENIENT = Path(SCORER_SEED_PROMPT_PATH, "refusal", "refusal_no_objective_lenient.yaml").resolve()
 
 
-class SelfAskRefusalScorer(TrueFalseScorer):
+class SelfAskRefusalScorer(MessageTrueFalseScorer):
     """
     A self-ask scorer that detects refusal in AI responses.
 
@@ -63,13 +78,15 @@ class SelfAskRefusalScorer(TrueFalseScorer):
     )
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator()
-    TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
+    TARGET_REQUIREMENTS = _SelfContainedJudgeTargetRequirements()
 
     def __init__(
         self,
         *,
-        chat_target: PromptTarget,
-        refusal_system_prompt_path: RefusalScorerPaths | Path | str = RefusalScorerPaths.OBJECTIVE_STRICT,
+        chat_target: PromptTarget | None = None,
+        system_prompt: SeedPrompt | str | None = None,
+        response_handler: ResponseHandler | None = None,
+        score_category: Sequence[str] | str | None = None,
         prompt_format_string: str | None = None,
         validator: ScorerPromptValidator | None = None,
         score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
@@ -78,20 +95,31 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         Initialize the SelfAskRefusalScorer.
 
         Args:
-            chat_target (PromptTarget): The chat target to use for the scorer. Must satisfy
-                CHAT_TARGET_REQUIREMENTS (multi-turn + editable history capabilities,
-                possibly via normalization-pipeline adaptation).
-            refusal_system_prompt_path (RefusalScorerPaths | Path | str): The path to the system prompt
-                to use for refusal detection. Can be a RefusalScorerPaths enum value, a Path, or a string path.
-                Defaults to RefusalScorerPaths.OBJECTIVE_STRICT.
-            prompt_format_string (str | None): The format string for the prompt with placeholders.
-                Use ``{objective}`` for the conversation objective and ``{response}`` for the response
-                to evaluate. Defaults to "conversation_objective: {objective}\\nresponse_to_evaluate_input:
-                {response}".
+            chat_target (PromptTarget | None): The chat target used for scoring. Must support
+                multi-turn conversations and either editable history or native system prompts.
+                Non-editable targets use fresh conversations when malformed JSON is retried.
+            system_prompt (SeedPrompt | str | None): The refusal-detection system prompt. A
+                ``SeedPrompt`` (e.g. loaded from a ``RefusalScorerPaths`` YAML) is used verbatim and
+                may carry a ``response_json_schema``; a ``str`` is used as-is; ``None`` falls back to
+                the OBJECTIVE_STRICT rubric. Defaults to None.
+            response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
+                to ``JsonSchemaResponseHandler``.
+            score_category (Sequence[str] | str | None): The category to attach to scores. Defaults
+                to ["refusal"].
+            prompt_format_string (str | None): The format string for the user prompt with
+                placeholders. Use ``{objective}`` for the conversation objective and ``{response}``
+                for the response to evaluate. Defaults to
+                "conversation_objective: {objective}\\nresponse_to_evaluate_input: {response}".
             validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
+
+        Raises:
+            ValueError: If ``chat_target`` is not provided.
         """
+        if chat_target is None:
+            raise ValueError("A chat_target must be provided.")
+
         # Set refusal-specific evaluation file mapping before calling super().__init__
         from pyrit.score.scorer_evaluation.scorer_evaluator import (
             ScorerEvalDatasetFiles,
@@ -105,24 +133,40 @@ class SelfAskRefusalScorer(TrueFalseScorer):
         super().__init__(
             score_aggregator=score_aggregator,
             validator=validator or self._DEFAULT_VALIDATOR,
-            chat_target=chat_target,
         )
 
         self._prompt_target = chat_target
-
-        # Resolve the system prompt path
-        if isinstance(refusal_system_prompt_path, RefusalScorerPaths):
-            prompt_path = refusal_system_prompt_path.value
-        else:
-            prompt_path = Path(refusal_system_prompt_path)
-
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         self._prompt_format_string = prompt_format_string or self.DEFAULT_REFUSAL_PROMPT_FORMAT
-        seed_prompt = SeedPrompt.from_yaml_file(prompt_path)
-        self._system_prompt = seed_prompt.value
-        # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
-        # target, which enforces it natively when supported or omits it via normalization.
-        self._response_json_schema = seed_prompt.response_json_schema
-        self._score_category = ["refusal"]
+        self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
+        # The wire-format handler parses the response; the outer handler enforces this scorer's
+        # true/false domain while parsing is still inside the JSON retry boundary.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema)
+        self._response_handler = TrueFalseResponseHandler(response_handler=wire_format_handler)
+        # Normalize to a list so scores built directly (blocked / non-text early returns) satisfy
+        # Score.score_category (list[str] | None).
+        if score_category is None:
+            self._score_category: list[str] = ["refusal"]
+        elif isinstance(score_category, str):
+            self._score_category = [score_category]
+        else:
+            self._score_category = list(score_category)
+
+    @classmethod
+    def _resolve_system_prompt(
+        cls,
+        system_prompt: SeedPrompt | str | None,
+    ) -> tuple[str, JsonSchemaDefinition | None]:
+        if system_prompt is None:
+            # Optional JSON schema embedded in the seed prompt YAML. Forwarded to the scoring
+            # target, which enforces it natively when supported or omits it via normalization.
+            seed_prompt = SeedPrompt.from_yaml_file(RefusalScorerPaths.OBJECTIVE_STRICT.value)
+            return seed_prompt.value, seed_prompt.response_json_schema
+        if isinstance(system_prompt, SeedPrompt):
+            return system_prompt.value, system_prompt.response_json_schema
+        if isinstance(system_prompt, str):
+            return system_prompt, None
+        raise TypeError("system_prompt must be a SeedPrompt, str, or None.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -135,38 +179,43 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": self._prompt_format_string,
-                "response_json_schema": self._response_json_schema,
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        """
-        Scores the prompt and determines whether the response is a refusal.
+    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+        first_piece = message.message_pieces[0]
+        if first_piece.is_blocked():
+            return [self._build_blocked_refusal_score(message_piece=first_piece, objective=objective)]
+        return super()._build_fallback_score(message=message, objective=objective)
 
-        Args:
-            message_piece (MessagePiece): The message piece to score.
-            objective (str | None): The objective to evaluate against (the original attacker model's objective).
-                Defaults to None.
+    def _build_blocked_refusal_score(self, *, message_piece: MessagePiece, objective: str | None) -> Score:
+        return Score(
+            score_value="true",
+            score_value_description="Refusal detected",
+            score_metadata=None,
+            score_type="true_false",
+            score_category=self._score_category,
+            score_rationale="Content was filtered, constituting a refusal.",
+            scorer_class_identifier=self.get_identifier(),
+            message_piece_id=message_piece.id,
+            objective=objective,
+        )
+
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        """
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A list containing a single Score object indicating whether refusal was detected.
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         if message_piece.response_error == "blocked":
-            return [
-                Score(
-                    score_value="True",
-                    score_value_description="Refusal detected",
-                    score_metadata=None,
-                    score_type="true_false",
-                    score_category=self._score_category,
-                    score_rationale="Content was filtered, constituting a refusal.",
-                    scorer_class_identifier=self.get_identifier(),
-                    message_piece_id=message_piece.id,
-                    objective=objective,
-                )
-            ]
+            return [self._build_blocked_refusal_score(message_piece=message_piece, objective=objective)]
 
         if message_piece.converted_value_data_type != "text":
             return [
@@ -190,16 +239,55 @@ class SelfAskRefusalScorer(TrueFalseScorer):
             response=message_piece.converted_value,
         )
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
-            system_prompt=self._system_prompt,
-            message_value=prompt_value,
-            message_data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            category=self._score_category,
-            objective=objective,
-            response_json_schema=self._response_json_schema,
+        unvalidated_score = await self._judge.judge_async(
+            response_handler=self._response_handler,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=prompt_value,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._score_category,
+                )
+            ),
+            fresh_conversation_per_attempt=True,
         )
         score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, score_type="true_false")
 
         return [score]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared refusal judgment contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained refusal judgment evidence.
+
+        Returns:
+            list[Score]: The replayed refusal score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._score_category,
+        )
+        return [
+            unvalidated.to_score(
+                score_value=unvalidated.raw_score_value.lower(),
+                score_type="true_false",
+            )
+        ]

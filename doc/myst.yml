@@ -11,6 +11,11 @@ project:
     - format: pdf
       template: plain_latex_book
       output: exports/book.pdf
+  # MyST copies these to the site root, preserving the videos directory.
+  static_files:
+    - assets/videos
+    - scanner-demo.png
+    - copyrit-demo.png
   # See https://mystmd.org/guide for error_rules schema.
   # Rule IDs come from https://github.com/jupyter-book/mystmd
   # (packages/myst-common/src/ruleids.ts).
@@ -39,6 +44,7 @@ project:
         - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
   toc:
     - file: index.md
+    - file: security.md
     - file: getting_started/README.md
       children:
         - file: getting_started/install.md
@@ -85,6 +91,7 @@ project:
       children:
         - file: scanner/1_pyrit_scan.ipynb
         - file: scanner/2_pyrit_shell.md
+        - file: scanner/adaptive.ipynb
         - file: scanner/airt.ipynb
         - file: scanner/benchmark.ipynb
         - file: scanner/foundry.ipynb
@@ -98,6 +105,7 @@ project:
             - file: code/datasets/3_dataset_writing.md
             - file: code/datasets/4_dataset_coding.ipynb
             - file: code/datasets/5_simulated_conversation.ipynb
+            - file: code/datasets/6_generated_datasets.ipynb
         - file: code/executor/0_executor.md
           children:
             - file: code/executor/1_single_turn.ipynb
@@ -107,6 +115,10 @@ project:
             - file: code/executor/5_workflow.ipynb
             - file: code/executor/6_benchmark.ipynb
             - file: code/executor/7_promptgen.ipynb
+            - file: code/executor/8_modality_feedback.ipynb
+            - file: code/executor/gcg/0_gcg.ipynb
+              children:
+                - file: code/executor/gcg/1_gcg_azure_ml.ipynb
         - file: code/targets/0_prompt_targets.md
           children:
             - file: code/targets/1_openai_chat_target.ipynb
@@ -120,14 +132,18 @@ project:
             - file: code/targets/8_non_llm_targets.ipynb
             - file: code/targets/9_rate_limiting.ipynb
             - file: code/targets/10_http_target.ipynb
-            - file: code/targets/10_1_playwright_target.ipynb
-            - file: code/targets/10_2_playwright_target_copilot.ipynb
-            - file: code/targets/10_3_websocket_copilot_target.ipynb
+              children:
+                - file: code/targets/10_1_playwright_target.ipynb
+                - file: code/targets/10_2_playwright_target_copilot.ipynb
+                - file: code/targets/10_3_websocket_copilot_target.ipynb
             - file: code/targets/11_message_normalizer.ipynb
+            - file: code/targets/hack_a_prompt_target.ipynb
             - file: code/targets/open_ai_completions.ipynb
+            - file: code/targets/github_copilot_target.ipynb
             - file: code/targets/prompt_shield_target.ipynb
             - file: code/targets/realtime_target.ipynb
             - file: code/targets/use_huggingface_chat_target.ipynb
+            - file: code/targets/websocket_target.ipynb
             - file: code/targets/round_robin_target.ipynb
         - file: code/converters/0_converters.ipynb
           children:
@@ -143,6 +159,7 @@ project:
             - file: code/scoring/2_float_scale_scorers.ipynb
             - file: code/scoring/3_combining_scorers.ipynb
             - file: code/scoring/4_scorer_metrics.ipynb
+            - file: code/scoring/5_tool_call_scorer.ipynb
         - file: code/memory/0_memory.md
           children:
             - file: code/memory/1_sqlite_memory.ipynb
@@ -161,9 +178,6 @@ project:
             - file: code/setup/2_resiliency.ipynb
             - file: code/setup/default_values.md
             - file: code/setup/pyrit_initializer.ipynb
-        - file: code/auxiliary_attacks/0_auxiliary_attacks.ipynb
-          children:
-            - file: code/auxiliary_attacks/1_gcg_azure_ml.ipynb
         - file: code/scenarios/0_scenarios.ipynb
           children:
             - file: code/scenarios/0_attack_techniques.ipynb
@@ -179,7 +193,6 @@ project:
       children:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
-        - file: api/pyrit_auxiliary_attacks.md
         - file: api/pyrit_cli_api_client.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
@@ -192,12 +205,11 @@ project:
         - file: api/pyrit_executor_core.md
         - file: api/pyrit_executor_promptgen.md
         - file: api/pyrit_executor_workflow.md
-        - file: api/pyrit_identifiers.md
         - file: api/pyrit_memory.md
         - file: api/pyrit_message_normalizer.md
         - file: api/pyrit_models.md
         - file: api/pyrit_output.md
-        - file: api/pyrit_prompt_converter.md
+        - file: api/pyrit_converter.md
         - file: api/pyrit_prompt_normalizer.md
         - file: api/pyrit_prompt_target.md
         - file: api/pyrit_registry.md
@@ -207,6 +219,8 @@ project:
         - file: api/pyrit_show_versions.md
     - file: blog/README.md
       children:
+        - file: blog/2026_09_03_adversarial_model_selection.md
+        - file: blog/2026_07_09_scenarios.md
         - file: blog/2026_04_14_scoring_scorers.md
         - file: blog/2025_06_06.md
         - file: blog/2025_03_03.md

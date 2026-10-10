@@ -8,7 +8,6 @@ from typing import Any
 import jwt
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ class ManualCopilotAuthenticator(Authenticator):
         3. Go to the Network tab.
         4. Filter by "Socket" connections or search for "Chathub".
         5. Start typing in the chat to initiate a WebSocket connection.
-        6. Look for the latest WebSocket connection to ``substrate.office.com/m365Copilot/Chathub``.
+        6. Look for the latest WebSocket connection to ``substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
         7. You may find the ``access_token`` in the request URL or in the request payload.
 
     Note:
@@ -101,20 +100,6 @@ class ManualCopilotAuthenticator(Authenticator):
             dict[str, Any]: The JWT claims decoded from the access token.
         """
         return self._claims
-
-    async def get_claims(self) -> dict[str, Any]:  # pyrit-async-suffix-exempt
-        """
-        Return the JWT claims (deprecated alias of ``get_claims_async``).
-
-        Returns:
-            dict[str, Any]: The JWT claims decoded from the access token.
-        """
-        print_deprecation_message(
-            old_item="ManualCopilotAuthenticator.get_claims",
-            new_item="ManualCopilotAuthenticator.get_claims_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_claims_async()
 
     async def refresh_token_async(self) -> str:
         """

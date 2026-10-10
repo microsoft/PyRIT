@@ -3,7 +3,7 @@
 
 from abc import abstractmethod
 
-from pyrit.models import AttackOutcome, Message, Score
+from pyrit.models import AttackOutcome, AttackResult, Message, Score
 from pyrit.output.base import PrinterBase
 
 
@@ -17,6 +17,31 @@ class AttackResultPrinterBase(PrinterBase):
     Framework implementations fetch data via CentralMemory.
     Thin-client implementations can fetch data via REST endpoints.
     """
+
+    @abstractmethod
+    async def render_async(
+        self,
+        result: AttackResult,
+        *,
+        include_auxiliary_scores: bool = False,
+        include_pruned_conversations: bool = False,
+        include_adversarial_conversation: bool = False,
+        include_reasoning_summaries: bool = False,
+    ) -> str:
+        """
+        Render an attack result.
+
+        Args:
+            result (AttackResult): The attack result to render.
+            include_auxiliary_scores (bool): Whether to include auxiliary scores. Defaults to False.
+            include_pruned_conversations (bool): Whether to include pruned conversations. Defaults to False.
+            include_adversarial_conversation (bool): Whether to include the adversarial conversation.
+                Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+
+        Returns:
+            str: The rendered attack result.
+        """
 
     @abstractmethod
     async def _get_conversation_async(self, conversation_id: str) -> list[Message]:

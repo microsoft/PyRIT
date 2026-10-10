@@ -5,20 +5,24 @@
 Tests for the shared registry constructor-argument resolution primitive.
 """
 
-from typing import Literal
+from collections.abc import Callable
+from enum import Enum
+from typing import Any, Literal
 
 import pytest
 
-from pyrit.common import REQUIRED_VALUE
+from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.models import Message, MessagePiece
-from pyrit.models.identifiers import ConverterIdentifier
+from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
 from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.resolution import (
+    _registry_getter_for_component_type,
     derive_parameters,
     display_choices,
+    reject_non_external_params,
     resolve_constructor_args,
 )
 
@@ -57,6 +61,18 @@ class _SimpleOnly:
         self.mode = mode
 
 
+class _Speed(Enum):
+    FAST = "fast"
+    SLOW = "slow"
+
+
+class _EnumOnly:
+    """Helper whose constructor takes an enum parameter."""
+
+    def __init__(self, *, speed: _Speed) -> None:
+        self.speed = speed
+
+
 class _Plain:
     def __init__(
         self, *, count: int, ratio: float = 0.5, mode: Literal["a", "b"] = "a", note: str | None = None
@@ -85,11 +101,43 @@ class _VarArgs:
         self.name = name
 
 
+class _ForwardedParent:
+    def __init__(self, *, count: int = 1, speed: _Speed = _Speed.FAST) -> None:
+        self.count = count
+        self.speed = speed
+
+
+class _ForwardingChild(_ForwardedParent):
+    @forward_init_parameters
+    def __init__(self, *, label: str = "child", **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.label = label
+
+
+class _OpaqueParent:
+    def __init__(self, *, count: int = 1) -> None:
+        self.count = count
+
+
+class _OpenBagChild(_OpaqueParent):
+    def __init__(self, *, label: str = "child", **options: object) -> None:
+        super().__init__()
+        self.label = label
+        self.options = options
+
+
 class _StrTargetArg:
     """A constructor arg named like the identifier reference but annotated as a plain type."""
 
     def __init__(self, *, converter_target: str = "x") -> None:
         self.converter_target = converter_target
+
+
+class _NeedsTargets:
+    """Helper whose constructor takes a list-typed registry reference."""
+
+    def __init__(self, *, targets: list[PromptTarget]) -> None:
+        self.targets = targets
 
 
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
@@ -100,20 +148,20 @@ def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | 
 @pytest.fixture
 def target_registry():
     """Provide a fresh TargetRegistry singleton with one registered target."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     registry = TargetRegistry.get_registry_singleton()
-    registry.register_instance(MockPromptTarget(), name="my_target")
+    registry.instances.register(MockPromptTarget(), name="my_target")
     yield registry
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 @pytest.fixture
 def empty_target_registry():
     """Provide a fresh, empty TargetRegistry singleton."""
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
     registry = TargetRegistry.get_registry_singleton()
     yield registry
-    TargetRegistry.reset_instance()
+    TargetRegistry.reset_registry_singleton()
 
 
 class TestDisplayChoices:
@@ -145,6 +193,18 @@ class TestResolveConstructorArgs:
         with pytest.raises(ValueError, match="mode"):
             _resolve(_SimpleOnly, {"mode": "z"})
 
+    def test_enum_string_coerces_to_member(self) -> None:
+        resolved = _resolve(_EnumOnly, {"speed": "fast"})
+        assert resolved == {"speed": _Speed.FAST}
+
+    def test_forwarded_parent_params_are_coerced(self) -> None:
+        resolved = _resolve(_ForwardingChild, {"label": "configured", "count": "3", "speed": "slow"})
+        assert resolved == {"label": "configured", "count": 3, "speed": _Speed.SLOW}
+
+    def test_open_bag_does_not_disable_unknown_param_rejection(self) -> None:
+        with pytest.raises(ValueError, match="Unknown parameter 'count'"):
+            _resolve(_OpenBagChild, {"count": "3"})
+
     def test_unknown_param_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
             _resolve(_SimpleOnly, {"nope": "1"})
@@ -161,8 +221,32 @@ class TestResolveConstructorArgs:
         resolved = _resolve(
             _NeedsTarget, {"converter_target": "my_target", "offset": "5"}, identifier_type=ConverterIdentifier
         )
-        assert resolved["converter_target"] is target_registry.get_instance_by_name("my_target")
+        assert resolved["converter_target"] is target_registry.instances.get("my_target")
         assert resolved["offset"] == 5
+
+    def test_resolves_list_registry_reference_by_name(self, target_registry: TargetRegistry) -> None:
+        # A ``list[...]`` reference resolves each element by name (the list-aware path
+        # used by RoundRobinTarget and composite scorers).
+        target_registry.instances.register(MockPromptTarget(), name="second_target")
+        resolved = _resolve(
+            _NeedsTargets, {"targets": ["my_target", "second_target"]}, identifier_type=TargetIdentifier
+        )
+        assert resolved["targets"] == [
+            target_registry.instances.get("my_target"),
+            target_registry.instances.get("second_target"),
+        ]
+
+    def test_list_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
+        # Non-string elements (already-built instances) pass through unchanged,
+        # interleaved with names that are looked up.
+        instance = MockPromptTarget()
+        resolved = _resolve(_NeedsTargets, {"targets": ["my_target", instance]}, identifier_type=TargetIdentifier)
+        assert resolved["targets"][0] is target_registry.instances.get("my_target")
+        assert resolved["targets"][1] is instance
+
+    def test_list_registry_reference_unknown_name_raises(self, target_registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="missing"):
+            _resolve(_NeedsTargets, {"targets": ["my_target", "missing"]}, identifier_type=TargetIdentifier)
 
     def test_registry_reference_instance_passthrough(self, target_registry: TargetRegistry) -> None:
         instance = MockPromptTarget()
@@ -178,6 +262,149 @@ class TestResolveConstructorArgs:
             _resolve(_NeedsTarget, {"converter_target": "missing"}, identifier_type=ConverterIdentifier)
 
 
+class _Handle:
+    """A Python object no external caller can supply."""
+
+
+class _Mixed:
+    """Helper whose constructor mixes external inputs with Python-object parameters."""
+
+    def __init__(
+        self,
+        *,
+        count: int = 1,
+        words: list[str] | None = None,
+        key: str | Callable[[], str] | None = None,
+        handle: _Handle | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        self.count = count
+        self.words = words
+        self.key = key
+        self.handle = handle
+        self.options = options
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestExternalInput:
+    """The external path accepts only supported inputs; the in-process path is unchanged."""
+
+    def test_external_accepts_supported_inputs(self) -> None:
+        raw_args: dict[str, object] = {"count": "3", "words": ["a", "b"], "key": "secret"}
+
+        resolved = resolve_constructor_args(cls=_Mixed, raw_args=raw_args, external_input=True)
+
+        assert resolved == {"count": 3, "words": ["a", "b"], "key": "secret"}
+
+    @pytest.mark.parametrize("raw_args", [{"handle": {}}, {"handle": None}, {"options": {"a": 1}}])
+    def test_external_rejects_parameters_that_take_python_objects(self, raw_args: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            resolve_constructor_args(cls=_Mixed, raw_args=raw_args, external_input=True)
+
+    def test_external_still_rejects_unknown_parameters(self) -> None:
+        with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
+            resolve_constructor_args(cls=_Mixed, raw_args={"nope": 1}, external_input=True)
+
+    def test_in_process_callers_keep_passing_python_objects(self) -> None:
+        handle = _Handle()
+        options = {"dtype": object()}
+
+        resolved = _resolve(_Mixed, {"handle": handle, "options": options, "key": print})
+
+        assert resolved["handle"] is handle
+        assert resolved["options"] is options
+        assert resolved["key"] is print
+
+    def test_external_values_of_supported_parameters_reach_the_constructor(self) -> None:
+        assert resolve_constructor_args(cls=_Mixed, raw_args={"words": "a, b"}, external_input=True) == {
+            "words": "a, b"
+        }
+
+    @pytest.mark.parametrize("value", [{"name": "my_target"}, 5, True])
+    def test_external_reference_must_be_a_name(self, target_registry: TargetRegistry, value: object) -> None:
+        with pytest.raises(ValueError, match="expected a registry name"):
+            resolve_constructor_args(
+                cls=_NeedsTarget,
+                raw_args={"converter_target": value},
+                identifier_type=ConverterIdentifier,
+                external_input=True,
+            )
+
+    def test_external_list_reference_must_be_names(self, target_registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="expected a registry name"):
+            resolve_constructor_args(
+                cls=_NeedsTargets,
+                raw_args={"targets": ["my_target", {"name": "x"}]},
+                identifier_type=TargetIdentifier,
+                external_input=True,
+            )
+
+        resolved = resolve_constructor_args(
+            cls=_NeedsTargets,
+            raw_args={"targets": ["my_target"]},
+            identifier_type=TargetIdentifier,
+            external_input=True,
+        )
+        assert resolved["targets"] == [target_registry.instances.get("my_target")]
+
+    def test_external_reference_resolves_name(self, target_registry: TargetRegistry) -> None:
+        resolved = resolve_constructor_args(
+            cls=_NeedsTarget,
+            raw_args={"converter_target": "my_target"},
+            identifier_type=ConverterIdentifier,
+            external_input=True,
+        )
+
+        assert resolved["converter_target"] is target_registry.instances.get("my_target")
+
+    def test_reject_non_external_params_checks_names_and_references(self) -> None:
+        declared = derive_parameters(cls=_Mixed)
+        reference = derive_parameters(cls=_NeedsTarget, identifier_type=ConverterIdentifier)
+
+        reject_non_external_params(params={"count": 1, "key": "k"}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="'handle' of 'demo' cannot be set through the API"):
+            reject_non_external_params(params={"handle": None}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="Unknown parameter 'unknown' for 'demo'"):
+            reject_non_external_params(params={"unknown": None}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="demo.converter_target: expected a registry name"):
+            reject_non_external_params(params={"converter_target": {"name": "x"}}, declared=reference, owner="demo")
+
+    @pytest.mark.parametrize(
+        ("registry_type", "identifier_type", "type_name", "raw_args"),
+        [
+            (TargetRegistry, TargetIdentifier, "TextTarget", {"custom_configuration": {}}),
+            (TargetRegistry, TargetIdentifier, "OpenAIChatTarget", {"httpx_client_kwargs": {"timeout": 5}}),
+            (ConverterRegistry, ConverterIdentifier, "TextJailbreakConverter", {"jailbreak_template": "x"}),
+            (ConverterRegistry, ConverterIdentifier, "PDFConverter", {"font_color": [1, 2, 3]}),
+        ],
+    )
+    def test_registered_components_reject_object_parameters_from_external_input(
+        self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
+    ) -> None:
+        cls = registry_type.get_registry_singleton().get_class(type_name)
+
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type, external_input=True)
+
+    @pytest.mark.parametrize(
+        ("registry_type", "identifier_type", "type_name", "raw_args"),
+        [
+            (TargetRegistry, TargetIdentifier, "OpenAIChatTarget", {"api_key": "key", "temperature": 0.5}),
+            (ConverterRegistry, ConverterIdentifier, "SearchReplaceConverter", {"pattern": "a", "replace": "b"}),
+        ],
+    )
+    def test_registered_components_accept_string_inputs_from_external_input(
+        self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
+    ) -> None:
+        cls = registry_type.get_registry_singleton().get_class(type_name)
+
+        resolved = resolve_constructor_args(
+            cls=cls, raw_args=raw_args, identifier_type=identifier_type, external_input=True
+        )
+
+        assert resolved == raw_args
+
+
 class TestDeriveParameters:
     """Tests for deriving the Parameter contract from a constructor signature."""
 
@@ -187,9 +414,10 @@ class TestDeriveParameters:
         assert params["ratio"].default == 0.5
         assert params["count"].param_type is int
 
-    def test_optional_unwrapped(self) -> None:
+    def test_optional_annotation_preserved(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
-        assert params["note"].param_type is str
+        assert params["note"].param_type == str | None
+        assert params["note"].type_name == "str"
 
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
@@ -207,6 +435,14 @@ class TestDeriveParameters:
     def test_var_args_skipped(self) -> None:
         names = [p.name for p in derive_parameters(cls=_VarArgs)]
         assert names == ["name"]
+
+    def test_forwarded_parent_parameters_follow_child_in_mro_order(self) -> None:
+        names = [p.name for p in derive_parameters(cls=_ForwardingChild)]
+        assert names == ["label", "count", "speed"]
+
+    def test_unexposed_parent_parameters_are_not_inferred_from_open_bag(self) -> None:
+        names = [p.name for p in derive_parameters(cls=_OpenBagChild)]
+        assert names == ["label"]
 
     def test_identifier_marker_overrides_plain_annotation(self) -> None:
         # The identifier marks ``converter_target`` as a TARGET reference, so even a
@@ -245,3 +481,37 @@ def test_module_has_no_backend_dependency() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_modules.append(node.module)
     assert not any(name.startswith("pyrit.backend") for name in imported_modules)
+
+
+# Component families whose references resolve by name, and the registry each maps to.
+# Kept in the test (not imported from resolution.py) so it is an independent spec:
+# the test fails if the production mapping drifts from this expectation.
+_RESOLVABLE_COMPONENT_REGISTRIES = {
+    ComponentType.TARGET: TargetRegistry,
+    ComponentType.CONVERTER: ConverterRegistry,
+    ComponentType.SCORER: ScorerRegistry,
+}
+# Scenarios are created by name, never referenced by name inside another component,
+# so they are deliberately not wired for reference resolution.
+_NON_RESOLVABLE_COMPONENT_TYPES = {ComponentType.SCENARIO}
+
+
+def test_every_component_type_is_classified() -> None:
+    # Guard against silently adding a ComponentType without deciding whether its
+    # references resolve by name. A new member forces an update here (and to the
+    # resolution map), rather than failing only at build time.
+    classified = set(_RESOLVABLE_COMPONENT_REGISTRIES) | _NON_RESOLVABLE_COMPONENT_TYPES
+    assert set(ComponentType) == classified
+
+
+@pytest.mark.parametrize("component_type", list(_RESOLVABLE_COMPONENT_REGISTRIES))
+def test_resolvable_component_type_maps_to_its_registry(component_type: ComponentType) -> None:
+    getter = _registry_getter_for_component_type(component_type)
+    assert getter is not None
+    expected_registry = _RESOLVABLE_COMPONENT_REGISTRIES[component_type]
+    assert getter() is expected_registry.get_registry_singleton().instances
+
+
+@pytest.mark.parametrize("component_type", sorted(_NON_RESOLVABLE_COMPONENT_TYPES))
+def test_non_resolvable_component_type_has_no_registry(component_type: ComponentType) -> None:
+    assert _registry_getter_for_component_type(component_type) is None

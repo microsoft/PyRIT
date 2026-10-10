@@ -4,15 +4,19 @@
 import json
 import logging
 import uuid
-from collections.abc import Sequence
-from datetime import datetime, timezone
-from typing import Any, Literal
+from abc import abstractmethod
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
     ARRAY,
     INTEGER,
     JSON,
+    Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -20,6 +24,8 @@ from sqlalchemy import (
     String,
     TypeDecorator,
     Unicode,
+    UniqueConstraint,
+    column,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -32,30 +38,49 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
+from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
+from pyrit.memory.analytics_sql import ResolvedAttackIdentifierHash
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ChatMessageRole,
     ComponentIdentifier,
+    ContentEntryScorable,
     Conversation,
     ConversationReference,
+    ConversationRetry,
     ConversationType,
+    ConverterIdentifier,
     EvaluationIdentifier,
     MessagePiece,
+    Observation,
     PromptDataType,
+    ScenarioEvaluationIdentifier,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunState,
     Score,
     ScorerEvaluationIdentifier,
+    ScorerIdentifier,
+    ScoreStatus,
+    ScoringExpectation,
     Seed,
+    SeedIdentifier,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
     SeedType,
+    TargetIdentifier,
+    scorable_from_dict,
 )
+from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +221,7 @@ class UTCDateTime(TypeDecorator[datetime]):
             datetime | None: The value with UTC tzinfo if it was naive, otherwise unchanged.
         """
         if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
 
 
@@ -225,7 +250,7 @@ class PromptMemoryEntry(Base):
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
-        converters (list[PromptConverter]): The converters for the prompt.
+        converters (list[Converter]): The converters for the prompt.
         prompt_target (PromptTarget): The target for the prompt.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
@@ -233,7 +258,7 @@ class PromptMemoryEntry(Base):
         converted_value_data_type (PromptDataType): The data type of the converted prompt (text, image)
         converted_value (str): The text of the converted prompt. If prompt is an image, it's a link.
         converted_value_sha256 (str): The SHA256 hash of the original prompt data.
-        idx_conversation_id (Index): The index for the conversation ID.
+        ix_PromptMemoryEntries_conversation_sequence_id (Index): Composite conversation ordering index.
         original_prompt_id (UUID): The original prompt id. It is equal to id unless it is a duplicate.
         scores (list[ScoreEntry]): The list of scores associated with the prompt.
 
@@ -242,15 +267,23 @@ class PromptMemoryEntry(Base):
     """
 
     __tablename__ = "PromptMemoryEntries"
-    __table_args__ = {"extend_existing": True}
-    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    role: Mapped[Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]] = mapped_column(
-        String, nullable=False
+    __table_args__ = (
+        Index(
+            "ix_PromptMemoryEntries_conversation_sequence_id",
+            "conversation_id",
+            "sequence",
+            "id",
+            mssql_include=["timestamp", "converted_value_data_type"],
+        ),
+        {"extend_existing": True},
     )
-    conversation_id = mapped_column(String, nullable=False)
+    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
+    role: Mapped[ChatMessageRole] = mapped_column(String, nullable=False)
+    # Bounded so SQL Server accepts it as an index key. 128 rather than 36 because
+    # conversation_id is a free-form caller-supplied string, not necessarily a UUID.
+    conversation_id = mapped_column(String(128), nullable=False)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, str | int]] = mapped_column(JSON)
     converter_identifiers: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
@@ -263,8 +296,6 @@ class PromptMemoryEntry(Base):
     converted_value = mapped_column(Unicode)
     converted_value_sha256 = mapped_column(String)
 
-    idx_conversation_id = Index("idx_conversation_id", "conversation_id")
-
     original_prompt_id = mapped_column(CustomUUID, nullable=False)
 
     # Version of PyRIT used when this entry was created
@@ -273,9 +304,22 @@ class PromptMemoryEntry(Base):
 
     scores: Mapped[list["ScoreEntry"]] = relationship(
         "ScoreEntry",
-        primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
+        primaryjoin="and_(ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id, "
+        "ScoreEntry.is_intermediate == False)",
+        viewonly=True,
+        foreign_keys="ScoreEntry.prompt_request_response_id",
+    )
+    all_scores: Mapped[list["ScoreEntry"]] = relationship(
+        "ScoreEntry",
         back_populates="prompt_request_piece",
         foreign_keys="ScoreEntry.prompt_request_response_id",
+    )
+    converter_identifier_links: Mapped[list["PromptConverterIdentifierEntry"]] = relationship(
+        "PromptConverterIdentifierEntry",
+        primaryjoin="PromptMemoryEntry.id == PromptConverterIdentifierEntry.prompt_memory_entry_id",
+        foreign_keys="PromptConverterIdentifierEntry.prompt_memory_entry_id",
+        order_by="PromptConverterIdentifierEntry.position",
+        cascade="all, delete-orphan",
     )
 
     def __init__(self, *, entry: MessagePiece) -> None:
@@ -290,7 +334,6 @@ class PromptMemoryEntry(Base):
         self.conversation_id = entry.conversation_id
         self.sequence = entry.sequence
         self.timestamp = entry.timestamp
-        self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
         self.converter_identifiers = [identifier.model_dump() for identifier in entry.converter_identifiers]
 
@@ -318,7 +361,7 @@ class PromptMemoryEntry(Base):
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         converter_ids = _load_identifiers(self.converter_identifiers, pyrit_version=stored_version)
 
-        message_piece = MessagePiece(
+        return MessagePiece(
             role=self.role,
             original_value=self.original_value,
             original_value_sha256=self.original_value_sha256,
@@ -328,19 +371,13 @@ class PromptMemoryEntry(Base):
             conversation_id=self.conversation_id,
             sequence=self.sequence,
             prompt_metadata=self.prompt_metadata,
-            converter_identifiers=[c for c in (converter_ids or []) if c is not None],
+            converter_identifiers=converter_ids or [],
             original_value_data_type=self.original_value_data_type,
             converted_value_data_type=self.converted_value_data_type,
             response_error=self.response_error or "none",
             original_prompt_id=self.original_prompt_id,
             timestamp=self.timestamp,
         )
-        # Assign deprecated ``labels`` container post-construction so the DB-load
-        # path does not trip the ``MessagePiece`` deprecation-kwarg validator.
-        # ``validate_assignment=False`` on the model makes this assignment bypass
-        # the model_validator entirely.
-        message_piece.labels = self.labels or {}
-        return message_piece
 
     def __str__(self) -> str:
         """
@@ -352,15 +389,641 @@ class PromptMemoryEntry(Base):
         return f"{self.role}: {self.converted_value}"
 
 
+TDomain = TypeVar("TDomain")
+
+
+class DomainBackedEntry(Base, Generic[TDomain]):
+    """
+    Mixin marking a DB entry as the persistence representation of a domain model.
+
+    Every ``*Entry`` in this module mirrors a domain model (``PromptMemoryEntry`` and
+    ``MessagePiece``, ``ScoreEntry`` and ``Score``, ``TargetIdentifierEntry`` and
+    ``TargetIdentifier``, and so on). ``from_domain_model`` is the single, uniform seam
+    that converts a domain model into an unsaved row, so the domain-to-DB direction has
+    one well-known name across every entry that adopts this base.
+    """
+
+    __abstract__ = True
+
+    @classmethod
+    @abstractmethod
+    def from_domain_model(cls, domain_model: TDomain) -> Self:
+        """
+        Build an unsaved entry row from its domain model.
+
+        Args:
+            domain_model (TDomain): The domain model this entry persists.
+
+        Returns:
+            Self: A new, unsaved row.
+        """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Reject concrete subclasses that do not implement ``from_domain_model``.
+
+        The SQLAlchemy declarative ``Base`` is not an ``ABCMeta``, so a bare
+        ``@abstractmethod`` would not stop a concrete entry from omitting the converter.
+        This fires at class-definition time so a dev who forgets is told immediately.
+        SQLAlchemy abstract/intermediate mapped classes (``__abstract__ = True``) are
+        skipped so they can leave the method abstract for their concrete subclasses.
+
+        Raises:
+            TypeError: If a concrete (non-``__abstract__``) subclass leaves
+                ``from_domain_model`` abstract.
+        """
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("__abstract__", False):
+            return
+        method = getattr(cls, "from_domain_model", None)
+        if method is None or getattr(method, "__isabstractmethod__", False):
+            raise TypeError(
+                f"{cls.__name__} inherits DomainBackedEntry but does not implement "
+                "from_domain_model(...); every concrete entry must define how its "
+                "domain model is converted into a row."
+            )
+
+
+T = TypeVar("T", bound=ComponentIdentifier)
+
+
+@dataclass(frozen=True)
+class _ChildRelationshipSpec:
+    """Mapping from a promoted child field to its ORM edge relationship wiring."""
+
+    relationship_name: str
+    edge_factory: Callable[[], Any]
+    edge_child_hash_attr: str
+    edge_position_attr: str | None = "position"
+
+
+class ComponentIdentifierEntry(DomainBackedEntry[T]):
+    """
+    Abstract base for tables that persist a ``ComponentIdentifier`` projection.
+
+    Mirrors the identifier class hierarchy: concrete identifier tables inherit the
+    shared projection columns the way ``TargetIdentifier`` inherits
+    ``ComponentIdentifier``. The content ``hash`` is the natural, dedupable primary
+    key. Runtime writes populate the descriptive fields and full ``identifier_json``;
+    they remain nullable so best-effort migration backfills can preserve partial
+    legacy identifiers. Rows are immutable — the same content always maps to the
+    same hash, so a given identifier reused across rows is stored once.
+
+    Subclasses declare their promoted query columns and implement the
+    ``DomainBackedEntry.from_domain_model`` seam to map their strongly-typed identifier
+    projection onto the shared columns plus those promoted columns. The shared columns
+    are built once, here, so subclasses never repeat that logic.
+    """
+
+    __abstract__ = True
+
+    #: Optional per-child-field wiring for materialized edge relationships.
+    #: Empty by default so identifier rows only persist their own projection.
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {}
+    #: Mapping from singular promoted child fields to their foreign-key columns.
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {}
+
+    #: Content-addressed identity — the same value as ``ComponentIdentifier.hash``.
+    #: SHA256 hex digest is 64 chars; bounded for SQL Server key/index compatibility.
+    hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    class_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    class_module: Mapped[str | None] = mapped_column(String, nullable=True)
+    #: Full flat ``model_dump()`` of the identifier. Source of truth on reload.
+    identifier_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Version that first wrote this content-addressed row. Nullable for backwards
+    #: compatibility with existing databases.
+    pyrit_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """
+        Validate that concrete entries persist every promoted scalar field.
+
+        Raises:
+            TypeError: If the entry omits its identifier type or a mapped scalar column.
+        """
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("__abstract__", False):
+            return
+
+        identifier_type = next(
+            (
+                get_args(base)[0]
+                for base in getattr(cls, "__orig_bases__", ())
+                if get_origin(base) is ComponentIdentifierEntry
+            ),
+            None,
+        )
+        if not isinstance(identifier_type, type) or not issubclass(identifier_type, ComponentIdentifier):
+            raise TypeError(f"{cls.__name__} must declare its ComponentIdentifier domain model type.")
+
+        missing_columns = set(identifier_type.promoted_scalar_field_names()) - set(cls.__table__.columns.keys())
+        if missing_columns:
+            names = ", ".join(sorted(missing_columns))
+            raise TypeError(f"{cls.__name__} has no mapped column for promoted scalar field(s): {names}.")
+
+    @classmethod
+    def from_domain_model(cls, domain_model: T) -> Self:
+        """
+        Build an unsaved component identifier memory entry from the given domain model.
+
+        Args:
+            domain_model (T): The domain model this entry persists.
+
+        Returns:
+            Self: A new, unsaved row.
+        """
+        entry = cls(
+            hash=domain_model.hash,
+            class_name=domain_model.class_name,
+            class_module=domain_model.class_module,
+            identifier_json=domain_model.model_dump(),
+            pyrit_version=domain_model.pyrit_version,
+        )
+        for name, value in domain_model.promoted_scalar_values().items():
+            setattr(entry, name, value)  # each promoted scalar → its mapped column
+        cls._populate_child_hashes(entry=entry, domain_model=domain_model)
+        cls._attach_child_relationship_rows(entry=entry, domain_model=domain_model)
+        return entry
+
+    @classmethod
+    def _populate_child_hashes(cls, *, entry: Self, domain_model: T) -> None:
+        for child_field, hash_column in cls.CHILD_HASH_COLUMNS.items():
+            child = getattr(domain_model, child_field)
+            setattr(entry, hash_column, child.hash if child is not None else None)
+
+    @classmethod
+    def _attach_child_relationship_rows(cls, *, entry: Self, domain_model: T) -> None:
+        for field_name in domain_model.promoted_child_field_names():
+            spec = cls.CHILD_RELATIONSHIP_SPECS.get(field_name)
+            if spec is None:
+                continue
+
+            child_value = getattr(domain_model, field_name)
+            children = (
+                child_value if isinstance(child_value, list) else ([child_value] if child_value is not None else [])
+            )
+            edge_rows = getattr(entry, spec.relationship_name)
+            for position, child_identifier in enumerate(children):
+                if not isinstance(child_identifier, ComponentIdentifier):
+                    continue
+                edge_row = spec.edge_factory()
+                setattr(edge_row, spec.edge_child_hash_attr, child_identifier.hash)
+                if spec.edge_position_attr:
+                    setattr(edge_row, spec.edge_position_attr, position)
+                edge_rows.append(edge_row)
+
+
+class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
+    """
+    Content-addressed store of ``TargetIdentifier`` projections, deduped by hash.
+
+    Populated as a side effect of registering a conversation (see
+    ``MemoryInterface._persist_target_identifier``). ``ConversationEntry`` references a
+    row here via ``target_identifier_hash``. The promoted scalar columns (``endpoint`` /
+    ``model_name`` / ``underlying_model_name`` / ``temperature`` / ``top_p`` /
+    ``max_requests_per_minute`` / ``supported_auth_modes``) are surfaced for querying;
+    ``identifier_json`` remains the source of truth on reload. Inner targets of a
+    multi-target are linked via ``TargetIdentifierChildren`` (and also live inline in
+    ``identifier_json``).
+    """
+
+    __tablename__ = "TargetIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "targets": _ChildRelationshipSpec(
+            relationship_name="targets",
+            edge_factory=lambda: TargetIdentifierChildEntry(),
+            edge_child_hash_attr="child_hash",
+            edge_position_attr="position",
+        )
+    }
+
+    endpoint: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    underlying_model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_requests_per_minute: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    supported_auth_modes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    #: Ordered child-edge rows (``parent_hash -> child_hash``) for this target.
+    #: Reconstructing nested targets from relational rows requires joining through
+    #: this relationship and then following ``TargetIdentifierChildEntry.child``.
+    targets: Mapped[list["TargetIdentifierChildEntry"]] = relationship(
+        "TargetIdentifierChildEntry",
+        primaryjoin="TargetIdentifierEntry.hash == TargetIdentifierChildEntry.parent_hash",
+        foreign_keys="TargetIdentifierChildEntry.parent_hash",
+        order_by="TargetIdentifierChildEntry.position",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+    )
+
+
+class TargetIdentifierChildEntry(Base):
+    """
+    Ordered edge rows linking a multi-target ``TargetIdentifierEntry`` to its inner
+    target identifiers.
+
+    A multi-target (e.g. ``RoundRobinTarget``) owns a ``targets`` list; each inner
+    target is itself a content-addressed ``TargetIdentifiers`` row, and one edge row
+    here maps ``parent_hash -> child_hash`` at a given ``position`` (the child's index
+    in the parent's ``targets`` list). Both endpoints are hashes into
+    ``TargetIdentifiers``, so an inner target shared across parents dedupes to a single
+    row and is merely referenced here. This is a query index over target composition;
+    ``TargetIdentifierEntry.identifier_json`` remains the source of truth for
+    reconstruction (inner targets are stored inline there too).
+
+    Constructed with its child hash by ``TargetIdentifierEntry.from_domain_model``
+    after ``MemoryInterface._persist_target_identifier`` has persisted the child row.
+    It is a plain ``Base`` row rather than a ``DomainBackedEntry`` because an edge has
+    no standalone domain model.
+    """
+
+    __tablename__ = "TargetIdentifierChildren"
+    __table_args__ = {"extend_existing": True}
+
+    parent_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    #: Zero-based index of the child within the parent's ``targets`` list.
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    child_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+
+    #: Parent target that owns this edge position.
+    parent: Mapped["TargetIdentifierEntry"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[parent_hash],
+        back_populates="targets",
+    )
+    #: Child target row referenced by ``child_hash``.
+    child: Mapped["TargetIdentifierEntry"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[child_hash],
+    )
+
+
+class ConverterIdentifierEntry(ComponentIdentifierEntry[ConverterIdentifier]):
+    """Content-addressed store of ``ConverterIdentifier`` projections."""
+
+    __tablename__ = "ConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {
+        "converter_target": "converter_target_hash",
+        "sub_converter": "sub_converter_hash",
+    }
+
+    supported_input_types: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    supported_output_types: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    converter_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    sub_converter_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("ConverterIdentifiers.hash"), nullable=True
+    )
+
+    converter_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[converter_target_hash],
+    )
+    sub_converter: Mapped["ConverterIdentifierEntry | None"] = relationship(
+        "ConverterIdentifierEntry",
+        foreign_keys=[sub_converter_hash],
+        remote_side="ConverterIdentifierEntry.hash",
+    )
+
+
+class PromptConverterIdentifierEntry(Base):
+    """Ordered association between a prompt piece and an applied converter."""
+
+    __tablename__ = "PromptConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    prompt_memory_entry_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    converter_identifier_hash: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey(f"{ConverterIdentifierEntry.__tablename__}.hash"),
+        nullable=False,
+    )
+    converter_identifier: Mapped["ConverterIdentifierEntry"] = relationship(
+        "ConverterIdentifierEntry",
+        foreign_keys=[converter_identifier_hash],
+    )
+
+
+class ScorerIdentifierEntry(ComponentIdentifierEntry[ScorerIdentifier]):
+    """Content-addressed store of ``ScorerIdentifier`` projections."""
+
+    __tablename__ = "ScorerIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "sub_scorers": _ChildRelationshipSpec(
+            relationship_name="sub_scorers",
+            edge_factory=lambda: ScorerIdentifierChildEntry(),
+            edge_child_hash_attr="child_hash",
+            edge_position_attr="position",
+        )
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {"prompt_target": "prompt_target_hash"}
+
+    scorer_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    score_aggregator: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    prompt_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[prompt_target_hash],
+    )
+    sub_scorers: Mapped[list["ScorerIdentifierChildEntry"]] = relationship(
+        "ScorerIdentifierChildEntry",
+        primaryjoin="ScorerIdentifierEntry.hash == ScorerIdentifierChildEntry.parent_hash",
+        foreign_keys="ScorerIdentifierChildEntry.parent_hash",
+        order_by="ScorerIdentifierChildEntry.position",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+    )
+
+
+class ScorerIdentifierChildEntry(Base):
+    """Ordered edge linking a composite scorer to one of its sub-scorers."""
+
+    __tablename__ = "ScorerIdentifierChildren"
+    __table_args__ = {"extend_existing": True}
+
+    parent_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    child_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+
+    parent: Mapped["ScorerIdentifierEntry"] = relationship(
+        "ScorerIdentifierEntry",
+        foreign_keys=[parent_hash],
+        back_populates="sub_scorers",
+    )
+    child: Mapped["ScorerIdentifierEntry"] = relationship(
+        "ScorerIdentifierEntry",
+        foreign_keys=[child_hash],
+    )
+
+
+class ScenarioIdentifierEntry(ComponentIdentifierEntry[ScenarioIdentifier]):
+    """Content-addressed store of ``ScenarioIdentifier`` projections."""
+
+    __tablename__ = "ScenarioIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {
+        "objective_target": "objective_target_hash",
+        "objective_scorer": "objective_scorer_hash",
+    }
+
+    version: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    techniques: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    datasets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    objective_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    objective_scorer_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    objective_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry",
+        foreign_keys=[objective_target_hash],
+    )
+    objective_scorer: Mapped["ScorerIdentifierEntry | None"] = relationship(
+        "ScorerIdentifierEntry",
+        foreign_keys=[objective_scorer_hash],
+    )
+
+
+class SeedIdentifierEntry(ComponentIdentifierEntry[SeedIdentifier]):
+    """Content-addressed store of ``SeedIdentifier`` projections."""
+
+    __tablename__ = "SeedIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    value: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    value_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    dataset_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_general_technique: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class AttackIdentifierEntry(ComponentIdentifierEntry[AttackIdentifier]):
+    """Content-addressed store of ``AttackIdentifier`` projections."""
+
+    __tablename__ = "AttackIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "request_converters": _ChildRelationshipSpec(
+            relationship_name="request_converters",
+            edge_factory=lambda: AttackRequestConverterIdentifierEntry(),
+            edge_child_hash_attr="converter_identifier_hash",
+        ),
+        "response_converters": _ChildRelationshipSpec(
+            relationship_name="response_converters",
+            edge_factory=lambda: AttackResponseConverterIdentifierEntry(),
+            edge_child_hash_attr="converter_identifier_hash",
+        ),
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {
+        "objective_target": "objective_target_hash",
+        "adversarial_chat": "adversarial_chat_hash",
+        "objective_scorer": "objective_scorer_hash",
+    }
+
+    adversarial_system_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    adversarial_seed_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    adversarial_prompt_template: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    use_score_as_feedback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    objective_target_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    adversarial_chat_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    objective_scorer_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    objective_target: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry", foreign_keys=[objective_target_hash]
+    )
+    adversarial_chat: Mapped["TargetIdentifierEntry | None"] = relationship(
+        "TargetIdentifierEntry", foreign_keys=[adversarial_chat_hash]
+    )
+    objective_scorer: Mapped["ScorerIdentifierEntry | None"] = relationship(
+        "ScorerIdentifierEntry", foreign_keys=[objective_scorer_hash]
+    )
+    request_converters: Mapped[list["AttackRequestConverterIdentifierEntry"]] = relationship(
+        "AttackRequestConverterIdentifierEntry",
+        order_by="AttackRequestConverterIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+    response_converters: Mapped[list["AttackResponseConverterIdentifierEntry"]] = relationship(
+        "AttackResponseConverterIdentifierEntry",
+        order_by="AttackResponseConverterIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+
+
+class AttackRequestConverterIdentifierEntry(Base):
+    """Ordered request-converter edge for an attack identifier."""
+
+    __tablename__ = "AttackRequestConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    attack_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AttackIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    converter_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ConverterIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    converter_identifier: Mapped["ConverterIdentifierEntry"] = relationship(
+        "ConverterIdentifierEntry", foreign_keys=[converter_identifier_hash]
+    )
+
+
+class AttackResponseConverterIdentifierEntry(Base):
+    """Ordered response-converter edge for an attack identifier."""
+
+    __tablename__ = "AttackResponseConverterIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    attack_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AttackIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    converter_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{ConverterIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    converter_identifier: Mapped["ConverterIdentifierEntry"] = relationship(
+        "ConverterIdentifierEntry", foreign_keys=[converter_identifier_hash]
+    )
+
+
+class AttackTechniqueIdentifierEntry(ComponentIdentifierEntry[AttackTechniqueIdentifier]):
+    """Content-addressed store of ``AttackTechniqueIdentifier`` projections."""
+
+    __tablename__ = "AttackTechniqueIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "technique_seeds": _ChildRelationshipSpec(
+            relationship_name="technique_seeds",
+            edge_factory=lambda: AttackTechniqueSeedIdentifierEntry(),
+            edge_child_hash_attr="seed_identifier_hash",
+        )
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {"attack": "attack_identifier_hash"}
+
+    attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{AttackIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    attack: Mapped["AttackIdentifierEntry | None"] = relationship(
+        "AttackIdentifierEntry", foreign_keys=[attack_identifier_hash]
+    )
+    technique_seeds: Mapped[list["AttackTechniqueSeedIdentifierEntry"]] = relationship(
+        "AttackTechniqueSeedIdentifierEntry",
+        order_by="AttackTechniqueSeedIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+
+
+class AttackTechniqueSeedIdentifierEntry(Base):
+    """Ordered seed edge for an attack technique identifier."""
+
+    __tablename__ = "AttackTechniqueSeedIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    attack_technique_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AttackTechniqueIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    seed_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{SeedIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    seed_identifier: Mapped["SeedIdentifierEntry"] = relationship(
+        "SeedIdentifierEntry", foreign_keys=[seed_identifier_hash]
+    )
+
+
+class AtomicAttackIdentifierEntry(ComponentIdentifierEntry[AtomicAttackIdentifier]):
+    """Content-addressed store of ``AtomicAttackIdentifier`` projections."""
+
+    __tablename__ = "AtomicAttackIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    CHILD_RELATIONSHIP_SPECS: ClassVar[dict[str, _ChildRelationshipSpec]] = {
+        "seed_identifiers": _ChildRelationshipSpec(
+            relationship_name="seed_identifiers",
+            edge_factory=lambda: AtomicAttackSeedIdentifierEntry(),
+            edge_child_hash_attr="seed_identifier_hash",
+        )
+    }
+    CHILD_HASH_COLUMNS: ClassVar[dict[str, str]] = {"attack_technique": "attack_technique_identifier_hash"}
+
+    attack_technique_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{AttackTechniqueIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    attack_technique: Mapped["AttackTechniqueIdentifierEntry | None"] = relationship(
+        "AttackTechniqueIdentifierEntry", foreign_keys=[attack_technique_identifier_hash]
+    )
+    seed_identifiers: Mapped[list["AtomicAttackSeedIdentifierEntry"]] = relationship(
+        "AtomicAttackSeedIdentifierEntry",
+        order_by="AtomicAttackSeedIdentifierEntry.position",
+        cascade="all, delete-orphan",
+    )
+
+
+class AtomicAttackSeedIdentifierEntry(Base):
+    """Ordered seed edge for an atomic attack identifier."""
+
+    __tablename__ = "AtomicAttackSeedIdentifiers"
+    __table_args__ = {"extend_existing": True}
+
+    atomic_attack_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    seed_identifier_hash: Mapped[str] = mapped_column(
+        String(64), ForeignKey(f"{SeedIdentifierEntry.__tablename__}.hash"), nullable=False
+    )
+    seed_identifier: Mapped["SeedIdentifierEntry"] = relationship(
+        "SeedIdentifierEntry", foreign_keys=[seed_identifier_hash]
+    )
+
+
 class ConversationEntry(Base):
     """
     Conversation-scoped metadata, persisted once per ``conversation_id``.
 
-    Holds identifiers that belong to the conversation as a whole -- currently the
-    target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
-    row. The target is captured once when the conversation's pieces are written and
-    read back via ``MemoryInterface._get_conversation`` (it is not stamped
-    onto individual pieces).
+    Holds identifiers that belong to the conversation as a whole, namely the target
+    identifier and the owning attack execution's result ID, so they are not
+    duplicated onto every ``PromptMemoryEntry`` row. The target is captured once when
+    the conversation's pieces are written and read back via
+    ``MemoryInterface._get_conversation`` (it is not stamped onto individual pieces).
+
+    The target is dual-written: the full identifier stays in the ``target_identifier``
+    JSON column (still the read source), and ``target_identifier_hash`` references the
+    deduped ``TargetIdentifierEntry`` row keyed by the identifier's content hash.
     """
 
     __tablename__ = "Conversations"
@@ -368,6 +1031,20 @@ class ConversationEntry(Base):
 
     conversation_id = mapped_column(String(36), primary_key=True, nullable=False)
     target_identifier: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    #: Foreign key to the content-addressed ``TargetIdentifiers`` row. Nullable:
+    #: a conversation may be registered without a known target.
+    target_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+
+    # JSON-serialized list of ConversationRetry records (turns that were retried in
+    # this conversation). Nullable for backwards compatibility with existing databases.
+    retries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+    #: ID of the attack result whose execution owns this conversation. It matches
+    #: ``AttackResultEntries.id`` by value rather than by foreign key, because the result
+    #: row is written when the execution finishes. Null outside an attack execution.
+    attack_result_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
 
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
@@ -382,6 +1059,9 @@ class ConversationEntry(Base):
         """
         self.conversation_id = conversation.conversation_id
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
+        self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
+        self.retries = [retry.model_dump(mode="json") for retry in conversation.retries] or None
+        self.attack_result_id = uuid.UUID(conversation.attack_result_id) if conversation.attack_result_id else None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -393,7 +1073,13 @@ class ConversationEntry(Base):
         """
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
         target_id = _load_identifier(self.target_identifier, pyrit_version=stored_version)
-        return Conversation(conversation_id=self.conversation_id, target_identifier=target_id)
+        retries = [ConversationRetry.model_validate(retry) for retry in self.retries or []]
+        return Conversation(
+            conversation_id=self.conversation_id,
+            target_identifier=target_id,
+            attack_result_id=str(self.attack_result_id) if self.attack_result_id else None,
+            retries=retries,
+        )
 
 
 class EmbeddingDataEntry(Base):
@@ -425,6 +1111,143 @@ class EmbeddingDataEntry(Base):
         return f"{self.id}"
 
 
+class ScorableContentEntry(Base):
+    """
+    Loose content a score was taken over.
+
+    ``score_text_async`` / ``score_image_async`` scored content that was never a conversation
+    turn, so before this table the score's anchor resolved to nothing. Several scores taken
+    over the same content in one write share a row, because they share the scorable value.
+    """
+
+    __tablename__ = "ScorableContentEntries"
+    __table_args__ = {"extend_existing": True}
+
+    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
+    value = mapped_column(Unicode, nullable=False)
+    value_sha256 = mapped_column(String(64), nullable=False)
+    data_type: Mapped[PromptDataType] = mapped_column(String(32), nullable=False)
+    timestamp = mapped_column(UTCDateTime, nullable=False)
+
+    def __str__(self) -> str:
+        """
+        Return a string representation of the content entry (its ID).
+
+        Returns:
+            str: The stringified ID of the entry.
+        """
+        return f"{self.id}"
+
+
+class ObservationEntry(Base):
+    """A durable scorer observation."""
+
+    __tablename__ = "ObservationEntries"
+    __table_args__ = (
+        Index("ix_ObservationEntries_scorable_content_id", "scorable_content_id"),
+        Index("ix_ObservationEntries_scored_message_piece_id", "scored_message_piece_id"),
+        {"extend_existing": True},
+    )
+
+    id = mapped_column(CustomUUID, nullable=False, primary_key=True)
+    source_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    acquisition = mapped_column(String(16), nullable=False)
+    observed_at = mapped_column(UTCDateTime, nullable=False)
+    scorable: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    scorable_content_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ScorableContentEntry.__tablename__}.id"),
+        nullable=True,
+    )
+    scored_message_piece_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        nullable=True,
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    metadata_json: Mapped[dict[str, str]] = mapped_column("metadata", JSON, nullable=False)
+    pyrit_version = mapped_column(String, nullable=True)
+    message_piece_links: Mapped[list["ObservationMessagePieceEntry"]] = relationship(
+        "ObservationMessagePieceEntry",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+        order_by="ObservationMessagePieceEntry.position",
+        lazy="selectin",
+    )
+    score_links: Mapped[list["ScoreObservationEntry"]] = relationship(
+        "ScoreObservationEntry",
+        back_populates="observation",
+        cascade="all, delete-orphan",
+    )
+
+    def __init__(self, *, entry: Observation) -> None:
+        """Initialize a persisted observation from its canonical model."""
+        entry = Observation.model_validate(entry.model_dump())
+        self.id = entry.id
+        self.source_identifier = entry.source_identifier.model_dump(mode="json")
+        self.acquisition = entry.acquisition.value
+        self.observed_at = entry.observed_at
+        self.scorable = entry.scorable.model_dump(mode="json")
+        self.scorable_content_id = entry.scorable_content_id
+        self.scored_message_piece_id = entry.scored_message_piece_id
+        self.payload = entry.payload.model_dump(mode="json")
+        self.metadata_json = dict(entry.metadata)
+        self.pyrit_version = pyrit.__version__
+
+    def get_observation(self) -> Observation:
+        """
+        Reconstruct the canonical observation model.
+
+        Returns:
+            Observation: The reconstructed observation.
+
+        Raises:
+            ValueError: If the stored observation has no source identifier.
+        """
+        stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
+        source_identifier = _load_identifier(self.source_identifier, pyrit_version=stored_version)
+        if source_identifier is None:
+            raise ValueError(f"Observation {self.id} has no source identifier.")
+        return Observation.model_validate(
+            {
+                "id": self.id,
+                "source_identifier": source_identifier,
+                "acquisition": self.acquisition,
+                "observed_at": self.observed_at,
+                "scorable": self.scorable,
+                "payload": self.payload,
+                "metadata": self.metadata_json or {},
+            }
+        )
+
+
+class ObservationMessagePieceEntry(Base):
+    """An ordered immutable message reference from an observation payload."""
+
+    __tablename__ = "ObservationMessagePieceEntries"
+    __table_args__ = (
+        UniqueConstraint("observation_id", "message_piece_id", name="uq_observation_message_pieces_piece"),
+        Index("ix_ObservationMessagePieceEntries_message_piece_id", "message_piece_id"),
+        {"extend_existing": True},
+    )
+
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ObservationEntry.__tablename__}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    message_piece_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"),
+        nullable=False,
+    )
+    observation: Mapped[ObservationEntry] = relationship(
+        "ObservationEntry",
+        back_populates="message_piece_links",
+    )
+
+
 class ScoreEntry(Base):
     """
     Represents the Score Memory Entry.
@@ -435,36 +1258,66 @@ class ScoreEntry(Base):
     __table_args__ = {"extend_existing": True}
 
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    score_value = mapped_column(String, nullable=False)
+    score_value = mapped_column(String, nullable=True)
+    # Marks nested scorer results, not the public call's returned results.
+    is_intermediate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     score_value_description = mapped_column(String, nullable=True)
+    # "complete" or "undetermined"; an undetermined score carries no score_value.
+    status = mapped_column(String(16), nullable=False, default=ScoreStatus.COMPLETE.value)
     score_type: Mapped[Literal["true_false", "float_scale", "unknown"]] = mapped_column(String, nullable=False)
     score_category: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     score_rationale = mapped_column(String, nullable=True)
     score_metadata: Mapped[dict[str, str | int | float]] = mapped_column(JSON)
     scorer_class_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
+    # What the score is about, in the shape the Scorable owns. Always a reference once stored.
+    scorable: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Foreign key to the loose content a ``ContentEntryScorable`` anchor names. Promoted out
+    #: of ``scorable`` so the reference is enforced and joinable; the JSON stays the read source.
+    scorable_content_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey(f"{ScorableContentEntry.__tablename__}.id"), nullable=True
+    )
+    scorer_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
     timestamp = mapped_column(UTCDateTime, nullable=False)
-    task = mapped_column(String, nullable=True)  # Deprecated: Use objective instead
-    objective = mapped_column(String, nullable=True)
+    # The full, versioned expectation this score was judged against (objective + conditions).
+    # Supersedes the legacy ``objective`` column.
+    scored_expectation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
-    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
+    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="all_scores")
+    observation_links: Mapped[list["ScoreObservationEntry"]] = relationship(
+        "ScoreObservationEntry",
+        back_populates="score",
+        cascade="all, delete-orphan",
+        order_by="ScoreObservationEntry.position",
+        lazy="selectin",
+    )
 
-    def __init__(self, *, entry: Score) -> None:
+    def __init__(self, *, entry: Score, is_intermediate: bool = False) -> None:
         """
         Initialize a ScoreEntry from a Score object.
 
         Args:
             entry (Score): The score object to convert into a database entry.
+            is_intermediate (bool): Whether this result came from a nested scoring call.
         """
+        entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
         self.id = entry.id
+        self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description
+        self.status = entry.status.value
         self.score_type = entry.score_type
         self.score_category = entry.score_category
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
+        self.scorable = entry.scorable.model_dump(mode="json") if entry.scorable else None
+        self.scorable_content_id = (
+            entry.scorable.content_id if isinstance(entry.scorable, ContentEntryScorable) else None
+        )
         normalized_scorer = entry.scorer_class_identifier
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
@@ -473,12 +1326,10 @@ class ScoreEntry(Base):
                 ScorerEvaluationIdentifier(normalized_scorer).eval_hash
             )
         self.scorer_class_identifier = normalized_scorer.model_dump() if normalized_scorer else {}
+        self.scorer_identifier_hash = normalized_scorer.hash if normalized_scorer else None
         self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
         self.timestamp = entry.timestamp
-        # Store in both columns for backward compatibility
-        # New code should only read from objective
-        self.task = entry.objective
-        self.objective = entry.objective
+        self.scored_expectation = entry.scored_expectation.model_dump(mode="json") if entry.scored_expectation else None
         self.pyrit_version = pyrit.__version__
 
     def get_score(self) -> Score:
@@ -500,14 +1351,21 @@ class ScoreEntry(Base):
             id=self.id,
             score_value=self.score_value,
             score_value_description=self.score_value_description,
+            status=ScoreStatus(self.status) if self.status else ScoreStatus.COMPLETE,
             score_type=self.score_type,
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
             scorer_class_identifier=scorer_identifier,
             message_piece_id=self.prompt_request_response_id,
+            scorable=scorable_from_dict(self.scorable) if self.scorable else None,
+            observation_ids=[link.observation_id for link in self.observation_links],
             timestamp=self.timestamp,
-            objective=self.objective,
+            scored_expectation=(
+                ScoringExpectation.model_validate_persisted(self.scored_expectation)
+                if self.scored_expectation is not None
+                else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -519,17 +1377,48 @@ class ScoreEntry(Base):
         """
         return {
             "id": str(self.id),
+            "is_intermediate": self.is_intermediate,
             "score_value": self.score_value,
             "score_value_description": self.score_value_description,
+            "status": self.status,
             "score_type": self.score_type,
             "score_category": self.score_category,
             "score_rationale": self.score_rationale,
             "score_metadata": self.score_metadata,
             "scorer_class_identifier": self.scorer_class_identifier,
+            "scorable": self.scorable,
+            "scorable_content_id": str(self.scorable_content_id) if self.scorable_content_id else None,
             "prompt_request_response_id": str(self.prompt_request_response_id),
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "objective": self.objective,
+            "scored_expectation": self.scored_expectation,
+            "observation_ids": [str(link.observation_id) for link in self.observation_links],
+            "objective": self.scored_expectation.get("objective") if self.scored_expectation else None,
         }
+
+
+class ScoreObservationEntry(Base):
+    """An ordered many-to-many link between a score and its observations."""
+
+    __tablename__ = "ScoreObservationEntries"
+    __table_args__ = (
+        UniqueConstraint("score_id", "observation_id", name="uq_score_observations_observation"),
+        Index("ix_ScoreObservationEntries_observation_id", "observation_id"),
+        {"extend_existing": True},
+    )
+
+    score_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ScoreEntry.__tablename__}.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+    observation_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID,
+        ForeignKey(f"{ObservationEntry.__tablename__}.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    score: Mapped[ScoreEntry] = relationship("ScoreEntry", back_populates="observation_links")
+    observation: Mapped[ObservationEntry] = relationship("ObservationEntry", back_populates="score_links")
 
 
 class ConversationMessageWithSimilarity(BaseModel):
@@ -554,7 +1443,7 @@ class EmbeddingMessageWithSimilarity(BaseModel):
     """
     Represents an embedding message with its similarity score.
 
-    Parameters:
+    Attributes:
         uuid (uuid.UUID): The UUID of the embedding message.
         metric (str): The metric used to calculate the similarity score.
         score (float): The similarity score (default is 0.0).
@@ -601,6 +1490,7 @@ class SeedEntry(Base):
             are stored, this is used to order the prompts.
         role (str): The role of the prompt (e.g., user, system, assistant).
         seed_type (SeedType): The type of seed - "prompt", "objective", or "simulated_conversation".
+        conditions (list[dict[str, Any]] | None): Serialized objective criteria, absent for other seeds.
 
     Methods:
         __str__(): Returns a string representation of the memory entry.
@@ -627,6 +1517,10 @@ class SeedEntry(Base):
     sequence: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     role: Mapped[ChatMessageRole | None] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
+    )
+    conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: Seed) -> None:
         """
@@ -659,6 +1553,12 @@ class SeedEntry(Base):
         self.prompt_metadata = self._pack_seed_metadata(entry)
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
+        self.origin = entry.origin.value
+        self.conditions = (
+            entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
+            if isinstance(entry, SeedObjective)
+            else None
+        )
 
         # SeedPrompt-specific fields
         if isinstance(entry, SeedPrompt):
@@ -699,7 +1599,8 @@ class SeedEntry(Base):
         schema = getattr(entry, "response_json_schema", None)
 
         if not raw and schema is None:
-            return raw
+            no_schema_metadata: dict[str, str | int] | None = None if raw is None else {}
+            return no_schema_metadata
 
         packed: dict[str, str | int] = dict(raw) if raw else {}
         # Defensive strip — the reserved key is owned by this class.
@@ -748,17 +1649,58 @@ class SeedEntry(Base):
             decoded = None
         return cleaned, decoded
 
-    def get_seed(self) -> Seed:
+    def get_seed_record(self) -> SeedRecord:
+        """
+        Project stored fields without reconstructing an executable seed.
+
+        Returns:
+            SeedRecord: Stored content, identifiers, and metadata, including raw configuration text.
+        """
+        metadata, response_json_schema = self._unpack_seed_metadata(self.prompt_metadata)
+        return SeedRecord(
+            id=self.id,
+            seed_type=self.seed_type,
+            value=self.value,
+            value_sha256=self.value_sha256,
+            data_type=self.data_type,
+            name=self.name,
+            dataset_name=self.dataset_name,
+            origin=SeedOrigin(self.origin),
+            harm_categories=self.harm_categories,
+            description=self.description,
+            authors=self.authors,
+            groups=self.groups,
+            source=self.source,
+            date_added=self.date_added,
+            added_by=self.added_by,
+            metadata=metadata,
+            prompt_group_id=self.prompt_group_id,
+            sequence=self.sequence,
+            role=self.role,
+            parameters=self.parameters,
+            conditions=self.conditions,
+            response_json_schema=response_json_schema,
+        )
+
+    def get_seed(self) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
         """
         Convert this database entry back into a Seed object.
 
         Returns:
-            Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
+            SeedPrompt | SeedObjective | SeedSimulatedConversation: The reconstructed seed object.
+
+        Raises:
+            ValueError: If persisted conditions are invalid or attached to a non-objective seed,
+                or a simulated conversation record cannot be rebuilt, for example when it names
+                a prompt file that is not present on this machine.
         """
+        if self.seed_type != "objective" and self.conditions not in (None, []):
+            raise ValueError("Only objective seeds can have persisted conditions.")
         cleaned_metadata, decoded_schema = self._unpack_seed_metadata(self.prompt_metadata)
         if self.seed_type == "objective":
             return SeedObjective(
                 id=self.id,
+                origin=SeedOrigin(self.origin),
                 value=self.value,
                 value_sha256=self.value_sha256,
                 name=self.name,
@@ -772,32 +1714,59 @@ class SeedEntry(Base):
                 added_by=self.added_by,
                 metadata=cleaned_metadata,
                 prompt_group_id=self.prompt_group_id,
+                conditions=self.conditions if self.conditions is not None else (),
             )
         if self.seed_type == "simulated_conversation":
-            # Reconstruct SeedSimulatedConversation from JSON value
+            # Reconstruct SeedSimulatedConversation from JSON value. Records written before the
+            # prompts were normalized carry only ``*_path`` keys; the model's compatibility
+            # adapter resolves those, and a canonicalized record loses the stale hash of its
+            # old path-shaped value.
             config = json.loads(self.value)
-            return SeedSimulatedConversation(
-                id=self.id,
-                value_sha256=self.value_sha256,
-                name=self.name,
-                dataset_name=self.dataset_name,
-                harm_categories=self.harm_categories,
-                description=self.description,
-                authors=self.authors,
-                groups=self.groups,
-                source=self.source,
-                date_added=self.date_added,
-                added_by=self.added_by,
-                metadata=cleaned_metadata,
-                prompt_group_id=self.prompt_group_id,
-                num_turns=config.get("num_turns", 3),
-                sequence=config.get("sequence", 0),
-                adversarial_chat_system_prompt_path=config.get("adversarial_chat_system_prompt_path"),
-                simulated_target_system_prompt_path=config.get("simulated_target_system_prompt_path"),
-                next_message_system_prompt_path=config.get("next_message_system_prompt_path"),
-            )
+            prompt_config = {
+                key: config[key]
+                for key in (
+                    "adversarial_chat_system_prompt",
+                    "adversarial_chat_system_prompt_path",
+                    "simulated_target_system_prompt",
+                    "simulated_target_system_prompt_path",
+                    "next_message_system_prompt",
+                    "next_message_system_prompt_path",
+                )
+                if config.get(key) is not None
+            }
+            is_legacy_record = any(key.endswith("_path") for key in prompt_config)
+            try:
+                return SeedSimulatedConversation(
+                    id=self.id,
+                    origin=SeedOrigin(self.origin),
+                    value_sha256=None if is_legacy_record else self.value_sha256,
+                    name=self.name,
+                    dataset_name=self.dataset_name,
+                    harm_categories=self.harm_categories,
+                    description=self.description,
+                    authors=self.authors,
+                    groups=self.groups,
+                    source=self.source,
+                    date_added=self.date_added,
+                    added_by=self.added_by,
+                    metadata=cleaned_metadata,
+                    prompt_group_id=self.prompt_group_id,
+                    num_turns=config.get("num_turns", 3),
+                    sequence=config.get("sequence", 0),
+                    pyrit_version=config.get("pyrit_version"),
+                    **prompt_config,
+                )
+            except (OSError, ValueError) as exc:
+                # A legacy record names prompt files by absolute path, so one written elsewhere
+                # can reference a file this machine does not have. Name the record so a single
+                # bad row is identifiable rather than an opaque failure of the whole query.
+                raise ValueError(
+                    f"Could not rebuild simulated conversation seed {self.id} "
+                    f"(name={self.name!r}, dataset={self.dataset_name!r}): {exc}"
+                ) from exc
         return SeedPrompt(
             id=self.id,
+            origin=SeedOrigin(self.origin),
             value=self.value,
             value_sha256=self.value_sha256,
             data_type=self.data_type,
@@ -833,48 +1802,135 @@ class AttackResultEntry(Base):
             (technique, seeds, etc.).
         objective_sha256 (str): The SHA256 hash of the objective.
         last_response_id (Uuid): Foreign key to the last response MessagePiece.
-        last_score_id (Uuid): Foreign key to the last score ScoreEntry.
+        automated_score_id (Uuid): Foreign key to the automated score ScoreEntry.
+        human_score_id (Uuid): Foreign key to the human score ScoreEntry.
         executed_turns (int): Total number of turns that were executed.
         execution_time_ms (int): Total execution time of the attack in milliseconds.
         outcome (AttackOutcome): The outcome of the attack, indicating success, failure, or undetermined.
         outcome_reason (str): Optional reason for the outcome, providing additional context.
         attack_metadata (dict[str, Any]): Metadata can be included as key-value pairs to provide extra context.
+        operator (str | None): Operator responsible for the attack.
+        operation (str | None): Operation associated with the attack.
         labels (dict[str, str]): Optional labels associated with the attack result entry.
         targeted_harm_categories (list[str]): Harm categories this attack targeted.
         pruned_conversation_ids (list[str]): List of conversation IDs that were pruned from the attack.
         adversarial_chat_conversation_ids (list[str]): List of conversation IDs used for adversarial chat.
+        preparation_conversation_ids (list[str]): List of conversations used to prepare the attack.
         timestamp (DateTime): The timestamp of the attack result entry.
         last_response (PromptMemoryEntry): Relationship to the last response prompt memory entry.
-        last_score (ScoreEntry): Relationship to the last score entry.
+        automated_score (ScoreEntry): Relationship to the automated score entry.
+        human_score (ScoreEntry): Relationship to the human score entry.
 
     Methods:
         __str__(): Returns a string representation of the attack result entry.
     """
 
     __tablename__ = "AttackResultEntries"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        Index(
+            "ix_AttackResultEntries_objective_target_eval_v1",
+            "objective_target_eval_hash_v1",
+            "outcome",
+        ),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_sqlite",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "targeted_harm_categories",
+            "operation",
+            "operator",
+            info={"dialect": "sqlite"},
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_mssql",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "operation",
+            "operator",
+            mssql_include=["targeted_harm_categories"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_sqlite", "operation", "labels", info={"dialect": "sqlite"}
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_mssql",
+            "operation",
+            mssql_include=["labels"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
+        # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
+        Index(
+            "ix_AttackResultEntries_conversation_timestamp_id",
+            "conversation_id",
+            "timestamp",
+            "id",
+        ),
+        # Serves the History recency ORDER BY timestamp DESC, id DESC and its keyset seek.
+        Index("ix_AttackResultEntries_timestamp_id", "timestamp", "id"),
+        Index(
+            "ix_AttackResultEntries_operator_timestamp_id",
+            "operator",
+            "timestamp",
+            "id",
+            mssql_include=["conversation_id"],
+        ),
+        Index(
+            "ix_AttackResultEntries_operation_timestamp_id",
+            "operation",
+            "timestamp",
+            "id",
+            mssql_include=["conversation_id"],
+        ),
+        # Serves scenario progress deltas scoped by parent and ordered oldest-first.
+        Index(
+            "ix_AttackResultEntries_attribution_parent_timestamp_id",
+            "attribution_parent_id",
+            "timestamp",
+            "id",
+        ),
+        {"extend_existing": True},
+    )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    conversation_id = mapped_column(String, nullable=False)
+    conversation_id = mapped_column(String(36), nullable=False)
     objective = mapped_column(Unicode, nullable=False)
     atomic_attack_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    resolved_atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed(
+            ResolvedAttackIdentifierHash(column("atomic_attack_identifier_hash"), column("atomic_attack_identifier")),
+            persisted=False,
+        ),
+        nullable=True,
+    )
+    objective_target_eval_hash_v1: Mapped[str | None] = mapped_column(String(64), nullable=True)
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
     )
-    last_score_id: Mapped[uuid.UUID | None] = mapped_column(
+    automated_score_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey(f"{ScoreEntry.__tablename__}.id"), nullable=True
+    )
+    human_score_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{ScoreEntry.__tablename__}.id"), nullable=True
     )
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
     execution_time_ms = mapped_column(INTEGER, nullable=False, default=0)
     outcome: Mapped[Literal["success", "failure", "error", "undetermined"]] = mapped_column(
-        String, nullable=False, default="undetermined"
+        String(16), nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
+    operator: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
+    operation: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     adversarial_chat_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    preparation_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     timestamp = mapped_column(UTCDateTime, nullable=False)
     # Version of PyRIT used when this attack result was created
     # Nullable for backwards compatibility with existing databases
@@ -906,9 +1962,17 @@ class AttackResultEntry(Base):
         "PromptMemoryEntry",
         foreign_keys=[last_response_id],
     )
-    last_score: Mapped["ScoreEntry | None"] = relationship(
+    automated_score: Mapped["ScoreEntry | None"] = relationship(
         "ScoreEntry",
-        foreign_keys=[last_score_id],
+        foreign_keys=[automated_score_id],
+    )
+    human_score: Mapped["ScoreEntry | None"] = relationship(
+        "ScoreEntry",
+        foreign_keys=[human_score_id],
+    )
+    atomic_attack_identifier_entry: Mapped["AtomicAttackIdentifierEntry | None"] = relationship(
+        "AtomicAttackIdentifierEntry",
+        foreign_keys=[atomic_attack_identifier_hash],
     )
 
     def __init__(self, *, entry: AttackResult) -> None:
@@ -917,31 +1981,37 @@ class AttackResultEntry(Base):
 
         Args:
             entry (AttackResult): The attack result object to convert into a database entry.
+
+        Raises:
+            ValueError: If mutated legacy attribution labels are invalid or conflict.
         """
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Always recompute eval_hash before dumping so the stored JSON carries the
-        # freshly computed value for DB-level filtering (never a value from storage).
-        if entry.atomic_attack_identifier:
-            entry.atomic_attack_identifier = entry.atomic_attack_identifier.with_eval_hash(
-                AtomicAttackEvaluationIdentifier(entry.atomic_attack_identifier).eval_hash
-            )
-        self.atomic_attack_identifier = (
-            entry.atomic_attack_identifier.model_dump() if entry.atomic_attack_identifier else None
-        )
+        atomic_attack_identifier = self._prepare_atomic_attack_identifier(identifier=entry.atomic_attack_identifier)
+        self._set_atomic_attack_identifier(identifier=atomic_attack_identifier)
+        if atomic_attack_identifier is not None:
+            entry.atomic_attack_identifier = atomic_attack_identifier
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions
         self.last_response_id = self._get_id_as_uuid(entry.last_response)
-        self.last_score_id = self._get_id_as_uuid(entry.last_score)
+        self.automated_score_id = self._get_id_as_uuid(entry.automated_score)
+        self.human_score_id = self._get_id_as_uuid(entry.human_score)
 
         self.executed_turns = entry.executed_turns
         self.execution_time_ms = entry.execution_time_ms
         self.outcome = entry.outcome.value
         self.outcome_reason = entry.outcome_reason
         self.attack_metadata = self.filter_json_serializable_metadata(entry.metadata)
-        self.labels = entry.labels or {}
+        remaining_labels, operator, operation = normalize_legacy_attack_attribution(
+            labels=entry.labels or {},
+            operator=entry.operator,
+            operation=entry.operation,
+        )
+        self.operator = operator
+        self.operation = operation
+        self.labels = remaining_labels
         self.targeted_harm_categories = entry.targeted_harm_categories or None
 
         # Persist conversation references by type
@@ -953,7 +2023,11 @@ class AttackResultEntry(Base):
             ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.ADVERSARIAL)
         ] or None
 
-        self.timestamp = entry.timestamp or datetime.now(tz=timezone.utc)
+        self.preparation_conversation_ids = [
+            ref.conversation_id for ref in entry.get_conversations_by_type(ConversationType.PREPARATION)
+        ] or None
+
+        self.timestamp = entry.timestamp or datetime.now(tz=UTC)
         self.pyrit_version = pyrit.__version__
 
         # Error information
@@ -972,6 +2046,42 @@ class AttackResultEntry(Base):
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
         self.attribution_data = entry.attribution_data
+
+    @staticmethod
+    def _prepare_atomic_attack_identifier(
+        *, identifier: ComponentIdentifier | dict[str, Any] | None
+    ) -> ComponentIdentifier | None:
+        """
+        Validate an atomic identifier and recompute its stored evaluation hash.
+
+        Args:
+            identifier (ComponentIdentifier | dict[str, Any] | None): The replacement identifier or None.
+
+        Returns:
+            ComponentIdentifier | None: A normalized identifier with a fresh evaluation hash.
+        """
+        if identifier is None:
+            return None
+        atomic = (
+            AtomicAttackIdentifier.from_component_identifier(identifier)
+            if isinstance(identifier, ComponentIdentifier)
+            else AtomicAttackIdentifier.model_validate(identifier)
+        )
+        return atomic.with_eval_hash(AtomicAttackEvaluationIdentifier(atomic).eval_hash)
+
+    def _set_atomic_attack_identifier(self, *, identifier: ComponentIdentifier | None) -> None:
+        """
+        Set the stored identifier, normalized foreign key, and frozen target evaluation key together.
+
+        Args:
+            identifier (ComponentIdentifier | None): An identifier prepared by
+                ``_prepare_atomic_attack_identifier``, or None to clear the association.
+        """
+        self.atomic_attack_identifier = identifier.model_dump() if identifier is not None else None
+        self.atomic_attack_identifier_hash = identifier.hash if identifier is not None else None
+        self.objective_target_eval_hash_v1 = ObjectiveTargetAnalyticsIdentityV1.from_atomic_document(
+            document=self.atomic_attack_identifier
+        )
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:
@@ -1046,6 +2156,15 @@ class AttackResultEntry(Base):
                 )
             )
 
+        for cid in self.preparation_conversation_ids or []:
+            related_conversations.add(
+                ConversationReference(
+                    conversation_id=cid,
+                    conversation_type=ConversationType.PREPARATION,
+                    description="preparation conversation",
+                )
+            )
+
         # eval_hash is recomputed on reload via AtomicAttackEvaluationIdentifier.
         atomic_id = _load_identifier(
             self.atomic_attack_identifier,
@@ -1065,14 +2184,17 @@ class AttackResultEntry(Base):
             objective=self.objective,
             atomic_attack_identifier=atomic_id,
             last_response=self.last_response.get_message_piece() if self.last_response else None,
-            last_score=self.last_score.get_score() if self.last_score else None,
+            automated_score=self.automated_score.get_score() if self.automated_score else None,
+            human_score=self.human_score.get_score() if self.human_score else None,
             executed_turns=self.executed_turns,
             execution_time_ms=self.execution_time_ms,
             outcome=AttackOutcome(self.outcome),
             outcome_reason=self.outcome_reason,
             related_conversations=related_conversations,
             metadata=self.attack_metadata or {},
-            timestamp=self.timestamp or datetime.now(tz=timezone.utc),
+            timestamp=self.timestamp or datetime.now(tz=UTC),
+            operator=self.operator,
+            operation=self.operation,
             labels=self.labels or {},
             targeted_harm_categories=self.targeted_harm_categories or [],
             error_message=self.error_message,
@@ -1090,9 +2212,8 @@ class ScenarioResultEntry(Base):
     Represents a scenario execution result in the database.
 
     This class stores the high-level metadata and results of a PyRIT scenario execution,
-    including references to all attack results generated during the scenario run. The actual
-    AttackResult objects are stored separately in AttackResultEntries and can be retrieved
-    using the conversation IDs stored here.
+    AttackResult objects are stored separately in AttackResultEntries and linked to their
+    parent scenario through attribution_parent_id.
 
     Attributes:
         __tablename__ (str): The name of the database table ("ScenarioResultEntries").
@@ -1102,14 +2223,14 @@ class ScenarioResultEntry(Base):
         scenario_description (str): Optional detailed description of the scenario.
         scenario_version (int): Version number of the scenario definition (default: 1).
         pyrit_version (str): Version of PyRIT framework used during scenario execution.
-        scenario_init_data (dict): Optional initialization parameters used to configure the scenario.
+        scenario_identifier (dict): Canonical scenario identity (class name, version,
+            techniques, datasets, resolved params, objective target / scorer children).
         objective_target_identifier (dict): Identifier for the target being evaluated in the scenario.
+            Required: this is the denormalized filter key that target-based queries match on, so a
+            scenario result without one could never be retrieved by target.
         objective_scorer_identifier (dict): Optional identifier for the scorer used to evaluate results.
         scenario_run_state (str): Current execution state of the scenario
             (one of CREATED, IN_PROGRESS, COMPLETED, FAILED, CANCELLED).
-        attack_results_json (str): JSON-serialized dictionary mapping attack names to conversation IDs.
-            Format: {"attack_name": ["conversation_id1", "conversation_id2", ...]}.
-            The full AttackResult objects are stored in AttackResultEntries and can be queried by conversation_id.
         labels (dict): Optional key-value pairs for categorization and filtering.
         number_tries (int): Number of times run_async has been called on this scenario (incremented at each run).
         completion_time (DateTime): When the scenario execution completed.
@@ -1119,22 +2240,39 @@ class ScenarioResultEntry(Base):
         get_scenario_result(): Returns a ScenarioResult object with scenario metadata.
             Note: attack_results will be empty. Use memory_interface.get_scenario_results()
             to automatically populate AttackResults from the database.
-        get_conversation_ids_by_attack_name(): Returns the mapping of attack names to conversation IDs.
         __str__(): Returns a human-readable string representation.
     """
 
     __tablename__ = "ScenarioResultEntries"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        Index("ix_ScenarioResultEntries_timestamp_id", "timestamp", "id"),
+        Index("ix_ScenarioResultEntries_scenario_name_timestamp_id", "scenario_name", "timestamp", "id"),
+        Index(
+            "ix_ScenarioResultEntries_scenario_run_state_timestamp_id",
+            "scenario_run_state",
+            "timestamp",
+            "id",
+        ),
+        {"extend_existing": True},
+    )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    scenario_name = mapped_column(String, nullable=False)
+    scenario_name = mapped_column(String(256), nullable=False)
     scenario_description = mapped_column(Unicode, nullable=True)
     scenario_version = mapped_column(INTEGER, nullable=False, default=1)
     pyrit_version = mapped_column(String, nullable=False)
-    scenario_init_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Canonical scenario identity (class name, version, techniques, datasets,
+    #: resolved params, objective target / scorer children) with its eval hash.
+    scenario_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    scenario_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey(f"{ScenarioIdentifierEntry.__tablename__}.hash"), nullable=True
+    )
+    scenario_identifier_entry: Mapped["ScenarioIdentifierEntry | None"] = relationship(
+        "ScenarioIdentifierEntry",
+        foreign_keys=[scenario_identifier_hash],
+    )
     objective_target_identifier: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     objective_scorer_identifier: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    scenario_run_state: Mapped[str] = mapped_column(String, nullable=False, default="CREATED")
-    attack_results_json: Mapped[str] = mapped_column(Unicode, nullable=False)
+    scenario_run_state: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED")
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
@@ -1145,12 +2283,9 @@ class ScenarioResultEntry(Base):
     error_message: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Free-form JSON metadata stamped by the scenario. Currently used to record
-    # ``objective_hashes`` — the objective sha256 set chosen on the
-    # first run, replayed on resume so a fresh ``random.sample`` can't
-    # silently change which objectives the scenario operates on. Column is
-    # named ``scenario_metadata`` because SQLAlchemy's ``DeclarativeBase``
-    # reserves ``metadata`` as a class attribute on the model.
+    # Free-form JSON metadata stamped by the scenario. Stores the normalized run
+    # plan and sampled objective hashes. Column is named ``scenario_metadata``
+    # because SQLAlchemy's ``DeclarativeBase`` reserves ``metadata``.
     scenario_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: ScenarioResult) -> None:
@@ -1159,37 +2294,50 @@ class ScenarioResultEntry(Base):
 
         Args:
             entry (ScenarioResult): The scenario result object to convert into a database entry.
+
+        Raises:
+            ValueError: If ``entry`` has no ``objective_target_identifier``. The denormalized target
+                column is the key that target-based queries filter on, so a result without one would
+                be persisted as a row those queries could never return.
         """
         self.id = entry.id
-        self.scenario_name = entry.scenario_identifier.name
-        self.scenario_description = entry.scenario_identifier.description
-        self.scenario_version = entry.scenario_identifier.version
-        self.pyrit_version = entry.scenario_identifier.pyrit_version
-        self.scenario_init_data = entry.scenario_identifier.init_data
-        # Convert ComponentIdentifier to dict for JSON storage
-        self.objective_target_identifier = (  # type: ignore[ty:invalid-assignment]
-            entry.objective_target_identifier.model_dump() if entry.objective_target_identifier else None
+        self.scenario_name = entry.scenario_name
+        self.scenario_description = entry.scenario_description
+        self.scenario_version = entry.scenario_version
+        self.pyrit_version = entry.pyrit_version
+
+        # Stamp the canonical scenario identifier's eval_hash fresh and store it.
+        # The denormalized target / scorer columns are populated from the same
+        # identifier for DB-level filtering (never a value trusted from storage).
+        scenario_identifier = entry.scenario_identifier.with_eval_hash(
+            ScenarioEvaluationIdentifier(entry.scenario_identifier).eval_hash
         )
+        self.scenario_identifier = scenario_identifier.model_dump()
+        self.scenario_identifier_hash = scenario_identifier.hash
+
+        # Convert ComponentIdentifier to dict for JSON storage. The target is required: it is the
+        # denormalized key that target-based queries filter on, so persisting a result without one
+        # would write a row that those queries can never return.
+        target_identifier = entry.objective_target_identifier
+        if target_identifier is None:
+            raise ValueError(
+                "objective_target_identifier is required to persist a ScenarioResult. "
+                f"Scenario '{entry.scenario_name}' produced a result with no objective target; "
+                "a scenario must declare and resolve objective_target before its result is stored."
+            )
+        self.objective_target_identifier = target_identifier.model_dump()
         # Always recompute eval_hash before dumping so the stored JSON carries the
         # freshly computed value for DB-level filtering (never a value from storage).
-        if entry.objective_scorer_identifier:
-            entry.objective_scorer_identifier = entry.objective_scorer_identifier.with_eval_hash(
-                ScorerEvaluationIdentifier(entry.objective_scorer_identifier).eval_hash
+        scorer_identifier = entry.objective_scorer_identifier
+        if scorer_identifier:
+            scorer_identifier = scorer_identifier.with_eval_hash(
+                ScorerEvaluationIdentifier(scorer_identifier).eval_hash
             )
-        self.objective_scorer_identifier = (
-            entry.objective_scorer_identifier.model_dump() if entry.objective_scorer_identifier else None
-        )
+        self.objective_scorer_identifier = scorer_identifier.model_dump() if scorer_identifier else None
         self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
         self.number_tries = entry.number_tries
         self.completion_time = entry.completion_time
-
-        # Serialize attack_results: dict[str, list[AttackResult]] -> dict[str, list[str]]
-        # Store only conversation_ids - the full AttackResults can be queried from the database
-        serialized_attack_results = {}
-        for attack_name, results in entry.attack_results.items():
-            serialized_attack_results[attack_name] = [result.conversation_id for result in results]
-        self.attack_results_json = json.dumps(serialized_attack_results)
 
         # Serialize display_group_map if present
         self.display_group_map_json = json.dumps(entry.display_group_map) if entry.display_group_map else None
@@ -1198,7 +2346,7 @@ class ScenarioResultEntry(Base):
         self.error_type = entry.error_type
         self.scenario_metadata = entry.metadata if entry.metadata else None
 
-        self.timestamp = datetime.now(tz=timezone.utc)
+        self.timestamp = entry.creation_time
 
     def get_scenario_result(self) -> ScenarioResult:
         """
@@ -1211,29 +2359,22 @@ class ScenarioResultEntry(Base):
         Returns:
             ScenarioResult object with scenario metadata but empty attack_results
         """
-        # Recreate ScenarioIdentifier with the stored pyrit_version
+        # The canonical scenario identity (name / version / techniques / datasets /
+        # params / target / scorer children) is stored as one JSON column and
+        # reconstructed here as a typed ScenarioIdentifier. eval_hash is recomputed
+        # on reload (never trusted from storage). The denormalized target / scorer
+        # columns exist only for DB-level filtering, so they aren't read back here.
         stored_version = self.pyrit_version or LEGACY_PYRIT_VERSION
-        scenario_identifier = ScenarioIdentifier(
-            name=self.scenario_name,
-            description=self.scenario_description or "",
-            scenario_version=self.scenario_version,
-            init_data=self.scenario_init_data,
-            pyrit_version=stored_version,
-        )
 
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        # Convert dict back to ComponentIdentifier with the stored pyrit_version;
-        # eval_hash is recomputed on reload via ScorerEvaluationIdentifier.
-        scorer_identifier = _load_identifier(
-            self.objective_scorer_identifier,
-            pyrit_version=stored_version,
-            eval_identifier_cls=ScorerEvaluationIdentifier,
+        base_identifier = ComponentIdentifier.model_validate(
+            {**self.scenario_identifier, "pyrit_version": stored_version}
         )
-
-        # Convert dict back to ComponentIdentifier for reconstruction
-        target_identifier = _load_identifier(self.objective_target_identifier)
+        scenario_identifier = ScenarioIdentifier.from_component_identifier(
+            base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)
+        )
 
         # Deserialize display_group_map if stored
         display_group_map: dict[str, str] | None = None
@@ -1243,9 +2384,8 @@ class ScenarioResultEntry(Base):
         return ScenarioResult(
             id=self.id,
             scenario_identifier=scenario_identifier,
-            objective_target_identifier=target_identifier,
+            scenario_description=self.scenario_description or "",
             attack_results=attack_results,
-            objective_scorer_identifier=scorer_identifier,
             scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,
@@ -1256,16 +2396,6 @@ class ScenarioResultEntry(Base):
             error_type=self.error_type,
             metadata=dict(self.scenario_metadata) if self.scenario_metadata else {},
         )
-
-    def get_conversation_ids_by_attack_name(self) -> dict[str, list[str]]:
-        """
-        Get the conversation IDs grouped by attack name.
-
-        Returns:
-            Dictionary mapping attack names to lists of conversation IDs
-        """
-        result: dict[str, list[str]] = json.loads(self.attack_results_json)
-        return result
 
     def __str__(self) -> str:
         """

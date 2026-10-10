@@ -3,26 +3,38 @@
 
 import os
 import uuid
-from collections.abc import Generator, MutableSequence, Sequence
+from collections.abc import AsyncGenerator, MutableSequence, Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, select, text
+from sqlalchemy.dialects import mssql
 
+from pyrit.common.singleton import Singleton
+from pyrit.converter.base64_converter import Base64Converter
 from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.memory_interface import AttackResultKeysetCursor
+from pyrit.memory.memory_models import ScenarioResultEntry
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import Conversation, MessagePiece
-from pyrit.prompt_converter.base64_converter import Base64Converter
 from pyrit.prompt_target.text_target import TextTarget
-from unit.mocks import get_azure_sql_memory, get_sample_conversation_entries
+from unit.mocks import get_azure_sql_memory_async, get_sample_conversation_entries
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_models import Base
 
 
 @pytest.fixture
-def memory_interface() -> Generator[AzureSQLMemory, None, None]:
-    yield from get_azure_sql_memory()
+async def memory_interface() -> AsyncGenerator[AzureSQLMemory, None]:
+    async for memory in get_azure_sql_memory_async():
+        yield memory
+
+
+@pytest.fixture
+def uninitialized_memory_interface() -> AzureSQLMemory:
+    return object.__new__(AzureSQLMemory)
 
 
 @pytest.fixture
@@ -39,21 +51,21 @@ async def test_insert_entry(memory_interface):
         original_value="Hello",
         converted_value="Hello",
     )
-    await message_piece.set_sha256_values_async()
+    await set_message_piece_sha256_async(message_piece)
     entry = PromptMemoryEntry(entry=message_piece)
 
     # Insert the entry
     memory_interface._insert_entry(entry)
 
     # Verify the entry was inserted
-    with memory_interface.get_session() as session:
-        inserted_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await memory_interface.get_session_async() as session:
+        inserted_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert inserted_entry is not None
         assert inserted_entry.role == "user"
         assert inserted_entry.original_value == "Hello"
 
 
-def test_insert_entries(memory_interface: AzureSQLMemory):
+async def test_insert_entries_async(memory_interface: AzureSQLMemory):
     entries = [
         PromptMemoryEntry(
             entry=MessagePiece(
@@ -67,10 +79,11 @@ def test_insert_entries(memory_interface: AzureSQLMemory):
     ]
 
     # Now, get a new session to query the database and verify the entries were inserted
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        # Use the insert_entries method to insert multiple entries into the database
-        memory_interface._insert_entries(entries=entries)
-        inserted_entries = session.query(PromptMemoryEntry).order_by(PromptMemoryEntry.conversation_id).all()
+    memory_interface._insert_entries(entries=entries)
+    async with await memory_interface.get_session_async() as session:
+        inserted_entries = (
+            await session.scalars(select(PromptMemoryEntry).order_by(PromptMemoryEntry.conversation_id))
+        ).all()
         assert len(inserted_entries) == 5
         for i, entry in enumerate(inserted_entries):
             assert entry.conversation_id == str(i)
@@ -79,7 +92,7 @@ def test_insert_entries(memory_interface: AzureSQLMemory):
             assert entry.converted_value == f"CMessage {i}"
 
 
-def test_insert_embedding_entry(memory_interface: AzureSQLMemory):
+async def test_insert_embedding_entry_async(memory_interface: AzureSQLMemory):
     # Create a ConversationData entry
     conversation_entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="abc")
@@ -89,9 +102,11 @@ def test_insert_embedding_entry(memory_interface: AzureSQLMemory):
     memory_interface._insert_entry(conversation_entry)
 
     # Re-query the ConversationData entry within a new session to ensure it's attached
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
+    async with await memory_interface.get_session_async() as session:
         # Assuming uuid is the primary key and is set upon insertion
-        reattached_conversation_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").one()
+        reattached_conversation_entry = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))
+        ).one()
         uuid = reattached_conversation_entry.id
 
     # Now that we have the uuid, we can create and insert the EmbeddingData entry
@@ -99,8 +114,8 @@ def test_insert_embedding_entry(memory_interface: AzureSQLMemory):
     memory_interface._insert_entry(embedding_entry)
 
     # Verify the EmbeddingData entry was inserted correctly
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        persisted_embedding_entry = session.query(EmbeddingDataEntry).filter_by(id=uuid).first()
+    async with await memory_interface.get_session_async() as session:
+        persisted_embedding_entry = (await session.scalars(select(EmbeddingDataEntry).filter_by(id=uuid))).first()
         assert persisted_embedding_entry is not None
         assert persisted_embedding_entry.embedding == [1, 2, 3]
         assert persisted_embedding_entry.embedding_type_name == "test_type"
@@ -135,8 +150,8 @@ def test_default_embedding_raises(memory_interface: AzureSQLMemory):
         memory_interface.enable_embedding()
 
 
-def test_reset_database_recreates_versioned_schema(memory_interface: AzureSQLMemory):
-    memory_interface.reset_database()
+async def test_reset_database_recreates_versioned_schema_async(memory_interface: AzureSQLMemory):
+    await memory_interface.reset_database_async()
 
     inspector = inspect(memory_interface.engine)
     table_names = set(inspector.get_table_names())
@@ -179,17 +194,17 @@ def test_query_entries(
     assert filtered_entries[0].conversation_id == "1"
 
 
-def test_get_all_memory(
+async def test_get_all_memory(
     memory_interface: AzureSQLMemory, sample_conversation_entries: MutableSequence[PromptMemoryEntry]
 ):
     memory_interface._insert_entries(entries=sample_conversation_entries)
 
     # Fetch all entries
-    all_entries = memory_interface.get_message_pieces()
+    all_entries = await memory_interface.get_message_pieces_async()
     assert len(all_entries) == 3
 
 
-def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
+async def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
     # Define a specific conversation_id
     specific_conversation_id = "test_conversation_id"
 
@@ -202,17 +217,21 @@ def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
         sequence=1,
         original_value="Test content",
         converted_value="Test content",
-        labels={"normalizer_id": "id1"},
+        prompt_metadata={"normalizer_id": "id1"},
         converter_identifiers=converter_identifiers,
     )
 
-    memory_interface.add_conversation_to_memory(
-        conversation=Conversation(conversation_id=specific_conversation_id, target_identifier=target.get_identifier())
+    (
+        await memory_interface.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=specific_conversation_id, target_identifier=target.get_identifier()
+            )
+        )
     )
-    memory_interface.add_message_pieces_to_memory(message_pieces=[piece])
+    (await memory_interface.add_message_pieces_to_memory_async(message_pieces=[piece]))
 
     # Use the get_memories_with_conversation_id method to retrieve entries with the specific conversation_id
-    retrieved_entries = memory_interface.get_conversation_messages(conversation_id=specific_conversation_id)
+    retrieved_entries = await memory_interface.get_conversation_messages_async(conversation_id=specific_conversation_id)
 
     # Verify that the retrieved entry matches the inserted entry
     assert len(retrieved_entries) == 1
@@ -232,8 +251,7 @@ def test_get_memories_with_json_properties(memory_interface: AzureSQLMemory):
     assert metadata is not None
     assert metadata.target_identifier.class_name == "TextTarget"
 
-    labels = retrieved_entry.labels
-    assert labels["normalizer_id"] == "id1"
+    assert retrieved_entry.prompt_metadata["normalizer_id"] == "id1"
 
 
 def test_get_memories_with_attack_id(memory_interface: AzureSQLMemory):
@@ -243,55 +261,57 @@ def test_get_memories_with_attack_id(memory_interface: AzureSQLMemory):
     pytest.skip("Test requires Azure SQL-specific JSON functions; covered by integration tests")
 
 
-def test_get_attack_result_label_condition_single_label(memory_interface: AzureSQLMemory):
+def test_get_attack_result_label_condition_single_label(uninitialized_memory_interface: AzureSQLMemory):
     """Test that _get_attack_result_label_condition builds a valid condition for a single label."""
-    condition = memory_interface._get_attack_result_label_condition(labels={"operation": "test_op"})
+    condition = uninitialized_memory_interface._get_attack_result_label_condition(labels={"operation": "test_op"})
     compiled = str(condition.compile(compile_kwargs={"literal_binds": False}))
     assert "JSON_VALUE" in compiled
     assert "ISJSON" in compiled
 
 
-def test_get_attack_result_label_condition_multiple_labels(memory_interface: AzureSQLMemory):
+def test_get_attack_result_label_condition_multiple_labels(uninitialized_memory_interface: AzureSQLMemory):
     """Test that _get_attack_result_label_condition builds a valid condition for multiple labels."""
-    condition = memory_interface._get_attack_result_label_condition(
+    condition = uninitialized_memory_interface._get_attack_result_label_condition(
         labels={"operation": "test_op", "operator": "roakey"}
     )
     compiled = str(condition.compile(compile_kwargs={"literal_binds": False}))
-    # Both AR-direct and PME-conversation branches should appear
-    assert "AttackResultEntries" in compiled
-    assert "PromptMemoryEntries" in compiled
+    assert 'JSON_VALUE("AttackResultEntries".labels' in compiled
+    assert 'JSON_VALUE("PromptMemoryEntries".labels' not in compiled
 
 
-def test_get_message_pieces_memory_label_conditions_single_label(memory_interface: AzureSQLMemory):
-    """Test that _get_message_pieces_memory_label_conditions builds a valid OR condition."""
-    conditions = memory_interface._get_message_pieces_memory_label_conditions(memory_labels={"operation": "test_op"})
+def test_get_message_pieces_memory_label_conditions_single_label(uninitialized_memory_interface: AzureSQLMemory):
+    """Test that _get_message_pieces_memory_label_conditions builds a valid condition."""
+    conditions = uninitialized_memory_interface._get_message_pieces_memory_label_conditions(
+        memory_labels={"operation": "test_op"}
+    )
     assert len(conditions) == 1
     compiled = str(conditions[0].compile(compile_kwargs={"literal_binds": False}))
     assert "ISJSON" in compiled
     assert "JSON_VALUE" in compiled
 
 
-def test_get_message_pieces_memory_label_conditions_includes_ar_fallback(memory_interface: AzureSQLMemory):
-    """Test that the condition references both PME and AR tables for the OR fallback."""
-    conditions = memory_interface._get_message_pieces_memory_label_conditions(
+def test_get_message_pieces_memory_label_conditions_uses_attack_result_labels(
+    uninitialized_memory_interface: AzureSQLMemory,
+):
+    """Test that only AttackResultEntry labels are queried."""
+    conditions = uninitialized_memory_interface._get_message_pieces_memory_label_conditions(
         memory_labels={"operation": "test_op", "operator": "roakey"}
     )
     compiled = str(conditions[0].compile(compile_kwargs={"literal_binds": False}))
-    assert "AttackResultEntries" in compiled
-    assert "PromptMemoryEntries" in compiled
+    assert 'JSON_VALUE("AttackResultEntries".labels' in compiled
+    assert 'JSON_VALUE("PromptMemoryEntries".labels' not in compiled
 
 
-def test_get_message_pieces_memory_label_conditions_bind_params(memory_interface: AzureSQLMemory):
-    """Test that bind parameters are created for both PME and AR branches."""
-    conditions = memory_interface._get_message_pieces_memory_label_conditions(memory_labels={"operation": "test_op"})
+def test_get_message_pieces_memory_label_conditions_bind_params(uninitialized_memory_interface: AzureSQLMemory):
+    """Test that bind parameters are created for AttackResultEntry labels."""
+    conditions = uninitialized_memory_interface._get_message_pieces_memory_label_conditions(
+        memory_labels={"operation": "test_op"}
+    )
     params = conditions[0].compile().params
-    # PME branch param
-    assert params.get("pme_ml_operation") == "test_op"
-    # AR branch param
-    assert params.get("are_ml_operation") == "test_op"
+    assert params == {"are_ml_operation": "test_op"}
 
 
-def test_update_entries(memory_interface: AzureSQLMemory):
+async def test_update_entries_async(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(conversation_id="123", role="user", original_value="Hello", converted_value="Hello")
@@ -306,8 +326,8 @@ def test_update_entries(memory_interface: AzureSQLMemory):
     memory_interface._update_entries(entries=entries_to_update, update_fields={"original_value": "Updated Hello"})
 
     # Verify the entry was updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await memory_interface.get_session_async() as session:
+        updated_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert updated_entry.original_value == "Updated Hello"
 
 
@@ -345,7 +365,7 @@ def test_update_entries_nonexistent_fields(memory_interface):
         )
 
 
-def test_update_prompt_entries_by_conversation_id(memory_interface: AzureSQLMemory, sample_conversation_entries):
+async def test_update_prompt_entries_by_conversation_id(memory_interface: AzureSQLMemory, sample_conversation_entries):
     specific_conversation_id = "update_test_id"
 
     for entry in sample_conversation_entries:
@@ -354,41 +374,20 @@ def test_update_prompt_entries_by_conversation_id(memory_interface: AzureSQLMemo
     memory_interface._insert_entries(entries=sample_conversation_entries)
 
     # Update the entry using the update_prompt_entries_by_conversation_id method
-    update_result = memory_interface.update_prompt_entries_by_conversation_id(
+    update_result = await memory_interface.update_prompt_entries_by_conversation_id_async(
         conversation_id=specific_conversation_id, update_fields={"original_value": "Updated Hello", "role": "assistant"}
     )
 
     assert update_result is True
 
     # Verify the entry was updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entries = session.query(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id)
+    async with await memory_interface.get_session_async() as session:
+        updated_entries = (
+            await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id=specific_conversation_id))
+        ).all()
         for entry in updated_entries:
             assert entry.original_value == "Updated Hello"
             assert entry.role == "assistant"
-
-
-def test_update_labels_by_conversation_id(memory_interface: AzureSQLMemory):
-    # Insert a test entry
-    entry = PromptMemoryEntry(
-        entry=MessagePiece(
-            conversation_id="123",
-            role="user",
-            original_value="Hello",
-            converted_value="Hello",
-            labels={"test": "label"},
-        )
-    )
-
-    memory_interface._insert_entry(entry)
-
-    # Update the labels using the update_labels_by_conversation_id method
-    memory_interface.update_labels_by_conversation_id(conversation_id="123", labels={"test1": "change"})
-
-    # Verify the labels were updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
-        assert updated_entry.labels["test1"] == "change"
 
 
 @pytest.mark.parametrize(
@@ -403,7 +402,7 @@ def test_get_condition_json_property_match_bind_params(
     memory_interface: AzureSQLMemory, partial_match: bool, expected_value: str
 ):
     condition = memory_interface._get_condition_json_property_match(
-        json_column=PromptMemoryEntry.labels,
+        json_column=PromptMemoryEntry.prompt_metadata,
         property_path="$.key",
         value="TestValue",
         partial_match=partial_match,
@@ -422,20 +421,18 @@ def test_get_attack_result_label_condition_with_string_value(memory_interface: A
     """String values produce a single-placeholder IN clause with the stringified value."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
     params = condition.compile().params
-    assert params.get("pme_label_operator_0") == "roakey"
-    assert params.get("are_label_operator_0") == "roakey"
+    assert params == {"are_label_operator_0": "roakey"}
 
 
 def test_get_attack_result_label_condition_with_sequence_value(memory_interface: AzureSQLMemory):
     """Sequence values produce one placeholder per element."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operation": ["op_a", "op_b", "op_c"]})
     params = condition.compile().params
-    assert params.get("pme_label_operation_0") == "op_a"
-    assert params.get("pme_label_operation_1") == "op_b"
-    assert params.get("pme_label_operation_2") == "op_c"
-    assert params.get("are_label_operation_0") == "op_a"
-    assert params.get("are_label_operation_1") == "op_b"
-    assert params.get("are_label_operation_2") == "op_c"
+    assert params == {
+        "are_label_operation_0": "op_a",
+        "are_label_operation_1": "op_b",
+        "are_label_operation_2": "op_c",
+    }
 
 
 def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface: AzureSQLMemory):
@@ -443,8 +440,7 @@ def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey", "operation": []})
     params = condition.compile().params
     # operator gets bind params; operation (empty) does not.
-    assert params.get("pme_label_operator_0") == "roakey"
-    assert params.get("are_label_operator_0") == "roakey"
+    assert params == {"are_label_operator_0": "roakey"}
     assert not any("label_operation_" in k for k in params)
 
 
@@ -453,6 +449,144 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     condition = memory_interface._get_attack_result_label_condition(labels={})
     params = condition.compile().params
     assert not any("label_" in k for k in params)
+
+
+def test_get_conversation_stats_uses_one_latest_row_apply(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The SQL Server query fetches preview and data type through one latest-row lookup."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        result = uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = str(session.execute.call_args.args[0])
+    assert result == {}
+    assert sql.upper().count("SELECT TOP 1") == 1
+    assert "OUTER APPLY" in sql.upper()
+    assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    """Scenario-history SQL Server conditions bind repeated values without interpolation."""
+    label_condition = memory_interface._get_scenario_result_labels_condition(
+        labels={"team.name": ["alice", "bob"], "operation": "nightly"}
+    )
+    registry_condition = memory_interface._get_scenario_registry_name_condition(
+        scenario_names=["first.scenario", "second.scenario"]
+    )
+
+    assert label_condition.compile().params == {
+        "scenario_label_path_0": '$."team.name"',
+        "scenario_label_value_0_0": "alice",
+        "scenario_label_value_0_1": "bob",
+        "scenario_label_path_1": '$."operation"',
+        "scenario_label_value_1_0": "nightly",
+    }
+    assert registry_condition.compile().params == {
+        "scenario_registry_name_0": "first.scenario",
+        "scenario_registry_name_1": "second.scenario",
+    }
+    assert " IN (" in str(label_condition)
+    assert " AND " in str(label_condition)
+    combined_statement = select(ScenarioResultEntry.id).where(
+        or_(
+            ScenarioResultEntry.scenario_name.in_(["first.scenario", "second.scenario"]),
+            registry_condition,
+        )
+    )
+    assert "scenario_registry_name_1" in combined_statement.compile().params
+
+
+def test_scenario_history_legacy_label_condition_binds_each_value(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    condition = memory_interface._get_scenario_result_label_condition(
+        labels={"team.name": "alice", "operation": "nightly"}
+    )
+
+    assert condition.compile().params == {
+        "scenario_label_path_0": '$."team.name"',
+        "scenario_label_value_0": "alice",
+        "scenario_label_path_1": '$."operation"',
+        "scenario_label_value_1": "nightly",
+    }
+    assert " AND " in str(condition)
+
+
+def test_scenario_history_started_at_uses_sql_server_json_value(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    expression = memory_interface._get_scenario_started_at_expression()
+
+    compiled = select(expression).compile()
+    assert "json_value" in str(compiled).lower()
+    assert "$.started_at" in compiled.params.values()
+
+
+def test_scenario_history_seed_projection_defaults_to_empty_json(memory_interface: AzureSQLMemory) -> None:
+    """The SQL Server seed projection returns an empty JSON array for runs without seed groups."""
+    _, _, seed_projection = memory_interface._get_scenario_history_plan_expressions()
+
+    assert "isnull" in str(seed_projection).lower()
+    assert "'[]'" in str(seed_projection)
+    assert "INCLUDE_NULL_VALUES" in str(seed_projection)
+
+
+def test_scenario_plan_unit_subqueries_expand_plan_json_server_side(memory_interface: AzureSQLMemory) -> None:
+    """The SQL Server plan expansion uses CROSS APPLY OPENJSON and binds scenario IDs."""
+    scenario_result_id = uuid.uuid4()
+    plan_units, plan_seeds = memory_interface._get_scenario_plan_unit_subqueries(
+        scenario_result_ids=[scenario_result_id]
+    )
+
+    statement = select(plan_units.c.atomic_group_id, plan_seeds.c.seed_group_id).join(
+        plan_seeds, plan_units.c.atomic_group_id == plan_seeds.c.seed_group_id
+    )
+    compiled = statement.compile(dialect=mssql.dialect())
+
+    assert "CROSS APPLY OPENJSON" in str(compiled)
+    assert "JOIN LATERAL" not in str(compiled)
+    assert str(scenario_result_id) in str(compiled.params)
+
+
+def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    statement = uninitialized_memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()], plan_entry_ids=[]
+    )
+    sql = str(statement.compile(dialect=mssql.dialect())).upper()
+
+    assert (
+        "HISTORY_UNITS.TIMESTAMP DESC, "
+        "LOWER(CAST(HISTORY_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
+    ) in sql
+
+
+def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    session = MagicMock()
+    session.execute.return_value.all.return_value = []
+    cursor = AttackResultKeysetCursor(
+        timestamp=datetime(2026, 10, 7, tzinfo=UTC),
+        attack_result_id="00000000-0000-4000-8000-ffffffffffff",
+    )
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        result = uninitialized_memory_interface._execute_get_scenario_attack_result_deltas(
+            scenario_result_id=str(uuid.uuid4()), cursor=cursor, limit=1
+        )
+
+    sql = str(session.execute.call_args.args[0].compile(dialect=mssql.dialect())).upper()
+    canonical_id = "LOWER(CAST([ATTACKRESULTENTRIES].ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2"
+    assert result == ([], False)
+    assert f"({canonical_id}) > (LOWER(CAST(" in sql
+    assert f"{canonical_id} ASC" in sql
+    assert "COLLATE LATIN1_GENERAL_100_BIN2)" in sql
 
 
 @pytest.mark.parametrize(
@@ -471,7 +605,7 @@ def test_get_condition_json_property_match_sql_text(
     expected_sql_fragment: str,
 ):
     condition = memory_interface._get_condition_json_property_match(
-        json_column=PromptMemoryEntry.labels,
+        json_column=PromptMemoryEntry.prompt_metadata,
         property_path="$.key",
         value="TestValue",
         partial_match=partial_match,
@@ -556,7 +690,7 @@ def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overloa
     assert "EXISTS" not in _normalize(condition_any)
 
 
-def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMemory):
+async def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMemory):
     # Insert a test entry
     entry = PromptMemoryEntry(
         entry=MessagePiece(
@@ -571,21 +705,24 @@ def test_update_prompt_metadata_by_conversation_id(memory_interface: AzureSQLMem
     memory_interface._insert_entry(entry)
 
     # Update the metadata using the update_prompt_metadata_by_conversation_id method
-    memory_interface.update_prompt_metadata_by_conversation_id(
-        conversation_id="123", prompt_metadata={"updated": "updated"}
+    (
+        await memory_interface.update_prompt_metadata_by_conversation_id_async(
+            conversation_id="123", prompt_metadata={"updated": "updated"}
+        )
     )
 
     # Verify the metadata was updated
-    with memory_interface.get_session() as session:  # type: ignore[arg-type]
-        updated_entry = session.query(PromptMemoryEntry).filter_by(conversation_id="123").first()
+    async with await memory_interface.get_session_async() as session:
+        updated_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="123"))).first()
         assert updated_entry.prompt_metadata == {"updated": "updated"}
 
 
-def test_refresh_token_if_needed_raises_when_expiry_none():
+def test_refresh_token_if_needed_initializes_deferred_token():
     obj = AzureSQLMemory.__new__(AzureSQLMemory)
     obj._auth_token_expiry = None
-    with pytest.raises(RuntimeError, match="Auth token expiry not initialized"):
+    with patch.object(obj, "_create_auth_token") as create_token:
         obj._refresh_token_if_needed()
+    create_token.assert_called_once()
 
 
 def test_provide_token_raises_when_auth_token_none():
@@ -612,8 +749,177 @@ def test_provide_token_raises_when_auth_token_none():
         captured_fn(None, None, ["some_connection_string"], {})
 
 
-def test_reset_database_raises_when_engine_none():
+async def test_reset_database_raises_when_engine_none_async() -> None:
     obj = AzureSQLMemory.__new__(AzureSQLMemory)
     obj.engine = None
     with pytest.raises(RuntimeError, match="Engine is not initialized"):
-        obj.reset_database()
+        await obj.reset_database_async()
+
+
+def test_init_prod_connection_runs_check_only_not_migration():
+    """When connection matches prod, only check_schema_migrations runs — not run_schema_migrations."""
+    prod_conn = "Server=tcp:prod.database.windows.net;Database=prod_db;"
+    saved = Singleton._instances.copy()
+    Singleton._instances.clear()
+    try:
+        with (
+            patch("pyrit.memory.AzureSQLMemory._create_engine"),
+            patch("pyrit.memory.AzureSQLMemory._create_auth_token"),
+            patch("pyrit.memory.AzureSQLMemory._enable_azure_authorization"),
+            patch.object(AzureSQLMemory, "_check_schema_migration") as mock_check,
+            patch.object(AzureSQLMemory, "_run_schema_migration") as mock_migration,
+            patch.dict(
+                "os.environ",
+                {
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: "https://test.blob.core.windows.net/test",
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: "valid_sas_token",
+                    AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: prod_conn,
+                },
+            ),
+        ):
+            AzureSQLMemory(
+                connection_string=prod_conn,
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+            )
+            mock_check.assert_called_once()
+            mock_migration.assert_not_called()
+    finally:
+        Singleton._instances.clear()
+        Singleton._instances.update(saved)
+
+
+def test_init_prod_connection_warns_on_schema_mismatch():
+    """When connection matches prod and schema doesn't match, startup succeeds with a warning (no raise)."""
+    from alembic.util.exc import AutogenerateDiffsDetected
+
+    prod_conn = "Server=tcp:prod.database.windows.net;Database=prod_db;"
+    saved = Singleton._instances.copy()
+    Singleton._instances.clear()
+    try:
+        with (
+            patch("pyrit.memory.AzureSQLMemory._create_engine"),
+            patch("pyrit.memory.AzureSQLMemory._create_auth_token"),
+            patch("pyrit.memory.AzureSQLMemory._enable_azure_authorization"),
+            patch.object(
+                AzureSQLMemory,
+                "_check_schema_migration",
+                side_effect=AutogenerateDiffsDetected(
+                    "diffs detected",
+                    revision_context=MagicMock(),
+                    diffs=[],
+                ),
+            ),
+            patch.dict(
+                "os.environ",
+                {
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: "https://test.blob.core.windows.net/test",
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: "valid_sas_token",
+                    AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: prod_conn,
+                },
+            ),
+        ):
+            # Should NOT raise — AzureSQLMemory catches AutogenerateDiffsDetected and warns
+            AzureSQLMemory(
+                connection_string=prod_conn,
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+            )
+    finally:
+        Singleton._instances.clear()
+        Singleton._instances.update(saved)
+
+
+def test_init_allows_migration_when_connection_does_not_match_prod():
+    """Migration proceeds normally when the connection string does not match the prod env var."""
+    saved = Singleton._instances.copy()
+    Singleton._instances.clear()
+    try:
+        with (
+            patch("pyrit.memory.AzureSQLMemory._create_engine"),
+            patch("pyrit.memory.AzureSQLMemory._create_auth_token"),
+            patch("pyrit.memory.AzureSQLMemory._enable_azure_authorization"),
+            patch.object(AzureSQLMemory, "_run_schema_migration") as mock_migration,
+            patch.dict(
+                "os.environ",
+                {
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: "https://test.blob.core.windows.net/test",
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: "valid_sas_token",
+                    AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: "Server=tcp:prod.database.windows.net;",
+                },
+            ),
+        ):
+            AzureSQLMemory(
+                connection_string="Server=tcp:dev.database.windows.net;",
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+            )
+            mock_migration.assert_called_once()
+    finally:
+        Singleton._instances.clear()
+        Singleton._instances.update(saved)
+
+
+def test_init_allows_migration_when_prod_env_var_not_set():
+    """Migration proceeds normally when AZURE_SQL_DB_CONNECTION_STRING_PROD is not set."""
+    saved = Singleton._instances.copy()
+    Singleton._instances.clear()
+    try:
+        with (
+            patch("pyrit.memory.AzureSQLMemory._create_engine"),
+            patch("pyrit.memory.AzureSQLMemory._create_auth_token"),
+            patch("pyrit.memory.AzureSQLMemory._enable_azure_authorization"),
+            patch.object(AzureSQLMemory, "_run_schema_migration") as mock_migration,
+            patch.dict(
+                "os.environ",
+                {
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: "https://test.blob.core.windows.net/test",
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: "valid_sas_token",
+                },
+                clear=False,
+            ),
+        ):
+            os.environ.pop(AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD, None)
+            AzureSQLMemory(
+                connection_string="Server=tcp:dev.database.windows.net;",
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+            )
+            mock_migration.assert_called_once()
+    finally:
+        Singleton._instances.clear()
+        Singleton._instances.update(saved)
+
+
+def test_init_prod_with_skip_schema_migration_still_checks():
+    """When skip_schema_migration=True on prod, the read-only check still runs but migration does not."""
+    prod_conn = "Server=tcp:prod.database.windows.net;Database=prod_db;"
+    saved = Singleton._instances.copy()
+    Singleton._instances.clear()
+    try:
+        with (
+            patch("pyrit.memory.AzureSQLMemory._create_engine"),
+            patch("pyrit.memory.AzureSQLMemory._create_auth_token"),
+            patch("pyrit.memory.AzureSQLMemory._enable_azure_authorization"),
+            patch.object(AzureSQLMemory, "_check_schema_migration") as mock_check,
+            patch.object(AzureSQLMemory, "_run_schema_migration") as mock_migration,
+            patch.dict(
+                "os.environ",
+                {
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL: "https://test.blob.core.windows.net/test",
+                    AzureSQLMemory.AZURE_STORAGE_ACCOUNT_DB_DATA_SAS_TOKEN: "valid_sas_token",
+                    AzureSQLMemory.AZURE_SQL_DB_CONNECTION_STRING_PROD: prod_conn,
+                },
+            ),
+        ):
+            AzureSQLMemory(
+                connection_string=prod_conn,
+                results_container_url="https://test.blob.core.windows.net/test",
+                results_sas_token="valid_sas_token",
+                skip_schema_migration=True,
+            )
+            mock_check.assert_called_once()
+            mock_migration.assert_not_called()
+    finally:
+        Singleton._instances.clear()
+        Singleton._instances.update(saved)

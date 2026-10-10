@@ -8,11 +8,14 @@
  * endpoint (served by the backend from environment variables). This avoids
  * hardcoding tenant-specific values in the frontend bundle.
  *
- * Uses access tokens (not ID tokens) with an API-specific scope so that
- * Entra ID includes the `groups` claim for group-based authorization.
+ * Uses a delegated Microsoft Graph access token. The backend forwards this
+ * token only to trusted Graph endpoints to authenticate the user and resolve
+ * group membership.
  */
 
 import { type Configuration, LogLevel } from '@azure/msal-browser'
+
+const GRAPH_USER_READ_SCOPE = 'User.Read'
 
 export interface AuthConfig {
   clientId: string
@@ -21,17 +24,26 @@ export interface AuthConfig {
 }
 
 export async function fetchAuthConfig(): Promise<AuthConfig> {
+  let response: Response
   try {
-    const response = await fetch('/api/auth/config')
-    if (!response.ok) {
-      // Auth endpoint not available — treat as auth disabled
-      return { clientId: '', tenantId: '', allowedGroupIds: '' }
-    }
-    return (await response.json()) as AuthConfig
-  } catch {
-    // Network error (e.g., backend not running yet) — treat as auth disabled
-    return { clientId: '', tenantId: '', allowedGroupIds: '' }
+    response = await fetch('/api/auth/config')
+  } catch (error) {
+    // A network error (e.g., backend not running yet) is a transient
+    // infrastructure failure, not proof that auth is disabled. Surface it so
+    // AuthProvider can show its error state instead of rendering the shell
+    // while protected APIs return 401.
+    const fetchError = new Error(
+      `Failed to reach /api/auth/config: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    // ErrorOptions requires ES2022, while this project targets ES2020.
+    Object.defineProperty(fetchError, 'cause', { value: error })
+    throw fetchError
   }
+  if (!response.ok) {
+    // HTTP-level failures on the config endpoint are equally inconclusive.
+    throw new Error(`/api/auth/config returned ${response.status} ${response.statusText}`)
+  }
+  return (await response.json()) as AuthConfig
 }
 
 export function buildMsalConfig(authConfig: AuthConfig): Configuration {
@@ -54,23 +66,13 @@ export function buildMsalConfig(authConfig: AuthConfig): Configuration {
   }
 }
 
-/**
-  * Build the API scopes for token acquisition.
-  *
-  * Requests the app's custom `access` scope so the resulting access token has
-  * `aud` equal to the app's client ID. The explicit scope name avoids the
-  * `.default` shorthand, which resolves via `requiredResourceAccess` and
-  * triggers mandatory admin consent in the Microsoft corporate tenant.
-  *
-  * The `access` scope is defined under "Expose an API" on the app registration.
-  */
-export function getApiScopes(clientId: string): string[] {
-  if (!clientId) return ['openid', 'profile', 'email']
-  return [`api://${clientId}/access`]
+/** Build the delegated Microsoft Graph scopes used for authentication. */
+export function getGraphScopes(): string[] {
+  return [GRAPH_USER_READ_SCOPE]
 }
 
-export function buildLoginRequest(clientId: string) {
+export function buildLoginRequest(): { scopes: string[] } {
   return {
-    scopes: getApiScopes(clientId),
+    scopes: getGraphScopes(),
   }
 }

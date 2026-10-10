@@ -41,6 +41,7 @@ async def test_fetch_dataset_async_loads_templates_from_path(tmp_path):
     assert dataset.dataset_name == "jailbreak_templates"
     assert len(dataset.seeds) == 2
     assert all(isinstance(seed, SeedPrompt) for seed in dataset.seeds)
+    assert all(seed.dataset_name == dataset.dataset_name for seed in dataset.seeds)
 
 
 async def test_fetch_dataset_async_skips_invalid_templates(tmp_path):

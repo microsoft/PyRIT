@@ -47,7 +47,7 @@
           "**/.pytest_cache/**": true,
           "**/build/**": true,
           "**/dist/**": true,
-          "**/pyrit/auxiliary_attacks/gcg/attack/**": true,
+          "**/pyrit/executor/promptgen/gcg/attack/**": true,
           "**/doc/**": true,
           "**/.ty_cache/**": true,
           "**/frontend/node_modules/**": true,

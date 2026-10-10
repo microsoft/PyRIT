@@ -10,7 +10,7 @@
 # ---
 
 # %% [markdown]
-# # 1. SQLite Memory
+# # SQLite Memory
 #
 # The memory SQLite database can be thought of as a normalized source of truth. The memory module is the primary way PyRIT keeps track of requests and responses to targets and scores. Most of this is done automatically. All Prompt Targets write to memory for later retrieval. All scorers also write to memory when scoring.
 #
@@ -21,4 +21,4 @@ from pyrit.memory import SQLiteMemory
 
 # Use in-memory database to avoid file corruption issues
 memory = SQLiteMemory(db_path=":memory:")
-memory.print_schema()
+(await memory.print_schema_async())

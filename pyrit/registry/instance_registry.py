@@ -21,6 +21,7 @@ so it can be reused anywhere (forms, agents, attack strategies).
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
@@ -28,6 +29,8 @@ from pyrit.models import ComponentIdentifier, Identifiable
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+
+    from pyrit.registry.tag_query import TagQuery
 
 T = TypeVar("T", bound=Identifiable)  # The type of items stored
 
@@ -76,12 +79,21 @@ class InstanceRegistry(Protocol[T]):
         name: str | None = None,
         tags: dict[str, str] | list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> None:
         """Register a pre-configured instance, defaulting its name to the identifier's ``unique_name``."""
         ...
 
     def get(self, name: str) -> T | None:
         """Return the instance registered under ``name``, or None."""
+        ...
+
+    def validate_name_available(self, name: str) -> None:
+        """Raise if ``name`` is reserved or already registered."""
+        ...
+
+    def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
+        """Remove and return ``name`` when it still refers to ``expected_entry``, if supplied."""
         ...
 
     def get_entry(self, name: str) -> RegistryEntry[T] | None:
@@ -94,6 +106,10 @@ class InstanceRegistry(Protocol[T]):
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
         """Return entries carrying ``tag`` (optionally matching ``value``), sorted by name."""
+        ...
+
+    def query_by_tags(self, *, query: TagQuery) -> list[RegistryEntry[T]]:
+        """Return entries whose tag keys satisfy the composable ``TagQuery``, sorted by name."""
         ...
 
     def add_tags(self, *, name: str, tags: dict[str, str] | list[str]) -> None:
@@ -164,7 +180,12 @@ class DefaultInstanceRegistry(Generic[T]):
         T: The type of instances held (must be ``Identifiable``).
     """
 
-    def __init__(self, *, instance_type: type[T] | Callable[[], type[T]] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        instance_type: type[T] | Callable[[], type[T]] | None = None,
+        reserved_names: set[str] | frozenset[str] | None = None,
+    ) -> None:
         """
         Initialize an empty instance container.
 
@@ -177,10 +198,15 @@ class DefaultInstanceRegistry(Generic[T]):
                 zero-argument callable returning it; the callable form lets owners
                 defer importing the type so a registry's lazy discovery is preserved.
                 It is resolved once, on the first ``register`` call, and cached.
+            reserved_names (set[str] | frozenset[str] | None): Names that cannot be
+                registered in this container.
         """
         self._registry_items: dict[str, RegistryEntry[T]] = {}
+        self._lock = threading.RLock()
         self._metadata_cache: list[ComponentIdentifier] | None = None
+        self._instance_version = 0
         self._instance_type: type[T] | Callable[[], type[T]] | None = instance_type
+        self._reserved_names = frozenset(reserved_names or ())
 
     def _resolve_instance_type(self) -> type | None:
         """
@@ -189,14 +215,17 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             type | None: The expected type, or None when no constraint is set.
         """
-        if self._instance_type is None or isinstance(self._instance_type, type):
-            return self._instance_type
-        resolved = self._instance_type()
-        self._instance_type = resolved
-        return resolved
+        with self._lock:
+            if self._instance_type is None or isinstance(self._instance_type, type):
+                return self._instance_type
+            resolved = self._instance_type()
+            self._instance_type = resolved
+            return resolved
 
     @staticmethod
-    def _normalize_tags(tags: dict[str, str] | list[str] | None = None) -> dict[str, str]:
+    def _normalize_tags(
+        tags: dict[str, str] | list[str] | None = None,
+    ) -> dict[str, str]:
         """
         Normalize tags into a ``dict[str, str]``.
 
@@ -220,6 +249,7 @@ class DefaultInstanceRegistry(Generic[T]):
         name: str | None = None,
         tags: dict[str, str] | list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> None:
         """
         Register a pre-configured instance.
@@ -231,10 +261,13 @@ class DefaultInstanceRegistry(Generic[T]):
             tags (dict[str, str] | list[str] | None): Optional tags for
                 categorization.
             metadata (dict[str, Any] | None): Optional per-entry metadata.
+            replace (bool): Whether to replace an existing entry with the same name.
 
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
+            ValueError: If the name is reserved or already registered and ``replace``
+                is False.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -245,14 +278,20 @@ class DefaultInstanceRegistry(Generic[T]):
 
         if name is None:
             name = instance.get_identifier().unique_name
-
-        self._registry_items[name] = RegistryEntry(
+        entry = RegistryEntry(
             name=name,
             instance=instance,
             tags=self._normalize_tags(tags),
             metadata=metadata or {},
         )
-        self._metadata_cache = None
+        with self._lock:
+            if name in self._reserved_names:
+                raise ValueError(f"Instance name '{name}' is reserved")
+            if not replace:
+                self.validate_name_available(name)
+            self._registry_items[name] = entry
+            self._metadata_cache = None
+            self._instance_version += 1
 
     def get(self, name: str) -> T | None:
         """
@@ -264,8 +303,46 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             T | None: The instance, or None if not found.
         """
-        entry = self._registry_items.get(name)
+        entry = self.get_entry(name)
         return entry.instance if entry is not None else None
+
+    def validate_name_available(self, name: str) -> None:
+        """
+        Validate that a registry name can be used.
+
+        Args:
+            name (str): The proposed registry name.
+
+        Raises:
+            ValueError: If the name is reserved or already registered.
+        """
+        with self._lock:
+            if name in self._reserved_names:
+                raise ValueError(f"Instance name '{name}' is reserved")
+            if name in self._registry_items:
+                raise ValueError(f"Instance '{name}' already exists")
+
+    def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
+        """
+        Remove a registered instance by name.
+
+        Args:
+            name (str): The registry name of the instance.
+            expected_entry (RegistryEntry[T] | None): When supplied, remove the
+                name only if it still refers to this exact registry entry.
+
+        Returns:
+            T | None: The removed instance, or None if the name is missing or now
+                refers to a different entry.
+        """
+        with self._lock:
+            entry = self._registry_items.get(name)
+            if entry is None or (expected_entry is not None and entry is not expected_entry):
+                return None
+            del self._registry_items[name]
+            self._metadata_cache = None
+            self._instance_version += 1
+            return entry.instance
 
     def get_entry(self, name: str) -> RegistryEntry[T] | None:
         """
@@ -277,7 +354,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             RegistryEntry[T] | None: The entry, or None if not found.
         """
-        return self._registry_items.get(name)
+        with self._lock:
+            return self._registry_items.get(name)
 
     def get_all_instances(self) -> list[RegistryEntry[T]]:
         """
@@ -286,7 +364,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[RegistryEntry[T]]: The entries sorted by name.
         """
-        return [self._registry_items[name] for name in sorted(self._registry_items.keys())]
+        with self._lock:
+            return [self._registry_items[name] for name in sorted(self._registry_items)]
 
     def get_names(self) -> list[str]:
         """
@@ -295,7 +374,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[str]: The instance names sorted alphabetically.
         """
-        return sorted(self._registry_items.keys())
+        with self._lock:
+            return sorted(self._registry_items)
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
         """
@@ -309,12 +389,30 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[RegistryEntry[T]]: Matching entries sorted by name.
         """
-        results: list[RegistryEntry[T]] = []
-        for name in sorted(self._registry_items.keys()):
-            entry = self._registry_items[name]
-            if tag in entry.tags and (value is None or entry.tags[tag] == value):
-                results.append(entry)
-        return results
+        with self._lock:
+            return [
+                entry
+                for entry in self.get_all_instances()
+                if tag in entry.tags and (value is None or entry.tags[tag] == value)
+            ]
+
+    def query_by_tags(self, *, query: TagQuery) -> list[RegistryEntry[T]]:
+        """
+        Get entries whose tag keys satisfy a composable ``TagQuery``.
+
+        Where ``get_by_tag`` matches a single key (optionally a value), this
+        evaluates an arbitrary AND / OR / exclude predicate built with ``TagQuery``
+        (e.g. ``TagQuery.all("core") & TagQuery.any_of("fast", "cheap")``). Matching
+        is on the tag *keys* only; tag values are not considered.
+
+        Args:
+            query (TagQuery): The predicate to evaluate against each entry's tag keys.
+
+        Returns:
+            list[RegistryEntry[T]]: Matching entries sorted by name.
+        """
+        with self._lock:
+            return [entry for entry in self.get_all_instances() if query.matches(set(entry.tags))]
 
     def add_tags(self, *, name: str, tags: dict[str, str] | list[str]) -> None:
         """
@@ -327,11 +425,14 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             KeyError: If no entry with the given name exists.
         """
-        entry = self._registry_items.get(name)
-        if entry is None:
-            raise KeyError(f"No instance named '{name}' in registry.")
-        entry.tags.update(self._normalize_tags(tags))
-        self._metadata_cache = None
+        normalized_tags = self._normalize_tags(tags)
+        with self._lock:
+            entry = self._registry_items.get(name)
+            if entry is None:
+                raise KeyError(f"No instance named '{name}' in registry.")
+            entry.tags.update(normalized_tags)
+            self._metadata_cache = None
+            self._instance_version += 1
 
     def find_dependents_of_tag(self, *, tag: str) -> list[RegistryEntry[T]]:
         """
@@ -365,10 +466,9 @@ class DefaultInstanceRegistry(Generic[T]):
             return []
 
         dependents: list[RegistryEntry[T]] = []
-        for name in sorted(self._registry_items.keys()):
-            if name in tagged_names:
+        for entry in self.get_all_instances():
+            if entry.name in tagged_names:
                 continue
-            entry = self._registry_items[name]
             identifier = self._build_metadata(entry.instance)
             child_hashes = identifier._collect_child_eval_hashes()
             if child_hashes & tagged_hashes:
@@ -391,21 +491,28 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             list[ComponentIdentifier]: The identifier metadata for each instance.
         """
-        from pyrit.registry.base import _matches_filters
+        from pyrit.registry.registry import _matches_filters
 
-        if self._metadata_cache is None:
-            self._metadata_cache = [
-                self._build_metadata(self._registry_items[name].instance)
-                for name in sorted(self._registry_items.keys())
-            ]
+        while True:
+            with self._lock:
+                if self._metadata_cache is not None:
+                    metadata = self._metadata_cache
+                    break
+                version = self._instance_version
+                entries = self.get_all_instances()
+            built = [self._build_metadata(entry.instance) for entry in entries]
+            with self._lock:
+                if version != self._instance_version:
+                    continue
+                self._metadata_cache = built
+                metadata = self._metadata_cache
+                break
 
         if not include_filters and not exclude_filters:
-            return self._metadata_cache
+            return metadata
 
         return [
-            m
-            for m in self._metadata_cache
-            if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
+            m for m in metadata if _matches_filters(m, include_filters=include_filters, exclude_filters=exclude_filters)
         ]
 
     def _build_metadata(self, instance: T) -> ComponentIdentifier:
@@ -427,7 +534,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             bool: True if the instance name is registered, False otherwise.
         """
-        return name in self._registry_items
+        with self._lock:
+            return name in self._registry_items
 
     def __len__(self) -> int:
         """
@@ -436,7 +544,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             int: The number of registered instances.
         """
-        return len(self._registry_items)
+        with self._lock:
+            return len(self._registry_items)
 
     def __iter__(self) -> Iterator[str]:
         """
@@ -445,4 +554,4 @@ class DefaultInstanceRegistry(Generic[T]):
         Returns:
             Iterator[str]: An iterator over sorted instance names.
         """
-        return iter(sorted(self._registry_items.keys()))
+        return iter(self.get_names())

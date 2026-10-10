@@ -7,115 +7,177 @@ Tests for attack service.
 The attack service uses PyRIT memory with AttackResult as the source of truth.
 """
 
-from datetime import datetime, timezone
+import asyncio
+import base64
+import json
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
+import pyrit
+import pyrit.backend.services.pagination as backend_pagination
+import pyrit.common.pagination as common_pagination
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     AttackSummary,
     ConversationMessagesResponse,
     CreateAttackRequest,
+    CreateConversationRequest,
     MessagePieceRequest,
     PrependedMessageRequest,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
 from pyrit.backend.services.attack_service import (
+    AttackObjectiveConflictError,
     AttackService,
     get_attack_service,
 )
+from pyrit.backend.services.manual_send_scheduler import (
+    ManualSendConflictError,
+    ManualSendQueueFullError,
+    ManualSendScheduler,
+)
+from pyrit.backend.services.message_send_service import MessageSendService, get_message_send_service
+from pyrit.backend.services.pagination import (
+    decode_keyset_cursor,
+    encode_keyset_cursor,
+    fingerprint_filters,
+    normalize_label_filters,
+)
+from pyrit.common.utils import to_sha256
+from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.memory.memory_models import ConversationEntry
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ChatMessageRole,
     ComponentIdentifier,
+    Conversation,
+    ConversationReference,
+    ConversationType,
     Message,
     MessagePiece,
+    PromptDataType,
+    PromptResponseError,
+    Score,
+    TargetIdentifier,
 )
 from pyrit.models.conversation_stats import ConversationStats
+from pyrit.prompt_normalizer import PromptNormalizer
+from unit.backend.mocks import _make_matching_target_mock, make_attack_result, make_mock_memory
+from unit.mocks import MockPromptTarget
 
 
 @pytest.fixture
-def mock_memory():
-    """Create a mock memory instance."""
-    memory = MagicMock()
-    memory.get_attack_results.return_value = []
-    memory.get_conversation_messages.return_value = []
-    memory.get_message_pieces.return_value = []
-    memory.get_conversation_stats.return_value = {}
-    memory._get_conversation.return_value = None
-    memory.get_prompt_scores.return_value = []
-
-    return memory
+def mock_memory() -> MagicMock:
+    return make_mock_memory()
 
 
 @pytest.fixture
 def attack_service(mock_memory):
     """Create an attack service with mocked memory."""
-    with patch("pyrit.backend.services.attack_service.CentralMemory") as mock_central:
-        mock_central.get_memory_instance.return_value = mock_memory
-        service = AttackService()
+    with patch.object(CentralMemory, "get_memory_instance", return_value=mock_memory):
+        service = AttackService(message_send_service=MessageSendService(scheduler=ManualSendScheduler()))
         yield service
 
 
-def make_attack_result(
+def _make_message(
     *,
-    conversation_id: str = "attack-1",
-    attack_result_id: str = "",
-    objective: str = "Test objective",
-    has_target: bool = True,
-    name: str = "Test Attack",
-    outcome: AttackOutcome = AttackOutcome.UNDETERMINED,
-    created_at: datetime | None = None,
-    updated_at: datetime | None = None,
-) -> AttackResult:
-    """Create a mock AttackResult for testing."""
-    now = datetime.now(timezone.utc)
-    created = created_at or now
-    updated = updated_at or now
+    role: ChatMessageRole,
+    sequence: int,
+    response_error: PromptResponseError = "none",
+) -> Message:
+    """Create a single-piece text message for conversation response tests."""
+    piece = MessagePiece(
+        role=role,
+        original_value="message",
+        converted_value="message",
+        original_value_data_type="text",
+        converted_value_data_type="text",
+        conversation_id="test-id",
+        sequence=sequence,
+        response_error=response_error,
+    )
+    return Message(message_pieces=[piece])
 
-    # Default attack_result_id to "ar-<conversation_id>" when not explicit.
-    effective_ar_id = attack_result_id or f"ar-{conversation_id}"
 
-    target_identifier = (
-        ComponentIdentifier(
-            class_name="TextTarget",
-            class_module="pyrit.prompt_target",
-        )
-        if has_target
-        else None
+def _keyset_side_effect(backing):
+    """Return a get_attack_results side_effect simulating a recency-ordered keyset seek.
+
+    ``backing`` must already be in the order memory would return (recency DESC). When an
+    ``after`` anchor is supplied, every row up to and including the anchor id is skipped,
+    mirroring a seek strictly past the previous page's last row. The memory layer owns the
+    real dedup / turn-filter / recency-sort / seek, so the service tests exercise only the
+    cursor<->anchor round-trip and the over-fetch (limit + 1) logic.
+    """
+
+    def _side_effect(**kwargs):
+        after = kwargs.get("after")
+        limit = kwargs.get("limit")
+        data = list(backing)
+        if after is not None:
+            ids = [r.attack_result_id for r in data]
+            data = data[ids.index(after.attack_result_id) + 1 :] if after.attack_result_id in ids else []
+        if limit is not None:
+            data = data[:limit]
+        return data
+
+    return _side_effect
+
+
+def _paginated_backing(count: int) -> list[AttackResult]:
+    """Build ``count`` attack results with real UUID ids, ordered as memory would return them."""
+    return [make_attack_result(conversation_id=f"attack-{i}", attack_result_id=str(uuid.uuid4())) for i in range(count)]
+
+
+def _cursor_for(result: AttackResult, *, fingerprint: str | None = None) -> str:
+    """Encode a keyset cursor anchored at ``result`` for the given (default) filter set.
+
+    Mirrors what ``list_attacks_async`` mints internally, so tests can feed a cursor back
+    in without depending on the fingerprint's exact value.
+    """
+    effective_fingerprint = fingerprint if fingerprint is not None else _attack_filter_fingerprint()
+    return encode_keyset_cursor(
+        timestamp=result.timestamp,
+        identifier=result.attack_result_id,
+        fingerprint=effective_fingerprint,
     )
 
-    return AttackResult(
-        conversation_id=conversation_id,
-        objective=objective,
-        atomic_attack_identifier=AtomicAttackIdentifier.build(
-            attack_identifier=ComponentIdentifier(
-                class_name=name,
-                class_module="pyrit.backend",
-                children={"objective_target": target_identifier} if target_identifier else {},
-            ),
-        ),
-        outcome=outcome,
-        attack_result_id=effective_ar_id,
-        metadata={
-            "created_at": created.isoformat(),
-            "updated_at": updated.isoformat(),
-        },
-        labels={"test_ar_label": "test_ar_value"},
-    )
 
-
-def _make_matching_target_mock() -> MagicMock:
-    """Create a mock target object whose get_identifier() matches make_attack_result's default target."""
-    mock_target = MagicMock()
-    mock_target.get_identifier.return_value = ComponentIdentifier(
-        class_name="TextTarget",
-        class_module="pyrit.prompt_target",
+def _attack_filter_fingerprint(
+    *,
+    attack_types: list[str] | None = None,
+    converter_types: list[str] | None = None,
+    converter_types_match: str = "all",
+    has_converters: bool | None = None,
+    include_scenario_attacks: bool = True,
+    outcome: str | None = None,
+    labels: dict[str, str | list[str]] | None = None,
+    min_turns: int | None = None,
+    max_turns: int | None = None,
+) -> str:
+    """Build the fingerprint used by ``AttackService.list_attacks_async``."""
+    return fingerprint_filters(
+        filters={
+            "attack_types": attack_types,
+            "converter_types": converter_types,
+            "converter_types_match": converter_types_match,
+            "has_converters": has_converters,
+            "include_scenario_attacks": include_scenario_attacks,
+            "outcome": outcome,
+            "labels": normalize_label_filters(labels=labels),
+            "min_turns": min_turns,
+            "max_turns": max_turns,
+        }
     )
-    return mock_target
 
 
 def make_mock_piece(
@@ -139,7 +201,7 @@ def make_mock_piece(
     piece.converted_value_data_type = "text"
     piece.original_value_data_type = "text"
     piece.response_error = "none"
-    piece.timestamp = timestamp or datetime.now(timezone.utc)
+    piece.timestamp = timestamp or datetime.now(UTC)
     # MessagePiece no longer carries scores — they are fetched from memory.
     # Pin original_prompt_id so the mapper's score-lookup key is deterministic.
     piece.original_prompt_id = None
@@ -164,14 +226,38 @@ class TestAttackServiceInit:
 
     def test_init_gets_memory_instance(self) -> None:
         """Test that init gets the memory instance."""
-        with patch("pyrit.backend.services.attack_service.CentralMemory") as mock_central:
+        with patch.object(CentralMemory, "get_memory_instance") as get_memory:
             mock_memory = MagicMock()
-            mock_central.get_memory_instance.return_value = mock_memory
+            get_memory.return_value = mock_memory
 
             service = AttackService()
 
-            mock_central.get_memory_instance.assert_called_once()
-            assert service._memory == mock_memory
+            assert service._memory is service._message_send_service._memory is PromptNormalizer()._memory is mock_memory
+
+    def test_default_facades_share_message_send_owner(self) -> None:
+        first, second = get_attack_service(), AttackService()
+        assert first._message_send_service is second._message_send_service is get_message_send_service()
+
+    def test_injected_sender_preserves_scheduler(self) -> None:
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        service = AttackService(message_send_service=sender)
+        assert service._message_send_service is sender
+        assert sender._scheduler is scheduler
+        assert sender is not get_message_send_service()
+
+    async def test_shared_shutdown_rejects_synchronous_facade_async(self) -> None:
+        service = get_attack_service()
+        await get_message_send_service().shutdown_async()
+        with pytest.raises(ManualSendQueueFullError, match="shutting down"):
+            await service.add_message_async(
+                attack_result_id="attack",
+                request=AddMessageRequest(
+                    pieces=[MessagePieceRequest(original_value="Hello")],
+                    target_conversation_id="conversation",
+                    send=False,
+                ),
+            )
 
 
 # ============================================================================
@@ -185,7 +271,7 @@ class TestListAttacks:
 
     async def test_list_attacks_returns_empty_when_no_attacks(self, attack_service, mock_memory) -> None:
         """Test that list_attacks returns empty list when no AttackResults exist."""
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.list_attacks_async()
 
@@ -195,8 +281,8 @@ class TestListAttacks:
     async def test_list_attacks_returns_attacks(self, attack_service, mock_memory) -> None:
         """Test that list_attacks returns attacks from AttackResult records."""
         ar = make_attack_result()
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.list_attacks_async()
 
@@ -207,45 +293,45 @@ class TestListAttacks:
     async def test_list_attacks_filters_by_attack_types_exact(self, attack_service, mock_memory) -> None:
         """Test that list_attacks passes attack_types to memory layer."""
         ar1 = make_attack_result(conversation_id="attack-1", name="CrescendoAttack")
-        mock_memory.get_attack_results.return_value = [ar1]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar1]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.list_attacks_async(attack_types=["CrescendoAttack"])
 
         assert len(result.items) == 1
         assert result.items[0].conversation_id == "attack-1"
         # Verify attack_types was forwarded to the memory layer as attack_classes
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["attack_classes"] == ["CrescendoAttack"]
 
     async def test_list_attacks_attack_types_passed_to_memory(self, attack_service, mock_memory) -> None:
         """Test that attack_types is forwarded to memory as attack_classes for DB-level filtering."""
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(attack_types=["Crescendo"])
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["attack_classes"] == ["Crescendo"]
 
     async def test_list_attacks_filters_by_attack_types_multi(self, attack_service, mock_memory) -> None:
         """Test that multiple attack_types are forwarded as a list to memory for OR-matching."""
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(attack_types=["CrescendoAttack", "ManualAttack"])
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["attack_classes"] == ["CrescendoAttack", "ManualAttack"]
 
     async def test_list_attacks_attack_types_empty_list_coerced_to_none(self, attack_service, mock_memory) -> None:
         """Test that attack_types=[] is coerced to None before reaching memory (no filter)."""
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(attack_types=[])
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["attack_classes"] is None
 
     async def test_list_attacks_coerces_empty_converter_types_to_no_filter(self, attack_service, mock_memory) -> None:
@@ -254,34 +340,42 @@ class TestListAttacks:
         The 'attacks with no converters' intent is expressed via has_converters=False;
         an empty list is coerced to None so route/service/memory stay consistent.
         """
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(converter_types=[])
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["converter_classes"] is None
         assert call_kwargs["has_converters"] is None
 
     async def test_list_attacks_forwards_has_converters_true(self, attack_service, mock_memory) -> None:
         """has_converters=True is forwarded to memory."""
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(has_converters=True)
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["has_converters"] is True
 
     async def test_list_attacks_forwards_has_converters_false(self, attack_service, mock_memory) -> None:
         """has_converters=False is forwarded to memory."""
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(has_converters=False)
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["has_converters"] is False
+
+    async def test_list_attacks_forwards_scenario_attack_filter(self, attack_service, mock_memory) -> None:
+        """The scenario-attack inclusion flag is forwarded to memory."""
+        mock_memory.get_attack_results_async.return_value = []
+
+        await attack_service.list_attacks_async(include_scenario_attacks=False)
+
+        assert mock_memory.get_attack_results_async.call_args.kwargs["include_scenario_attacks"] is False
 
     async def test_list_attacks_filters_by_converter_types_and_logic(self, attack_service, mock_memory) -> None:
         """Test that list_attacks passes converter_types to memory layer."""
@@ -312,15 +406,15 @@ class TestListAttacks:
                 },
             ),
         )
-        mock_memory.get_attack_results.return_value = [ar1]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar1]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.list_attacks_async(converter_types=["Base64Converter", "ROT13Converter"])
 
         assert len(result.items) == 1
         assert result.items[0].conversation_id == "attack-1"
         # Verify converter_types was forwarded to the memory layer with default "all" mode
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
         assert call_kwargs["converter_classes_match"] == "all"
 
@@ -328,15 +422,15 @@ class TestListAttacks:
         self, attack_service, mock_memory
     ) -> None:
         """Explicit converter_types_match='all' still pushes converter filter to memory."""
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(
             converter_types=["Base64Converter", "ROT13Converter"],
             converter_types_match="all",
         )
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
         assert call_kwargs["converter_classes_match"] == "all"
 
@@ -348,15 +442,15 @@ class TestListAttacks:
         The memory layer ignores the match mode when the list has fewer than 2 entries, but the
         service still forwards the mode verbatim (memory is authoritative for that optimization).
         """
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(
             converter_types=["Base64Converter"],
             converter_types_match="any",
         )
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter"]
         assert call_kwargs["converter_classes_match"] == "any"
 
@@ -367,53 +461,43 @@ class TestListAttacks:
         with a set intersection, which was O(total rows) per query. The OR-matching is now
         expressed as a DB predicate so only matching rows are returned and pagination is honored.
         """
-        mock_memory.get_attack_results.return_value = []
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
 
         await attack_service.list_attacks_async(
             converter_types=["Base64Converter", "ROT13Converter"],
             converter_types_match="any",
         )
 
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["converter_classes"] == ["Base64Converter", "ROT13Converter"]
         assert call_kwargs["converter_classes_match"] == "any"
 
-    async def test_list_attacks_filters_by_min_turns(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks filters by minimum executed turns."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar1.executed_turns = 5
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar2.executed_turns = 2
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_forwards_min_turns(self, attack_service, mock_memory) -> None:
+        """min_turns is forwarded to the memory query (filtering now happens in SQL)."""
+        mock_memory.get_attack_results_async.return_value = []
 
-        result = await attack_service.list_attacks_async(min_turns=3)
+        await attack_service.list_attacks_async(min_turns=3)
 
-        assert len(result.items) == 1
-        assert result.items[0].conversation_id == "attack-1"
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
+        assert call_kwargs["min_turns"] == 3
 
-    async def test_list_attacks_filters_by_max_turns(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks filters by maximum executed turns."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar1.executed_turns = 5
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar2.executed_turns = 2
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_forwards_max_turns(self, attack_service, mock_memory) -> None:
+        """max_turns is forwarded to the memory query (filtering now happens in SQL)."""
+        mock_memory.get_attack_results_async.return_value = []
 
-        result = await attack_service.list_attacks_async(max_turns=3)
+        await attack_service.list_attacks_async(max_turns=3)
 
-        assert len(result.items) == 1
-        assert result.items[0].conversation_id == "attack-2"
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
+        assert call_kwargs["max_turns"] == 3
 
     async def test_list_attacks_includes_labels_in_summary(self, attack_service, mock_memory) -> None:
         """Test that list_attacks includes labels from conversation stats in summaries."""
         ar = make_attack_result(
             conversation_id="attack-1",
         )
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(
                 message_count=1,
                 last_message_preview="test",
@@ -429,9 +513,9 @@ class TestListAttacks:
     async def test_list_attacks_formats_media_preview(self, attack_service, mock_memory) -> None:
         """list_attacks AttackSummary previews must not leak absolute media paths."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
         path = r"C:\Users\someone\PyRIT\dbdata\prompt-memory-entries\images\1780010098266691.png"
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(
                 message_count=1,
                 last_message_preview=path,
@@ -446,38 +530,34 @@ class TestListAttacks:
         assert preview == "[Image: 1780010098266691.png]"
         assert "C:\\" not in (preview or "")
 
-    async def test_list_attacks_filters_by_labels_directly(self, attack_service, mock_memory) -> None:
-        """Test that label filters are passed directly to the DB query (no legacy expansion)."""
+    async def test_list_attacks_filters_by_dedicated_attribution(self, attack_service, mock_memory) -> None:
+        """Dedicated attribution filters are passed to indexed memory columns."""
         ar = make_attack_result(conversation_id="attack-canonical")
+        ar.operator = "alice"
+        ar.operation = "red"
 
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_stats.side_effect = lambda conversation_ids: {
-            cid: ConversationStats(message_count=1, labels={"operator": "alice", "operation": "red"})
-            for cid in conversation_ids
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_stats_async.side_effect = lambda conversation_ids: {
+            cid: ConversationStats(message_count=1) for cid in conversation_ids
         }
 
-        result = await attack_service.list_attacks_async(labels={"operator": "alice", "operation": "red"})
+        result = await attack_service.list_attacks_async(operator=["alice"], operation=["red"])
 
         assert len(result.items) == 1
-        mock_memory.get_attack_results.assert_called_once()
-        call_kwargs = mock_memory.get_attack_results.call_args[1]
-        assert call_kwargs["labels"] == {"operator": "alice", "operation": "red"}
+        mock_memory.get_attack_results_async.assert_called_once()
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
+        assert call_kwargs["operator"] == ["alice"]
+        assert call_kwargs["operation"] == ["red"]
 
-    async def test_list_attacks_combined_min_and_max_turns(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks filters by both min_turns and max_turns together."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar1.executed_turns = 1
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar2.executed_turns = 3
-        ar3 = make_attack_result(conversation_id="attack-3")
-        ar3.executed_turns = 7
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_forwards_min_and_max_turns(self, attack_service, mock_memory) -> None:
+        """Both min_turns and max_turns are forwarded to the memory query."""
+        mock_memory.get_attack_results_async.return_value = []
 
-        result = await attack_service.list_attacks_async(min_turns=2, max_turns=5)
+        await attack_service.list_attacks_async(min_turns=2, max_turns=5)
 
-        assert len(result.items) == 1
-        assert result.items[0].conversation_id == "attack-2"
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
+        assert call_kwargs["min_turns"] == 2
+        assert call_kwargs["max_turns"] == 5
 
 
 # ============================================================================
@@ -491,21 +571,21 @@ class TestAttackOptions:
 
     async def test_returns_empty_when_no_attacks(self, attack_service, mock_memory) -> None:
         """Test that attack options returns empty list when no attacks exist."""
-        mock_memory.get_unique_attack_class_names.return_value = []
+        mock_memory.get_unique_attack_class_names_async.return_value = []
 
         result = await attack_service.get_attack_options_async()
 
         assert result == []
-        mock_memory.get_unique_attack_class_names.assert_called_once()
+        mock_memory.get_unique_attack_class_names_async.assert_called_once()
 
     async def test_returns_result_from_memory(self, attack_service, mock_memory) -> None:
         """Test that attack options delegates to memory layer."""
-        mock_memory.get_unique_attack_class_names.return_value = ["CrescendoAttack", "ManualAttack"]
+        mock_memory.get_unique_attack_class_names_async.return_value = ["CrescendoAttack", "ManualAttack"]
 
         result = await attack_service.get_attack_options_async()
 
         assert result == ["CrescendoAttack", "ManualAttack"]
-        mock_memory.get_unique_attack_class_names.assert_called_once()
+        mock_memory.get_unique_attack_class_names_async.assert_called_once()
 
 
 # ============================================================================
@@ -519,21 +599,21 @@ class TestConverterOptions:
 
     async def test_returns_empty_when_no_attacks(self, attack_service, mock_memory) -> None:
         """Test that converter options returns empty list when no attacks exist."""
-        mock_memory.get_unique_converter_class_names.return_value = []
+        mock_memory.get_unique_converter_class_names_async.return_value = []
 
         result = await attack_service.get_converter_options_async()
 
         assert result == []
-        mock_memory.get_unique_converter_class_names.assert_called_once()
+        mock_memory.get_unique_converter_class_names_async.assert_called_once()
 
     async def test_returns_result_from_memory(self, attack_service, mock_memory) -> None:
         """Test that converter options delegates to memory layer."""
-        mock_memory.get_unique_converter_class_names.return_value = ["Base64Converter", "ROT13Converter"]
+        mock_memory.get_unique_converter_class_names_async.return_value = ["Base64Converter", "ROT13Converter"]
 
         result = await attack_service.get_converter_options_async()
 
         assert result == ["Base64Converter", "ROT13Converter"]
-        mock_memory.get_unique_converter_class_names.assert_called_once()
+        mock_memory.get_unique_converter_class_names_async.assert_called_once()
 
 
 # ============================================================================
@@ -547,7 +627,7 @@ class TestGetAttack:
 
     async def test_get_attack_returns_none_for_nonexistent(self, attack_service, mock_memory) -> None:
         """Test that get_attack returns None when AttackResult doesn't exist."""
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.get_attack_async(attack_result_id="nonexistent")
 
@@ -559,8 +639,8 @@ class TestGetAttack:
             conversation_id="test-id",
             name="My Attack",
         )
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         result = await attack_service.get_attack_async(attack_result_id="test-id")
 
@@ -576,11 +656,11 @@ class TestGetAttack:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestGetConversationMessages:
-    """Tests for get_conversation_messages method."""
+    "Tests for get_conversation_messages_async method."
 
     async def test_get_conversation_messages_returns_none_for_nonexistent(self, attack_service, mock_memory) -> None:
-        """Test that get_conversation_messages returns None when attack doesn't exist."""
-        mock_memory.get_attack_results.return_value = []
+        "Test that get_conversation_messages_async returns None when attack doesn't exist."
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.get_conversation_messages_async(
             attack_result_id="nonexistent", conversation_id="any-id"
@@ -589,10 +669,10 @@ class TestGetConversationMessages:
         assert result is None
 
     async def test_get_conversation_messages_returns_messages(self, attack_service, mock_memory) -> None:
-        """Test that get_conversation_messages returns messages for existing attack."""
+        "Test that get_conversation_messages_async returns messages for existing attack."
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         result = await attack_service.get_conversation_messages_async(
             attack_result_id="test-id", conversation_id="test-id"
@@ -601,13 +681,122 @@ class TestGetConversationMessages:
         assert result is not None
         assert result.conversation_id == "test-id"
         assert result.messages == []
+        assert result.target_response_status is None
+
+    @pytest.mark.parametrize("response_error", ["none", "processing", "blocked"])
+    async def test_get_conversation_messages_returns_latest_target_status_async(
+        self,
+        attack_service,
+        mock_memory,
+        response_error: PromptResponseError,
+    ) -> None:
+        """Test that the latest real assistant response is linked to its user request."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = [
+            _make_message(role="user", sequence=2),
+            _make_message(role="assistant", sequence=3, response_error=response_error),
+        ]
+
+        result = await attack_service.get_conversation_messages_async(
+            attack_result_id="test-id", conversation_id="test-id"
+        )
+
+        assert result is not None
+        assert result.target_response_status is not None
+        assert result.target_response_status.response_error == response_error
+        assert result.target_response_status.request_turn_number == 2
+        assert result.target_response_status.response_turn_number == 3
+
+    async def test_get_conversation_messages_ignores_stale_processing_error(self, attack_service, mock_memory) -> None:
+        """Test that a later successful response supersedes an earlier processing failure."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = [
+            _make_message(role="user", sequence=0),
+            _make_message(role="assistant", sequence=1, response_error="processing"),
+            _make_message(role="user", sequence=2),
+            _make_message(role="assistant", sequence=3),
+        ]
+
+        result = await attack_service.get_conversation_messages_async(
+            attack_result_id="test-id", conversation_id="test-id"
+        )
+
+        assert result is not None
+        assert result.target_response_status is not None
+        assert result.target_response_status.response_error == "none"
+        assert result.target_response_status.request_turn_number == 2
+        assert result.target_response_status.response_turn_number == 3
+
+    @pytest.mark.parametrize("latest_role", ["user", "simulated_assistant"])
+    async def test_get_conversation_messages_ignores_non_target_latest_message(
+        self,
+        attack_service,
+        mock_memory,
+        latest_role: ChatMessageRole,
+    ) -> None:
+        """Test that user and simulated-assistant history are not classified as target responses."""
+        ar = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = [
+            _make_message(role="user", sequence=0),
+            _make_message(role=latest_role, sequence=1, response_error="processing"),
+        ]
+
+        result = await attack_service.get_conversation_messages_async(
+            attack_result_id="test-id", conversation_id="test-id"
+        )
+
+        assert result is not None
+        assert result.target_response_status is None
+
+    async def test_get_conversation_messages_marks_attack_objective_score(self, attack_service, mock_memory) -> None:
+        """The message mapper receives the attack's canonical objective score ID."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = uuid.uuid4()
+        ar.automated_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
+
+    async def test_get_conversation_messages_preserves_string_objective_score_id(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The message mapper receives string score IDs without UUID conversion."""
+        ar = make_attack_result(conversation_id="test-id")
+        objective_score_id = str(uuid.uuid4())
+        ar.automated_score = MagicMock(id=objective_score_id)
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
+
+        with patch(
+            "pyrit.backend.services.attack_service.pyrit_messages_to_dto_async",
+            new=AsyncMock(return_value=[]),
+        ) as mock_mapper:
+            await attack_service.get_conversation_messages_async(
+                attack_result_id="test-id",
+                conversation_id="test-id",
+            )
+
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id)
 
     async def test_get_conversation_messages_raises_for_unrelated_conversation(
         self, attack_service, mock_memory
     ) -> None:
-        """Test that get_conversation_messages raises ValueError for a conversation not belonging to the attack."""
+        "Test that get_conversation_messages_async raises ValueError for a conversation not belonging to the attack."
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         with pytest.raises(ValueError, match="not part of attack"):
             await attack_service.get_conversation_messages_async(
@@ -623,6 +812,42 @@ class TestGetConversationMessages:
 @pytest.mark.usefixtures("patch_central_database")
 class TestCreateAttack:
     """Tests for create_attack method."""
+
+    @pytest.mark.parametrize("copy_history", [False, True])
+    async def test_manual_creation_registers_ownership_async(
+        self, *, sqlite_instance: SQLiteMemory, copy_history: bool
+    ) -> None:
+        target = MockPromptTarget()
+        source_owner = str(uuid.uuid4())
+        source_id = str(uuid.uuid4())
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(
+                conversation_id=source_id,
+                target_identifier=target.get_identifier(),
+                attack_result_id=source_owner,
+            )
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(role="user", original_value="history", conversation_id=source_id).to_message()
+        )
+        with patch("pyrit.backend.services.attack_service.get_target_service") as targets:
+            targets.return_value.get_target_async = AsyncMock(return_value=object())
+            targets.return_value.get_target_object.return_value = target
+            created = await AttackService().create_attack_async(
+                request=CreateAttackRequest(
+                    target_registry_name="target",
+                    source_conversation_id=source_id if copy_history else None,
+                    cutoff_index=0 if copy_history else None,
+                )
+            )
+        [owned] = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=created.attack_result_id)
+        assert owned.conversation_id == created.conversation_id
+        assert owned.target_identifier == target.get_identifier()
+        assert owned.conversation_id != source_id
+        [source] = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=source_owner)
+        assert source.conversation_id == source_id
+        copied = await sqlite_instance.get_message_pieces_async(attack_result_id=created.attack_result_id)
+        assert [piece.original_value for piece in copied] == (["history"] if copy_history else [])
 
     async def test_create_attack_validates_target_exists(self, attack_service) -> None:
         """Test that create_attack validates target exists."""
@@ -649,12 +874,23 @@ class TestCreateAttack:
             mock_get_target_service.return_value = mock_target_service
 
             result = await attack_service.create_attack_async(
-                request=CreateAttackRequest(target_registry_name="target-1", name="My Attack")
+                request=CreateAttackRequest(
+                    target_registry_name="target-1",
+                    name="My Attack",
+                    operator="alice",
+                    operation="nightly",
+                    labels={"team": "red"},
+                )
             )
 
             assert result.conversation_id is not None
             assert result.created_at is not None
-            mock_memory.add_attack_results_to_memory.assert_called_once()
+            mock_memory.add_conversation_branches_to_attack_async.assert_called_once()
+            stored_attack = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
+            assert stored_attack.metadata["target_registry_name"] == "target-1"
+            assert stored_attack.operator == "alice"
+            assert stored_attack.operation == "nightly"
+            assert stored_attack.labels == {"team": "red", "source": "gui"}
 
     async def test_create_attack_stores_prepended_conversation(self, attack_service, mock_memory) -> None:
         """Test that create_attack stores prepended conversation messages."""
@@ -680,12 +916,85 @@ class TestCreateAttack:
             )
 
             assert result.conversation_id is not None
-            # Both attack result and prepended message pieces should be stored
-            mock_memory.add_attack_results_to_memory.assert_called_once()
-            mock_memory.add_message_pieces_to_memory.assert_called()
+            mock_memory.add_conversation_branches_to_attack_async.assert_called_once()
+            assert len(mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]) == 1
+
+    async def test_create_attack_lowers_system_prompt_to_system_message(self, attack_service, mock_memory) -> None:
+        """Test that system_prompt is lowered to a single system-role message at sequence 0."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", system_prompt="You are Bob.")
+            )
+
+            pieces = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]
+            assert len(pieces) == 1
+            piece = pieces[0]
+            assert piece.api_role == "system"
+            assert piece.sequence == 0
+            assert piece.original_value == "You are Bob."
+
+    async def test_create_attack_blank_system_prompt_is_noop(self, attack_service, mock_memory) -> None:
+        """Test that an empty system_prompt stores no prepended message."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", system_prompt="")
+            )
+
+            assert mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"] == []
+
+    async def test_create_attack_system_prompt_prepends_before_prepended_conversation(
+        self, attack_service, mock_memory
+    ) -> None:
+        """Test that system_prompt is inserted at sequence 0, ahead of prepended_conversation messages."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            prepended = [
+                PrependedMessageRequest(role="user", pieces=[MessagePieceRequest(original_value="Hello")]),
+            ]
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(
+                    target_registry_name="target-1",
+                    system_prompt="You are Bob.",
+                    prepended_conversation=prepended,
+                )
+            )
+
+            pieces = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]
+            assert len(pieces) == 2
+            roles = [piece.api_role for piece in pieces]
+            sequences = [piece.sequence for piece in pieces]
+            assert roles == ["system", "user"]
+            assert sequences == [0, 1]
 
     async def test_create_attack_does_not_store_labels_in_metadata(self, attack_service, mock_memory) -> None:
-        """Test that labels are not stored in attack metadata (they live on pieces)."""
+        """Test that labels are not duplicated in attack metadata."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -704,12 +1013,11 @@ class TestCreateAttack:
                 )
             )
 
-            call_args = mock_memory.add_attack_results_to_memory.call_args
-            stored_ar = call_args[1]["attack_results"][0]
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert "labels" not in stored_ar.metadata
 
-    async def test_create_attack_stamps_labels_on_prepended_pieces(self, attack_service, mock_memory) -> None:
-        """Test that labels are forwarded to prepended message pieces."""
+    async def test_create_attack_stores_labels_on_attack_result(self, attack_service, mock_memory) -> None:
+        """Test that labels are stored on the attack result."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -720,23 +1028,15 @@ class TestCreateAttack:
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
-            prepended = [
-                PrependedMessageRequest(
-                    role="system",
-                    pieces=[MessagePieceRequest(original_value="Be helpful.")],
-                )
-            ]
-
             await attack_service.create_attack_async(
                 request=CreateAttackRequest(
                     target_registry_name="target-1",
                     labels={"env": "prod"},
-                    prepended_conversation=prepended,
                 )
             )
 
-            stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-            assert stored_piece.labels == {"env": "prod", "source": "gui"}
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
+            assert stored_ar.labels == {"env": "prod", "source": "gui"}
 
     async def test_create_attack_prepended_messages_have_incrementing_sequences(
         self, attack_service, mock_memory
@@ -784,19 +1084,17 @@ class TestCreateAttack:
                 request=CreateAttackRequest(target_registry_name="target-1", prepended_conversation=prepended)
             )
 
-            # Each message stored separately with incrementing sequence
-            calls = mock_memory.add_message_pieces_to_memory.call_args_list
-            assert len(calls) == 3
-            sequences = [call[1]["message_pieces"][0].sequence for call in calls]
+            stored_pieces = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"]
+            assert len(stored_pieces) == 3
+            sequences = [piece.sequence for piece in stored_pieces]
             assert sequences == [0, 1, 2]
 
-            roles = [call[1]["message_pieces"][0].api_role for call in calls]
+            roles = [piece.api_role for piece in stored_pieces]
             assert roles == ["system", "user", "assistant"]
 
             # original_prompt_id preserved for lineage tracking
             import uuid
 
-            stored_pieces = [call[1]["message_pieces"][0] for call in calls]
             assert stored_pieces[0].original_prompt_id == uuid.UUID(original_id_1)
             assert stored_pieces[1].original_prompt_id == uuid.UUID(original_id_2)
             assert stored_pieces[2].original_prompt_id == uuid.UUID(original_id_3)
@@ -817,26 +1115,18 @@ class TestCreateAttack:
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
-            prepended = [
-                PrependedMessageRequest(
-                    role="system",
-                    pieces=[MessagePieceRequest(original_value="Be helpful.")],
-                )
-            ]
-
             await attack_service.create_attack_async(
                 request=CreateAttackRequest(
                     target_registry_name="target-1",
                     labels={"source": "api-test"},
-                    prepended_conversation=prepended,
                 )
             )
 
-            stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-            assert stored_piece.labels["source"] == "api-test"  # not overwritten to "gui"
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
+            assert stored_ar.labels["source"] == "api-test"
 
     async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
-        """Test that request.name=None uses default class_name and objective."""
+        """Test that request.name=None uses default class_name and an empty objective."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -849,10 +1139,30 @@ class TestCreateAttack:
 
             await attack_service.create_attack_async(request=CreateAttackRequest(target_registry_name="target-1"))
 
-            call_args = mock_memory.add_attack_results_to_memory.call_args
-            stored_ar = call_args[1]["attack_results"][0]
-            assert stored_ar.objective == "Manual attack via GUI"
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
+            assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
+            assert "objective_is_placeholder" not in stored_ar.metadata
+
+    async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
+        """Test that a user-supplied request.name is persisted directly as the objective."""
+        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
+            mock_target_obj = MagicMock()
+            mock_target_obj.get_identifier.return_value = ComponentIdentifier(
+                class_name="TextTarget", class_module="pyrit.prompt_target"
+            )
+            mock_target_service = MagicMock()
+            mock_target_service.get_target_async = AsyncMock(return_value=MagicMock(type="TextTarget"))
+            mock_target_service.get_target_object.return_value = mock_target_obj
+            mock_get_target_service.return_value = mock_target_service
+
+            await attack_service.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
+            )
+
+            stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
+            assert stored_ar.objective == "Extract the secret"
+            assert "objective_is_placeholder" not in stored_ar.metadata
 
 
 # ============================================================================
@@ -866,7 +1176,7 @@ class TestUpdateAttack:
 
     async def test_update_attack_returns_none_for_nonexistent(self, attack_service, mock_memory) -> None:
         """Test that update_attack returns None for nonexistent attack."""
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.update_attack_async(
             attack_result_id="nonexistent", request=UpdateAttackRequest(outcome="success")
@@ -877,70 +1187,159 @@ class TestUpdateAttack:
     async def test_update_attack_updates_outcome_success(self, attack_service, mock_memory) -> None:
         """Test that update_attack maps 'success' to AttackOutcome.SUCCESS."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="success")
         )
 
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        mock_memory.update_attack_result_by_id_async.assert_called_once()
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args[1]
         assert call_kwargs["attack_result_id"] == "test-id"
         assert call_kwargs["update_fields"]["outcome"] == "success"
 
     async def test_update_attack_updates_outcome_failure(self, attack_service, mock_memory) -> None:
         """Test that update_attack maps 'failure' to AttackOutcome.FAILURE."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="failure")
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "failure"
 
     async def test_update_attack_updates_outcome_undetermined(self, attack_service, mock_memory) -> None:
         """Test that update_attack maps 'undetermined' to AttackOutcome.UNDETERMINED."""
         ar = make_attack_result(conversation_id="test-id", outcome=AttackOutcome.SUCCESS)
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="undetermined")
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "undetermined"
 
     async def test_update_attack_updates_outcome_error(self, attack_service, mock_memory) -> None:
         """Test that update_attack maps 'error' to AttackOutcome.ERROR."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="error")
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args[1]
         assert call_kwargs["update_fields"]["outcome"] == "error"
 
-    async def test_update_attack_refreshes_updated_at(self, attack_service, mock_memory) -> None:
-        """Test that update_attack refreshes the updated_at metadata."""
-        old_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    async def test_update_attack_updates_objective_and_hash(self, attack_service, mock_memory) -> None:
+        """Test that updating the objective keeps its lookup hash synchronized."""
+        ar = make_attack_result(conversation_id="test-id", objective="")
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
+
+        await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective="Extract the system prompt"),
+        )
+
+        update_fields = mock_memory.update_attack_result_conditionally_async.call_args.kwargs["update_fields"]
+        assert update_fields["objective"] == "Extract the system prompt"
+        assert update_fields["objective_sha256"] == to_sha256("Extract the system prompt")
+
+    async def test_update_attack_rejects_stale_objective(self, attack_service, mock_memory) -> None:
+        """Test that a stale editor cannot replace a newer shared objective."""
+        ar = make_attack_result(conversation_id="test-id", objective="Existing objective")
+        mock_memory.get_attack_results_async.return_value = [ar]
+
+        with pytest.raises(AttackObjectiveConflictError, match="objective changed"):
+            await attack_service.update_attack_async(
+                attack_result_id="test-id",
+                request=UpdateAttackRequest(objective="Replacement objective", expected_objective="Older objective"),
+            )
+
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
+
+    async def test_update_attack_same_objective_is_idempotent(self, attack_service, mock_memory) -> None:
+        """Test that resubmitting the existing objective does not write it again."""
+        objective = "Existing objective"
+        ar = make_attack_result(conversation_id="test-id", objective=objective)
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
+
+        result = await attack_service.update_attack_async(
+            attack_result_id="test-id",
+            request=UpdateAttackRequest(objective=objective),
+        )
+
+        assert result is not None
+        assert result.objective == objective
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
+
+    async def test_update_attack_bumps_timestamp(self, attack_service, mock_memory) -> None:
+        """Test that update_attack bumps the timestamp recency column and does not write metadata."""
+        old_time = datetime(2024, 1, 1, tzinfo=UTC)
         ar = make_attack_result(conversation_id="test-id", updated_at=old_time)
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_messages_async.return_value = []
 
         await attack_service.update_attack_async(
             attack_result_id="test-id", request=UpdateAttackRequest(outcome="success")
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        assert call_kwargs["update_fields"]["attack_metadata"]["updated_at"] != old_time.isoformat()
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args[1]["update_fields"]
+        assert isinstance(update_fields["timestamp"], datetime)
+        assert update_fields["timestamp"] > old_time
+        assert "attack_metadata" not in update_fields
+
+    @pytest.mark.parametrize(
+        ("score_value", "expected_outcome"),
+        [("True", "success"), ("False", "failure")],
+    )
+    async def test_remove_human_score_restores_automated_outcome(
+        self,
+        attack_service,
+        mock_memory,
+        score_value: str,
+        expected_outcome: str,
+    ) -> None:
+        """Test that removing a human score restores the automated true/false result."""
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type="true_false",
+            score_value=score_value,
+            score_rationale="Automated rationale",
+        )
+        mock_memory.get_attack_results_async.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == expected_outcome
+        assert update_fields["outcome_reason"] == "Automated rationale"
+
+    async def test_remove_human_score_without_automated_score_is_undetermined(
+        self,
+        attack_service,
+        mock_memory,
+    ) -> None:
+        """Test that removing the only score makes the attack outcome undetermined."""
+        attack = make_attack_result(conversation_id="test-id")
+        mock_memory.get_attack_results_async.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        assert update_fields["human_score_id"] is None
+        assert update_fields["outcome"] == "undetermined"
+        assert update_fields["outcome_reason"] is None
 
 
 # ============================================================================
@@ -952,123 +1351,247 @@ class TestUpdateAttack:
 class TestAddMessage:
     """Tests for add_message method."""
 
-    async def test_add_message_raises_for_nonexistent_attack(self, attack_service, mock_memory) -> None:
-        """Test that add_message raises ValueError for nonexistent attack."""
-        mock_memory.get_attack_results.return_value = []
-
+    @pytest.mark.parametrize("send", [False, True])
+    async def test_add_message_delegates_before_reading_response(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, send: bool
+    ) -> None:
         request = AddMessageRequest(
             pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
+            target_conversation_id="branch",
+            target_registry_name="target" if send else None,
+            send=send,
         )
-
-        with pytest.raises(ValueError, match="not found"):
-            await attack_service.add_message_async(attack_result_id="nonexistent", request=request)
-
-    async def test_add_message_without_send_stamps_labels_on_pieces(self, attack_service, mock_memory) -> None:
-        """Test that add_message (send=False) inherits labels from existing pieces."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"env": "prod"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels == {"env": "prod"}
-        assert result.attack is not None
-
-    async def test_add_message_with_send_passes_labels_to_normalizer(self, attack_service, mock_memory) -> None:
-        """Test that add_message (send=True) inherits labels from existing pieces."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"env": "staging"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation_messages.return_value = []
-
+        summary = AttackSummary(conversation_id="main", attack_result_id="attack", objective="test")
+        messages = ConversationMessagesResponse(conversation_id="branch", messages=[])
         with (
-            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
+            patch.object(attack_service._message_send_service, "_add_message_async") as sender,
+            patch.object(attack_service, "get_attack_async", return_value=summary),
+            patch.object(attack_service, "get_conversation_messages_async", return_value=messages) as reader,
         ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
+            result = await attack_service.add_message_async(attack_result_id="attack", request=request)
 
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
+        sender.assert_awaited_once_with(attack_result_id="attack", request=request)
+        reader.assert_awaited_once_with(attack_result_id="attack", conversation_id="branch")
+        assert result.attack is summary
+        assert result.messages is messages
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                target_registry_name="test-target",
-            )
-
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-            call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
-            assert call_kwargs["labels"] == {"env": "staging"}
-
-    async def test_add_message_raises_when_send_without_registry_name(self, attack_service, mock_memory) -> None:
-        """Test that add_message raises ValueError when send=True but target_registry_name missing."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
+    @pytest.mark.parametrize("error", [ValueError("not found"), RuntimeError("send failed")])
+    async def test_add_message_propagates_service_errors(
+        self, *, attack_service: AttackService, error: Exception
+    ) -> None:
         request = AddMessageRequest(
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=True,
+            pieces=[MessagePieceRequest(original_value="Hello")], target_conversation_id="conversation"
+        )
+        with (
+            patch.object(attack_service._message_send_service, "_add_message_async", side_effect=error),
+            patch.object(attack_service, "get_attack_async") as reader,
+            pytest.raises(type(error), match=str(error)),
+        ):
+            await attack_service.add_message_async(attack_result_id="attack", request=request)
+        reader.assert_not_called()
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
+    @pytest.mark.parametrize("incoming_send", [False, True])
+    async def test_response_assembly_keeps_conversation_reserved_async(
+        self, *, sqlite_instance: SQLiteMemory, read_method: str, incoming_send: bool
+    ) -> None:
+        ar = make_attack_result(conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False)
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar])
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        service, peer = AttackService(message_send_service=sender), AttackService(message_send_service=sender)
+        started, release = asyncio.Event(), asyncio.Event()
+        read = (
+            service.get_attack_async if read_method == "get_attack_async" else service.get_conversation_messages_async
         )
 
-        with pytest.raises(ValueError, match="target_registry_name is required when send=True"):
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
+        async def pause_after_read_async(**kwargs: Any) -> AttackSummary | ConversationMessagesResponse | None:
+            result = await read(**kwargs)
+            started.set()
+            await release.wait()
+            return result
 
-    async def test_add_message_send_false_without_registry_name_succeeds(self, attack_service, mock_memory) -> None:
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="first")],
+            target_conversation_id=ar.conversation_id,
+            target_registry_name="target",
+        )
+        with (
+            patch("pyrit.backend.services.message_send_service.get_target_service") as registry,
+            patch.object(service, read_method, side_effect=pause_after_read_async),
+        ):
+            registry.return_value.get_target_object.return_value = MockPromptTarget()
+            active = asyncio.create_task(
+                service.add_message_async(attack_result_id=ar.attack_result_id, request=request)
+            )
+            try:
+                await started.wait()
+                with pytest.raises(ManualSendConflictError):
+                    await peer.add_message_async(
+                        attack_result_id=ar.attack_result_id,
+                        request=AddMessageRequest(
+                            pieces=[MessagePieceRequest(original_value="next")],
+                            target_conversation_id=ar.conversation_id,
+                            target_registry_name="target" if incoming_send else None,
+                            send=incoming_send,
+                        ),
+                    )
+            finally:
+                release.set()
+                result = await active
+
+        assert result.attack.message_count == 2
+        assert [message.message_pieces[0].original_value for message in result.messages.messages] == [
+            "first",
+            "default",
+        ]
+        assert result.messages.target_response_status is not None
+        assert result.messages.target_response_status.response_error == "none"
+        assert not scheduler._conversations
+        await peer.add_message_async(
+            attack_result_id=ar.attack_result_id,
+            request=AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="next")],
+                target_conversation_id=ar.conversation_id,
+                send=False,
+            ),
+        )
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("read_method", ["get_attack_async", "get_conversation_messages_async"])
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_response_failure_releases_conversation_async(
+        self, *, attack_service: AttackService, read_method: str, cancel: bool
+    ) -> None:
+        sender = attack_service._message_send_service
+        request = AddMessageRequest(
+            pieces=[MessagePieceRequest(original_value="Hello")], target_conversation_id="conversation", send=False
+        )
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def fail_read_async(**_: Any) -> None:
+            started.set()
+            await release.wait()
+            raise RuntimeError("response failed")
+
+        summary = AttackSummary(conversation_id="conversation", attack_result_id="attack", objective="test")
+        with (
+            patch.object(sender, "_add_message_async"),
+            patch.object(attack_service, "get_attack_async", return_value=summary),
+            patch.object(attack_service, read_method, side_effect=fail_read_async),
+        ):
+            active = asyncio.create_task(attack_service.add_message_async(attack_result_id="attack", request=request))
+            try:
+                await started.wait()
+                assert sender._scheduler._conversations == {"conversation"}
+                if cancel:
+                    active.cancel()
+            finally:
+                release.set()
+                with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+                    await active
+            assert not sender._scheduler._conversations
+            await sender.add_message_async(attack_result_id="attack", request=request)
+
+    @pytest.mark.parametrize(
+        "role", ["system", "user", "assistant", "simulated_assistant", "tool", "simulated_tool", "developer"]
+    )
+    async def test_add_message_send_false_without_registry_name_succeeds(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, role: ChatMessageRole
+    ) -> None:
         """Test that add_message with send=False does not require target_registry_name."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        ar.operator = "alice"
+        ar.operation = "nightly"
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = [
+            MessagePiece(role="user", original_value="prior", conversation_id="test-id", sequence=3)
+        ]
+        mock_memory.get_conversation_messages_async.return_value = []
+        target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
+        mock_memory.get_conversation_metadata_async.return_value = Conversation(
+            conversation_id="test-id", target_identifier=target
+        )
+        original_id = uuid.uuid4()
 
         request = AddMessageRequest(
-            role="system",
-            pieces=[MessagePieceRequest(original_value="Hello")],
+            role=role,
+            pieces=[
+                MessagePieceRequest(original_value="Hello", original_prompt_id=str(original_id)),
+                MessagePieceRequest(original_value="World", converted_value="converted"),
+            ],
             target_conversation_id="test-id",
             send=False,
         )
 
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
+        with patch("pyrit.backend.services.message_send_service.PromptNormalizer") as normalizer:
+            result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
+        normalizer.assert_not_called()
         assert result.attack is not None
+        assert result.messages.conversation_id == "test-id"
+        pieces = [
+            piece
+            for call in mock_memory.add_message_pieces_to_memory_async.call_args_list
+            for piece in call.kwargs["message_pieces"]
+        ]
+        assert [piece.original_value for piece in pieces] == ["Hello", "World"]
+        assert [piece.converted_value for piece in pieces] == ["Hello", "converted"]
+        expected_role = {"assistant": "simulated_assistant", "tool": "simulated_tool"}.get(role, role)
+        assert all(piece.role == expected_role and piece.sequence == 4 for piece in pieces)
+        assert pieces[0].original_prompt_id == original_id
+        assert mock_memory.add_conversation_to_memory_async.call_args.kwargs["conversation"].target_identifier == target
 
-    async def test_add_message_with_send_sends_via_normalizer(self, attack_service, mock_memory) -> None:
-        """Test that add_message with send=True sends message via normalizer."""
+    async def test_add_message_surfaces_stored_error_piece_on_send_failure(self, attack_service, mock_memory) -> None:
+        """When the normalizer stores an error piece then raises, the send returns that turn inline (no raise)."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+
+        # The PromptNormalizer persists a full error piece before re-raising; model
+        # that by flipping to return the stored error piece only after send fails.
+        traceback_text = "Connection error.\nAPIConnectionError('Connection error.')\nTraceback..."
+        request_piece = MessagePiece(
+            role="user",
+            original_value="Hello",
+            original_value_data_type="text",
+            converted_value="Hello",
+            converted_value_data_type="text",
+            conversation_id="test-id",
+            sequence=0,
+        )
+        error_piece = MessagePiece(
+            role="assistant",
+            original_value=traceback_text,
+            original_value_data_type="error",
+            converted_value=traceback_text,
+            converted_value_data_type="error",
+            conversation_id="test-id",
+            sequence=1,
+            response_error="processing",
+        )
+        state = {"sent": False}
+        mock_memory.get_message_pieces_async.side_effect = lambda **_: [error_piece] if state["sent"] else []
+        # The conversation-messages read (used to build the response DTO) must include
+        # the stored error turn so we can assert it is surfaced to the caller.
+        mock_memory.get_conversation_messages_async.side_effect = lambda **_: (
+            [Message(message_pieces=[request_piece]), Message(message_pieces=[error_piece])] if state["sent"] else []
+        )
+
+        async def _raise_after_store_async(**_: Any) -> None:
+            state["sent"] = True
+            raise Exception("Error sending prompt with conversation ID: test-id")
 
         with (
-            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
+            patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
+            patch("pyrit.backend.services.message_send_service.PromptNormalizer") as mock_normalizer_cls,
         ):
             mock_target_svc = MagicMock()
             mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
             mock_get_target_svc.return_value = mock_target_svc
 
             mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
+            mock_normalizer.send_prompt_async = AsyncMock(side_effect=_raise_after_store_async)
             mock_normalizer_cls.return_value = mock_normalizer
 
             request = AddMessageRequest(
@@ -1078,83 +1601,72 @@ class TestAddMessage:
                 target_registry_name="test-target",
             )
 
+            # Should NOT raise: the stored error turn is surfaced via the normal response.
             result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
             mock_normalizer.send_prompt_async.assert_called_once()
             assert result.attack is not None
 
-    async def test_add_message_with_send_raises_when_target_not_found(self, attack_service, mock_memory) -> None:
-        """Test that add_message with send=True raises when target object not found."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+            # The error turn (response_error="processing" + traceback) must come back in the response,
+            # so the send-time view matches the conversation-reload view.
+            returned_pieces = [piece for message in result.messages.messages for piece in message.message_pieces]
+            error_views = [piece for piece in returned_pieces if piece.response_error == "processing"]
+            assert len(error_views) == 1
+            assert "APIConnectionError" in error_views[0].converted_value
+            assert result.messages.target_response_status is not None
+            assert result.messages.target_response_status.response_error == "processing"
+            assert result.messages.target_response_status.request_turn_number == 0
+            assert result.messages.target_response_status.response_turn_number == 1
 
-        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc:
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = None
-            mock_get_target_svc.return_value = mock_target_svc
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                target_registry_name="test-target",
-            )
-
-            with pytest.raises(ValueError, match="Target object .* not found"):
-                await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-    async def test_add_message_with_converter_ids_gets_converters(self, attack_service, mock_memory) -> None:
-        """Test that add_message with converter_ids gets converters from service."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
-
+    @pytest.mark.parametrize("failure", ["normalization", "validation", "target"])
+    async def test_real_preflight_and_provider_errors_preserve_synchronous_response_async(
+        self, *, sqlite_instance: SQLiteMemory, failure: str
+    ) -> None:
+        attack = make_attack_result(
+            conversation_id=str(uuid.uuid4()), attack_result_id=str(uuid.uuid4()), has_target=False
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+        target = MockPromptTarget()
+        service = AttackService()
+        method = {
+            "normalization": "_get_normalized_conversation_async",
+            "validation": "_validate_request",
+            "target": "_send_prompt_to_target_async",
+        }[failure]
         with (
-            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_conv_svc,
-            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
-            patch("pyrit.backend.services.attack_service.PromptConverterConfiguration") as mock_config,
+            patch("pyrit.backend.services.message_send_service.get_target_service") as registry,
+            patch.object(target, method, side_effect=RuntimeError("controlled failure")),
         ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
-
-            mock_conv_svc = MagicMock()
-            mock_converter = MagicMock()
-            mock_converter.get_identifier.return_value = ComponentIdentifier(
-                class_name="TestConverter",
-                class_module="test_module",
-                params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
+            registry.return_value.get_target_object.return_value = target
+            result = await service.add_message_async(
+                attack_result_id=attack.attack_result_id,
+                request=AddMessageRequest(
+                    pieces=[MessagePieceRequest(original_value="Hello")],
+                    target_conversation_id=attack.conversation_id,
+                    target_registry_name="target",
+                ),
             )
-            mock_conv_svc.get_converter_objects_for_ids.return_value = [mock_converter]
-            mock_get_conv_svc.return_value = mock_conv_svc
-
-            mock_config.from_converters.return_value = [MagicMock()]
-
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                converter_ids=["conv-1"],
-                target_registry_name="test-target",
-            )
-
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-            mock_conv_svc.get_converter_objects_for_ids.assert_any_call(converter_ids=["conv-1"])
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)
+        assert [piece.role for piece in pieces] == ["user", "assistant"]
+        assert pieces[-1].response_error == "processing"
+        assert "controlled failure" in pieces[-1].original_value
+        status = result.messages.target_response_status
+        assert status is not None
+        assert status.response_error == "processing"
+        assert (status.request_turn_number, status.response_turn_number) == (0, 1)
+        reloaded = await service.get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert reloaded is not None
+        assert reloaded.target_response_status == status
+        assert reloaded.messages == result.messages.messages
 
     async def test_add_message_raises_when_attack_not_found_after_update(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when attack disappears after update."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         request = AddMessageRequest(
             role="system",
@@ -1170,9 +1682,9 @@ class TestAddMessage:
     async def test_add_message_raises_when_messages_not_found_after_update(self, attack_service, mock_memory) -> None:
         """Test that add_message raises ValueError when messages disappear after update."""
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         request = AddMessageRequest(
             role="system",
@@ -1188,141 +1700,6 @@ class TestAddMessage:
             with pytest.raises(ValueError, match="messages not found after update"):
                 await attack_service.add_message_async(attack_result_id="test-id", request=request)
 
-    async def test_add_message_persists_updated_at_timestamp(self, attack_service, mock_memory) -> None:
-        """Should persist updated_at in attack_metadata via update_attack_result."""
-        ar = make_attack_result(conversation_id="test-id")
-        ar.metadata = {"created_at": "2026-01-01T00:00:00+00:00"}
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-        )
-
-        await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        assert call_kwargs["attack_result_id"] == "test-id"
-        persisted_metadata = call_kwargs["update_fields"]["attack_metadata"]
-        assert "updated_at" in persisted_metadata
-        assert persisted_metadata["created_at"] == "2026-01-01T00:00:00+00:00"
-
-    async def test_converter_ids_propagate_even_when_preconverted(self, attack_service, mock_memory) -> None:
-        """Test that converter identifiers propagate to attack_identifier even when pieces are preconverted."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
-
-        mock_converter = MagicMock()
-        mock_converter.get_identifier.return_value = ComponentIdentifier(
-            class_name="Base64Converter",
-            class_module="pyrit.prompt_converter",
-            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-        )
-
-        with (
-            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_conv_svc,
-            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
-        ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
-
-            mock_conv_svc = MagicMock()
-            mock_conv_svc.get_converter_objects_for_ids.return_value = [mock_converter]
-            mock_get_conv_svc.return_value = mock_conv_svc
-
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello", converted_value="SGVsbG8=")],
-                send=True,
-                target_conversation_id="test-id",
-                converter_ids=["conv-1"],
-                target_registry_name="test-target",
-            )
-
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-            # Converter service IS called to resolve identifiers for the attack_identifier
-            mock_get_conv_svc.assert_called()
-            # Normalizer should still get empty converter configs since pieces are preconverted
-            call_kwargs = mock_normalizer.send_prompt_async.call_args[1]
-            assert call_kwargs["request_converter_configurations"] == []
-            # atomic_attack_identifier should be updated with converter identifiers
-            update_call = mock_memory.update_attack_result_by_id.call_args[1]
-            assert "atomic_attack_identifier" in update_call["update_fields"]
-
-    async def test_add_message_no_existing_pieces_uses_request_labels(self, attack_service, mock_memory) -> None:
-        """Test that add_message with no existing pieces falls back to request.labels."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []  # No existing pieces
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"env": "prod", "source": "gui"},
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels == {"env": "prod", "source": "gui"}
-        assert result.attack is not None
-
-    async def test_add_message_no_existing_pieces_uses_request_labels_as_is(self, attack_service, mock_memory) -> None:
-        """Test that add_message passes request labels through as-is when stamping new pieces."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"operator": "alice", "operation": "red"},
-        )
-
-        await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels == {"operator": "alice", "operation": "red"}
-
-    async def test_add_message_no_existing_pieces_no_request_labels(self, attack_service, mock_memory) -> None:
-        """Test that add_message with no existing pieces and no request.labels passes None."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []  # No existing pieces
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-        stored_piece = mock_memory.add_message_pieces_to_memory.call_args[1]["message_pieces"][0]
-        assert stored_piece.labels is None or stored_piece.labels == {}
-        assert result.attack is not None
-
 
 # ============================================================================
 # Pagination Tests
@@ -1333,104 +1710,253 @@ class TestAddMessage:
 class TestPagination:
     """Tests for pagination in list_attacks."""
 
-    async def test_list_attacks_with_cursor_paginates(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks with cursor starts from the right position."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar3 = make_attack_result(conversation_id="attack-3")
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "DecodedKeysetCursor",
+            "decode_keyset_cursor",
+            "encode_keyset_cursor",
+            "fingerprint_filters",
+            "normalize_label_filters",
+        ],
+    )
+    def test_pagination_reexports_preserve_identity(self, name: str) -> None:
+        assert getattr(backend_pagination, name) is getattr(common_pagination, name)
 
-        # Get first page
+    async def test_list_attacks_first_page_forwards_limit_plus_one_and_no_after(
+        self, attack_service, mock_memory
+    ) -> None:
+        """The first page over-fetches one row (limit + 1) and passes no keyset anchor."""
+        mock_memory.get_attack_results_async.return_value = []
+
+        await attack_service.list_attacks_async(limit=20)
+
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
+        assert call_kwargs["limit"] == 21
+        assert call_kwargs["after"] is None
+
+    async def test_list_attacks_empty_attack_types_match_no_filter_cursor(self, attack_service, mock_memory) -> None:
+        """An empty attack-type list has the same query and cursor fingerprint as no filter."""
+        backing = _paginated_backing(3)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
+
+        first = await attack_service.list_attacks_async(limit=2)
+        assert first.pagination.next_cursor is not None
+        await attack_service.list_attacks_async(
+            attack_types=[],
+            limit=2,
+            cursor=first.pagination.next_cursor,
+        )
+
+        call_kwargs = mock_memory.get_attack_results_async.call_args.kwargs
+        assert call_kwargs["attack_classes"] is None
+        assert call_kwargs["after"].attack_result_id == backing[1].attack_result_id
+
+    async def test_list_attacks_decodes_cursor_to_after(self, attack_service, mock_memory) -> None:
+        """A cursor is decoded into the memory keyset anchor when its filter fingerprint matches."""
+        mock_memory.get_attack_results_async.return_value = []
+        anchor_row = make_attack_result(conversation_id="attack-anchor", attack_result_id=str(uuid.uuid4()))
+
+        await attack_service.list_attacks_async(limit=20, cursor=_cursor_for(anchor_row))
+
+        call_kwargs = mock_memory.get_attack_results_async.call_args[1]
+        assert call_kwargs["after"].attack_result_id == anchor_row.attack_result_id
+        assert call_kwargs["limit"] == 21
+
+    async def test_list_attacks_invalid_cursor_defaults_to_first_page(self, attack_service, mock_memory) -> None:
+        """A malformed or legacy (offset/attack-result-id) cursor degrades to the first page."""
+        mock_memory.get_attack_results_async.return_value = []
+
+        await attack_service.list_attacks_async(limit=20, cursor="ar-attack-1")
+
+        assert mock_memory.get_attack_results_async.call_args[1]["after"] is None
+
+    @pytest.mark.parametrize("field", ["t", "i"])
+    async def test_list_attacks_non_string_cursor_fields_restart_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, field: str
+    ) -> None:
+        payload = {
+            "v": 1,
+            "f": _attack_filter_fingerprint(),
+            "t": "2026-09-21T12:00:00Z",
+            "i": "00000000-0000-0000-0000-000000000001",
+            field: 123,
+        }
+        cursor = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+        mock_memory.get_attack_results_async.return_value = []
+
+        await attack_service.list_attacks_async(limit=20, cursor=cursor)
+
+        assert mock_memory.get_attack_results_async.call_args.kwargs["after"] is None
+
+    def test_decode_attack_cursor_rejects_invalid_and_round_trips_valid(self) -> None:
+        """Bad/legacy/mismatched/naive cursors decode to None; valid round-trips; non-UTC canonicalizes to UTC."""
+        fingerprint = _attack_filter_fingerprint()
+
+        def decode(cursor, fp=fingerprint):
+            return decode_keyset_cursor(cursor=cursor, fingerprint=fp)
+
+        assert decode(None) is None
+        assert decode("") is None
+        assert decode("not-base64!!!") is None
+        assert decode("ar-attack-1") is None  # legacy attack-result-id cursor
+        assert decode("deadbeef.40") is None  # legacy offset cursor
+
+        anchor = make_attack_result(conversation_id="attack-1", attack_result_id=str(uuid.uuid4()))
+        valid = _cursor_for(anchor, fingerprint=fingerprint)
+        # A cursor minted for a different filter set is rejected.
+        assert decode(valid, "0000000000000000") is None
+        decoded = decode(valid)
+        assert decoded is not None
+        assert decoded.identifier == anchor.attack_result_id
+        assert decoded.timestamp == anchor.timestamp
+
+        # A crafted cursor carrying a naive (tz-less) timestamp is rejected: service-minted anchors
+        # are always timezone-aware, and a naive anchor would bind inconsistently in the seek.
+        naive_payload = {
+            "f": fingerprint,
+            "t": "2026-01-01T00:00:00",
+            "i": str(uuid.uuid4()),
+        }
+        naive_cursor = base64.urlsafe_b64encode(json.dumps(naive_payload).encode("utf-8")).decode("ascii").rstrip("=")
+        assert decode(naive_cursor) is None
+
+        # A crafted cursor carrying a non-UTC aware offset is canonicalized to UTC so its seek
+        # tie-break matches the UTC-normalized timestamp column (service cursors are already UTC).
+        offset_payload = {
+            "f": fingerprint,
+            "t": "2026-01-01T00:00:00+05:00",
+            "i": str(uuid.uuid4()),
+        }
+        offset_cursor = base64.urlsafe_b64encode(json.dumps(offset_payload).encode("utf-8")).decode("ascii").rstrip("=")
+        offset_decoded = decode(offset_cursor)
+        assert offset_decoded is not None
+        assert offset_decoded.timestamp == datetime(2025, 12, 31, 19, 0, 0, tzinfo=UTC)
+        assert offset_decoded.timestamp.tzinfo == UTC
+
+        # A crafted cursor whose extreme UTC offset would push the timestamp past datetime's
+        # representable range when normalized to UTC decodes to None instead of raising.
+        overflow_payload = {
+            "f": fingerprint,
+            "t": "0001-01-01T00:00:00+23:59",
+            "i": str(uuid.uuid4()),
+        }
+        overflow_cursor = (
+            base64.urlsafe_b64encode(json.dumps(overflow_payload).encode("utf-8")).decode("ascii").rstrip("=")
+        )
+        assert decode(overflow_cursor) is None
+
+    async def test_list_attacks_has_more_and_next_cursor(self, attack_service, mock_memory) -> None:
+        """When an extra row is returned, has_more is set and next_cursor anchors on the last row."""
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
+
         result = await attack_service.list_attacks_async(limit=2)
-        # Results are sorted by updated_at desc, so order may vary
+
         assert len(result.items) == 2
-
-    async def test_list_attacks_has_more_flag(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks sets has_more flag correctly."""
-        ar1 = make_attack_result(conversation_id="attack-1")
-        ar2 = make_attack_result(conversation_id="attack-2")
-        ar3 = make_attack_result(conversation_id="attack-3")
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
-
-        result = await attack_service.list_attacks_async(limit=2)
-
         assert result.pagination.has_more is True
-        assert len(result.items) == 2
+        assert result.pagination.next_cursor == _cursor_for(backing[1])
 
-    async def test_list_attacks_cursor_skips_to_correct_position(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks with cursor skips items before cursor."""
-        ar1 = make_attack_result(
-            conversation_id="attack-1",
-            updated_at=datetime(2024, 1, 3, tzinfo=timezone.utc),
-        )
-        ar2 = make_attack_result(
-            conversation_id="attack-2",
-            updated_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        )
-        ar3 = make_attack_result(
-            conversation_id="attack-3",
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        mock_memory.get_attack_results.return_value = [ar1, ar2, ar3]
-        mock_memory.get_message_pieces.return_value = []
+    async def test_list_attacks_second_page_via_cursor_is_disjoint(self, attack_service, mock_memory) -> None:
+        """Following next_cursor returns the next disjoint page."""
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
 
-        # Cursor = ar-attack-1 should skip attack-1 and return from attack-2 onward
-        result = await attack_service.list_attacks_async(cursor="ar-attack-1", limit=10)
+        result = await attack_service.list_attacks_async(limit=2, cursor=_cursor_for(backing[1]))
 
-        attack_ids = [item.conversation_id for item in result.items]
-        assert "attack-1" not in attack_ids
-        assert len(result.items) == 2
+        assert [item.conversation_id for item in result.items] == ["attack-2", "attack-3"]
+        assert result.pagination.has_more is True
+        assert result.pagination.next_cursor == _cursor_for(backing[3])
+
+    async def test_list_attacks_last_page_has_no_next_cursor(self, attack_service, mock_memory) -> None:
+        """The final page reports has_more False and a null next_cursor."""
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
+
+        result = await attack_service.list_attacks_async(limit=2, cursor=_cursor_for(backing[3]))
+
+        assert [item.conversation_id for item in result.items] == ["attack-4"]
+        assert result.pagination.has_more is False
+        assert result.pagination.next_cursor is None
+
+    async def test_list_attacks_prev_cursor_echoes_incoming_cursor(self, attack_service, mock_memory) -> None:
+        """prev_cursor echoes the incoming cursor unchanged."""
+        mock_memory.get_attack_results_async.return_value = []
+        cursor = _cursor_for(make_attack_result(conversation_id="attack-1", attack_result_id=str(uuid.uuid4())))
+
+        result = await attack_service.list_attacks_async(limit=2, cursor=cursor)
+
+        assert result.pagination.prev_cursor == cursor
+
+    async def test_list_attacks_stale_cursor_after_filter_change_resets_to_first_page(
+        self, attack_service, mock_memory
+    ) -> None:
+        """A cursor minted for one filter set falls back to page 1 when the filters change.
+
+        This is the core cursor-fingerprint guarantee: without the filter fingerprint, replaying a
+        keyset anchor against a different result set would seek within the wrong data set. With it,
+        the stale cursor degrades to the first page of the new filter set, matching the
+        pre-optimization id-cursor behavior.
+        """
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
+
+        # Page 1 with no filter yields a next_cursor anchored on the last row.
+        first = await attack_service.list_attacks_async(limit=2)
+        stale_cursor = first.pagination.next_cursor
+        assert stale_cursor is not None
+
+        # Replaying it with a different filter set must reset to the first page, not seek.
+        result = await attack_service.list_attacks_async(limit=2, cursor=stale_cursor, outcome="success")
+
+        assert mock_memory.get_attack_results_async.call_args[1]["after"] is None
+        assert [item.conversation_id for item in result.items] == ["attack-0", "attack-1"]
+
+    async def test_list_attacks_cursor_with_matching_filters_preserves_anchor(
+        self, attack_service, mock_memory
+    ) -> None:
+        """A cursor replayed with the same filter set applies its encoded keyset anchor."""
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
+
+        first = await attack_service.list_attacks_async(limit=2, outcome="success")
+        next_cursor = first.pagination.next_cursor
+        assert next_cursor is not None
+
+        result = await attack_service.list_attacks_async(limit=2, cursor=next_cursor, outcome="success")
+
+        assert (
+            mock_memory.get_attack_results_async.call_args[1]["after"].attack_result_id == backing[1].attack_result_id
+        )
+        assert [item.conversation_id for item in result.items] == ["attack-2", "attack-3"]
+
+    def test_attack_filter_fingerprint_is_order_independent_and_filter_sensitive(self) -> None:
+        """The fingerprint normalizes ordering but distinguishes different filter values."""
+        fingerprint = _attack_filter_fingerprint
+        assert fingerprint(attack_types=["a", "b"]) == fingerprint(attack_types=["b", "a"])
+        assert fingerprint(labels={"op": ["red", "blue"]}) == fingerprint(labels={"op": ["blue", "red"]})
+        assert fingerprint() != fingerprint(outcome="success")
+        assert fingerprint(outcome="success") != fingerprint(outcome="failure")
+        assert fingerprint() != fingerprint(include_scenario_attacks=False)
+        assert fingerprint(min_turns=1) != fingerprint(max_turns=1)
+        # An empty-sequence label is a no-op filter in get_attack_results (effective_labels),
+        # so it must fingerprint identically to no label filter — otherwise a cursor minted
+        # with it would spuriously reset pagination to the first page.
+        assert fingerprint(labels={"op": []}) == fingerprint()
+        assert fingerprint(labels={"op": []}) == fingerprint(labels=None)
+        assert fingerprint(labels={"op": [], "team": "red"}) == fingerprint(labels={"team": "red"})
 
     async def test_list_attacks_uses_conversation_stats_not_pieces(self, attack_service, mock_memory) -> None:
-        """Test that list_attacks uses get_conversation_stats instead of loading full pieces."""
-        attacks = [make_attack_result(conversation_id=f"attack-{i}") for i in range(5)]
-        mock_memory.get_attack_results.return_value = attacks
+        "Test that list_attacks uses get_conversation_stats_async instead of loading full pieces."
+        backing = _paginated_backing(5)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
 
         await attack_service.list_attacks_async(limit=2)
 
         # get_conversation_stats should be called once (batched), not per-attack
-        mock_memory.get_conversation_stats.assert_called_once()
+        mock_memory.get_conversation_stats_async.assert_called_once()
         # get_message_pieces should NOT be called by list_attacks
-        mock_memory.get_message_pieces.assert_not_called()
-
-    async def test_pagination_cursor_not_found_returns_from_start(self, attack_service, mock_memory) -> None:
-        """Test that a stale/invalid cursor defaults to returning from the beginning."""
-        ar1 = make_attack_result(
-            conversation_id="attack-1",
-            updated_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        )
-        ar2 = make_attack_result(
-            conversation_id="attack-2",
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
-
-        result = await attack_service.list_attacks_async(cursor="nonexistent-cursor", limit=10)
-
-        # Should return all items (from beginning) since cursor wasn't found
-        assert len(result.items) == 2
-
-    async def test_pagination_cursor_at_last_item_returns_empty(self, attack_service, mock_memory) -> None:
-        """Test that cursor pointing to the last item returns empty page with has_more=False."""
-        ar1 = make_attack_result(
-            conversation_id="attack-1",
-            updated_at=datetime(2024, 1, 2, tzinfo=timezone.utc),
-        )
-        ar2 = make_attack_result(
-            conversation_id="attack-2",
-            updated_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        )
-        mock_memory.get_attack_results.return_value = [ar1, ar2]
-        mock_memory.get_message_pieces.return_value = []
-
-        # Cursor = last sorted item (attack-2 has the oldest updated_at, so it's last)
-        result = await attack_service.list_attacks_async(cursor="ar-attack-2", limit=10)
-
-        assert len(result.items) == 0
-        assert result.pagination.has_more is False
+        mock_memory.get_message_pieces_async.assert_not_called()
 
 
 # ============================================================================
@@ -1443,9 +1969,9 @@ class TestMessageBuilding:
     """Tests for message translation and building."""
 
     async def test_get_attack_with_messages_translates_correctly(self, attack_service, mock_memory) -> None:
-        """Test that get_conversation_messages translates PyRIT messages to backend format."""
+        "Test that get_conversation_messages_async translates PyRIT messages to backend format."
         ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         piece = MessagePiece(
             role="user",
@@ -1458,7 +1984,7 @@ class TestMessageBuilding:
         )
         msg = Message(message_pieces=[piece])
 
-        mock_memory.get_conversation_messages.return_value = [msg]
+        mock_memory.get_conversation_messages_async.return_value = [msg]
 
         result = await attack_service.get_conversation_messages_async(
             attack_result_id="test-id", conversation_id="test-id"
@@ -1484,7 +2010,7 @@ class TestAttackServiceSingleton:
         """Test that get_attack_service returns an AttackService instance."""
         get_attack_service.cache_clear()
 
-        with patch("pyrit.backend.services.attack_service.CentralMemory"):
+        with patch.object(CentralMemory, "get_memory_instance"):
             service = get_attack_service()
             assert isinstance(service, AttackService)
 
@@ -1492,7 +2018,7 @@ class TestAttackServiceSingleton:
         """Test that get_attack_service returns the same instance."""
         get_attack_service.cache_clear()
 
-        with patch("pyrit.backend.services.attack_service.CentralMemory"):
+        with patch.object(CentralMemory, "get_memory_instance"):
             service1 = get_attack_service()
             service2 = get_attack_service()
             assert service1 is service2
@@ -1507,6 +2033,159 @@ class TestAttackServiceSingleton:
 class TestPersistBase64Pieces:
     """Tests for _persist_base64_pieces_async helper."""
 
+    @pytest.mark.parametrize(
+        ("original_type", "original_value", "converted_type", "converted_value", "expected_types", "extensions"),
+        [
+            (
+                "text",
+                "source",
+                "image_path",
+                "data:image/png;base64,cHJldmlldw==",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "text",
+                "Exact description",
+                ["image_path"],
+                [".png"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "audio_path",
+                "data:audio/wav;base64,cHJldmlldw==",
+                ["image_path", "audio_path"],
+                [".png", ".wav"],
+            ),
+            (
+                "image_path",
+                "data:image/png;base64,c291cmNl",
+                "image_path",
+                "data:image/jpeg;base64,cHJldmlldw==",
+                ["image_path", "image_path"],
+                [".png", ".jpg"],
+            ),
+        ],
+    )
+    async def test_persists_original_and_converted_media_independently_async(
+        self,
+        *,
+        original_type: PromptDataType,
+        original_value: str,
+        converted_type: PromptDataType,
+        converted_value: str,
+        expected_types: list[PromptDataType],
+        extensions: list[str],
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type=original_type,
+                    original_value=original_value,
+                    converted_value=converted_value,
+                    converted_value_data_type=converted_type,
+                    mime_type="image/png" if original_type == "image_path" else "text/plain",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializers = [MagicMock(value=f"saved-{index}{extension}") for index, extension in enumerate(extensions)]
+        for serializer in serializers:
+            serializer.save_b64_image_async = AsyncMock()
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", side_effect=serializers) as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert [call.kwargs["data_type"] for call in factory.call_args_list] == expected_types
+        assert [call.kwargs["extension"] for call in factory.call_args_list] == extensions
+        piece = request.pieces[0]
+        assert piece.data_type == original_type
+        assert piece.converted_value_data_type == converted_type
+        assert piece.original_value == (serializers[0].value if original_type == "image_path" else original_value)
+        assert piece.converted_value == (converted_value if converted_type == "text" else serializers[-1].value)
+        for serializer in serializers:
+            serializer.save_b64_image_async.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ("converted_value", "expected_value"),
+        [
+            ("/api/media?path=preview.png", "preview.png"),
+            ("https://example.com/preview.png?token=example", "https://example.com/preview.png?token=example"),
+            ("preview.png", "preview.png"),
+        ],
+    )
+    async def test_converted_media_references_are_not_repersisted_async(
+        self, *, converted_value: str, expected_value: str
+    ) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    original_value="source",
+                    converted_value=converted_value,
+                    converted_value_data_type="image_path",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        with (
+            patch("pyrit.backend.services.media_persistence.Path.is_file", return_value=True),
+            patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory,
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "source"
+        assert request.pieces[0].converted_value == expected_value
+        factory.assert_not_called()
+
+    async def test_identical_original_and_converted_media_saved_once_async(self) -> None:
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="data:image/png;base64,c291cmNl",
+                    converted_value="data:image/png;base64,c291cmNl",
+                )
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        serializer = MagicMock(value="saved.png")
+        serializer.save_b64_image_async = AsyncMock()
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        serializer.save_b64_image_async.assert_awaited_once()
+        assert request.pieces[0].original_value == "saved.png"
+        assert request.pieces[0].converted_value == "saved.png"
+
+    async def test_converted_media_failure_preserves_both_request_values_async(self) -> None:
+        piece = MessagePieceRequest(
+            data_type="image_path",
+            original_value="data:image/png;base64,c291cmNl",
+            converted_value="data:image/png;base64,cHJldmlldw==",
+        )
+        request = AddMessageRequest(pieces=[piece], send=False, target_conversation_id="test-id")
+        before = piece.model_dump()
+        original_serializer = MagicMock(value="source.png")
+        original_serializer.save_b64_image_async = AsyncMock()
+        converted_serializer = MagicMock()
+        converted_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("preview save failed"))
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                side_effect=[original_serializer, converted_serializer],
+            ),
+            pytest.raises(OSError, match="preview save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert piece.model_dump() == before
+
     async def test_text_pieces_are_unchanged(self, attack_service) -> None:
         """Text pieces should not be modified."""
         request = AddMessageRequest(
@@ -1515,7 +2194,7 @@ class TestPersistBase64Pieces:
             send=False,
             target_conversation_id="test-id",
         )
-        await AttackService._persist_base64_pieces_async(request)
+        await AttackService._persist_base64_pieces_async(pieces=request.pieces)
         assert request.pieces[0].original_value == "hello"
 
     async def test_image_piece_is_saved_to_file(self, attack_service) -> None:
@@ -1541,7 +2220,7 @@ class TestPersistBase64Pieces:
             "pyrit.backend.services.attack_service.data_serializer_factory",
             return_value=mock_serializer,
         ) as factory_mock:
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         factory_mock.assert_called_once_with(
             category="prompt-memory-entries",
@@ -1575,7 +2254,7 @@ class TestPersistBase64Pieces:
             "pyrit.backend.services.attack_service.data_serializer_factory",
             return_value=mock_serializer,
         ):
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         assert request.pieces[0].original_value == "describe this"
         assert request.pieces[1].original_value == "/saved/photo.jpg"
@@ -1602,7 +2281,7 @@ class TestPersistBase64Pieces:
             "pyrit.backend.services.attack_service.data_serializer_factory",
             return_value=mock_serializer,
         ) as factory_mock:
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         factory_mock.assert_called_once_with(
             category="prompt-memory-entries",
@@ -1633,7 +2312,7 @@ class TestPersistBase64Pieces:
             "pyrit.backend.services.attack_service.data_serializer_factory",
             return_value=mock_serializer,
         ):
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         # Should receive only the base64 payload, not the data URI prefix
         mock_serializer.save_b64_image_async.assert_awaited_once_with(data="aW1hZ2VkYXRh")
@@ -1661,7 +2340,7 @@ class TestPersistBase64Pieces:
             "pyrit.backend.services.attack_service.data_serializer_factory",
             return_value=mock_serializer,
         ) as factory_mock:
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         factory_mock.assert_called_once_with(
             category="prompt-memory-entries",
@@ -1693,7 +2372,7 @@ class TestPersistBase64Pieces:
             "pyrit.backend.services.attack_service.data_serializer_factory",
             return_value=mock_serializer,
         ) as factory_mock:
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         factory_mock.assert_called_once_with(
             category="prompt-memory-entries",
@@ -1717,10 +2396,49 @@ class TestPersistBase64Pieces:
             target_conversation_id="test-id",
         )
 
-        await AttackService._persist_base64_pieces_async(request)
+        await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         assert request.pieces[0].original_value == ("https://myblob.blob.core.windows.net/images/photo.png?sv=2024")
         assert request.pieces[0].converted_value == request.pieces[0].original_value
+
+    async def test_media_reference_is_resolved_without_persistence(self, attack_service) -> None:
+        """Local media URLs are converted back to their decoded file paths."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="/api/media?path=%2Ftmp%2Fimage.png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "/tmp/image.png"
+        assert request.pieces[0].converted_value == "/tmp/image.png"
+        factory.assert_not_called()
+
+    async def test_existing_file_is_kept_without_persistence(self, attack_service, tmp_path: Path) -> None:
+        """An existing path remains the canonical original and converted value."""
+        media_path = tmp_path / "image.png"
+        media_path.write_bytes(b"image")
+        request = AddMessageRequest(
+            role="user",
+            pieces=[MessagePieceRequest(data_type="image_path", original_value=str(media_path))],
+            send=False,
+            target_conversation_id="test-id",
+        )
+
+        with patch("pyrit.backend.services.attack_service.data_serializer_factory") as factory:
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == str(media_path)
+        assert request.pieces[0].converted_value == str(media_path)
+        factory.assert_not_called()
 
     async def test_non_path_data_types_are_skipped(self, attack_service) -> None:
         """Non *_path types like reasoning, url, function_call should not be decoded."""
@@ -1733,7 +2451,7 @@ class TestPersistBase64Pieces:
             target_conversation_id="test-id",
         )
 
-        await AttackService._persist_base64_pieces_async(request)
+        await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
         assert request.pieces[0].original_value == "thinking step"
 
@@ -1759,11 +2477,40 @@ class TestPersistBase64Pieces:
             mock_serializer.value = "/tmp/saved_audio.wav"
             mock_factory.return_value = mock_serializer
 
-            await AttackService._persist_base64_pieces_async(request)
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
 
             mock_factory.assert_called_once()
             mock_serializer.save_b64_image_async.assert_called_once_with(data=long_b64)
             assert request.pieces[0].original_value == "/tmp/saved_audio.wav"
+
+    async def test_persistence_failure_does_not_partially_mutate_piece(self, attack_service) -> None:
+        """A failed save leaves both request values unchanged."""
+        request = AddMessageRequest(
+            role="user",
+            pieces=[
+                MessagePieceRequest(
+                    data_type="image_path",
+                    original_value="aW1hZ2VkYXRh",
+                    mime_type="image/png",
+                ),
+            ],
+            send=False,
+            target_conversation_id="test-id",
+        )
+        mock_serializer = MagicMock()
+        mock_serializer.save_b64_image_async = AsyncMock(side_effect=OSError("save failed"))
+
+        with (
+            patch(
+                "pyrit.backend.services.attack_service.data_serializer_factory",
+                return_value=mock_serializer,
+            ),
+            pytest.raises(OSError, match="save failed"),
+        ):
+            await AttackService._persist_base64_pieces_async(pieces=request.pieces)
+
+        assert request.pieces[0].original_value == "aW1hZ2VkYXRh"
+        assert request.pieces[0].converted_value is None
 
 
 # ============================================================================
@@ -1777,7 +2524,7 @@ class TestGetConversations:
 
     async def test_returns_none_when_attack_not_found(self, attack_service, mock_memory):
         """Should return None when the attack doesn't exist."""
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.get_conversations_async(attack_result_id="missing")
 
@@ -1786,8 +2533,8 @@ class TestGetConversations:
     async def test_returns_main_conversation_only(self, attack_service, mock_memory):
         """Should return only the main conversation when no related conversations exist."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(message_count=2, last_message_preview="test"),
         }
 
@@ -1801,9 +2548,9 @@ class TestGetConversations:
     async def test_conversation_summary_formats_media_preview(self, attack_service, mock_memory):
         """ConversationSummary previews must not leak absolute media paths."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
         path = r"C:\Users\someone\PyRIT\dbdata\prompt-memory-entries\audio\1780010098266691.mp3"
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(
                 message_count=1,
                 last_message_preview=path,
@@ -1837,16 +2584,24 @@ class TestGetConversations:
                 description="Scoring conversation",
             )
         )
+        ar.related_conversations.add(
+            ConversationReference(
+                conversation_id="preparation-1",
+                conversation_type=ConversationType.PREPARATION,
+                description="Preparation conversation",
+            )
+        )
 
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
-        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=timezone.utc)  # earlier than t1
+        t1 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2026, 1, 1, 9, 30, 0, tzinfo=UTC)  # earlier than t1
 
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t1),
             "branch-1": ConversationStats(message_count=2, last_message_preview="test", created_at=t2),
             "score-1": ConversationStats(message_count=0),
+            "preparation-1": ConversationStats(message_count=2),
         }
 
         result = await attack_service.get_conversations_async(attack_result_id="attack-1")
@@ -1871,11 +2626,106 @@ class TestGetConversations:
 class TestCreateRelatedConversation:
     """Tests for create_related_conversation_async."""
 
+    async def test_empty_history_branch_preserves_target_on_first_send_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        target = MockPromptTarget()
+        target_identifier = target.get_identifier()
+        attack = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="Branch an empty history",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(
+                    class_name="ManualAttack",
+                    class_module="pyrit.backend",
+                    objective_target=target_identifier,
+                )
+            ),
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+        assert await sqlite_instance.get_conversation_metadata_async(conversation_id=attack.conversation_id) is None
+
+        branch = await service.create_related_conversation_async(
+            attack_result_id=attack.attack_result_id,
+            request=CreateConversationRequest(source_conversation_id=attack.conversation_id, cutoff_index=0),
+        )
+
+        assert branch is not None
+        normalizer = PromptNormalizer()
+        for conversation_id in [attack.conversation_id, branch.conversation_id]:
+            await normalizer.send_prompt_async(
+                message=Message.from_prompt(prompt="Hello", role="user"),
+                target=target,
+                conversation_id=conversation_id,
+            )
+            metadata = await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id)
+            assert metadata is not None
+            assert metadata.target_identifier == target_identifier
+            assert metadata.attack_result_id == attack.attack_result_id
+            async with await sqlite_instance.get_session_async() as session:
+                rows = (
+                    await session.scalars(
+                        select(ConversationEntry).where(ConversationEntry.conversation_id == conversation_id)
+                    )
+                ).all()
+            assert rows[0].target_identifier_hash == target_identifier.hash
+        assert target.prompt_sent == ["Hello", "Hello"]
+        owned = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=attack.attack_result_id)
+        assert {conversation.conversation_id for conversation in owned} == {
+            attack.conversation_id,
+            branch.conversation_id,
+        }
+
+    async def test_nested_branching_preserves_target_after_version_change_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        target = TargetIdentifier(class_name="ExampleTarget", class_module="tests.unit", pyrit_version="1.1.0")
+        source = Conversation(conversation_id=str(uuid.uuid4()), target_identifier=target)
+        attack = AttackResult(conversation_id=source.conversation_id, objective="Branch older history")
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+        with patch.object(pyrit, "__version__", "1.1.0"):
+            await sqlite_instance.add_conversation_to_memory_async(conversation=source)
+        original = MessagePiece(
+            conversation_id=source.conversation_id, role="user", original_value="Original", sequence=0
+        )
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[original])
+        expected_rows = [(source.conversation_id, "1.1.0", target.model_dump())]
+
+        source_id = source.conversation_id
+        for _ in range(2):
+            branch = await service.create_related_conversation_async(
+                attack_result_id=attack.attack_result_id,
+                request=CreateConversationRequest(source_conversation_id=source_id, cutoff_index=0),
+            )
+            assert branch is not None
+            async with await sqlite_instance.get_session_async() as session:
+                rows = (
+                    await session.scalars(
+                        select(ConversationEntry).where(ConversationEntry.conversation_id == branch.conversation_id)
+                    )
+                ).all()
+            expected_rows.append((branch.conversation_id, rows[0].pyrit_version, rows[0].target_identifier))
+            pieces = await sqlite_instance.get_message_pieces_async(conversation_id=branch.conversation_id)
+            assert [piece.original_prompt_id for piece in pieces] == [original.id]
+            source_id = branch.conversation_id
+
+        async with await sqlite_instance.get_session_async() as session:
+            rows = (await session.scalars(select(ConversationEntry))).all()
+        assert {row.conversation_id: (row.pyrit_version, row.target_identifier) for row in rows} == {
+            conversation_id: (version, identifier) for conversation_id, version, identifier in expected_rows
+        }
+        assert all(row.target_identifier_hash == target.hash for row in rows)
+        assert all(str(row.attack_result_id) == attack.attack_result_id for row in rows)
+        current = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert current[0].get_active_conversation_ids() == {row.conversation_id for row in rows}
+
     async def test_returns_none_when_attack_not_found(self, attack_service, mock_memory):
         """Should return None when the attack doesn't exist."""
         from pyrit.backend.models.attacks import CreateConversationRequest
 
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.create_related_conversation_async(
             attack_result_id="missing",
@@ -1889,8 +2739,8 @@ class TestCreateRelatedConversation:
         from pyrit.backend.models.attacks import CreateConversationRequest
 
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         request = CreateConversationRequest()
 
@@ -1903,19 +2753,40 @@ class TestCreateRelatedConversation:
         assert result.conversation_id is not None
         assert result.conversation_id != "attack-1"
 
-        # Should have called update_attack_result to persist in DB column
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        mock_memory.add_conversation_branches_to_attack_async.assert_called_once()
+        call_kwargs = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "attack-1"
-        assert result.conversation_id in call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert "updated_at" in call_kwargs["update_fields"]["attack_metadata"]
+        assert [conversation.conversation_id for conversation in call_kwargs["conversations"]] == [
+            result.conversation_id
+        ]
+        attack_identifier = ar.get_attack_strategy_identifier()
+        assert attack_identifier is not None
+        assert call_kwargs["conversations"][0].target_identifier == attack_identifier.get_child("objective_target")
+        assert call_kwargs["message_pieces"] == []
+        assert call_kwargs["source_conversation"] is None
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
+
+    async def test_returns_none_when_attack_disappears_during_creation_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results_async.return_value = [make_attack_result()]
+        mock_memory.add_conversation_branches_to_attack_async.return_value = False
+
+        result = await attack_service.create_related_conversation_async(
+            attack_result_id="ar-attack-1", request=CreateConversationRequest()
+        )
+
+        assert result is None
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
     async def test_rejects_source_conversation_from_different_attack(self, attack_service, mock_memory):
         """Should raise ValueError when source_conversation_id doesn't belong to the attack."""
         from pyrit.backend.models.attacks import CreateConversationRequest
 
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         request = CreateConversationRequest(source_conversation_id="unrelated-conv", cutoff_index=0)
 
@@ -1924,6 +2795,47 @@ class TestCreateRelatedConversation:
                 attack_result_id="ar-attack-1",
                 request=request,
             )
+
+        mock_memory.add_conversation_branches_to_attack_async.assert_not_called()
+
+    @pytest.mark.parametrize("conversation_type", [ConversationType.ADVERSARIAL, ConversationType.PREPARATION])
+    async def test_rejects_diagnostic_sources_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, conversation_type: ConversationType
+    ) -> None:
+        ar = make_attack_result()
+        ar.related_conversations = {
+            ConversationReference(conversation_id="diagnostic", conversation_type=conversation_type),
+        }
+        mock_memory.get_attack_results_async.return_value = [ar]
+
+        with pytest.raises(ValueError, match="not part of attack"):
+            await attack_service.create_related_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=CreateConversationRequest(source_conversation_id="diagnostic", cutoff_index=0),
+            )
+
+        mock_memory.get_conversation_messages_async.assert_not_called()
+        mock_memory.add_conversation_branches_to_attack_async.assert_not_called()
+
+    async def test_branch_persistence_failure_does_not_commit_copies_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results_async.return_value = [make_attack_result()]
+        mock_memory.get_conversation_messages_async.return_value = [_make_message(role="user", sequence=0)]
+        copied = MessagePiece(conversation_id="branch", role="user", original_value="copy")
+        mock_memory.duplicate_messages_async.return_value = ("branch", [copied])
+        mock_memory.add_conversation_branches_to_attack_async.side_effect = RuntimeError("branch insertion failed")
+
+        with pytest.raises(RuntimeError, match="branch insertion failed"):
+            await attack_service.create_related_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=CreateConversationRequest(source_conversation_id="attack-1", cutoff_index=0),
+            )
+
+        assert mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["message_pieces"] == [copied]
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
 
 # ============================================================================
@@ -1937,7 +2849,7 @@ class TestUpdateMainConversation:
 
     async def test_returns_none_when_attack_not_found(self, attack_service, mock_memory):
         """Should return None when the attack doesn't exist."""
-        mock_memory.get_attack_results.return_value = []
+        mock_memory.get_attack_results_async.return_value = []
 
         result = await attack_service.update_main_conversation_async(
             attack_result_id="missing",
@@ -1947,9 +2859,9 @@ class TestUpdateMainConversation:
         assert result is None
 
     async def test_noop_when_target_is_already_main(self, attack_service, mock_memory):
-        """When target is already the main conversation, return immediately without update."""
+        """Memory must check the current main while holding the attack's write lock."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         result = await attack_service.update_main_conversation_async(
             attack_result_id="ar-attack-1",
@@ -1958,18 +2870,23 @@ class TestUpdateMainConversation:
 
         assert result is not None
         assert result.conversation_id == "attack-1"
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.promote_attack_conversation_async.assert_called_once_with(
+            attack_result_id="ar-attack-1", conversation_id="attack-1"
+        )
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
     async def test_raises_when_conversation_not_part_of_attack(self, attack_service, mock_memory):
         """Should raise ValueError when conversation is not in the attack."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         with pytest.raises(ValueError, match="not part of this attack"):
             await attack_service.update_main_conversation_async(
                 attack_result_id="ar-attack-1",
                 request=UpdateMainConversationRequest(conversation_id="not-related"),
             )
+
+        mock_memory.promote_attack_conversation_async.assert_not_called()
 
     async def test_swaps_main_conversation(self, attack_service, mock_memory):
         """Changing the main to a related conversation should swap it with the main."""
@@ -1979,11 +2896,11 @@ class TestUpdateMainConversation:
         ar.related_conversations = {
             ConversationReference(
                 conversation_id="branch-1",
-                conversation_type=ConversationType.ADVERSARIAL,
+                conversation_type=ConversationType.PRUNED,
                 description="Branch 1",
             ),
         }
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
         result = await attack_service.update_main_conversation_async(
             attack_result_id="ar-attack-1",
@@ -1994,16 +2911,48 @@ class TestUpdateMainConversation:
         assert result.attack_result_id == "ar-attack-1"
         assert result.conversation_id == "branch-1"
 
-        # Should update via update_attack_result_by_id
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
+        mock_memory.promote_attack_conversation_async.assert_called_once()
+        call_kwargs = mock_memory.promote_attack_conversation_async.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "ar-attack-1"
-        assert call_kwargs["update_fields"]["conversation_id"] == "branch-1"
+        assert call_kwargs["conversation_id"] == "branch-1"
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
-        # Old main should now be in pruned_conversation_ids (user-visible)
-        pruned = call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert "attack-1" in pruned
-        assert "branch-1" not in pruned
+    async def test_returns_none_when_attack_disappears_during_promotion_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        mock_memory.get_attack_results_async.return_value = [make_attack_result()]
+        mock_memory.promote_attack_conversation_async.return_value = False
+
+        result = await attack_service.update_main_conversation_async(
+            attack_result_id="ar-attack-1",
+            request=UpdateMainConversationRequest(conversation_id="attack-1"),
+        )
+
+        assert result is None
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
+
+    @pytest.mark.parametrize("conversation_type", ["preparation", "adversarial"])
+    async def test_rejects_promoting_diagnostic_conversation(self, attack_service, mock_memory, conversation_type):
+        """Diagnostic conversations cannot replace the evaluated main conversation."""
+        from pyrit.models import ConversationReference, ConversationType
+
+        ar = make_attack_result(conversation_id="attack-1")
+        ar.related_conversations = {
+            ConversationReference(
+                conversation_id="diagnostic-1",
+                conversation_type=ConversationType(conversation_type),
+            ),
+        }
+        mock_memory.get_attack_results_async.return_value = [ar]
+
+        with pytest.raises(ValueError, match="not part of this attack"):
+            await attack_service.update_main_conversation_async(
+                attack_result_id="ar-attack-1",
+                request=UpdateMainConversationRequest(conversation_id="diagnostic-1"),
+            )
+
+        mock_memory.promote_attack_conversation_async.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2019,9 +2968,9 @@ class TestAddMessageTargetConversation:
         ar.related_conversations = {
             ConversationReference(conversation_id="branch-1", conversation_type=ConversationType.PRUNED),
         }
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = []
 
         request = AddMessageRequest(
             role="user",
@@ -2030,7 +2979,7 @@ class TestAddMessageTargetConversation:
             target_conversation_id="branch-1",
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_summary = AttackSummary(
             attack_result_id="ar-attack-1",
             conversation_id="attack-1",
@@ -2057,22 +3006,6 @@ class TestAddMessageTargetConversation:
             conversation_id="branch-1",
         )
 
-    async def test_rejects_unrelated_conversation_id(self, attack_service, mock_memory):
-        """Writing to a conversation_id that doesn't belong to the attack should raise ValueError."""
-        ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(data_type="text", original_value="Hello")],
-            send=False,
-            target_conversation_id="unrelated-conv",
-        )
-
-        with pytest.raises(ValueError, match="not part of attack"):
-            await attack_service.add_message_async(attack_result_id="ar-attack-1", request=request)
-
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConversationCount:
@@ -2093,8 +3026,8 @@ class TestConversationCount:
                 conversation_type=ConversationType.ADVERSARIAL,
             ),
         }
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.list_attacks_async()
 
@@ -2104,8 +3037,8 @@ class TestConversationCount:
     async def test_list_attacks_no_related_returns_empty_list(self, attack_service, mock_memory):
         """An attack with no related conversations should return empty list."""
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.list_attacks_async()
 
@@ -2116,16 +3049,16 @@ class TestConversationCount:
         from pyrit.backend.models.attacks import CreateConversationRequest
 
         ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.create_related_conversation_async(
             attack_result_id="attack-1",
             request=CreateConversationRequest(),
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        ids = call_kwargs["update_fields"]["pruned_conversation_ids"]
+        call_kwargs = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs
+        ids = [conversation.conversation_id for conversation in call_kwargs["conversations"]]
         assert result.conversation_id in ids
         assert len(ids) == 1
 
@@ -2141,19 +3074,19 @@ class TestConversationCount:
                 conversation_type=ConversationType.PRUNED,
             ),
         }
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_message_pieces_async.return_value = []
 
         result = await attack_service.create_related_conversation_async(
             attack_result_id="attack-1",
             request=CreateConversationRequest(),
         )
 
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args[1]
-        ids = call_kwargs["update_fields"]["pruned_conversation_ids"]
-        assert "conv-existing" in ids
+        call_kwargs = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs
+        ids = [conversation.conversation_id for conversation in call_kwargs["conversations"]]
         assert result.conversation_id in ids
-        assert len(ids) == 2
+        assert len(ids) == 1
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2171,12 +3104,12 @@ class TestConversationSorting:
                 conversation_type=ConversationType.PRUNED,
             ),
         }
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
-        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
-        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=timezone.utc)
+        t_early = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
+        t_late = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)
 
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t_late),
             "branch-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t_early),
         }
@@ -2199,11 +3132,11 @@ class TestConversationSorting:
                 conversation_type=ConversationType.PRUNED,
             ),
         }
-        mock_memory.get_attack_results.return_value = [ar]
+        mock_memory.get_attack_results_async.return_value = [ar]
 
-        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+        t = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
 
-        mock_memory.get_conversation_stats.return_value = {
+        mock_memory.get_conversation_stats_async.return_value = {
             "attack-1": ConversationStats(message_count=1, last_message_preview="test", created_at=t),
         }
 
@@ -2225,8 +3158,8 @@ class TestConversationSorting:
                 conversation_type=ConversationType.PRUNED,
             ),
         }
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_conversation_stats.return_value = {}  # Both have no stats
+        mock_memory.get_attack_results_async.return_value = [ar]
+        mock_memory.get_conversation_stats_async.return_value = {}  # Both have no stats
 
         result = await attack_service.get_conversations_async(attack_result_id="attack-1")
 
@@ -2240,19 +3173,39 @@ class TestConversationSorting:
 class TestAttackServiceAdditionalCoverage:
     """Targeted branch coverage tests for attack service helpers and converter merge logic."""
 
-    async def test_create_related_conversation_uses_duplicate_branch(self, attack_service, mock_memory):
-        """When source_conversation_id and cutoff_index are provided, duplication path is used."""
+    @pytest.mark.parametrize("has_metadata", [False, True])
+    @pytest.mark.parametrize("has_pieces", [False, True])
+    @pytest.mark.parametrize("has_target", [False, True])
+    async def test_create_related_conversation_uses_duplicate_branch(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        has_metadata: bool,
+        has_pieces: bool,
+        has_target: bool,
+    ) -> None:
+        """Prepare the history without committing it before the atomic branch insertion."""
         from pyrit.backend.models.attacks import CreateConversationRequest
         from pyrit.models import Conversation
 
-        ar = make_attack_result(conversation_id="attack-1")
-        mock_memory.get_attack_results.return_value = [ar]
-        expected_target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
-        mock_memory._get_conversation.return_value = Conversation(
-            conversation_id="attack-1", target_identifier=expected_target
+        ar = make_attack_result(conversation_id="attack-1", has_target=has_target)
+        mock_memory.get_attack_results_async.return_value = [ar]
+        expected_target = (
+            ComponentIdentifier(
+                class_name="SourceTarget" if has_metadata else "TextTarget", class_module="pyrit.prompt_target"
+            )
+            if has_metadata or has_target
+            else None
         )
+        source = Conversation(conversation_id="attack-1", target_identifier=expected_target)
+        mock_memory.get_conversation_metadata_async.return_value = source if has_metadata else None
+        prepared = Conversation(conversation_id="branch-dup", target_identifier=expected_target)
+        pieces = [MessagePiece(conversation_id="branch-dup", role="user", original_value="copy")] if has_pieces else []
 
-        with patch.object(attack_service, "_duplicate_conversation_up_to", return_value="branch-dup") as mock_dup:
+        with patch.object(
+            attack_service, "_prepare_conversation_up_to_async", return_value=(prepared, pieces)
+        ) as mock_dup:
             result = await attack_service.create_related_conversation_async(
                 attack_result_id="attack-1",
                 request=CreateConversationRequest(source_conversation_id="attack-1", cutoff_index=2),
@@ -2260,425 +3213,93 @@ class TestAttackServiceAdditionalCoverage:
 
         assert result is not None
         assert result.conversation_id == "branch-dup"
-        mock_dup.assert_called_once_with(
-            source_conversation_id="attack-1",
-            cutoff_index=2,
-            target_identifier=expected_target,
-        )
+        mock_dup.assert_called_once()
+        assert mock_dup.call_args.kwargs == {
+            "source_conversation_id": "attack-1",
+            "cutoff_index": 2,
+            "target_identifier": expected_target,
+        }
+        mock_memory.add_conversation_branches_to_attack_async.assert_called_once()
+        assert mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs == {
+            "attack_result_id": "attack-1",
+            "conversations": [prepared],
+            "message_pieces": pieces,
+            "source_conversation": source,
+        }
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
-    async def test_add_message_merges_converter_identifiers_without_duplicates(self, attack_service, mock_memory):
-        """Should merge new converter identifiers with existing attack identifiers by hash."""
-        from pyrit.backend.models.attacks import AttackSummary, ConversationMessagesResponse
-
-        existing_converter = ComponentIdentifier(
-            class_name="ExistingConverter",
-            class_module="pyrit.prompt_converter",
-            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-        )
-        duplicate_converter = ComponentIdentifier(
-            class_name="ExistingConverter",
-            class_module="pyrit.prompt_converter",
-            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-        )
-        new_converter = ComponentIdentifier(
-            class_name="NewConverter",
-            class_module="pyrit.prompt_converter",
-            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-        )
-
-        ar = make_attack_result(conversation_id="attack-1")
-        # Rebuild the atomic_attack_identifier to include an existing converter child
-        strategy = ar.get_attack_strategy_identifier()
-        ar.atomic_attack_identifier = AtomicAttackIdentifier.build(
-            attack_identifier=ComponentIdentifier(
-                class_name="ManualAttack",
-                class_module="pyrit.backend",
-                children={
-                    "objective_target": strategy.get_child("objective_target") if strategy else None,
-                    "request_converters": [existing_converter],
-                },
-            ),
-        )
-
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="attack-1",
-            send=False,
-            converter_ids=["c-1", "c-2"],
-        )
-
-        with (
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
-            patch.object(
-                attack_service,
-                "get_attack_async",
-                new=AsyncMock(
-                    return_value=AttackSummary(
-                        attack_result_id="ar-attack-1",
-                        conversation_id="attack-1",
-                        objective="test objective",
-                        message_count=0,
-                        labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ),
-            ),
-            patch.object(
-                attack_service,
-                "get_conversation_messages_async",
-                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="attack-1", messages=[])),
-            ),
-        ):
-            mock_converter_service = MagicMock()
-            mock_converter_service.get_converter_objects_for_ids.return_value = [
-                MagicMock(get_identifier=MagicMock(return_value=duplicate_converter)),
-                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
-            ]
-            mock_get_converter_service.return_value = mock_converter_service
-
-            await attack_service.add_message_async(attack_result_id="attack-1", request=request)
-
-        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
-        # Converters are now stored inside atomic_attack_identifier -> attack_technique -> attack
-        atomic_id = update_fields["atomic_attack_identifier"]
-        attack_id = atomic_id["children"]["attack_technique"]["children"]["attack"]
-        persisted_identifiers = attack_id["children"]["request_converters"]
-        persisted_classes = [identifier["class_name"] for identifier in persisted_identifiers]
-
-        assert persisted_classes.count("ExistingConverter") == 1
-        assert persisted_classes.count("NewConverter") == 1
-        # The deprecated attack_identifier column should NOT be written
-        assert "attack_identifier" not in update_fields
-
-    async def test_converter_merge_with_flat_atomic_identifier(self, attack_service, mock_memory):
-        """Should merge converters via fallback path when atomic_attack_identifier has no attack_technique child."""
-        new_converter = ComponentIdentifier(
-            class_name="NewConverter",
-            class_module="pyrit.prompt_converter",
-            params={"supported_input_types": ("text",), "supported_output_types": ("text",)},
-        )
-
-        # Build a flat atomic identifier (no attack_technique nesting — legacy shape)
-        attack_id = ComponentIdentifier(
-            class_name="ManualAttack",
-            class_module="pyrit.backend",
-            children={
-                "objective_target": ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target"),
-            },
-        )
-        ar = make_attack_result(conversation_id="flat-1")
-        ar.atomic_attack_identifier = ComponentIdentifier(
-            class_name="AtomicAttack",
-            class_module="pyrit.scenario.core.atomic_attack",
-            children={"attack": attack_id},
-        )
-
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="flat-1",
-            send=False,
-            converter_ids=["c-1"],
-        )
-
-        with (
-            patch("pyrit.backend.services.attack_service.get_converter_service") as mock_get_converter_service,
-            patch.object(
-                attack_service,
-                "get_attack_async",
-                new=AsyncMock(
-                    return_value=AttackSummary(
-                        attack_result_id="ar-flat-1",
-                        conversation_id="flat-1",
-                        objective="test objective",
-                        message_count=0,
-                        labels={},
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    )
-                ),
-            ),
-            patch.object(
-                attack_service,
-                "get_conversation_messages_async",
-                new=AsyncMock(return_value=ConversationMessagesResponse(conversation_id="flat-1", messages=[])),
-            ),
-        ):
-            mock_converter_service = MagicMock()
-            mock_converter_service.get_converter_objects_for_ids.return_value = [
-                MagicMock(get_identifier=MagicMock(return_value=new_converter)),
-            ]
-            mock_get_converter_service.return_value = mock_converter_service
-
-            await attack_service.add_message_async(attack_result_id="flat-1", request=request)
-
-        update_fields = mock_memory.update_attack_result_by_id.call_args[1]["update_fields"]
-        assert "atomic_attack_identifier" in update_fields
-        assert "attack_identifier" not in update_fields
-        # Flat fallback: converter should be under atomic -> attack -> children
-        atomic_id = update_fields["atomic_attack_identifier"]
-        attack_child = atomic_id["children"]["attack"]
-        persisted_converters = attack_child["children"]["request_converters"]
-        assert len(persisted_converters) == 1
-        assert persisted_converters[0]["class_name"] == "NewConverter"
-
-    def test_duplicate_conversation_up_to_adds_pieces_when_present(self, attack_service, mock_memory):
-        """Should duplicate up to cutoff and persist duplicated pieces only when returned."""
-        source_messages = [
-            make_mock_piece(conversation_id="attack-1", sequence=0),
-            make_mock_piece(conversation_id="attack-1", sequence=1),
-            make_mock_piece(conversation_id="attack-1", sequence=2),
+    @pytest.mark.parametrize("cutoff_index,expected_sequences", [(-1, []), (0, [0]), (2, [0, 2])])
+    async def test_prepare_conversation_up_to_does_not_persist(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        cutoff_index: int,
+        expected_sequences: list[int],
+    ) -> None:
+        mock_memory.get_conversation_messages_async.return_value = [
+            _make_message(role="user", sequence=sequence) for sequence in [0, 2, 4]
         ]
-        mock_memory.get_conversation_messages.return_value = source_messages
-        duplicated_piece = make_mock_piece(conversation_id="branch-1", sequence=0)
-        mock_memory.duplicate_messages.return_value = ("branch-1", [duplicated_piece])
+        pieces = [
+            MessagePiece(conversation_id="prepared", role="user", original_value="copy", sequence=sequence)
+            for sequence in expected_sequences
+        ]
+        mock_memory.duplicate_messages_async.return_value = ("prepared", pieces)
+        target = ComponentIdentifier(class_name="TextTarget", class_module="pyrit.prompt_target")
 
-        new_id = attack_service._duplicate_conversation_up_to(source_conversation_id="attack-1", cutoff_index=1)
-
-        assert new_id == "branch-1"
-        passed_messages = mock_memory.duplicate_messages.call_args[1]["messages"]
-        assert [m.sequence for m in passed_messages] == [0, 1]
-        mock_memory.add_message_pieces_to_memory.assert_called_once()
-
-    def test_duplicate_conversation_up_to_skips_persist_when_no_duplicated_pieces(self, attack_service, mock_memory):
-        """Should not write to memory when duplicate_messages returns no pieces."""
-        mock_memory.get_conversation_messages.return_value = [make_mock_piece(conversation_id="attack-1", sequence=0)]
-        mock_memory.duplicate_messages.return_value = ("branch-empty", [])
-
-        new_id = attack_service._duplicate_conversation_up_to(source_conversation_id="attack-1", cutoff_index=10)
-
-        assert new_id == "branch-empty"
-        mock_memory.add_message_pieces_to_memory.assert_not_called()
-
-    def test_duplicate_conversation_remaps_assistant_to_simulated(self, attack_service, mock_memory):
-        """Should remap assistant pieces to simulated_assistant when flag is set."""
-        source = make_mock_piece(conversation_id="attack-1", role="assistant", sequence=0)
-        mock_memory.get_conversation_messages.return_value = [source]
-        dup_piece = make_mock_piece(conversation_id="branch-1", role="assistant", sequence=0)
-        mock_memory.duplicate_messages.return_value = ("branch-1", [dup_piece])
-
-        attack_service._duplicate_conversation_up_to(
-            source_conversation_id="attack-1", cutoff_index=0, remap_assistant_to_simulated=True
+        conversation, copies = await attack_service._prepare_conversation_up_to_async(
+            source_conversation_id="source", cutoff_index=cutoff_index, target_identifier=target
         )
 
-        assert dup_piece.role == "simulated_assistant"
+        assert conversation == Conversation(conversation_id="prepared", target_identifier=target)
+        assert copies == pieces
+        mock_memory.get_conversation_messages_async.assert_called_once_with(conversation_id="source")
+        assert [
+            message.sequence for message in mock_memory.duplicate_messages_async.call_args.kwargs["messages"]
+        ] == expected_sequences
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
-    async def test_store_prepended_messages_noop_when_empty(self, attack_service, mock_memory):
-        """Empty prepended list should be a no-op: no conversation row and no piece writes."""
-        await attack_service._store_prepended_messages_async(conversation_id="conv-1", prepended=[])
+    async def test_prepare_empty_messages_does_not_write_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        pieces = await attack_service._prepare_message_pieces_async(
+            conversation_id="conv-1", messages=[], persisted_paths=[]
+        )
+        assert pieces == []
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
-        mock_memory.add_conversation_to_memory.assert_not_called()
-        mock_memory.add_message_pieces_to_memory.assert_not_called()
+    @pytest.mark.parametrize(("role", "expected"), [("assistant", "simulated_assistant"), ("tool", "simulated_tool")])
+    async def test_prepare_conversation_remaps_response_roles_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock, role: ChatMessageRole, expected: ChatMessageRole
+    ) -> None:
+        piece = MessagePiece(conversation_id="branch-1", role=role, sequence=0, original_value="copied")
+        mock_memory.duplicate_messages_async.return_value = ("branch-1", [piece])
 
-
-class TestAddMessageGuards:
-    """Tests for target-mismatch and operator-mismatch guards in add_message_async."""
-
-    async def test_rejects_mismatched_target(self, attack_service, mock_memory) -> None:
-        """Should raise ValueError when request target differs from attack target."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-
-        # Create a mock target with a different class_name
-        wrong_target = MagicMock()
-        wrong_target.get_identifier.return_value = ComponentIdentifier(
-            class_name="DifferentTarget",
-            class_module="pyrit.prompt_target",
+        _, copies = await attack_service._prepare_conversation_up_to_async(
+            source_conversation_id="attack-1", cutoff_index=0
         )
 
-        with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc:
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = wrong_target
-            mock_get_target_svc.return_value = mock_target_svc
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                target_registry_name="wrong-target",
-            )
-
-            with pytest.raises(ValueError, match="Target mismatch"):
-                await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-    async def test_allows_matching_target(self, attack_service, mock_memory) -> None:
-        """Should NOT raise when request target matches attack target."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-        mock_memory.get_message_pieces.return_value = []
-        mock_memory.get_conversation_messages.return_value = []
-
-        with (
-            patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_svc,
-            patch("pyrit.backend.services.attack_service.PromptNormalizer") as mock_normalizer_cls,
-        ):
-            mock_target_svc = MagicMock()
-            mock_target_svc.get_target_object.return_value = _make_matching_target_mock()
-            mock_get_target_svc.return_value = mock_target_svc
-
-            mock_normalizer = MagicMock()
-            mock_normalizer.send_prompt_async = AsyncMock()
-            mock_normalizer_cls.return_value = mock_normalizer
-
-            request = AddMessageRequest(
-                pieces=[MessagePieceRequest(original_value="Hello")],
-                target_conversation_id="test-id",
-                send=True,
-                target_registry_name="test-target",
-            )
-
-            result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-            assert result.attack is not None
-
-    async def test_rejects_mismatched_operator(self, attack_service, mock_memory) -> None:
-        """Should raise ValueError when request operator differs from existing operator."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"operator": "alice"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"operator": "bob"},
-        )
-
-        with pytest.raises(ValueError, match="Operator mismatch"):
-            await attack_service.add_message_async(attack_result_id="test-id", request=request)
-
-    async def test_allows_matching_operator(self, attack_service, mock_memory) -> None:
-        """Should NOT raise when request operator matches existing operator."""
-        ar = make_attack_result(conversation_id="test-id")
-        mock_memory.get_attack_results.return_value = [ar]
-
-        existing_piece = make_mock_piece(conversation_id="test-id")
-        existing_piece.labels = {"operator": "alice"}
-        mock_memory.get_message_pieces.return_value = [existing_piece]
-        mock_memory.get_conversation_messages.return_value = []
-
-        request = AddMessageRequest(
-            role="user",
-            pieces=[MessagePieceRequest(original_value="Hello")],
-            target_conversation_id="test-id",
-            send=False,
-            labels={"operator": "alice"},
-        )
-
-        result = await attack_service.add_message_async(attack_result_id="test-id", request=request)
-        assert result.attack is not None
+        assert copies[0].role == expected
+        assert copies[0].prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY]
+        mock_memory.add_conversation_to_memory_async.assert_not_called()
+        mock_memory.add_message_pieces_to_memory_async.assert_not_called()
 
 
-class TestResolveVideoRemixMetadata:
-    """Tests for _resolve_video_remix_metadata."""
+def test_create_attack_request_normalizes_legacy_attribution_labels() -> None:
+    labels = {"operator": "alice", "operation": "nightly", "team": "red"}
 
-    def test_resolves_video_id_from_original_piece(self, attack_service, mock_memory):
-        """When a video_path piece has original_prompt_id, resolve video_id onto text piece."""
-        original_piece = MagicMock()
-        original_piece.prompt_metadata = {"video_id": "vid-abc-123"}
-        mock_memory.get_message_pieces.return_value = [original_piece]
+    with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+        request = CreateAttackRequest(target_registry_name="target", labels=labels)
 
-        request = AddMessageRequest(
-            role="user",
-            target_conversation_id="conv-1",
-            pieces=[
-                MessagePieceRequest(original_value="remix this video", data_type="text"),
-                MessagePieceRequest(
-                    original_value="/path/to/video.mp4",
-                    data_type="video_path",
-                    original_prompt_id="piece-id-1",
-                ),
-            ],
-        )
+    assert request.operator == "alice"
+    assert request.operation == "nightly"
+    assert request.labels == {"team": "red"}
+    assert labels == {"operator": "alice", "operation": "nightly", "team": "red"}
 
-        attack_service._resolve_video_remix_metadata(request)
 
-        assert request.pieces[0].prompt_metadata == {"video_id": "vid-abc-123"}
-        assert request.pieces[1].prompt_metadata == {"video_id": "vid-abc-123"}
-
-    def test_no_op_without_video_pieces(self, attack_service):
-        """Should do nothing when there are no video_path pieces."""
-        request = AddMessageRequest(
-            role="user",
-            target_conversation_id="conv-1",
-            pieces=[MessagePieceRequest(original_value="just text", data_type="text")],
-        )
-
-        attack_service._resolve_video_remix_metadata(request)
-
-        assert request.pieces[0].prompt_metadata is None
-
-    def test_no_op_when_video_id_already_set(self, attack_service, mock_memory):
-        """Should not overwrite existing video_id on text piece."""
-        request = AddMessageRequest(
-            role="user",
-            target_conversation_id="conv-1",
-            pieces=[
-                MessagePieceRequest(
-                    original_value="remix",
-                    data_type="text",
-                    prompt_metadata={"video_id": "existing-id"},
-                ),
-                MessagePieceRequest(
-                    original_value="/path/to/video.mp4",
-                    data_type="video_path",
-                    original_prompt_id="piece-id-1",
-                ),
-            ],
-        )
-
-        attack_service._resolve_video_remix_metadata(request)
-
-        assert request.pieces[0].prompt_metadata == {"video_id": "existing-id"}
-        mock_memory.get_message_pieces.assert_not_called()
-
-    def test_no_op_without_original_prompt_id(self, attack_service, mock_memory):
-        """Should not crash when video_path piece has no original_prompt_id."""
-        request = AddMessageRequest(
-            role="user",
-            target_conversation_id="conv-1",
-            pieces=[
-                MessagePieceRequest(original_value="remix", data_type="text"),
-                MessagePieceRequest(original_value="/path/to/video.mp4", data_type="video_path"),
-            ],
-        )
-
-        attack_service._resolve_video_remix_metadata(request)
-
-        assert request.pieces[0].prompt_metadata is None
-        mock_memory.get_message_pieces.assert_not_called()
-
-    def test_no_op_when_original_piece_has_no_video_id(self, attack_service, mock_memory):
-        """Should not set metadata when original piece has no video_id."""
-        original_piece = MagicMock()
-        original_piece.prompt_metadata = {"other_key": "value"}
-        mock_memory.get_message_pieces.return_value = [original_piece]
-
-        request = AddMessageRequest(
-            role="user",
-            target_conversation_id="conv-1",
-            pieces=[
-                MessagePieceRequest(original_value="remix", data_type="text"),
-                MessagePieceRequest(
-                    original_value="/path/to/video.mp4",
-                    data_type="video_path",
-                    original_prompt_id="piece-id-1",
-                ),
-            ],
-        )
-
-        attack_service._resolve_video_remix_metadata(request)
-
-        assert request.pieces[0].prompt_metadata is None
+def test_create_attack_request_rejects_overlength_values() -> None:
+    with pytest.raises(ValueError, match="at most 128"):
+        CreateAttackRequest(target_registry_name="target", operator="x" * 129)

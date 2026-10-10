@@ -4,6 +4,7 @@ import { ACTIONS, LIFECYCLE, STATUS } from 'react-joyride'
 
 import { useTour } from './useTour'
 import { TOUR_STEPS } from '../components/Tour/tourSteps'
+import type { ViewName } from '../components/Sidebar/Navigation'
 
 // Minimal EventData shape — only fields our handler reads
 function makeEvent(overrides: Record<string, unknown> = {}) {
@@ -25,12 +26,34 @@ function makeEvent(overrides: Record<string, unknown> = {}) {
   } as any
 }
 
+const TOUR_ANCHORS = [
+  'sidebar-nav',
+  'labels-card',
+  'target-card',
+  'chat-prerequisite',
+  'converter-toggle',
+  'scanner-catalog',
+  'history-tabs',
+  'registry-tabs',
+]
+
+/** Mounts the anchors every step targets so the DOM matches a rendered app. */
+function mountTourAnchors(): void {
+  for (const anchor of TOUR_ANCHORS) {
+    const element = document.createElement('div')
+    element.setAttribute('data-tour', anchor)
+    document.body.appendChild(element)
+  }
+}
+
 describe('useTour', () => {
   const onNavigate = jest.fn()
 
   beforeEach(() => {
     jest.clearAllMocks()
     localStorage.clear()
+    document.body.innerHTML = ''
+    mountTourAnchors()
     // Mock requestAnimationFrame — jsdom doesn't implement it.
     // Call the callback synchronously so tests don't need to wait.
     jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
@@ -50,6 +73,202 @@ describe('useTour', () => {
 
     expect(result.current.tourProps.run).toBe(true)
     expect(result.current.tourProps.stepIndex).toBe(0)
+    expect(result.current.tourProps.floatingOptions).toEqual({
+      hideArrow: true,
+      shiftOptions: {
+        boundary: [],
+        crossAxis: true,
+        padding: 12,
+        rootBoundary: 'viewport',
+      },
+    })
+  })
+
+  it('uses visible setup guidance when no target is active', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home', false))
+    const steps = result.current.tourProps.steps
+
+    expect(steps[2].content).toContain('Select a target from the Chat dropdown')
+    expect(steps[2].content).toContain('Target Registry')
+    expect(steps[2].content).toContain('defaults for your account')
+    expect(steps[3].target).toBe('[data-tour="chat-prerequisite"]')
+    expect(steps[3].content).toContain('to enable the message composer')
+    expect(steps[3].content).toContain('automatically select their original registered target')
+  })
+
+  it('uses the active target card and visible converter control when a target is active', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home', true))
+    const steps = result.current.tourProps.steps
+
+    expect(steps[2].content).toContain('default objective target')
+    expect(steps[2].content).toContain('new chats and scanner runs')
+    expect(steps[2].content).toContain('adversarial defaults in the Target Registry')
+    expect(steps[3].target).toBe('[data-tour="converter-toggle"]')
+    expect(steps[3].content).toContain('Chat shows the message composer')
+    expect(steps[3].content).toContain('Toggle converter panel')
+  })
+
+  it('covers every primary view the sidebar advertises', () => {
+    const { result } = renderHook(() => useTour(onNavigate, true, 'home'))
+    const steps = result.current.tourProps.steps
+
+    expect(steps.map((step) => step.target)).toEqual([
+      '[data-tour="sidebar-nav"]',
+      '[data-tour="labels-card"]',
+      '[data-tour="target-card"]',
+      '[data-tour="chat-prerequisite"]',
+      '[data-tour="scanner-catalog"]',
+      '[data-tour="history-tabs"]',
+      '[data-tour="registry-tabs"]',
+    ])
+    expect(steps[0].content).toContain('Scanner launches full test campaigns')
+    expect(steps[4].content).toContain('Scanner runs a whole campaign')
+    expect(steps[5].content).toContain('The Attacks tab lists individual conversations')
+    expect(steps[6].content).toContain('Register targets and set your objective and adversarial defaults')
+  })
+
+  it('mentions Configuration only when the user can manage it', () => {
+    const withConfig = renderHook(() => useTour(onNavigate, true, 'home', false, true))
+    expect(withConfig.result.current.tourProps.steps[0].content)
+      .toContain('Configuration holds environment settings')
+
+    const withoutConfig = renderHook(() => useTour(onNavigate, true, 'home', false, false))
+    expect(withoutConfig.result.current.tourProps.steps[0].content)
+      .not.toContain('Configuration holds environment settings')
+  })
+
+  it('re-navigates when the next anchor is missing on a sub-route of the same view', () => {
+    // Simulates /scanner/:scenarioName: the view matches but the catalog
+    // anchor the scanner step points at is not rendered.
+    document.querySelector('[data-tour="scanner-catalog"]')?.remove()
+
+    const { result, rerender } = renderHook(
+      ({ currentView }: { currentView: ViewName }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as ViewName } },
+    )
+
+    act(() => { result.current.startTour() })
+    rerender({ currentView: 'scenarios' })
+    onNavigate.mockClear()
+
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.NEXT, index: 3 }))
+    })
+
+    expect(onNavigate).toHaveBeenCalledWith('scenarios')
+    expect(result.current.tourProps.stepIndex).toBe(4)
+  })
+
+  it('does not advance a missing-anchor step after the tour is cancelled', () => {
+    document.querySelector('[data-tour="scanner-catalog"]')?.remove()
+    const deferredFrames: Parameters<typeof window.requestAnimationFrame>[0][] = []
+    jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      deferredFrames.push(cb)
+      return 0
+    })
+
+    const { result, rerender } = renderHook(
+      ({ currentView }: { currentView: ViewName }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as ViewName } },
+    )
+
+    act(() => { result.current.startTour() })
+    rerender({ currentView: 'scenarios' })
+
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.NEXT, index: 3 }))
+    })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ action: ACTIONS.CLOSE }))
+    })
+    act(() => {
+      for (const frame of deferredFrames) frame(0)
+    })
+
+    expect(result.current.tourProps.run).toBe(false)
+    expect(result.current.tourProps.stepIndex).toBe(0)
+  })
+
+  it('keeps tour controls available after manual navigation away from the current step', () => {
+    const { result, rerender } = renderHook(
+      ({ currentView }: { currentView: ViewName }) => useTour(onNavigate, true, currentView),
+      { initialProps: { currentView: 'home' as ViewName } },
+    )
+
+    act(() => { result.current.startTour() })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 0 }))
+    })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 1 }))
+    })
+    expect(result.current.tourProps.stepIndex).toBe(2)
+
+    rerender({ currentView: 'registry' })
+
+    expect(result.current.tourProps.run).toBe(true)
+    expect(result.current.tourProps.steps[2]).toMatchObject({
+      target: 'body',
+      placement: 'center',
+      hideOverlay: true,
+      disableFocusTrap: true,
+    })
+
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({
+        action: ACTIONS.PREV,
+        index: 2,
+      }))
+    })
+    expect(onNavigate).toHaveBeenCalledWith('home')
+
+    rerender({ currentView: 'home' })
+    expect(result.current.tourProps.stepIndex).toBe(1)
+    expect(result.current.tourProps.steps[1].target).toBe('[data-tour="labels-card"]')
+  })
+
+  it('adapts the next step when a target is activated from another view', () => {
+    interface HookProps {
+      currentView: ViewName
+      hasActiveTarget: boolean
+    }
+
+    const { result, rerender } = renderHook(
+      ({ currentView, hasActiveTarget }: HookProps) =>
+        useTour(onNavigate, true, currentView, hasActiveTarget),
+      {
+        initialProps: {
+          currentView: 'home' as ViewName,
+          hasActiveTarget: false,
+        },
+      },
+    )
+
+    act(() => { result.current.startTour() })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 0 }))
+    })
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 1 }))
+    })
+
+    rerender({ currentView: 'registry', hasActiveTarget: false })
+    expect(result.current.tourProps.steps[2].content).toContain('Select a target')
+
+    rerender({ currentView: 'registry', hasActiveTarget: true })
+    expect(result.current.tourProps.steps[2].target).toBe('body')
+    expect(result.current.tourProps.steps[2].content).toContain('default objective target')
+    expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')
+
+    act(() => {
+      result.current.tourProps.onEvent(makeEvent({ index: 2 }))
+    })
+    expect(onNavigate).toHaveBeenCalledWith('chat')
+
+    rerender({ currentView: 'chat', hasActiveTarget: true })
+    expect(result.current.tourProps.stepIndex).toBe(3)
+    expect(result.current.tourProps.steps[3].target).toBe('[data-tour="converter-toggle"]')
+    expect(result.current.tourProps.steps[3].hideOverlay).toBeUndefined()
   })
 
   it('startTour navigates to home and defers step when on a different view', () => {

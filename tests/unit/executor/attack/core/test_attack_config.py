@@ -8,6 +8,7 @@ import pytest
 from pyrit.executor.attack.core import AttackScoringConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
+    resolve_adversarial_json_schema,
     resolve_adversarial_system_prompt,
 )
 from pyrit.models import SeedPrompt
@@ -84,21 +85,7 @@ class TestAttackScoringConfig:
         assert config.use_score_as_feedback is False
 
 
-class TestAttackAdversarialConfig:
-    """Tests for AttackAdversarialConfig construction and its deprecation handling."""
-
-    def test_both_system_prompt_and_path_logs_warning(self, caplog):
-        """Setting both system_prompt and the deprecated system_prompt_path warns about precedence."""
-        with caplog.at_level("WARNING"):
-            AttackAdversarialConfig(
-                target=MagicMock(spec=PromptTarget),
-                system_prompt="inline {{ objective }}",
-                system_prompt_path="some/legacy/path.yaml",
-            )
-        assert "takes precedence" in caplog.text
-
-
-class TestResolveAdversarialSystemPrompt:
+class TestResolveAdversarialSystemPromptInlineString:
     """Tests for resolve_adversarial_system_prompt."""
 
     def test_inline_string_is_trusted_and_wrapped(self):
@@ -111,6 +98,49 @@ class TestResolveAdversarialSystemPrompt:
         )
         assert seed.value == "persona {{ objective }}"
         assert "objective" in (seed.parameters or [])
+
+
+_SCHEMA: dict = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+_OTHER_SCHEMA: dict = {"type": "object", "properties": {"foo": {"type": "string"}}}
+
+
+def _seed_with_schema(schema: dict | None) -> SeedPrompt:
+    return SeedPrompt(value="{{ objective }}", data_type="text", response_json_schema=schema)
+
+
+class TestResolveAdversarialJsonSchema:
+    """Tests for the module-level resolve_adversarial_json_schema helper."""
+
+    def test_returns_none_when_neither_declares(self):
+        assert resolve_adversarial_json_schema(system_prompt=None, first_message=None) is None
+        assert (
+            resolve_adversarial_json_schema(
+                system_prompt=_seed_with_schema(None), first_message=_seed_with_schema(None)
+            )
+            is None
+        )
+
+    def test_returns_system_prompt_schema(self):
+        result = resolve_adversarial_json_schema(
+            system_prompt=_seed_with_schema(_SCHEMA), first_message=_seed_with_schema(None)
+        )
+        assert result == _SCHEMA
+
+    def test_returns_first_message_schema(self):
+        result = resolve_adversarial_json_schema(
+            system_prompt=_seed_with_schema(None), first_message=_seed_with_schema(_SCHEMA)
+        )
+        assert result == _SCHEMA
+
+    def test_raises_when_both_declare_schema(self):
+        with pytest.raises(ValueError, match="only one of them"):
+            resolve_adversarial_json_schema(
+                system_prompt=_seed_with_schema(_SCHEMA), first_message=_seed_with_schema(_OTHER_SCHEMA)
+            )
+
+
+class TestResolveAdversarialSystemPrompt:
+    """Tests for resolve_adversarial_system_prompt."""
 
     def test_explicit_seedprompt_with_required_params_returned_as_is(self):
         """An explicitly provided SeedPrompt declaring the required params is returned unchanged."""
@@ -144,4 +174,175 @@ class TestResolveAdversarialSystemPrompt:
                 default_system_prompt_path="unused.yaml",
                 required_parameters=["objective"],
                 error_message="must declare objective",
+            )
+
+
+class TestResolveAdversarialSystemPromptPrefix:
+    """Tests for layering ``system_prompt_prefix`` on top of resolve_adversarial_system_prompt."""
+
+    def test_prefix_prepended_ahead_of_inline_system_prompt(self):
+        """A prefix is prepended, blank-line separated, ahead of an inline system_prompt."""
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt="base persona {{ objective }}",
+            system_prompt_prefix="never use copy-through attacks",
+        )
+        seed = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path="unused.yaml",
+            required_parameters=["objective"],
+        )
+        assert seed.value == "never use copy-through attacks\n\nbase persona {{ objective }}"
+        assert "objective" in (seed.parameters or [])
+
+    def test_prefix_prepended_ahead_of_default_yaml_prompt(self, tmp_path):
+        """A prefix is prepended ahead of the technique's built-in default system prompt."""
+        default_path = tmp_path / "default.yaml"
+        default_path.write_text(
+            "name: default\ndata_type: text\nvalue: 'default persona {{ objective }}'\nparameters:\n  - objective\n"
+        )
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt_prefix="extra rules",
+        )
+        seed = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path=default_path,
+            required_parameters=["objective"],
+        )
+        assert seed.value == "extra rules\n\ndefault persona {{ objective }}"
+
+    def test_prefix_as_explicit_seedprompt_uses_its_value(self):
+        """A prefix provided as a SeedPrompt contributes its rendered value text, not the object itself."""
+        prefix = SeedPrompt(value="extra rules {{ objective }}", data_type="text", parameters=["objective"])
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt="base persona",
+            system_prompt_prefix=prefix,
+        )
+        seed = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path="unused.yaml",
+            required_parameters=["objective"],
+        )
+        assert seed.value == "extra rules {{ objective }}\n\nbase persona"
+
+    def test_inline_prefix_with_jinja_syntax_raises(self):
+        """An inline string prefix containing Jinja delimiters is rejected as non-static."""
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt="base persona {{ objective }}",
+            system_prompt_prefix="extra rules {{ objective }}",
+        )
+        with pytest.raises(ValueError, match="system_prompt_prefix must be static text without Jinja syntax"):
+            resolve_adversarial_system_prompt(
+                config=config,
+                default_system_prompt_path="unused.yaml",
+                required_parameters=["objective"],
+            )
+
+    def test_prefix_missing_required_params_raises(self):
+        """A prefix SeedPrompt missing a required parameter raises ValueError naming the prefix."""
+        prefix = SeedPrompt(value="extra rules", data_type="text", parameters=[])
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt="base persona {{ objective }}",
+            system_prompt_prefix=prefix,
+        )
+        with pytest.raises(ValueError, match="system_prompt_prefix is missing required parameters"):
+            resolve_adversarial_system_prompt(
+                config=config,
+                default_system_prompt_path="unused.yaml",
+                required_parameters=["objective"],
+            )
+
+    def test_prefix_failure_does_not_reuse_base_error_message(self):
+        """A custom error_message (written for the base prompt) is not reused for prefix failures."""
+        prefix = SeedPrompt(value="extra rules", data_type="text", parameters=[])
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt="base persona {{ objective }}",
+            system_prompt_prefix=prefix,
+        )
+        with pytest.raises(ValueError, match="system_prompt_prefix is missing required parameters") as exc_info:
+            resolve_adversarial_system_prompt(
+                config=config,
+                default_system_prompt_path="unused.yaml",
+                required_parameters=["objective"],
+                error_message="Adversarial seed prompt must have an objective",
+            )
+        assert "Adversarial seed prompt must have an objective" not in str(exc_info.value)
+
+    def test_no_prefix_returns_base_prompt_unchanged(self):
+        """With no prefix configured, the resolved base SeedPrompt is returned as-is (same object)."""
+        provided = SeedPrompt(value="persona {{ objective }}", data_type="text", parameters=["objective"])
+        config = AttackAdversarialConfig(target=MagicMock(spec=PromptTarget), system_prompt=provided)
+        seed = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path="unused.yaml",
+            required_parameters=["objective"],
+        )
+        assert seed is provided
+
+    def test_prefix_preserves_base_response_json_schema(self):
+        """When only the base prompt declares a response_json_schema, the combined prompt keeps it."""
+        schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+        base = SeedPrompt(
+            value="base {{ objective }}", data_type="text", parameters=["objective"], response_json_schema=schema
+        )
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt=base,
+            system_prompt_prefix="extra rules",
+        )
+        seed = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path="unused.yaml",
+            required_parameters=["objective"],
+        )
+        assert seed.response_json_schema == schema
+
+    def test_prefix_schema_used_when_base_has_none(self):
+        """When only the prefix declares a response_json_schema, the combined prompt uses it."""
+        schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+        prefix = SeedPrompt(
+            value="extra rules {{ objective }}",
+            data_type="text",
+            parameters=["objective"],
+            response_json_schema=schema,
+        )
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt="base persona {{ objective }}",
+            system_prompt_prefix=prefix,
+        )
+        seed = resolve_adversarial_system_prompt(
+            config=config,
+            default_system_prompt_path="unused.yaml",
+            required_parameters=["objective"],
+        )
+        assert seed.response_json_schema == schema
+
+    def test_prefix_and_base_both_declare_schema_raises(self):
+        """Declaring a response_json_schema on both the base prompt and the prefix is ambiguous."""
+        schema = {"type": "object", "properties": {"next_message": {"type": "string"}}}
+        base = SeedPrompt(
+            value="base {{ objective }}", data_type="text", parameters=["objective"], response_json_schema=schema
+        )
+        prefix = SeedPrompt(
+            value="extra {{ objective }}",
+            data_type="text",
+            parameters=["objective"],
+            response_json_schema=schema,
+        )
+        config = AttackAdversarialConfig(
+            target=MagicMock(spec=PromptTarget),
+            system_prompt=base,
+            system_prompt_prefix=prefix,
+        )
+        with pytest.raises(ValueError, match="Both the resolved adversarial system prompt and system_prompt_prefix"):
+            resolve_adversarial_system_prompt(
+                config=config,
+                default_system_prompt_path="unused.yaml",
+                required_parameters=["objective"],
             )

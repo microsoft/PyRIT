@@ -6,6 +6,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import Home from "./Home";
 import { attacksApi } from "../../services/api";
 import type { AttackSummary, TargetInstance } from "../../types";
@@ -13,9 +14,6 @@ import type { AttackSummary, TargetInstance } from "../../types";
 jest.mock("../../services/api", () => ({
   attacksApi: {
     listAttacks: jest.fn(),
-  },
-  labelsApi: {
-    getLabels: jest.fn().mockResolvedValue({ source: "attacks", labels: {} }),
   },
 }));
 
@@ -30,23 +28,22 @@ function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
     attack_result_id: "ar-1",
     conversation_id: "conv-1",
     attack_type: "TestAttack",
+    objective: "Test objective",
     converters: [],
     outcome: "success",
     last_message_preview: "preview",
     message_count: 1,
     related_conversation_ids: [],
-    labels: { operator: "alice", operation: "op_alpha" },
+    operator: "alice",
+    operation: "op_alpha",
+    labels: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
   };
 }
 
-const defaultLabels: Record<string, string> = { operator: "alice", operation: "op_alpha" };
-
 const defaultProps = {
-  labels: defaultLabels,
-  onLabelsChange: jest.fn(),
   activeTarget: null as TargetInstance | null,
   onNavigate: jest.fn(),
   onOpenAttack: jest.fn(),
@@ -63,7 +60,16 @@ describe("Home", () => {
 
   it("renders the welcome hero", async () => {
     render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(screen.getByText(/welcome to co-pyrit/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: /welcome to co-pyrit/i })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Labels" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Default objective target" })).toBeInTheDocument();
+    expect(screen.getByText(/Use the bar above/)).toBeInTheDocument();
+    expect(screen.queryByTestId("labels-bar")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Recent operations" })
+    ).toBeInTheDocument();
     await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
   });
 
@@ -75,24 +81,24 @@ describe("Home", () => {
   });
 
   it("renders active target summary and 'Manage targets' button when a target is set", async () => {
-    const target: TargetInstance = {
+    const target: TargetInstance = makeTarget({
       target_registry_name: "my_target",
       target_type: "OpenAIChatTarget",
       endpoint: "https://example.com",
       model_name: "gpt-test",
-    };
+    });
     render(<TestWrapper><Home {...defaultProps} activeTarget={target} /></TestWrapper>);
     expect(screen.getByTestId("home-target-active")).toHaveTextContent("gpt-test");
     expect(screen.getByRole("button", { name: /manage targets/i })).toBeInTheDocument();
     await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
   });
 
-  it("navigates to config when 'Configure a target' is clicked", async () => {
+  it("navigates to the registry when 'Configure a target' is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = jest.fn();
     render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
     await user.click(screen.getByTestId("home-configure-target-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("config");
+    expect(onNavigate).toHaveBeenCalledWith("registry");
   });
 
   it("shows the empty state when there are no attacks", async () => {
@@ -116,17 +122,20 @@ describe("Home", () => {
       items: [
         makeAttack({
           attack_result_id: "ar-1",
-          labels: { operator: "alice", operation: "op_alpha" },
+          operator: "alice",
+          operation: "op_alpha",
           updated_at: new Date(now).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-2",
-          labels: { operator: "alice", operation: "op_alpha" },
+          operator: "alice",
+          operation: "op_alpha",
           updated_at: new Date(now - 60_000).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-3",
-          labels: { operator: "alice", operation: "op_beta" },
+          operator: "alice",
+          operation: "op_beta",
           updated_at: new Date(now - 120_000).toISOString(),
         }),
       ],
@@ -152,19 +161,22 @@ describe("Home", () => {
         // the group's last-activity — exercising the "newer than current" branch.
         makeAttack({
           attack_result_id: "ar-old",
-          labels: { operator: "alice", operation: "op_time" },
+          operator: "alice",
+          operation: "op_time",
           last_message_preview: "older than a week",
           updated_at: new Date(now - 10 * DAY).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-hours",
-          labels: { operator: "alice", operation: "op_time" },
+          operator: "alice",
+          operation: "op_time",
           last_message_preview: "a few hours ago",
           updated_at: new Date(now - 3 * HOUR).toISOString(),
         }),
         makeAttack({
           attack_result_id: "ar-days",
-          labels: { operator: "alice", operation: "op_time" },
+          operator: "alice",
+          operation: "op_time",
           last_message_preview: "a few days ago",
           updated_at: new Date(now - 3 * DAY).toISOString(),
         }),
@@ -190,21 +202,24 @@ describe("Home", () => {
       items: [
         makeAttack({
           attack_result_id: "f1",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           outcome: "success",
           last_message_preview: "first preview",
           updated_at: new Date(now - 60_000).toISOString(),
         }),
         makeAttack({
           attack_result_id: "f2",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           outcome: null, // unknown outcome -> default icon via the ?? 'undetermined' branch
           last_message_preview: null, // missing preview -> falls back to attack_type
           updated_at: new Date(now - 120_000).toISOString(),
         }),
         makeAttack({
           attack_result_id: "f3",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           // Outcome not present in the icon map -> exercises the icon fallback branch.
           outcome: "mystery" as unknown as AttackSummary["outcome"],
           last_message_preview: "third preview",
@@ -212,7 +227,8 @@ describe("Home", () => {
         }),
         makeAttack({
           attack_result_id: "f4",
-          labels: { operator: "alice", operation: "op_full" },
+          operator: "alice",
+          operation: "op_full",
           last_message_preview: "fourth preview",
           updated_at: new Date(now - 240_000).toISOString(),
         }),
@@ -237,7 +253,7 @@ describe("Home", () => {
       items: [
         makeAttack({
           attack_result_id: "ar-x",
-          labels: { operator: "alice" },
+          operation: null,
         }),
       ],
       pagination: { has_more: false, next_cursor: null },

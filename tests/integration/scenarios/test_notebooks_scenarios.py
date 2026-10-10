@@ -14,6 +14,15 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "scenarios").resolve()
 
 skipped_files: list[str] = []
 
+# Default per-cell execution timeout (seconds) for scenario notebooks.
+DEFAULT_CELL_TIMEOUT = 600
+
+# Some scenario notebooks run many objectives across several attempts within a single
+# cell and need a longer per-cell timeout than the default.
+NOTEBOOK_CELL_TIMEOUTS = {
+    "3_adaptive_scenarios.ipynb": 1800,
+}
+
 
 @pytest.mark.parametrize(
     "file_name",
@@ -24,7 +33,7 @@ def test_execute_notebooks(file_name):
     with open(nb_path, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
-    ep = ExecutePreprocessor(timeout=600)
+    ep = ExecutePreprocessor(timeout=NOTEBOOK_CELL_TIMEOUTS.get(file_name, DEFAULT_CELL_TIMEOUT))
 
     # Execute notebook, test will throw exception if any cell fails
     ep.preprocess(nb, {"metadata": {"path": nb_path.parent}})

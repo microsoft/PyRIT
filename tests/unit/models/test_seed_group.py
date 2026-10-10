@@ -1,15 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Tests for the SeedGroup and SeedAttackGroup classes."""
+"""Tests for the SeedGroup and AttackSeedGroup classes."""
 
 import uuid
 
 import pytest
 
+from pyrit.models import MessagePiece, RequestTraceContext
 from pyrit.models.seeds import (
-    SeedAttackGroup,
-    SeedAttackTechniqueGroup,
+    AttackSeedGroup,
+    AttackTechniqueSeedGroup,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
@@ -19,6 +20,68 @@ from pyrit.models.seeds import (
 # =============================================================================
 # SeedGroup Tests
 # =============================================================================
+
+
+@pytest.mark.parametrize("has_next_message", [False, True])
+def test_seed_extraction_marks_only_history_and_preserves_seed_metadata(has_next_message: bool) -> None:
+    prompts = [
+        SeedPrompt(value="Instructions", role="system", sequence=0),
+        SeedPrompt(value="Earlier request", role="user", sequence=1),
+        SeedPrompt(
+            value='{"call_id":"c","name":"lookup","arguments":"{}"}',
+            role="assistant",
+            data_type="function_call",
+            sequence=2,
+        ),
+        SeedPrompt(
+            value='{"call_id":"c","output":"result"}', role="tool", data_type="function_call_output", sequence=3
+        ),
+    ]
+    if has_next_message:
+        prompts.append(SeedPrompt(value="Next request", role="user", sequence=4))
+    for prompt in prompts:
+        prompt.metadata = {
+            "keep": "value",
+            RequestTraceContext.METADATA_KEY: {"old": "trace"},
+            RequestTraceContext.REQUEST_METADATA_KEY: {"old": "request"},
+        }
+    group = SeedGroup(seeds=prompts)
+    original = group.model_dump()
+
+    history = group.prepended_conversation
+    assert history is not None
+    assert [message.get_piece().role for message in history] == [
+        "system",
+        "user",
+        "simulated_assistant",
+        "simulated_tool",
+    ]
+    for message in history:
+        assert message.get_piece().prompt_metadata == {
+            "keep": "value",
+            MessagePiece.PREPENDED_HISTORY_METADATA_KEY: True,
+        }
+    next_message = group.next_message
+    if has_next_message:
+        assert next_message is not None
+        assert next_message.get_piece().prompt_metadata == prompts[-1].metadata
+        assert MessagePiece.PREPENDED_HISTORY_METADATA_KEY not in next_message.get_piece().prompt_metadata
+    else:
+        assert next_message is None
+    assert group.model_dump() == original
+
+
+def test_outgoing_seed_user_messages_are_not_prepended_history() -> None:
+    group = SeedGroup(
+        seeds=[
+            SeedPrompt(value="First request", role="user", sequence=0, metadata={"keep": "first"}),
+            SeedPrompt(value="Second request", role="user", sequence=1, metadata={"keep": "second"}),
+        ]
+    )
+    assert [message.get_piece().prompt_metadata for message in group.user_messages] == [
+        {"keep": "first"},
+        {"keep": "second"},
+    ]
 
 
 class TestSeedGroupInit:
@@ -166,16 +229,16 @@ class TestSeedGroupHarmCategories:
 
 
 # =============================================================================
-# SeedAttackGroup Tests
+# AttackSeedGroup Tests
 # =============================================================================
 
 
-class TestSeedAttackGroupInit:
-    """Tests for SeedAttackGroup initialization."""
+class TestAttackSeedGroupInit:
+    """Tests for AttackSeedGroup initialization."""
 
     def test_init_with_objective_and_prompt(self):
         """Test basic initialization with objective and prompt."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Test objective"),
                 SeedPrompt(value="Test prompt", data_type="text"),
@@ -191,7 +254,7 @@ class TestSeedAttackGroupInit:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: Adversarial\ndata_type: text")
 
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Test objective"),
                 SeedSimulatedConversation(
@@ -210,7 +273,7 @@ class TestSeedAttackGroupInit:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: Adversarial\ndata_type: text")
 
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 {"value": "Test objective", "seed_type": "objective"},
                 {
@@ -232,7 +295,7 @@ class TestSeedAttackGroupInit:
         # SeedSimulatedConversation with sequence=0 and num_turns=3 occupies sequences 0-5
         # SeedPrompt with sequence=2 overlaps with that range
         with pytest.raises(ValueError, match="overlaps with SeedSimulatedConversation"):
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="Objective"),
                     SeedSimulatedConversation(
@@ -249,7 +312,7 @@ class TestSeedAttackGroupInit:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: adv\ndata_type: text")
 
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 {
                     "seed_type": "simulated_conversation",
@@ -264,12 +327,12 @@ class TestSeedAttackGroupInit:
         assert isinstance(group.seeds[1], SeedSimulatedConversation)
 
 
-class TestSeedAttackGroupObjective:
-    """Tests for SeedAttackGroup objective handling."""
+class TestAttackSeedGroupObjective:
+    """Tests for AttackSeedGroup objective handling."""
 
     def test_objective_property_returns_objective(self):
         """Test that objective property returns the SeedObjective."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="My objective"),
                 SeedPrompt(value="Test", data_type="text"),
@@ -279,13 +342,13 @@ class TestSeedAttackGroupObjective:
         assert group.objective.value == "My objective"
 
     def test_no_objective_raises_error(self):
-        """Test that SeedAttackGroup without objective raises error."""
+        """Test that AttackSeedGroup without objective raises error."""
         with pytest.raises(ValueError, match="must have exactly one objective"):
-            SeedAttackGroup(seeds=[SeedPrompt(value="Test", data_type="text")])
+            AttackSeedGroup(seeds=[SeedPrompt(value="Test", data_type="text")])
 
     def test_objective_value_can_be_updated(self):
         """Test that objective value can be updated directly."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Old objective"),
                 SeedPrompt(value="Test", data_type="text"),
@@ -297,12 +360,12 @@ class TestSeedAttackGroupObjective:
         assert group.objective.value == "New objective"
 
 
-class TestSeedAttackGroupSimulatedConversation:
-    """Tests for SeedAttackGroup simulated conversation handling."""
+class TestAttackSeedGroupSimulatedConversation:
+    """Tests for AttackSeedGroup simulated conversation handling."""
 
     def test_has_simulated_conversation_false_when_none(self):
         """Test has_simulated_conversation is False when no config."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test", data_type="text"),
@@ -316,7 +379,7 @@ class TestSeedAttackGroupSimulatedConversation:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: Adversarial\ndata_type: text")
 
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedSimulatedConversation(
@@ -335,7 +398,7 @@ class TestSeedAttackGroupSimulatedConversation:
 
         # SeedSimulatedConversation with sequence=0 and num_turns=2 occupies sequences 0-3 (2*2=4)
         # A prompt with sequence=10 does NOT overlap
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedSimulatedConversation(
@@ -358,7 +421,7 @@ class TestSeedAttackGroupSimulatedConversation:
 
         # SeedSimulatedConversation with sequence=5 and num_turns=2 occupies sequences 5-8
         # A prompt with sequence=0 does NOT overlap (it's before the simulated range)
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Static intro", data_type="text", sequence=0, role="user"),
@@ -375,24 +438,24 @@ class TestSeedAttackGroupSimulatedConversation:
         assert group.prompts[0].value == "Static intro"
 
 
-class TestSeedAttackGroupMessageExtraction:
-    """Tests for SeedAttackGroup message extraction methods."""
+class TestAttackSeedGroupMessageExtraction:
+    """Tests for AttackSeedGroup message extraction methods."""
 
     def test_is_single_turn_false_for_attack_group_with_objective(self):
-        """Test is_single_turn is False for SeedAttackGroup (always has objective)."""
-        group = SeedAttackGroup(
+        """Test is_single_turn is False for AttackSeedGroup (always has objective)."""
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test", data_type="text"),
             ]
         )
 
-        # SeedAttackGroup always has objective, so is_single_turn is always False
+        # AttackSeedGroup always has objective, so is_single_turn is always False
         assert not group.is_single_turn()
 
     def test_is_single_turn_false_with_objective(self):
         """Test is_single_turn is False when objective present."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test", data_type="text"),
@@ -403,7 +466,7 @@ class TestSeedAttackGroupMessageExtraction:
 
     def test_is_single_request_true_for_single_sequence(self):
         """Test is_single_request is True for single sequence."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test 1", data_type="text", sequence=0, role="user"),
@@ -415,7 +478,7 @@ class TestSeedAttackGroupMessageExtraction:
 
     def test_is_single_request_false_for_multi_sequence(self):
         """Test is_single_request is False for multi-sequence."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test 1", data_type="text", sequence=0, role="user"),
@@ -427,7 +490,7 @@ class TestSeedAttackGroupMessageExtraction:
 
     def test_next_message_returns_last_user_message(self):
         """Test next_message returns the last user message."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test prompt", data_type="text", role="user"),
@@ -440,7 +503,7 @@ class TestSeedAttackGroupMessageExtraction:
 
     def test_next_message_none_for_assistant_last(self):
         """Test next_message is None when last message is assistant."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="User msg", data_type="text", sequence=0, role="user"),
@@ -452,7 +515,7 @@ class TestSeedAttackGroupMessageExtraction:
 
     def test_prepended_conversation_returns_all_except_last_user(self):
         """Test prepended_conversation returns all except last user message."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="User 1", data_type="text", sequence=0, role="user"),
@@ -467,7 +530,7 @@ class TestSeedAttackGroupMessageExtraction:
 
     def test_user_messages_returns_all_prompts_as_messages(self):
         """Test user_messages returns all prompts as Messages."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Prompt 1", data_type="text", sequence=0, role="user"),
@@ -479,12 +542,12 @@ class TestSeedAttackGroupMessageExtraction:
         assert len(messages) == 2
 
 
-class TestSeedAttackGroupRepr:
-    """Tests for SeedAttackGroup.__repr__ method."""
+class TestAttackSeedGroupRepr:
+    """Tests for AttackSeedGroup.__repr__ method."""
 
     def test_repr_basic(self):
         """Test basic __repr__ output."""
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedPrompt(value="Test", data_type="text"),
@@ -500,7 +563,7 @@ class TestSeedAttackGroupRepr:
         adv_path = tmp_path / "adversarial.yaml"
         adv_path.write_text("value: Adversarial\ndata_type: text")
 
-        group = SeedAttackGroup(
+        group = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="Objective"),
                 SeedSimulatedConversation(
@@ -515,23 +578,23 @@ class TestSeedAttackGroupRepr:
 
 
 # =============================================================================
-# SeedAttackGroup.with_technique Tests
+# AttackSeedGroup.with_technique Tests
 # =============================================================================
 
 
-class TestSeedAttackGroupWithTechnique:
-    """Tests for SeedAttackGroup.with_technique() method."""
+class TestAttackSeedGroupWithTechnique:
+    """Tests for AttackSeedGroup.with_technique() method."""
 
-    def _make_base_group(self) -> SeedAttackGroup:
-        return SeedAttackGroup(
+    def _make_base_group(self) -> AttackSeedGroup:
+        return AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective"),
                 SeedPrompt(value="prompt1", data_type="text"),
             ]
         )
 
-    def _make_technique(self, *, insertion_index: int | None = None) -> SeedAttackTechniqueGroup:
-        return SeedAttackTechniqueGroup(
+    def _make_technique(self, *, insertion_index: int | None = None) -> AttackTechniqueSeedGroup:
+        return AttackTechniqueSeedGroup(
             seeds=[
                 SeedPrompt(value="tech_a", data_type="text", is_general_technique=True),
                 SeedPrompt(value="tech_b", data_type="text", is_general_technique=True),
@@ -567,7 +630,7 @@ class TestSeedAttackGroupWithTechnique:
 
     def test_insert_at_zero(self):
         """Test insertion_index=0: technique seeds appear right after the objective
-        because SeedAttackGroup always places the objective first."""
+        because AttackSeedGroup always places the objective first."""
         base = self._make_base_group()
         technique = self._make_technique(insertion_index=0)
 
@@ -602,19 +665,73 @@ class TestSeedAttackGroupWithTechnique:
         assert len(merged.seeds) == 4
         assert merged is not base
 
-    def test_merged_group_is_valid_seed_attack_group(self):
-        """Test that the returned group passes SeedAttackGroup validation."""
+    def test_merged_group_is_valid_attack_seed_group(self):
+        """Test that the returned group passes AttackSeedGroup validation."""
         base = self._make_base_group()
         technique = self._make_technique()
 
         merged = base.with_technique(technique=technique)
 
-        assert isinstance(merged, SeedAttackGroup)
+        assert isinstance(merged, AttackSeedGroup)
         merged._check_invariants()  # should not raise
+
+    def test_system_prompt_technique_merges_onto_user_turn_at_sequence_zero(self):
+        """A ``from_system_prompt`` technique merges onto a group whose first turn is a
+        ``user`` prompt at sequence 0 without a same-sequence role collision.
+
+        Reproduces the adaptive-scenario failure: merging the ``flip`` technique (a
+        ``from_system_prompt`` system seed) onto a multi-turn objective group whose opening
+        turn is a ``user`` prompt at sequence 0 raised ``Inconsistent roles found for
+        sequence 0``. The leading system seed is normalized to sequence 0 and the existing
+        turns shift up (user 0 -> 1, assistant 1 -> 2, ...).
+        """
+        base = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="opening user turn", data_type="text", role="user", sequence=0),
+                SeedPrompt(value="assistant reply", data_type="text", role="assistant", sequence=1),
+                SeedPrompt(value="follow-up user turn", data_type="text", role="user", sequence=2),
+            ]
+        )
+        technique = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        merged = base.with_technique(technique=technique)
+
+        merged._check_invariants()  # should not raise
+        system_prompts = [p for p in merged.prompts if p.role == "system"]
+        assert len(system_prompts) == 1
+        # The leading system seed is normalized to sequence 0 and the base turns shift up.
+        assert system_prompts[0].sequence == 0
+        assert merged.prompts[0].role == "system"
+        assert [(p.role, p.sequence) for p in merged.prompts] == [
+            ("system", 0),
+            ("user", 1),
+            ("assistant", 2),
+            ("user", 3),
+        ]
+
+    def test_system_prompt_technique_prepends_when_base_uses_negative_sequence(self):
+        """Explicit prepend placement must not reserve a sequence value in the base group."""
+        base = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="opening user turn", data_type="text", role="user", sequence=-1),
+                SeedPrompt(value="assistant reply", data_type="text", role="assistant", sequence=4),
+            ]
+        )
+        technique = AttackTechniqueSeedGroup.from_system_prompt("Follow these rules.")
+
+        merged = base.with_technique(technique=technique)
+
+        assert [(p.role, p.sequence) for p in merged.prompts] == [
+            ("system", 0),
+            ("user", 1),
+            ("assistant", 2),
+        ]
 
     def test_raises_when_technique_has_simulated_conversation_and_prompts_overlap(self):
         """Merging a technique with SeedSimulatedConversation into a group with overlapping prompts raises."""
-        base = SeedAttackGroup(
+        base = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective"),
                 SeedPrompt(value="turn_user", data_type="text", role="user", sequence=0),
@@ -622,10 +739,10 @@ class TestSeedAttackGroupWithTechnique:
                 SeedPrompt(value="turn_user_2", data_type="text", role="user", sequence=2),
             ]
         )
-        technique = SeedAttackTechniqueGroup(
+        technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -636,22 +753,22 @@ class TestSeedAttackGroupWithTechnique:
 
     def test_succeeds_when_technique_has_simulated_conversation_and_no_prompts(self):
         """Merging a technique with SeedSimulatedConversation into an objective-only group works."""
-        base = SeedAttackGroup(seeds=[SeedObjective(value="objective")])
-        technique = SeedAttackTechniqueGroup(
+        base = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+        technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
         )
 
         merged = base.with_technique(technique=technique)
-        assert isinstance(merged, SeedAttackGroup)
+        assert isinstance(merged, AttackSeedGroup)
 
     def test_is_compatible_returns_false_when_prompts_overlap_simulated_range(self):
         """is_compatible_with_technique returns False when prompt sequences overlap simulated range."""
-        base = SeedAttackGroup(
+        base = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective"),
                 SeedPrompt(value="turn_user", data_type="text", role="user", sequence=0),
@@ -659,10 +776,10 @@ class TestSeedAttackGroupWithTechnique:
                 SeedPrompt(value="turn_user_2", data_type="text", role="user", sequence=2),
             ]
         )
-        technique = SeedAttackTechniqueGroup(
+        technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -672,11 +789,11 @@ class TestSeedAttackGroupWithTechnique:
 
     def test_is_compatible_returns_true_for_objective_only_with_simulated(self):
         """is_compatible_with_technique returns True for objective-only base + simulated technique."""
-        base = SeedAttackGroup(seeds=[SeedObjective(value="objective")])
-        technique = SeedAttackTechniqueGroup(
+        base = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+        technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake_path.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
@@ -686,7 +803,7 @@ class TestSeedAttackGroupWithTechnique:
 
     def test_is_compatible_returns_true_when_no_simulated_conversation(self):
         """is_compatible_with_technique returns True when technique has no simulated conversation."""
-        base = SeedAttackGroup(
+        base = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="objective"),
                 SeedPrompt(value="turn_user", data_type="text", role="user", sequence=0),
@@ -700,19 +817,19 @@ class TestSeedAttackGroupWithTechnique:
 
 
 # =============================================================================
-# SeedAttackGroup.filter_compatible Tests
+# AttackSeedGroup.filter_compatible Tests
 # =============================================================================
 
 
-class TestSeedAttackGroupFilterCompatible:
-    """Tests for SeedAttackGroup.filter_compatible() static method."""
+class TestAttackSeedGroupFilterCompatible:
+    """Tests for AttackSeedGroup.filter_compatible() static method."""
 
     def test_filters_out_incompatible_groups(self):
         """filter_compatible removes groups whose prompts overlap with simulated conversation."""
-        compatible = SeedAttackGroup(
+        compatible = AttackSeedGroup(
             seeds=[SeedObjective(value="obj1")],
         )
-        incompatible = SeedAttackGroup(
+        incompatible = AttackSeedGroup(
             seeds=[
                 SeedObjective(value="obj2"),
                 SeedPrompt(value="u", data_type="text", role="user", sequence=0),
@@ -720,16 +837,16 @@ class TestSeedAttackGroupFilterCompatible:
                 SeedPrompt(value="u2", data_type="text", role="user", sequence=2),
             ],
         )
-        technique = SeedAttackTechniqueGroup(
+        technique = AttackTechniqueSeedGroup(
             seeds=[
                 SeedSimulatedConversation(
-                    adversarial_chat_system_prompt_path="fake.yaml",
+                    adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
                     num_turns=3,
                 ),
             ],
         )
 
-        result = SeedAttackGroup.filter_compatible(
+        result = AttackSeedGroup.filter_compatible(
             seed_groups=[compatible, incompatible],
             technique=technique,
         )
@@ -740,7 +857,7 @@ class TestSeedAttackGroupFilterCompatible:
     def test_returns_all_when_no_simulated_conversation(self):
         """filter_compatible returns all groups when technique has no simulated conversation."""
         groups = [
-            SeedAttackGroup(
+            AttackSeedGroup(
                 seeds=[
                     SeedObjective(value="obj"),
                     SeedPrompt(value="u", data_type="text", role="user", sequence=0),
@@ -749,9 +866,9 @@ class TestSeedAttackGroupFilterCompatible:
                 ],
             ),
         ]
-        technique = SeedAttackTechniqueGroup(
+        technique = AttackTechniqueSeedGroup(
             seeds=[SeedPrompt(value="tech", data_type="text", is_general_technique=True)],
         )
 
-        result = SeedAttackGroup.filter_compatible(seed_groups=groups, technique=technique)
+        result = AttackSeedGroup.filter_compatible(seed_groups=groups, technique=technique)
         assert len(result) == 1

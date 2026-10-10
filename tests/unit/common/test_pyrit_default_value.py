@@ -214,6 +214,47 @@ class TestInheritance:
         assert child_obj.param2 == 50
         assert child_obj.param3 == 3.14
 
+    def test_reregistering_true_then_false_replaces_previous(self) -> None:
+        """True-then-False re-registration must replace the old scope, not shadow it."""
+
+        class TargetClass:
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                self.param1 = param1
+
+        class ChildClass(TargetClass):
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                super().__init__(param1=param1)
+
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="broad", include_subclasses=True)
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="exact", include_subclasses=False)
+
+        # The newer registration wins for the registered class itself...
+        assert TargetClass().param1 == "exact"
+        # ...and subclasses no longer inherit the removed True-scope default.
+        assert ChildClass().param1 is None
+
+    def test_reregistering_false_then_true_replaces_previous(self) -> None:
+        """False-then-True re-registration restores subclass inheritance."""
+
+        class TargetClass:
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                self.param1 = param1
+
+        class ChildClass(TargetClass):
+            @apply_defaults
+            def __init__(self, *, param1: str | None = None) -> None:
+                super().__init__(param1=param1)
+
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="exact", include_subclasses=False)
+        set_default_value(class_type=TargetClass, parameter_name="param1", value="broad", include_subclasses=True)
+
+        assert TargetClass().param1 == "broad"
+        # Subclass inheritance comes back with the restored True scope.
+        assert ChildClass().param1 == "broad"
+
     def test_parent_not_affected_by_child_defaults(self) -> None:
         """Test that setting defaults on child class doesn't affect parent instances."""
 
@@ -393,11 +434,11 @@ class TestComplexScenarios:
                 *,
                 temperature: float | None = None,
                 top_p: float | None = None,
-                max_tokens: int | None = None,
+                max_completion_tokens: int | None = None,
             ) -> None:
                 self.temperature = temperature
                 self.top_p = top_p
-                self.max_tokens = max_tokens
+                self.max_completion_tokens = max_completion_tokens
 
         class AzureOpenAIChatTarget(OpenAIChatTarget):
             @apply_defaults
@@ -406,9 +447,13 @@ class TestComplexScenarios:
                 *,
                 temperature: float | None = None,
                 top_p: float | None = None,
-                max_tokens: int | None = None,
+                max_completion_tokens: int | None = None,
             ) -> None:
-                super().__init__(temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+                super().__init__(
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_completion_tokens=max_completion_tokens,
+                )
 
         # Set defaults for base class
         set_default_value(class_type=OpenAIChatTarget, parameter_name="temperature", value=0.7)
@@ -421,19 +466,19 @@ class TestComplexScenarios:
         base_obj = OpenAIChatTarget()
         assert base_obj.temperature == 0.7
         assert base_obj.top_p == 0.9
-        assert base_obj.max_tokens is None
+        assert base_obj.max_completion_tokens is None
 
         # Test subclass with inheritance
         azure_obj = AzureOpenAIChatTarget()
         assert azure_obj.temperature == 0.3  # More specific default
         assert azure_obj.top_p == 0.9  # Inherited from parent
-        assert azure_obj.max_tokens is None  # No default set
+        assert azure_obj.max_completion_tokens is None  # No default set
 
         # Test with explicit overrides
-        custom_obj = AzureOpenAIChatTarget(temperature=0.5, max_tokens=100)
+        custom_obj = AzureOpenAIChatTarget(temperature=0.5, max_completion_tokens=100)
         assert custom_obj.temperature == 0.5  # Explicit override
         assert custom_obj.top_p == 0.9  # Still uses default
-        assert custom_obj.max_tokens == 100  # Explicit override
+        assert custom_obj.max_completion_tokens == 100  # Explicit override
 
     def test_multiple_classes_independent_defaults(self) -> None:
         """Test that multiple classes can have independent default configurations."""

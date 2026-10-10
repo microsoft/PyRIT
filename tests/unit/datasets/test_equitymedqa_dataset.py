@@ -28,7 +28,7 @@ async def test_fetch_dataset_single_subset(mock_equitymedqa_data):
     assert isinstance(dataset, SeedDataset)
     assert len(dataset.seeds) > 0
     assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
-    assert all(p.harm_categories == ["health_bias"] for p in dataset.seeds)
+    assert all(p.harm_categories == ["REPRESENTATIONAL"] for p in dataset.seeds)
 
 
 async def test_fetch_dataset_multiple_subsets():

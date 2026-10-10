@@ -67,8 +67,19 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
     DATA_TYPE: ClassVar[PromptDataType] = "text"
 
     # Shared provenance metadata for the garak dataset family.
-    SOURCE_AUTHORS: ClassVar[list[str]] = ["garak Team", "NVIDIA"]
-    SOURCE_GROUPS: ClassVar[list[str]] = ["NVIDIA"]
+    SOURCE_AUTHORS: ClassVar[list[str]] = [
+        "Leon Derczynski",
+        "Erick Galinkin",
+        "Jeffrey Martin",
+        "Subho Majumdar",
+        "Nanna Inie",
+    ]
+    SOURCE_GROUPS: ClassVar[list[str]] = [
+        "NVIDIA",
+        "IT University of Copenhagen",
+        "University of Washington",
+        "Vijil.ai",
+    ]
 
     def __init__(self, *, max_examples: int | None = None) -> None:
         """
@@ -98,6 +109,9 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
         """
         Build the per-seed metadata dict from a raw row.
 
+        Values that are not natively JSON-serializable (e.g. ``datetime`` columns) are coerced
+        to ``str`` so the metadata can be persisted to memory.
+
         Args:
             item: A single raw HuggingFace row.
 
@@ -109,7 +123,8 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
         for out_key, candidates in self.METADATA_COLUMNS.items():
             for column in candidates:
                 if column in item and item[column] is not None:
-                    metadata[out_key] = item[column]
+                    value = item[column]
+                    metadata[out_key] = value if isinstance(value, (str, int, float, bool)) else str(value)
                     break
         return metadata
 
@@ -153,7 +168,7 @@ class _GarakRemoteDataset(_RemoteDatasetLoader, ABC):
         )
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the garak dataset from HuggingFace and return it as a ``SeedDataset``.
 

@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
 from pyrit.backend.models.common import FieldError, ProblemDetail
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,19 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=problem.model_dump(exclude_none=True),
         )
+
+    @app.exception_handler(RequestTooLargeError)
+    async def request_too_large_handler(  # pyrit-async-suffix-exempt
+        request: Request,
+        exc: RequestTooLargeError,
+    ) -> JSONResponse:
+        """
+        Handle a request body that grew past the size limit while it was read.
+
+        Returns:
+            JSONResponse: The same RFC 7807 problem response the size-limit middleware sends.
+        """
+        return request_too_large_response(status=status.HTTP_413_CONTENT_TOO_LARGE, title="Content Too Large")
 
     @app.exception_handler(ValueError)
     async def value_error_handler(  # pyrit-async-suffix-exempt

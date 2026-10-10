@@ -129,7 +129,6 @@ def _build_chat_target_requirements() -> TargetRequirements:
 CHAT_TARGET_REQUIREMENTS: TargetRequirements = _build_chat_target_requirements()
 """
 Standard requirements for a chat-style target: must support multi-turn conversations
-with an editable history. This is the replacement for the deprecated
-``PromptChatTarget`` type-based check; consumers validate their target against
+with an editable history. Consumers validate their target against
 these requirements at construction time.
 """

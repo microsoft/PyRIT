@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.18.1
+#       jupytext_version: 1.19.4
 # ---
 
 # %% [markdown]
@@ -28,6 +28,11 @@
 # - Any scorer-specific configuration
 #
 # This means changing *any* of these values creates a new scorer identity. The reason these are variables is because they _might_ change performance—does changing the temperature increase or decrease accuracy? Metrics let you experiment and find out.
+#
+# If any scoring trial returns no verdict for a response, the evaluator excludes that response from
+# accuracy and error calculations. `num_responses` counts rows used; `num_input_responses` counts
+# rows supplied. Compare them before interpreting the metrics. Older saved results may have no
+# input count, so their coverage cannot be recovered from the metrics alone.
 #
 # Metrics are stored and retrieved by this identity hash, so the same scorer configuration will always get the same cached metrics.
 
@@ -75,6 +80,7 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # **Error Metrics:**
 # - **Mean Absolute Error (MAE)**: Average absolute difference between model and human scores. An MAE of 0.15 means the model is off by 0.15 on average.
 # - **MAE Standard Error**: Uncertainty in the MAE estimate.
+# - **Constant-Guess Baseline MAE** (`baseline_mean_absolute_error`): The MAE of a scorer that ignores the response and always returns the dataset's median human score, the best any constant can do on these labels. A scorer whose MAE is not below this has not beaten a constant guess on that dataset. Results recorded before this field existed report `None`.
 #
 # **Statistical Significance:**
 # - **t-statistic**: From a one-sample t-test. Positive = model scores higher than humans; negative = lower.
@@ -91,6 +97,18 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # - **`krippendorff_alpha_humans`**: Agreement among human evaluators (baseline quality of labels)
 # - **`krippendorff_alpha_model`**: Agreement across multiple model scoring trials (model consistency)
 # - **`krippendorff_alpha_combined`**: Overall agreement between humans and model
+#
+# ### Error Split by Rater Agreement
+#
+# When a gold set has more than one human rater, the harm metrics also report the mean absolute error
+# separately for **unanimous** responses (every rater on the same side of `contested_threshold`, 0.5) and
+# **contested** responses (the raters split across it, so the gold label rests on a 2-1 vote rather than a
+# consensus). The aggregate MAE spends part of the scorer's error budget on the contested rows, so a scorer
+# can look strong overall while sitting near chance on exactly the responses humans found hard.
+# - **`mean_absolute_error_unanimous`** and **`num_unanimous_responses`**
+# - **`mean_absolute_error_contested`** and **`num_contested_responses`**
+#
+# These are `None` for single-rater gold sets, where there is no disagreement to measure.
 
 # %% [markdown]
 # ## Retrieving Scorer Metrics
@@ -150,13 +168,13 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score import LikertScalePaths, SelfAskLikertScorer
 
 gpt4o_endpoint = os.environ.get("AZURE_OPENAI_GPT4O_ENDPOINT")
-harm_scorer = SelfAskLikertScorer(
+harm_scorer = SelfAskLikertScorer.from_likert_scale(
     chat_target=OpenAIChatTarget(
         endpoint=gpt4o_endpoint,
         api_key=get_azure_openai_auth(gpt4o_endpoint),
         model_name=os.environ.get("AZURE_OPENAI_GPT4O_MODEL"),
     ),
-    likert_scale=LikertScalePaths.EXPLOITS_SCALE,
+    likert_scale=LikertScalePaths.EXPLOITS_SCALE.load(),
 )
 
 # Retrieve pre-computed metrics using the scorer's identity hash
@@ -246,7 +264,8 @@ for _i, e in enumerate(sorted_by_mae[:5], 1):
 #
 # During evaluation, the scorer processes each entry from human-labeled CSV dataset(s). For each `assistant_response` in the CSV, the scorer generates predictions which are compared against the `human_score` column(s). For objective scorers, this produces accuracy/precision/recall/F1 metrics. For harm scorers, it calculates MAE, t-statistics, and Krippendorff's alpha.
 #
-# Setting `add_to_evaluation_results=False` bypasses caching entirely—always running fresh evaluations without reading from or writing to the registry. This is useful for testing custom configurations without polluting the official metrics.
+# Set `update_registry_behavior=RegistryUpdateBehavior.NEVER_UPDATE` to run a fresh evaluation
+# without updating the registry. The examples below use small packaged datasets.
 
 # %% [markdown]
 # ### Running an Objective Evaluation
@@ -266,9 +285,6 @@ from pyrit.score import (
 
 # Create a refusal scorer - uses the chat target to determine if responses are refusals
 refusal_scorer = SelfAskRefusalScorer(chat_target=OpenAIChatTarget())
-
-# REAL usage would simply be:
-# metrics = await refusal_scorer.evaluate_async()
 
 # For demonstration, use a smaller evaluation file (normally you'd use the full dataset)
 # The evaluation_file_mapping tells the evaluator which human-labeled CSV files to use
@@ -300,15 +316,16 @@ from pyrit.score import LikertScalePaths, RegistryUpdateBehavior, SelfAskLikertS
 from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
 from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
 
-# Create a harm scorer using the hate speech Likert scale
-likert_scorer = SelfAskLikertScorer(chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.EXPLOITS_SCALE)
+# Create a harm scorer using the hate speech Likert scale.
+likert_scorer = SelfAskLikertScorer.from_likert_scale(
+    chat_target=OpenAIChatTarget(), likert_scale=LikertScalePaths.HATE_SPEECH_SCALE.load()
+)
 
-# # Configure evaluation to use a small sample dataset
-# likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
-#     human_labeled_datasets_files=["harm/mini_hate_speech.csv"],
-#     result_file="harm/test_hate_speech_metrics.jsonl",
-#     harm_category="hate_speech",  # Required for harm evaluations
-# )
+likert_scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
+    human_labeled_datasets_files=["harm/mini_hate_speech.csv"],
+    result_file="sample/test_hate_speech_metrics.jsonl",
+    harm_category="hate_speech",
+)
 
 # This can be called without parameters to update the registry
 metrics = await likert_scorer.evaluate_async(  # type: ignore
@@ -326,18 +343,18 @@ else:
 #
 # You can evaluate scorers against your own human-labeled datasets using `ScorerEvalDatasetFiles`:
 #
-# ```python
-# # Configure custom datasets
-# scorer.evaluation_file_mapping = ScorerEvalDatasetFiles(
-#     # Glob patterns relative to SCORER_EVALS_PATH
-#     human_labeled_datasets_files=["my_datasets/*.csv"],
-#     # Where to store results
-#     result_file="my_datasets/evaluation_metrics.jsonl",
-#     # Required for harm scorers, ignored for objective scorers
-#     harm_category="violence",
-# )
-# ```
-#
+# Paths are relative to `SCORER_EVALS_PATH`. This example selects the packaged sample;
+# replace its pattern with your dataset pattern when you run your own evaluation.
+# %%
+custom_mapping = ScorerEvalDatasetFiles(
+    human_labeled_datasets_files=["harm/mini_hate_speech.csv"],
+    result_file="sample/custom_hate_speech_metrics.jsonl",
+    harm_category="hate_speech",
+)
+likert_scorer.evaluation_file_mapping = custom_mapping
+print(likert_scorer.evaluation_file_mapping)
+
+# %% [markdown]
 # ### CSV Human Evaluation Files
 #
 # Many human scored dataset csv files are available in the `pyrit/datasets/scorer_evals/` directory. These include datasets for refusal detection, hate speech, violence, and other harm categories. You can reference these as templates for creating your own evaluation datasets.
@@ -366,14 +383,14 @@ else:
 #
 # ```bash
 # # Evaluate all registered scorers (long-running — can take hours)
-# python build_scripts/evaluate_scorers.py
+# python -m build_scripts.evaluate_scorers
 #
 # # Evaluate only scorers with specific tags
-# python build_scripts/evaluate_scorers.py --tags refusal
-# python build_scripts/evaluate_scorers.py --tags refusal,default
+# python -m build_scripts.evaluate_scorers --tags refusal
+# python -m build_scripts.evaluate_scorers --tags refusal,default
 #
 # # Control parallelism (default: 5, lower if hitting rate limits)
-# python build_scripts/evaluate_scorers.py --max-concurrency 3
+# python -m build_scripts.evaluate_scorers --max-concurrency 3
 # ```
 #
 # ### Tags
@@ -393,7 +410,7 @@ else:
 # **Step 1: Evaluate refusal scorers first**
 #
 # ```bash
-# python build_scripts/evaluate_scorers.py --tags refusal
+# python -m build_scripts.evaluate_scorers --tags refusal
 # ```
 #
 # This evaluates only the 4 refusal variants and writes results to
@@ -403,7 +420,7 @@ else:
 # **Step 2: Re-evaluate all scorers**
 #
 # ```bash
-# python build_scripts/evaluate_scorers.py
+# python -m build_scripts.evaluate_scorers
 # ```
 #
 # On the next full run, `ScorerInitializer` reads the refusal metrics from Step 1, picks the best

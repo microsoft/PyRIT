@@ -6,24 +6,18 @@ import json
 import logging
 import warnings
 from pathlib import Path
-from typing import Any, cast
-
-from transformers import (
-    AutoModelForCausalLM,  # type: ignore[ty:possibly-missing-import]
-    AutoTokenizer,  # type: ignore[ty:possibly-missing-import]
-    BatchEncoding,
-    PretrainedConfig,
-)
+from typing import TYPE_CHECKING, Any, cast
 
 from pyrit.common import default_values
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.common.download_hf_model import download_specific_files_async
 from pyrit.exceptions import EmptyResponseException, pyrit_target_retry
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
+
+if TYPE_CHECKING:
+    from transformers import BatchEncoding
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +172,7 @@ class HuggingFaceChatTarget(PromptTarget):
             raise RuntimeError("CUDA requested but not available.")
 
         self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
+        self._model_load_lock = asyncio.Lock()
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -213,6 +208,11 @@ class HuggingFaceChatTarget(PromptTarget):
             path: The path to load the model and tokenizer from.
             **kwargs: Additional keyword arguments to pass to the model loader.
         """
+        from transformers import (
+            AutoModelForCausalLM,  # type: ignore[ty:possibly-missing-import]
+            AutoTokenizer,  # type: ignore[ty:possibly-missing-import]
+        )
+
         logger.info(f"Loading model and tokenizer from path: {path}...")
         self.tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=self.trust_remote_code)
         self.model = AutoModelForCausalLM.from_pretrained(path, trust_remote_code=self.trust_remote_code, **kwargs)
@@ -224,6 +224,8 @@ class HuggingFaceChatTarget(PromptTarget):
         Returns:
             bool: True if valid, False otherwise.
         """
+        from transformers import PretrainedConfig  # type: ignore[ty:possibly-missing-import]
+
         try:
             # Attempt to load the configuration of the model
             PretrainedConfig.from_pretrained(self.model_id or "")
@@ -264,10 +266,14 @@ class HuggingFaceChatTarget(PromptTarget):
                 return
 
             if self.model_path:
-                # Load the tokenizer and model from the local directory
+                # Load the tokenizer and model from the local directory. This imports `transformers`
+                # and performs blocking disk I/O, so it is offloaded to a worker thread to keep the
+                # event loop responsive.
                 logger.info(f"Loading model from local path: {self.model_path}...")
-                self._load_from_path(self.model_path, **optional_model_kwargs)
+                await asyncio.to_thread(self._load_from_path, self.model_path, **optional_model_kwargs)
             else:
+                from pyrit.common.download_hf_model import download_specific_files_async
+
                 # Define the default Hugging Face cache directory
                 cache_dir = (
                     Path.home()
@@ -283,7 +289,7 @@ class HuggingFaceChatTarget(PromptTarget):
                     await download_specific_files_async(
                         self.model_id or "",
                         None,
-                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        self.huggingface_token,
                         cache_dir,
                     )
                 else:
@@ -292,24 +298,19 @@ class HuggingFaceChatTarget(PromptTarget):
                     await download_specific_files_async(
                         self.model_id or "",
                         self.necessary_files,
-                        self.huggingface_token,  # type: ignore[ty:invalid-argument-type]
+                        self.huggingface_token,
                         Path(cache_dir),
                     )
 
-                # Load the tokenizer and model from the specified directory
+                # Load the tokenizer and model from the downloaded local snapshot. This imports
+                # `transformers` and performs blocking disk I/O, so it is offloaded to a worker
+                # thread to keep the event loop responsive.
                 logger.info(f"Loading model {self.model_id} from cache path: {cache_dir}...")
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_id or "", cache_dir=cache_dir, trust_remote_code=self.trust_remote_code
-                )
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_id or "",
-                    cache_dir=cache_dir,
-                    trust_remote_code=self.trust_remote_code,
-                    **optional_model_kwargs,
-                )
+                await asyncio.to_thread(self._load_from_path, str(cache_dir), **optional_model_kwargs)
 
-            # Move the model to the correct device
-            self.model = cast("Any", self.model).to(self.device)
+            # Move the model to the correct device. This can be a slow, blocking operation
+            # (e.g., copying weights to a GPU), so it is offloaded to a worker thread as well.
+            self.model = await asyncio.to_thread(self.model.to, self.device)
 
             # Debug prints to check types
             logger.info(f"Model loaded: {type(self.model)}")
@@ -327,17 +328,8 @@ class HuggingFaceChatTarget(PromptTarget):
             logger.error(f"Error loading model {self.model_id}: {e}")
             raise
 
-    async def load_model_and_tokenizer(self) -> None:  # pyrit-async-suffix-exempt
-        """Use ``load_model_and_tokenizer_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.HuggingFaceChatTarget.load_model_and_tokenizer",
-            new_item="pyrit.prompt_target.HuggingFaceChatTarget.load_model_and_tokenizer_async",
-            removed_in="0.16.0",
-        )
-        await self.load_model_and_tokenizer_async()
-
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send a normalized prompt asynchronously to the HuggingFace model.
@@ -356,7 +348,7 @@ class HuggingFaceChatTarget(PromptTarget):
         Raises:
             EmptyResponseException: If the model generates an empty response.
         """
-        await self.load_model_and_tokenizer_task
+        await self._wait_for_model_and_tokenizer_async()
 
         request = normalized_conversation[-1].message_pieces[0]
 
@@ -413,6 +405,14 @@ class HuggingFaceChatTarget(PromptTarget):
         except Exception as e:
             logger.error(f"Error occurred during inference: {e}")
             raise
+
+    async def _wait_for_model_and_tokenizer_async(self) -> None:
+        """Wait for shared model loading without allowing a send cancellation to cancel it."""
+        async with self._model_load_lock:
+            if self.load_model_and_tokenizer_task.cancelled():
+                self.load_model_and_tokenizer_task = asyncio.create_task(self.load_model_and_tokenizer_async())
+            load_task = self.load_model_and_tokenizer_task
+        await asyncio.shield(load_task)
 
     def _build_chat_messages(self, *, normalized_conversation: list[Message]) -> list[dict[str, str]]:
         """

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Dialog,
   DialogSurface,
@@ -14,6 +14,7 @@ import {
   Text,
   tokens,
   makeStyles,
+  useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { OpenRegular } from '@fluentui/react-icons'
 import {
@@ -40,14 +41,22 @@ interface FeedbackDialogProps {
   context?: FeedbackContext
 }
 
+type FeedbackSelection = FeedbackCategory | 'security'
+
 // The order here is also the order in the dropdown.
-const CATEGORIES: { value: FeedbackCategory; helper: string }[] = [
+const CATEGORIES: { value: FeedbackSelection; helper: string }[] = [
+  {
+    value: 'security',
+    helper: 'Privately report a potential security vulnerability',
+  },
   { value: 'bug', helper: 'Something is broken or producing the wrong result' },
   { value: 'feature', helper: 'An idea or improvement you would like to see' },
   { value: 'doc', helper: 'Documentation is missing, confusing, or out of date' },
   { value: 'praise', helper: 'Something you love about Co-PyRIT — auto-acknowledged' },
   { value: 'other', helper: 'Anything else' },
 ]
+
+const SECURITY_POLICY_URL = 'https://github.com/microsoft/PyRIT/security/policy'
 
 // Keep the assembled body short enough that the URL-encoded GitHub issue URL
 // fits well within browser and intermediate-proxy limits (~8 KB URL is safe).
@@ -94,6 +103,10 @@ const useStyles = makeStyles({
     marginTop: tokens.spacingVerticalXS,
   },
 })
+
+function isFeedbackCategory(category: FeedbackSelection | ''): category is FeedbackCategory {
+  return category !== '' && category !== 'security'
+}
 
 /** Returns true iff the user has filled in enough to build a useful issue. */
 function getPrimaryField(
@@ -160,15 +173,21 @@ function buildInput(
 
 export default function FeedbackDialog({ open, onClose, context }: FeedbackDialogProps) {
   const styles = useStyles()
-  const [category, setCategory] = useState<FeedbackCategory>('bug')
+  const [category, setCategory] = useState<FeedbackSelection | ''>('')
   const [fields, setFields] = useState<DialogFields>({})
   const [optionalContact, setOptionalContact] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // The confirmation dialog opens from state rather than a DialogTrigger. Mark
+  // its submit button so Tabster can restore the outer dialog after it closes.
+  const confirmRestoreFocusTarget = useRestoreFocusTarget()
+  const submitButtonRef = useRef<HTMLButtonElement>(null)
 
   const update = (name: keyof DialogFields, value: string) =>
     setFields((prev) => ({ ...prev, [name]: value }))
 
-  const primary = getPrimaryField(category, fields)
+  const primary = isFeedbackCategory(category)
+    ? getPrimaryField(category, fields)
+    : { name: 'body' as const, value: '' }
   const primaryTrimmed = primary.value.trim()
   const primaryTooShort =
     primaryTrimmed.length > 0 && primaryTrimmed.length < MIN_PRIMARY_LENGTH
@@ -210,6 +229,8 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
   const handleSubmit = () => {
     if (!canSubmit) return
     if (secretMatches.length > 0) {
+      // Enter in the contact field can submit without focusing the restore target.
+      submitButtonRef.current?.focus()
       setConfirmOpen(true)
       return
     }
@@ -217,6 +238,7 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
   }
 
   const fireSubmit = () => {
+    if (!isFeedbackCategory(category)) return
     const input = buildInput(category, fields, optionalContact || undefined, context)
     const url = buildGithubFeedbackUrl(input)
     window.open(url, '_blank', 'noopener,noreferrer')
@@ -246,92 +268,119 @@ export default function FeedbackDialog({ open, onClose, context }: FeedbackDialo
                   handleSubmit()
                 }}
               >
-                <Text className={styles.warning} data-testid="feedback-sensitive-warning">
-                  GitHub issues are public. Please do not include secrets, credentials,
-                  customer data, model endpoints, or other proprietary information. Your
-                  feedback will be filed at{' '}
-                  <Link
-                    href="https://github.com/microsoft/PyRIT/issues"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    github.com/microsoft/PyRIT
-                  </Link>
-                  .
-                </Text>
-
                 <Field label="Category" required>
                   <Select
                     value={category}
                     onChange={(_, data) => {
-                      setCategory(data.value as FeedbackCategory)
+                      setCategory(data.value as FeedbackSelection)
                       // Keep contact field; clear the rest so old answers don't
                       // accidentally end up under a different template.
                       setFields({})
                     }}
                     data-testid="feedback-category-select"
                   >
+                    <option value="" disabled>
+                      Select feedback type
+                    </option>
                     {CATEGORIES.map((c) => (
                       <option key={c.value} value={c.value}>
-                        {getCategoryLabel(c.value)}
+                        {c.value === 'security'
+                          ? 'Security vulnerability'
+                          : getCategoryLabel(c.value)}
                       </option>
                     ))}
                   </Select>
                   <Text className={styles.categoryHelper}>{helperForCategory}</Text>
                 </Field>
 
-                <CategoryRenderer
-                  category={category}
-                  fields={fields}
-                  update={update}
-                  primaryTooShort={primaryTooShort}
-                />
+                {category === 'security' && (
+                  <Text className={styles.warning} data-testid="feedback-security-guidance">
+                    Use the PyRIT security reporting process to report vulnerabilities.
+                  </Text>
+                )}
 
-                <Field label="Preferred contact (optional)">
-                  <Input
-                    value={optionalContact}
-                    onChange={(_, data) => setOptionalContact(data.value)}
-                    placeholder="GitHub handle, email, alias — if you would like a reply"
-                    data-testid="feedback-contact-input"
-                  />
-                </Field>
+                {isFeedbackCategory(category) && (
+                  <>
+                    <Text
+                      className={styles.warning}
+                      data-testid="feedback-sensitive-warning"
+                    >
+                      This feedback is filed as a public GitHub issue. Do not include
+                      confidential information.
+                    </Text>
 
-                <SecretWarning
-                  matches={secretMatches}
-                  confirmOpen={confirmOpen}
-                  onConfirmOpenChange={setConfirmOpen}
-                  onConfirmSubmit={fireSubmit}
-                />
+                    <CategoryRenderer
+                      category={category}
+                      fields={fields}
+                      update={update}
+                      primaryTooShort={primaryTooShort}
+                    />
 
-                <Text className={styles.helper}>
-                  Continuing opens a new tab on github.com with this form pre-filled. You
-                  will need a GitHub account to file the issue. Data you submit is
-                  governed by the{' '}
-                  <Link
-                    href="https://privacy.microsoft.com/en-us/privacystatement"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Microsoft Privacy Statement
-                  </Link>
-                  .
-                </Text>
+                    <Field label="Preferred contact (optional)">
+                      <Input
+                        value={optionalContact}
+                        onChange={(_, data) => setOptionalContact(data.value)}
+                        placeholder="GitHub handle, email, alias — if you would like a reply"
+                        data-testid="feedback-contact-input"
+                      />
+                    </Field>
+
+                    <SecretWarning
+                      matches={secretMatches}
+                      confirmOpen={confirmOpen}
+                      onConfirmOpenChange={setConfirmOpen}
+                      onConfirmSubmit={fireSubmit}
+                    />
+
+                    <Text className={styles.helper}>
+                      Continuing opens a new tab on github.com with this form pre-filled.
+                      You will need a GitHub account to file the issue. Data you submit is
+                      governed by the{' '}
+                      <Link
+                        href="https://privacy.microsoft.com/en-us/privacystatement"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Microsoft Privacy Statement
+                      </Link>
+                      .
+                    </Text>
+                  </>
+                )}
               </form>
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={onClose}>
                 Cancel
               </Button>
-              <Button
-                appearance="primary"
-                onClick={handleSubmit}
-                disabled={!canSubmit}
-                icon={<OpenRegular />}
-                iconPosition="after"
-                data-testid="feedback-submit-button"
-              >
-                Continue on GitHub
-              </Button>
+              {category === 'security' && (
+                <Button
+                  as="a"
+                  appearance="primary"
+                  href={SECURITY_POLICY_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  icon={<OpenRegular />}
+                  iconPosition="after"
+                  onClick={onClose}
+                >
+                  Open security reporting process
+                </Button>
+              )}
+              {isFeedbackCategory(category) && (
+                <Button
+                  {...confirmRestoreFocusTarget}
+                  ref={submitButtonRef}
+                  appearance="primary"
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  icon={<OpenRegular />}
+                  iconPosition="after"
+                  data-testid="feedback-submit-button"
+                >
+                  Continue on GitHub
+                </Button>
+              )}
             </DialogActions>
           </DialogBody>
         </DialogSurface>

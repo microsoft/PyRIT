@@ -1,33 +1,224 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+import base64
+import codecs
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier, get_mock_target_identifier
+from unit.mocks import (
+    MockPromptTarget,
+    get_mock_prompt_normalizer,
+    get_mock_scorer_identifier,
+    get_mock_target_identifier,
+)
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
+from pyrit.converter import (
+    Base64Converter,
+    ROT13Converter,
+    SelectiveTextConverter,
+    StringJoinConverter,
+    TokenSelectionStrategy,
+)
 from pyrit.executor.attack import (
     AttackConverterConfig,
+    AttackExecutor,
     AttackParameters,
     AttackScoringConfig,
+    PrependedConversationConfig,
     PromptSendingAttack,
+    PromptSendingAttackParameters,
+    RTASystemPromptPaths,
     SingleTurnAttackContext,
 )
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
+)
+from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
+from pyrit.memory import CentralMemory
+from pyrit.message_normalizer import TokenizerTemplateNormalizer
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
+    ConversationReference,
     ConversationType,
     Message,
     MessagePiece,
     Score,
+    ScoringExpectation,
     SeedGroup,
+    SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
 )
-from pyrit.prompt_converter import Base64Converter, StringJoinConverter
-from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import Scorer, TrueFalseScorer
+from pyrit.setup.initializers.techniques.extra import get_technique_factories
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+async def test_attack_marker_pipelines_cover_history_request_response_async(
+    *, start_token: str, end_token: str, preserve_tokens: bool
+) -> None:
+    target = MockPromptTarget()
+    selected = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+        start_token=start_token,
+        end_token=end_token,
+    )
+    config = AttackConverterConfig(
+        request_converters=ConverterConfiguration.from_converters(converters=[selected, ROT13Converter()]),
+        response_converters=ConverterConfiguration.from_converters(converters=[Base64Converter(), ROT13Converter()]),
+    )
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=config,
+        prompt_normalizer=PromptNormalizer(start_token=start_token, end_token=end_token),
+    )
+    payload = f"{start_token}{start_token}test{end_token}{end_token}"
+    history = Message.from_prompt(prompt=f"History: {payload}", role="user")
+    assistant = Message.from_prompt(prompt=f"Assistant: {payload}", role="assistant")
+    captured: list[list[Message]] = []
+
+    async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        captured.append(normalized_conversation)
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value=f"Reply: {payload}",
+                conversation_id=normalized_conversation[-1].get_piece().conversation_id,
+            ).to_message()
+        ]
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async):
+        result = await attack.execute_async(
+            objective=f"Request: {payload}",
+            prepended_conversation=[history, assistant],
+        )
+    encoded = codecs.encode("dGVzdA==", "rot_13")
+    selected_output = f"{start_token}{encoded}{end_token}" if preserve_tokens else encoded
+    assert [message.get_value() for message in captured[0]] == [
+        f"History: {selected_output}",
+        f"Assistant: {payload}",
+        f"Request: {selected_output}",
+    ]
+    assert result.last_response is not None
+    assert result.last_response.converted_value == f"Reply: {encoded}"
+    assert history.get_value() == f"History: {payload}"
+    assert assistant.get_value() == f"Assistant: {payload}"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_execute_resets_invoked_objective_target_conversation() -> None:
+    target = MockPromptTarget()
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    attack = PromptSendingAttack(objective_target=target)
+
+    await attack.execute_async(objective="Test objective")
+
+    target.reset_conversation_async.assert_awaited_once()
+    assert target.reset_conversation_async.await_args.kwargs["conversation_id"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_execute_resets_objective_target_conversation_after_send_failure() -> None:
+    target = MockPromptTarget()
+    target._send_prompt_to_target_async = AsyncMock(side_effect=RuntimeError("send failed"))  # type: ignore[method-assign]
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    attack = PromptSendingAttack(objective_target=target)
+
+    with pytest.raises(Exception, match="Error sending prompt"):
+        await attack.execute_async(objective="Test objective")
+
+    target.reset_conversation_async.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cancelled_execute_resets_blocked_objective_target_conversation() -> None:
+    target = MockPromptTarget()
+    send_started = asyncio.Event()
+    wait_forever = asyncio.Event()
+    sent_conversation_id: str | None = None
+
+    async def block_send(*, normalized_conversation: list[Message]) -> list[Message]:
+        nonlocal sent_conversation_id
+        sent_conversation_id = normalized_conversation[-1].get_piece().conversation_id
+        send_started.set()
+        await wait_forever.wait()
+        return []
+
+    target._send_prompt_to_target_async = block_send  # type: ignore[method-assign]
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    attack = PromptSendingAttack(objective_target=target)
+    task = asyncio.create_task(attack.execute_async(objective="Test objective"))
+    await send_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    target.reset_conversation_async.assert_awaited_once_with(conversation_id=sent_conversation_id)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_concurrent_attacks_reset_only_their_own_conversations() -> None:
+    target = MockPromptTarget()
+    send_started = {
+        "first objective": asyncio.Event(),
+        "second objective": asyncio.Event(),
+    }
+    release_send = {
+        "first objective": asyncio.Event(),
+        "second objective": asyncio.Event(),
+    }
+    conversation_ids: dict[str, str] = {}
+
+    async def controlled_send(*, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1]
+        objective = request.get_value()
+        conversation_id = request.get_piece().conversation_id
+        conversation_ids[objective] = conversation_id
+        send_started[objective].set()
+        await release_send[objective].wait()
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id=conversation_id,
+            ).to_message()
+        ]
+
+    target._send_prompt_to_target_async = controlled_send  # type: ignore[method-assign]
+    target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+    first_attack = PromptSendingAttack(objective_target=target)
+    second_attack = PromptSendingAttack(objective_target=target)
+    first_task = asyncio.create_task(first_attack.execute_async(objective="first objective"))
+    second_task = asyncio.create_task(second_attack.execute_async(objective="second objective"))
+    await asyncio.gather(*(event.wait() for event in send_started.values()))
+
+    release_send["first objective"].set()
+    await first_task
+
+    target.reset_conversation_async.assert_awaited_once_with(conversation_id=conversation_ids["first objective"])
+    assert not second_task.done()
+
+    release_send["second objective"].set()
+    await second_task
+
+    assert target.reset_conversation_async.await_count == 2
+    target.reset_conversation_async.assert_any_await(conversation_id=conversation_ids["second objective"])
 
 
 @pytest.fixture
@@ -44,6 +235,7 @@ def mock_true_false_scorer():
     """Create a mock true/false scorer for testing"""
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer.score_text_async = AsyncMock()
+    scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
     scorer.get_identifier.return_value = get_mock_scorer_identifier()
     return scorer
 
@@ -59,7 +251,7 @@ def mock_non_true_false_scorer():
 @pytest.fixture
 def mock_prompt_normalizer():
     """Create a mock prompt normalizer for testing"""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -109,6 +301,20 @@ def failure_score():
         message_piece_id=str(uuid.uuid4()),
         scorer_class_identifier=get_mock_scorer_identifier(),
     )
+
+
+@pytest.fixture
+def best_of_n_attack(
+    *, patch_central_database: MagicMock, mock_true_false_scorer: MagicMock
+) -> tuple[PromptSendingAttack, MockPromptTarget]:
+    target = MockPromptTarget()
+    factory = next(factory for factory in get_technique_factories() if factory.name == "best_of_n")
+    attack = factory.create(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+    ).attack
+    assert isinstance(attack, PromptSendingAttack)
+    return attack, target
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -213,7 +419,6 @@ class TestContextValidation:
                 next_message=Message.from_prompt(prompt="test", role="user"),
             ),
             conversation_id=str(uuid.uuid4()),
-            system_prompt="System prompt",
             metadata={"key": "value"},
         )
 
@@ -257,11 +462,11 @@ class TestSetupPhase:
         assert basic_context.conversation_id  # Should have a new conversation_id
 
     async def test_setup_updates_conversation_state_with_converters(self, mock_target, basic_context):
-        from pyrit.prompt_normalizer.prompt_converter_configuration import (
-            PromptConverterConfiguration,
+        from pyrit.prompt_normalizer.converter_configuration import (
+            ConverterConfiguration,
         )
 
-        converter_config = [PromptConverterConfiguration(converters=[])]
+        converter_config = [ConverterConfiguration(converters=[])]
         attack = PromptSendingAttack(
             objective_target=mock_target,
             attack_converter_config=AttackConverterConfig(request_converters=converter_config),
@@ -277,9 +482,108 @@ class TestSetupPhase:
             target=mock_target,
             conversation_id=basic_context.conversation_id,
             request_converters=converter_config,
-            prepended_conversation_config=None,
+            prepended_conversation_config=PrependedConversationConfig(),
             memory_labels={},
         )
+
+    async def test_default_converter_scoping_preserves_simulated_assistant_history(self):
+        target = MockPromptTarget()
+        converter_config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        )
+        attack = PromptSendingAttack(objective_target=target, attack_converter_config=converter_config)
+        prepended_user = "prepended user request"
+        simulated_response = "simulated assistant response"
+        final_request = "live final request"
+
+        result = await attack.execute_async(
+            objective="Test objective",
+            prepended_conversation=[
+                Message.from_prompt(prompt=prepended_user, role="user"),
+                Message.from_prompt(prompt=simulated_response, role="assistant"),
+            ],
+            next_message=Message.from_prompt(prompt=final_request, role="user"),
+        )
+
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=result.conversation_id
+        )
+        assistant_piece = next(piece for piece in pieces if piece.original_value == simulated_response)
+        final_piece = next(piece for piece in pieces if piece.original_value == final_request)
+
+        assert assistant_piece.role == "simulated_assistant"
+        assert assistant_piece.converted_value == assistant_piece.original_value
+        assert assistant_piece.converter_identifiers == []
+        assert final_piece.converted_value != final_piece.original_value
+        assert [identifier.class_name for identifier in final_piece.converter_identifiers] == ["Base64Converter"]
+
+    async def test_explicit_assistant_role_opt_in_converts_simulated_history(self):
+        target = MockPromptTarget()
+        converter_config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        )
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_converter_config=converter_config,
+            prepended_conversation_config=PrependedConversationConfig(apply_converters_to_roles=["assistant"]),
+        )
+        simulated_response = "assistant history explicitly converted"
+
+        result = await attack.execute_async(
+            objective="Test objective",
+            prepended_conversation=[Message.from_prompt(prompt=simulated_response, role="assistant")],
+            next_message=Message.from_prompt(prompt="live request", role="user"),
+        )
+
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=result.conversation_id
+        )
+        assistant_piece = next(piece for piece in pieces if piece.original_value == simulated_response)
+
+        assert assistant_piece.role == "simulated_assistant"
+        assert assistant_piece.converted_value != assistant_piece.original_value
+        assert [identifier.class_name for identifier in assistant_piece.converter_identifiers] == ["Base64Converter"]
+
+    async def test_non_chat_target_converts_history_by_role_before_flattening(self):
+        target = MockPromptTarget()
+        target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
+        converter_config = AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+        )
+        attack = PromptSendingAttack(objective_target=target, attack_converter_config=converter_config)
+        prepended_user = "prepended user request"
+        simulated_response = "simulated assistant response"
+        final_request = "live final request"
+
+        await attack.execute_async(
+            objective="Test objective",
+            prepended_conversation=[
+                Message.from_prompt(prompt=prepended_user, role="user"),
+                Message.from_prompt(prompt=simulated_response, role="assistant"),
+            ],
+            next_message=Message.from_prompt(prompt=final_request, role="user"),
+        )
+
+        encoded_user = base64.b64encode(prepended_user.encode()).decode()
+        encoded_final_request = base64.b64encode(final_request.encode()).decode()
+        assert target.prompt_sent == [
+            (f"Turn 1:\nuser: {encoded_user}\nassistant: {simulated_response}\nTurn 2:\nuser: {encoded_final_request}")
+        ]
+
+    async def test_retry_setup_creates_fresh_conversation(self, basic_context):
+        target = MockPromptTarget()
+        target._configuration = TargetConfiguration(capabilities=TargetCapabilities())
+        attack = PromptSendingAttack(objective_target=target)
+        basic_context.prepended_conversation = [
+            Message.from_prompt(prompt="prepended", role="user"),
+        ]
+
+        await attack._setup_async(context=basic_context)
+        first_conversation_id = basic_context.conversation_id
+
+        await attack._setup_async(context=basic_context)
+
+        assert basic_context.conversation_id != first_conversation_id
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -386,12 +690,12 @@ class TestPromptSending:
     async def test_send_prompt_to_target_with_all_configurations(
         self, mock_target, mock_prompt_normalizer, basic_context
     ):
-        from pyrit.prompt_normalizer.prompt_converter_configuration import (
-            PromptConverterConfiguration,
+        from pyrit.prompt_normalizer.converter_configuration import (
+            ConverterConfiguration,
         )
 
-        request_converters = [PromptConverterConfiguration(converters=[])]
-        response_converters = [PromptConverterConfiguration(converters=[])]
+        request_converters = [ConverterConfiguration(converters=[])]
+        response_converters = [ConverterConfiguration(converters=[])]
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -402,7 +706,6 @@ class TestPromptSending:
         )
 
         message = Message.from_prompt(prompt="Test prompt", role="user")
-        basic_context.memory_labels = {"test": "label"}
         mock_response = MagicMock()
         mock_prompt_normalizer.send_prompt_async.return_value = mock_response
 
@@ -417,7 +720,6 @@ class TestPromptSending:
         assert call_args.kwargs["conversation_id"] == basic_context.conversation_id
         assert call_args.kwargs["request_converter_configurations"] == request_converters
         assert call_args.kwargs["response_converter_configurations"] == response_converters
-        assert call_args.kwargs["labels"] == {"test": "label"}
 
     async def test_send_prompt_handles_none_response(self, mock_target, mock_prompt_normalizer, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target, prompt_normalizer=mock_prompt_normalizer)
@@ -441,11 +743,15 @@ class TestResponseEvaluation:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": [success_score]},
         ) as mock_score_method:
-            result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="Test objective",
+                expectation=ScoringExpectation(objective="Test objective"),
+            )
 
             assert result == success_score
 
@@ -454,20 +760,23 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=mock_true_false_scorer,
-                role_filter="assistant",
-                objective="Test objective",
-                skip_on_error_result=True,
+                expectation=ScoringExpectation(objective="Test objective"),
+                auxiliary_expectations=[],
             )
 
     async def test_evaluate_response_without_objective_scorer_returns_none(self, mock_target, sample_response):
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [], "objective_scores": []},
         ) as mock_score_method:
-            result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="Test objective",
+                expectation=ScoringExpectation(objective="Test objective"),
+            )
 
             assert result is None
 
@@ -476,15 +785,17 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=attack._auxiliary_scorers,
                 objective_scorer=None,
-                role_filter="assistant",
-                objective="Test objective",
-                skip_on_error_result=True,
+                expectation=ScoringExpectation(objective="Test objective"),
+                auxiliary_expectations=[],
             )
 
     async def test_evaluate_response_with_auxiliary_scorers(
         self, mock_target, mock_true_false_scorer, sample_response, success_score
     ):
         auxiliary_scorer = MagicMock(spec=Scorer)
+        auxiliary_scorer.get_condition_types.return_value = frozenset()
+        auxiliary_scorer.select_expectation.side_effect = lambda *, expectation: expectation
+        auxiliary_scorer.prepare_expectation.side_effect = lambda *, expectation: expectation
         auxiliary_score = Score(
             score_type="float_scale",
             score_value="0.8",
@@ -504,11 +815,15 @@ class TestResponseEvaluation:
         )
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             return_value={"auxiliary_scores": [auxiliary_score], "objective_scores": [success_score]},
         ) as mock_score_method:
-            result = await attack._evaluate_response_async(response=sample_response, objective="Test objective")
+            result = await attack._evaluate_response_async(
+                response=sample_response,
+                objective="Test objective",
+                expectation=ScoringExpectation(objective="Test objective"),
+            )
 
             # Only objective score is returned
             assert result == success_score
@@ -518,9 +833,8 @@ class TestResponseEvaluation:
                 response=sample_response,
                 auxiliary_scorers=[auxiliary_scorer],
                 objective_scorer=mock_true_false_scorer,
-                role_filter="assistant",
-                objective="Test objective",
-                skip_on_error_result=True,
+                expectation=ScoringExpectation(objective="Test objective"),
+                auxiliary_expectations=[ScoringExpectation(objective="Test objective")],
             )
 
 
@@ -650,7 +964,7 @@ class TestAttackExecution:
         # Verify that _evaluate_response_async was called even without objective scorer
         # This ensures auxiliary scores are still collected
         attack._evaluate_response_async.assert_called_once_with(
-            response=sample_response, objective=basic_context.objective
+            response=sample_response, objective=basic_context.objective, expectation=basic_context.expectation
         )
 
     async def test_perform_attack_without_scorer_retries_on_filtered_response(
@@ -673,6 +987,31 @@ class TestAttackExecution:
         assert result.last_response == sample_response.get_piece()
         assert attack._send_prompt_to_objective_target_async.call_count == 2
 
+    async def test_retry_without_response_does_not_reuse_previous_score(
+        self,
+        mock_target,
+        mock_true_false_scorer,
+        basic_context,
+        sample_response,
+        failure_score,
+    ):
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+            max_attempts_on_failure=1,
+        )
+        attack._get_prompt_group = MagicMock(
+            return_value=SeedGroup(seeds=[SeedPrompt(value="Test prompt", data_type="text")])
+        )
+        attack._send_prompt_to_objective_target_async = AsyncMock(side_effect=[sample_response, None])
+        attack._evaluate_response_async = AsyncMock(return_value=failure_score)
+
+        result = await attack._perform_async(context=basic_context)
+
+        assert result.last_response is None
+        assert result.last_score is None
+        assert result.outcome is AttackOutcome.FAILURE
+
     async def test_perform_async_sets_atomic_attack_identifier(self, mock_target, basic_context, sample_response):
         """Test that _perform_async sets atomic_attack_identifier in the correct AtomicAttack format."""
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=None)
@@ -694,6 +1033,42 @@ class TestAttackExecution:
 @pytest.mark.usefixtures("patch_central_database")
 class TestConverterIntegration:
     """Tests for converter integration"""
+
+    @pytest.mark.parametrize("root_seed", [None, 42])
+    async def test_best_of_n_retry_diversity_and_seeded_replay_async(
+        self,
+        *,
+        best_of_n_attack: tuple[PromptSendingAttack, MockPromptTarget],
+        failure_score: Score,
+        root_seed: int | None,
+    ) -> None:
+        attack, target = best_of_n_attack
+        previous_seed = get_configured_random_seed()
+        try:
+            configure_random_seed(seed=root_seed)
+            sequences: list[list[str]] = []
+            with patch.object(attack, "_evaluate_response_async", new_callable=AsyncMock, return_value=failure_score):
+                for _ in range(2):
+                    target.prompt_sent.clear()
+                    context = SingleTurnAttackContext(
+                        params=AttackParameters(
+                            objective="Describe several different approaches to organizing a collection of books."
+                        ),
+                    )
+                    await attack._setup_async(context=context)
+                    result = await attack._perform_async(context=context)
+
+                    assert result.outcome == AttackOutcome.FAILURE
+                    assert len(target.prompt_sent) == 20
+                    assert len(set(target.prompt_sent)) == 20
+                    sequences.append(target.prompt_sent.copy())
+
+            if root_seed is not None:
+                assert sequences[0] == sequences[1]
+            else:
+                assert sequences[0] != sequences[1]
+        finally:
+            configure_random_seed(seed=previous_seed)
 
     @pytest.mark.parametrize(
         "converters,input_text,expected_pattern",
@@ -718,7 +1093,7 @@ class TestConverterIntegration:
         input_text,
         expected_pattern,
     ):
-        converter_config = PromptConverterConfiguration.from_converters(converters=converters)
+        converter_config = ConverterConfiguration.from_converters(converters=converters)
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -744,7 +1119,7 @@ class TestConverterIntegration:
         self, mock_target, mock_prompt_normalizer, basic_context, sample_response
     ):
         response_converter = Base64Converter()
-        converter_config = PromptConverterConfiguration.from_converters(converters=[response_converter])
+        converter_config = ConverterConfiguration.from_converters(converters=[response_converter])
 
         attack = PromptSendingAttack(
             objective_target=mock_target,
@@ -1007,6 +1382,104 @@ class TestAttackLifecycle:
         attack._perform_async.assert_called_once_with(context=basic_context)
         attack._teardown_async.assert_called_once_with(context=basic_context)
 
+    async def test_scorer_failure_cancels_siblings_before_error_persistence_and_reset(self, mock_true_false_scorer):
+        target = MockPromptTarget()
+        target.reset_conversation_async = AsyncMock()  # type: ignore[method-assign]
+        auxiliary_scorer = MagicMock(spec=Scorer)
+        auxiliary_scorer.get_identifier.return_value = get_mock_scorer_identifier()
+        objective_started = asyncio.Event()
+        allow_objective_completion = asyncio.Event()
+        events: list[str] = []
+        scorer_tasks: list[asyncio.Task[object]] = []
+
+        async def slow_objective_score_async(**kwargs) -> list[Score]:
+            current_task = asyncio.current_task()
+            assert current_task is not None
+            scorer_tasks.append(current_task)
+            events.append("objective_started")
+            objective_started.set()
+            try:
+                await allow_objective_completion.wait()
+                (await CentralMemory.get_memory_instance().add_scores_to_memory_async(scores=[]))
+                events.append("forbidden_objective_write")
+                return []
+            except asyncio.CancelledError:
+                events.append("objective_cancelled")
+                raise
+            finally:
+                events.append("objective_finalized")
+
+        async def failing_auxiliary_score_async(**kwargs) -> list[Score]:
+            current_task = asyncio.current_task()
+            assert current_task is not None
+            scorer_tasks.append(current_task)
+            await objective_started.wait()
+            events.append("auxiliary_raised")
+            raise RuntimeError("deterministic auxiliary scorer failure")
+
+        mock_true_false_scorer.score_async = slow_objective_score_async
+        auxiliary_scorer.score_async = failing_auxiliary_score_async
+        attack = PromptSendingAttack(
+            objective_target=target,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=mock_true_false_scorer,
+                auxiliary_scorers=[auxiliary_scorer],
+            ),
+        )
+        memory = CentralMemory.get_memory_instance()
+        original_persist_results = memory.add_attack_results_to_memory_async
+        persisted_results: list[AttackResult] = []
+
+        async def record_attack_results_async(*, attack_results: list[AttackResult]) -> None:
+            await original_persist_results(attack_results=attack_results)
+            persisted_results.extend(attack_results)
+            events.append("error_persisted")
+
+        async def record_reset(*, conversation_id: str) -> None:
+            events.append("target_reset")
+
+        target.reset_conversation_async.side_effect = record_reset
+
+        with (
+            patch.object(
+                memory, "add_attack_results_to_memory_async", side_effect=record_attack_results_async
+            ) as persist_results,
+            patch.object(memory, "add_scores_to_memory_async", new_callable=AsyncMock) as persist_scores_async,
+        ):
+            with pytest.raises(RuntimeError, match="deterministic auxiliary scorer failure"):
+                await attack.execute_async(objective="Test objective")
+            events.append("caller_received")
+
+            assert events == [
+                "objective_started",
+                "auxiliary_raised",
+                "objective_cancelled",
+                "objective_finalized",
+                "error_persisted",
+                "target_reset",
+                "caller_received",
+            ]
+            assert persist_results.call_count == 1
+            assert len(persisted_results) == 1
+            assert persisted_results[0].outcome == AttackOutcome.ERROR
+            assert persisted_results[0].outcome_reason == (
+                "Exception: RuntimeError: deterministic auxiliary scorer failure"
+            )
+            stored_results = await memory.get_attack_results_async(objective="Test objective")
+            assert len(stored_results) == 1
+            assert stored_results[0].outcome == AttackOutcome.ERROR
+            persist_scores_async.assert_not_awaited()
+            target.reset_conversation_async.assert_awaited_once_with(
+                conversation_id=persisted_results[0].conversation_id
+            )
+            assert len(scorer_tasks) == 2
+            assert all(task.done() for task in scorer_tasks)
+
+            terminal_events = list(events)
+            allow_objective_completion.set()
+            assert events == terminal_events
+            persist_scores_async.assert_not_awaited()
+
     async def test_teardown_async_is_noop(self, mock_target, basic_context):
         attack = PromptSendingAttack(objective_target=mock_target)
 
@@ -1037,7 +1510,6 @@ class TestAttackLifecycle:
             prepended_conversation=[sample_response],
             memory_labels={"test": "label"},
             next_message=message,
-            system_prompt="System prompt",
         )
 
         # Verify result
@@ -1051,7 +1523,13 @@ class TestAttackLifecycle:
         assert context.objective == "Test objective"
         assert context.memory_labels == {"test": "label"}
         assert context.next_message is not None
-        assert context.system_prompt == "System prompt"
+
+    async def test_execute_async_with_system_prompt_raises_error(self, mock_target):
+        """Passing the removed system_prompt parameter is rejected."""
+        attack = PromptSendingAttack(objective_target=mock_target)
+
+        with pytest.raises(ValueError, match="does not accept parameters.*system_prompt"):
+            await attack.execute_async(objective="Test objective", system_prompt="System prompt")
 
     async def test_execute_async_with_invalid_params_raises_error(self, mock_target):
         """Test execute_async raises error when invalid parameters are passed"""
@@ -1069,6 +1547,112 @@ class TestAttackLifecycle:
 @pytest.mark.usefixtures("patch_central_database")
 class TestEdgeCasesAndErrorHandling:
     """Tests for edge cases and error handling scenarios"""
+
+    async def test_preparation_failure_does_not_call_objective_target(
+        self,
+        mock_target: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+    ) -> None:
+        failure_reason = "Adversarial chat blocked the attack."
+        context = SingleTurnAttackContext(
+            params=PromptSendingAttackParameters(
+                objective="Test objective",
+                preparation_failure=AttackPreparationFailure(
+                    kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                    reason=failure_reason,
+                ),
+                source_conversations=frozenset(
+                    {
+                        ConversationReference(
+                            conversation_id="preparation-1",
+                            conversation_type=ConversationType.PREPARATION,
+                        )
+                    }
+                ),
+            ),
+            conversation_id=str(uuid.uuid4()),
+        )
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        result = await attack._perform_async(context=context)
+
+        assert result.outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome_reason == failure_reason
+        assert result.executed_turns == 0
+        assert result.last_response is None
+        assert result.related_conversations == context.related_conversations
+        preparation_failure = AttackPreparationFailure.from_result(result=result)
+        assert preparation_failure is not None
+        assert preparation_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
+        assert preparation_failure.reason == failure_reason
+        mock_prompt_normalizer.send_prompt_async.assert_not_awaited()
+
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
+    async def test_executor_completes_simulated_preparation_block_as_undetermined(
+        self,
+        mock_generate: AsyncMock,
+        mock_target: MagicMock,
+        mock_prompt_normalizer: MagicMock,
+        mock_true_false_scorer: MagicMock,
+    ) -> None:
+        failure_reason = "Adversarial chat blocked the attack."
+        mock_generate.return_value = SimulatedConversationResult(
+            seed_prompts=[],
+            related_conversations=frozenset(
+                {
+                    ConversationReference(
+                        conversation_id="preparation-1",
+                        conversation_type=ConversationType.PREPARATION,
+                    )
+                }
+            ),
+            preparation_failure=AttackPreparationFailure(
+                kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                reason=failure_reason,
+            ),
+        )
+        seed_group = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="Test objective"),
+                SeedSimulatedConversation(
+                    num_turns=1,
+                    adversarial_chat_system_prompt_path=RTASystemPromptPaths.TEXT_GENERATION.value,
+                ),
+            ]
+        )
+        attack = PromptSendingAttack(
+            objective_target=mock_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_true_false_scorer),
+            prompt_normalizer=mock_prompt_normalizer,
+        )
+
+        executor_result = await AttackExecutor().execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=[seed_group],
+            adversarial_chat=MagicMock(spec=PromptTarget),
+            objective_scorer=mock_true_false_scorer,
+            return_partial_on_failure=True,
+        )
+
+        assert executor_result.incomplete_objectives == []
+        assert len(executor_result.completed_results) == 1
+        result = executor_result.completed_results[0]
+        assert result.outcome is AttackOutcome.UNDETERMINED
+        assert result.outcome_reason == failure_reason
+        assert result.executed_turns == 0
+        assert {reference.conversation_id for reference in result.related_conversations} == {"preparation-1"}
+        mock_prompt_normalizer.send_prompt_async.assert_not_awaited()
+        [persisted_result] = await CentralMemory.get_memory_instance().get_attack_results_async(
+            objective="Test objective"
+        )
+        assert persisted_result.outcome is AttackOutcome.UNDETERMINED
+        assert persisted_result.related_conversations == result.related_conversations
+        persisted_failure = AttackPreparationFailure.from_result(result=persisted_result)
+        assert persisted_failure is not None
+        assert persisted_failure.kind is AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED
 
     @pytest.mark.parametrize("max_attempts", [0, 1, 5])
     async def test_perform_attack_with_various_max_attempts(
@@ -1125,13 +1709,15 @@ class TestEdgeCasesAndErrorHandling:
         attack = PromptSendingAttack(objective_target=mock_target, attack_scoring_config=attack_scoring_config)
 
         with patch(
-            "pyrit.score.Scorer.score_response_async",
+            "pyrit.score.MessageScorer.score_response_async",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Scorer error"),
         ):
             # Should propagate the exception
             with pytest.raises(RuntimeError, match="Scorer error"):
-                await attack._evaluate_response_async(response=sample_response, objective="Test")
+                await attack._evaluate_response_async(
+                    response=sample_response, objective="Test", expectation=ScoringExpectation(objective="Test")
+                )
 
     def test_attack_has_unique_identifier(self, mock_target):
         attack1 = PromptSendingAttack(objective_target=mock_target)
@@ -1148,6 +1734,34 @@ class TestEdgeCasesAndErrorHandling:
         # Same config produces same identifier
         assert id1.hash == id2.hash
         assert id1.class_name == id2.class_name == "PromptSendingAttack"
+
+    def test_attack_identifier_owns_prepended_formatter_provenance(self, mock_target):
+        tokenizer = MagicMock()
+        tokenizer.name_or_path = "example/tokenizer"
+        tokenizer.chat_template = "{{ messages }}"
+        tokenizer.special_tokens_map = {"bos_token": "<s>"}
+        keep_formatter = TokenizerTemplateNormalizer(
+            tokenizer=tokenizer,
+            system_message_behavior="keep",
+        )
+        ignore_formatter = TokenizerTemplateNormalizer(
+            tokenizer=tokenizer,
+            system_message_behavior="ignore",
+        )
+
+        keep_attack = PromptSendingAttack(
+            objective_target=mock_target,
+            prepended_conversation_config=PrependedConversationConfig(message_normalizer=keep_formatter),
+        )
+        ignore_attack = PromptSendingAttack(
+            objective_target=mock_target,
+            prepended_conversation_config=PrependedConversationConfig(message_normalizer=ignore_formatter),
+        )
+
+        keep_identifier = keep_attack.get_identifier()
+        ignore_identifier = ignore_attack.get_identifier()
+        assert "prepended_conversation_formatter" in keep_identifier.children
+        assert keep_identifier.hash != ignore_identifier.hash
 
     async def test_retry_stores_unsuccessful_conversation_and_updates_id(
         self, mock_target, mock_true_false_scorer, basic_context, sample_response, failure_score

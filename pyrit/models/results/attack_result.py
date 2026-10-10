@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, Field, field_serializer, model_validator
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
@@ -18,7 +18,60 @@ from pyrit.models.results.strategy_result import StrategyResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
+
+ATTRIBUTION_FIELDS: tuple[str, str] = ("operator", "operation")
+ATTRIBUTION_VALUE_MAX_LENGTH: int = 128
+
+
+def normalize_legacy_attack_attribution(
+    *,
+    labels: Mapping[str, Any],
+    operator: str | None,
+    operation: str | None,
+) -> tuple[dict[str, Any], str | None, str | None]:
+    """
+    Move scalar legacy label aliases to dedicated attribution fields.
+
+    TODO(PyRIT 1.4): Remove this helper with legacy attribution label aliases.
+
+    Args:
+        labels (Mapping[str, Any]): Labels that may still carry the legacy aliases.
+        operator (str | None): Dedicated operator value.
+        operation (str | None): Dedicated operation value.
+
+    Returns:
+        tuple[dict[str, Any], str | None, str | None]: Arbitrary labels and resolved attribution.
+
+    Raises:
+        ValueError: If an alias is invalid or disagrees with its dedicated value.
+    """
+    remaining = dict(labels)
+    resolved: dict[str, Any] = {"operator": operator, "operation": operation}
+    for field in ATTRIBUTION_FIELDS:
+        current = resolved[field]
+        if current is not None and not isinstance(current, str):
+            raise ValueError(f"{field} must be a string")
+        if current is not None and len(current) > ATTRIBUTION_VALUE_MAX_LENGTH:
+            raise ValueError(f"{field} must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+        if field in remaining:
+            legacy_value = remaining.pop(field)
+            if not isinstance(legacy_value, str):
+                raise ValueError(f"labels.{field} must be a string")
+            if len(legacy_value) > ATTRIBUTION_VALUE_MAX_LENGTH:
+                raise ValueError(f"labels.{field} must be at most {ATTRIBUTION_VALUE_MAX_LENGTH} characters")
+            if current is not None and current != legacy_value:
+                raise ValueError(f"{field} conflicts with legacy labels.{field}: {current!r} != {legacy_value!r}")
+            print_deprecation_message(
+                old_item=f"labels.{field}",
+                new_item=field,
+                removed_in="1.4.0",
+            )
+            resolved[field] = legacy_value
+    return remaining, resolved["operator"], resolved["operation"]
 
 
 class AttackOutcome(str, Enum):
@@ -42,8 +95,31 @@ class AttackOutcome(str, Enum):
     UNDETERMINED = "undetermined"
 
 
+class AttackResultRole(str, Enum):
+    """
+    What a persisted attack result represents, recorded by the strategy that produced it.
+
+    The role says which kind of record this is, not what happened. A target-facing result
+    can still end before any request reaches the objective target (for example, a preparation
+    failure), so the role is not proof that the target was called.
+    """
+
+    #: Produced by a strategy that sends its own requests to the objective target.
+    TARGET_FACING = "target_facing"
+
+    #: Produced by a strategy that only coordinates other attacks and has no target
+    #: conversation of its own, such as ``SequentialAttack``.
+    ORCHESTRATION = "orchestration"
+
+    #: Read-side value for records that carry no recognized role, such as rows persisted
+    #: before roles were recorded. Producers never write it.
+    UNKNOWN = "unknown"
+
+
 class AttackResult(StrategyResult):
     """Base class for all attack results."""
+
+    ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
 
     # Identity
     # Unique identifier of the conversation that produced this result
@@ -65,8 +141,11 @@ class AttackResult(StrategyResult):
     # Model response generated in the final turn of the attack
     last_response: MessagePiece | None = None
 
-    # Score assigned to the final response by a scorer component
-    last_score: Score | None = None
+    # Score assigned to the final response by an automated scorer component
+    automated_score: Score | None = None
+
+    # Score assigned to the final response by a human
+    human_score: Score | None = None
 
     # Metrics
     # Total number of turns that were executed
@@ -83,13 +162,18 @@ class AttackResult(StrategyResult):
     outcome_reason: str | None = None
 
     # Wall-clock time the result was created or persisted.
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # Flexible conversation refs (nothing unused)
     related_conversations: set[ConversationReference] = Field(default_factory=set)
 
     # Arbitrary metadata
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    # First-class attribution fields. These are deliberately separate from
+    # arbitrary labels so they can be indexed and queried efficiently.
+    operator: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    operation: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
 
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)
@@ -108,19 +192,47 @@ class AttackResult(StrategyResult):
     retry_events: list[RetryEvent] = Field(default_factory=list)
     total_retries: int = 0
 
-    # Attribution / parent linkage (infrastructure-managed). Set by the attack
-    # persistence path when an AttackResultAttribution is present on the
-    # AttackContext. User code should not set these directly; ad-hoc
-    # AttackResults created outside an orchestrator leave both fields as None
-    # and the corresponding DB columns remain NULL.
+    # Infrastructure-managed parent linkage and producer metadata. Strategies
+    # record their role even without an orchestrator; the parent ID stays None.
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
+        """
+        Move legacy attribution label aliases to their dedicated fields.
+
+        Returns:
+            The normalized model input.
+
+        Raises:
+            ValueError: If an alias is not a string or conflicts with a dedicated field.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("labels"), dict):
+            return data
+
+        normalized = dict(data)
+        remaining, operator, operation = normalize_legacy_attack_attribution(
+            labels=normalized["labels"],
+            operator=normalized.get("operator"),
+            operation=normalized.get("operation"),
+        )
+        normalized["labels"] = remaining
+        normalized["operator"] = operator
+        normalized["operation"] = operation
+        return normalized
+
+    @property
+    def last_score(self) -> Score | None:
+        """The human score when present, otherwise the automated score."""
+        return self.human_score or self.automated_score
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """
         Return the attack strategy identifier from the composite atomic identifier.
 
-        This is the non-deprecated replacement for the ``attack_identifier`` property.
+        This replaces the removed ``attack_identifier`` property.
         Extracts the ``"attack"`` child from the nested ``"attack_technique"`` child
         of ``atomic_attack_identifier``.
 
@@ -202,6 +314,23 @@ class AttackResult(StrategyResult):
         """
         return conversation_id in self.get_all_conversation_ids()
 
+    @field_serializer("related_conversations", when_used="json")
+    def _serialize_related_conversations(
+        self,
+        related_conversations: set[ConversationReference],
+    ) -> list[dict[str, Any]]:
+        return [
+            ref.model_dump(mode="json")
+            for ref in sorted(
+                related_conversations,
+                key=lambda ref: (
+                    ref.conversation_id,
+                    ref.conversation_type.value,
+                    ref.description or "",
+                ),
+            )
+        ]
+
     def __str__(self) -> str:
         """
         Return a concise string representation of this attack result.
@@ -211,99 +340,3 @@ class AttackResult(StrategyResult):
 
         """
         return f"AttackResult: {self.conversation_id}: {self.outcome.value}: {self.objective[:50]}..."
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Serialize this attack result to a JSON-compatible dictionary.
-
-        Deprecated: use ``model_dump(mode="json")`` for the canonical Pydantic
-        serialization. This shim preserves the legacy wire shape (base fields
-        only, raw ``metadata``, sorted ``related_conversations``) through the
-        deprecation window.
-
-        Returns:
-            dict[str, Any]: Serialized payload suitable for REST APIs or persistence.
-        """
-        print_deprecation_message(
-            old_item="AttackResult.to_dict()",
-            new_item="AttackResult.model_dump(mode='json')",
-            removed_in="0.16.0",
-        )
-        return {
-            "conversation_id": self.conversation_id,
-            "objective": self.objective,
-            "attack_result_id": self.attack_result_id,
-            "atomic_attack_identifier": (
-                self.atomic_attack_identifier.model_dump() if self.atomic_attack_identifier else None
-            ),
-            "last_response": self.last_response.model_dump(mode="json") if self.last_response else None,
-            "last_score": self.last_score.model_dump(mode="json") if self.last_score else None,
-            "executed_turns": self.executed_turns,
-            "execution_time_ms": self.execution_time_ms,
-            "outcome": self.outcome.value,
-            "outcome_reason": self.outcome_reason,
-            "timestamp": self.timestamp.isoformat(),
-            "related_conversations": sorted(
-                [ref.model_dump(mode="json") for ref in self.related_conversations],
-                key=lambda r: r["conversation_id"],
-            ),
-            "metadata": self.metadata,
-            "labels": self.labels,
-            "targeted_harm_categories": self.targeted_harm_categories,
-            "error_message": self.error_message,
-            "error_type": self.error_type,
-            "error_traceback": self.error_traceback,
-            "retry_events": [e.model_dump(mode="json") for e in self.retry_events],
-            "total_retries": self.total_retries,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AttackResult:
-        """
-        Reconstruct an AttackResult from a dictionary.
-
-        Deprecated: use ``model_validate(...)`` for the canonical Pydantic
-        deserialization. This shim accepts the legacy ``to_dict()`` wire shape
-        (base fields only) through the deprecation window.
-
-        Args:
-            data (dict[str, Any]): Dictionary as produced by to_dict().
-
-        Returns:
-            AttackResult: Reconstructed instance.
-        """
-        print_deprecation_message(
-            old_item="AttackResult.from_dict(...)",
-            new_item="AttackResult.model_validate(...)",
-            removed_in="0.16.0",
-        )
-        return cls(
-            conversation_id=data["conversation_id"],
-            objective=data["objective"],
-            attack_result_id=data.get("attack_result_id", str(uuid.uuid4())),
-            atomic_attack_identifier=(
-                ComponentIdentifier.model_validate(data["atomic_attack_identifier"])
-                if data.get("atomic_attack_identifier")
-                else None
-            ),
-            last_response=(MessagePiece.model_validate(data["last_response"]) if data.get("last_response") else None),
-            last_score=Score.model_validate(data["last_score"]) if data.get("last_score") else None,
-            executed_turns=data.get("executed_turns", 0),
-            execution_time_ms=data.get("execution_time_ms", 0),
-            outcome=AttackOutcome(data.get("outcome", "undetermined")),
-            outcome_reason=data.get("outcome_reason"),
-            timestamp=(
-                datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(timezone.utc)
-            ),
-            related_conversations={
-                ConversationReference.model_validate(r) for r in data.get("related_conversations", [])
-            },
-            metadata=data.get("metadata", {}),
-            labels=data.get("labels", {}),
-            targeted_harm_categories=data.get("targeted_harm_categories", []),
-            error_message=data.get("error_message"),
-            error_type=data.get("error_type"),
-            error_traceback=data.get("error_traceback"),
-            retry_events=[RetryEvent.model_validate(e) for e in data.get("retry_events", [])],
-            total_retries=data.get("total_retries", 0),
-        )

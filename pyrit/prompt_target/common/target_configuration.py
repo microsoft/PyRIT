@@ -3,6 +3,7 @@
 
 import logging
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from pyrit.message_normalizer import MessageListNormalizer
@@ -18,7 +19,7 @@ from pyrit.prompt_target.common.target_capabilities import (
 logger = logging.getLogger(__name__)
 
 
-# Default policy: RAISE on all adaptable capabilities.
+# Default policy: preserve each capability's ordinary global behavior.
 _DEFAULT_POLICY = CapabilityHandlingPolicy()
 
 
@@ -53,16 +54,17 @@ class TargetConfiguration:
         Args:
             capabilities (TargetCapabilities): The target's declared capabilities.
             policy (CapabilityHandlingPolicy | None): How to handle each missing
-                capability. Defaults to RAISE for all adaptable capabilities.
+                capability. Defaults to each capability's ordinary global behavior.
             normalizer_overrides (Mapping[CapabilityName, MessageListNormalizer[Any]] | None):
                 Optional overrides for specific capability normalizers.
         """
         self._capabilities = capabilities
         self._policy = policy or _DEFAULT_POLICY
+        self._normalizer_overrides = dict(normalizer_overrides or {})
         self._pipeline = ConversationNormalizationPipeline.from_capabilities(
             capabilities=self._capabilities,
             policy=self._policy,
-            normalizer_overrides=normalizer_overrides,
+            normalizer_overrides=self._normalizer_overrides,
         )
 
     @property
@@ -79,6 +81,11 @@ class TargetConfiguration:
     def pipeline(self) -> ConversationNormalizationPipeline:
         """The resolved normalization pipeline."""
         return self._pipeline
+
+    @property
+    def normalizer_overrides(self) -> Mapping[CapabilityName, MessageListNormalizer[Any]]:
+        """Read-only view of construction-time normalizer overrides."""
+        return MappingProxyType(self._normalizer_overrides)
 
     def includes(self, *, capability: CapabilityName) -> bool:
         """
@@ -110,6 +117,9 @@ class TargetConfiguration:
         if self._capabilities.includes(capability=capability):
             return
 
+        if self._pipeline.has_normalizer_for(capability=capability):
+            return
+
         try:
             behavior = self._policy.get_behavior(capability=capability)
         except KeyError:
@@ -118,18 +128,35 @@ class TargetConfiguration:
             ) from None
         if behavior == UnsupportedCapabilityBehavior.RAISE:
             raise ValueError(f"Target does not support '{capability.value}' and the handling policy is RAISE.")
+        raise ValueError(
+            f"Target does not support '{capability.value}', but no default or configured normalizer can adapt it."
+        )
 
-    async def normalize_async(self, *, messages: list[Message]) -> list[Message]:
+    async def normalize_async(
+        self,
+        *,
+        messages: list[Message],
+        normalizer_overrides: Mapping[CapabilityName, MessageListNormalizer[Any]] | None = None,
+    ) -> list[Message]:
         """
         Run the normalization pipeline over the given messages.
 
         Args:
             messages (list[Message]): The full conversation to normalize.
+            normalizer_overrides: Per-send replacements for capability normalizers.
 
         Returns:
             list[Message]: The (possibly adapted) message list.
         """
-        return await self._pipeline.normalize_async(messages=messages)
+        pipeline = self._pipeline
+        if normalizer_overrides:
+            merged_overrides = {**self._normalizer_overrides, **normalizer_overrides}
+            pipeline = ConversationNormalizationPipeline.from_capabilities(
+                capabilities=self._capabilities,
+                policy=self._policy,
+                normalizer_overrides=merged_overrides,
+            )
+        return await pipeline.normalize_async(messages=messages)
 
     def as_identifier_params(self) -> dict[str, Any]:
         """
@@ -161,9 +188,11 @@ class TargetConfiguration:
                 for capability, behavior in self._policy.behaviors.items()
                 if not caps.includes(capability=capability)
             },
-            # Stable, ordered representation of the resolved normalization
-            # pipeline. Captures the effect of ``normalizer_overrides`` since
-            # the pipeline is built from defaults + overrides.
+            # Stable, ordered representation of the pipeline this configuration was
+            # built with. Per-send ``normalizer_overrides`` are NOT reflected here:
+            # ``normalize_async`` builds a throwaway pipeline and never mutates
+            # ``self._pipeline``. Attack-owned overrides are represented by the
+            # attack identifier instead.
             "normalization_pipeline": [
                 f"{type(normalizer).__module__}.{type(normalizer).__qualname__}"
                 for normalizer in self._pipeline.normalizers

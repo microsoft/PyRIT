@@ -1,0 +1,312 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+from dataclasses import dataclass
+
+import pytest
+from unit.mocks import run_memory_session_async
+
+from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_models import AttackIdentifierEntry, TargetIdentifierEntry
+from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
+    AttackTechniqueIdentifier,
+    Conversation,
+    ConverterIdentifier,
+    ScenarioIdentifier,
+    ScorerIdentifier,
+    SeedIdentifier,
+    TargetIdentifier,
+)
+
+
+@dataclass(frozen=True)
+class IdentifierGraph:
+    objective_target: TargetIdentifier
+    adversarial_target: TargetIdentifier
+    nested_converter: ConverterIdentifier
+    converter: ConverterIdentifier
+    scorer: ScorerIdentifier
+    scenario: ScenarioIdentifier
+    technique_seed: SeedIdentifier
+    dataset_seed: SeedIdentifier
+    attack: AttackIdentifier
+    technique: AttackTechniqueIdentifier
+    atomic_attack: AtomicAttackIdentifier
+
+
+@pytest.fixture
+async def identifier_graph(sqlite_instance: MemoryInterface) -> IdentifierGraph:
+    objective_target = TargetIdentifier(
+        class_name="ObjectiveTarget",
+        class_module="tests.unit.memory",
+        endpoint="https://objective.test",
+        model_name="objective-model",
+        temperature=0.5,
+    )
+    adversarial_target = TargetIdentifier(
+        class_name="AdversarialTarget",
+        class_module="tests.unit.memory",
+        endpoint="https://adversarial.test",
+        model_name="adversarial-model",
+    )
+    nested_converter = ConverterIdentifier(
+        class_name="NestedConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text", "image_path"],
+        supported_output_types=["text", "audio_path"],
+        converter_target=adversarial_target,
+    )
+    converter = ConverterIdentifier(
+        class_name="CompositeConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text", "image_path"],
+        supported_output_types=["text", "audio_path"],
+        sub_converter=nested_converter,
+    )
+    scorer = ScorerIdentifier(
+        class_name="TestScorer",
+        class_module="tests.unit.memory",
+        scorer_type="true_false",
+        score_aggregator="AND_",
+        prompt_target=adversarial_target,
+    )
+    technique_seed = SeedIdentifier(
+        class_name="TechniqueSeed",
+        class_module="tests.unit.memory",
+        value="technique seed",
+        value_sha256="technique-sha",
+        data_type="text",
+        dataset_name="techniques",
+        is_general_technique=True,
+    )
+    dataset_seed = SeedIdentifier(
+        class_name="DatasetSeed",
+        class_module="tests.unit.memory",
+        value="dataset seed",
+        value_sha256="dataset-sha",
+        data_type="text",
+        dataset_name="dataset-a",
+        is_general_technique=False,
+    )
+    attack = AttackIdentifier(
+        class_name="TestAttack",
+        class_module="tests.unit.memory",
+        adversarial_system_prompt="system prompt",
+        adversarial_seed_prompt="seed prompt",
+        objective_target=objective_target,
+        adversarial_chat=adversarial_target,
+        objective_scorer=scorer,
+        request_converters=[converter],
+    )
+    technique = AttackTechniqueIdentifier(
+        class_name="TestTechnique",
+        class_module="tests.unit.memory",
+        attack=attack,
+        technique_seeds=[technique_seed],
+    )
+    atomic_attack = AtomicAttackIdentifier(
+        class_name="AtomicAttack",
+        class_module="tests.unit.memory",
+        attack_technique=technique,
+        seed_identifiers=[technique_seed, dataset_seed],
+    )
+    scenario = ScenarioIdentifier(
+        class_name="TestScenario",
+        class_module="tests.unit.memory",
+        version=2,
+        techniques=["TestTechnique", "OtherTechnique"],
+        datasets=["dataset-a", "dataset-b"],
+        objective_target=objective_target,
+        objective_scorer=scorer,
+    )
+
+    def persist_identifiers(session):
+        sqlite_instance._persist_identifier(session=session, identifier=atomic_attack)
+        sqlite_instance._persist_identifier(session=session, identifier=scenario)
+        session.commit()
+
+    await run_memory_session_async(memory=sqlite_instance, operation=persist_identifiers)
+    return IdentifierGraph(
+        objective_target=objective_target,
+        adversarial_target=adversarial_target,
+        nested_converter=nested_converter,
+        converter=converter,
+        scorer=scorer,
+        scenario=scenario,
+        technique_seed=technique_seed,
+        dataset_seed=dataset_seed,
+        attack=attack,
+        technique=technique,
+        atomic_attack=atomic_attack,
+    )
+
+
+async def test_get_target_identifiers_by_hash_and_promoted_field(sqlite_instance: MemoryInterface) -> None:
+    target = TargetIdentifier(
+        class_name="TestTarget",
+        class_module="tests.unit.memory",
+        endpoint="https://example.test",
+        model_name="test-model",
+        supported_auth_modes=["api_key", "identity"],
+    )
+    (
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id="identifier-query", target_identifier=target)
+        )
+    )
+
+    identifiers = await sqlite_instance.get_target_identifiers_async(
+        identifier_hashes=[target.hash],
+        model_name="test-model",
+        supported_auth_modes=["identity", "api_key"],
+    )
+
+    assert identifiers == [target]
+    assert isinstance(identifiers[0], TargetIdentifier)
+    assert (await sqlite_instance.get_target_identifiers_async(supported_auth_modes=["api_key"])) == []
+    assert (await sqlite_instance.get_target_identifiers_async(supported_auth_modes=["API_KEY", "identity"])) == []
+
+
+async def test_attack_identifier_disabled_score_feedback_round_trips(sqlite_instance: MemoryInterface) -> None:
+    attack = AttackIdentifier(class_name="TestAttack", class_module="tests.unit.memory", use_score_as_feedback=False)
+
+    def persist_identifier(session):
+        sqlite_instance._persist_identifier(session=session, identifier=attack)
+        session.commit()
+        entry = session.get(AttackIdentifierEntry, attack.hash)
+        assert entry is not None
+        assert entry.use_score_as_feedback is False
+
+    await run_memory_session_async(memory=sqlite_instance, operation=persist_identifier)
+    identifiers = await sqlite_instance.get_attack_identifiers_async(identifier_hashes=[attack.hash])
+
+    assert identifiers == [attack]
+    assert identifiers[0].use_score_as_feedback is False
+    assert identifiers[0].hash == attack.hash
+
+
+async def test_get_identifiers_reconstructs_each_typed_graph(
+    sqlite_instance: MemoryInterface, identifier_graph: IdentifierGraph
+) -> None:
+    queries = [
+        (
+            (
+                await sqlite_instance.get_target_identifiers_async(
+                    identifier_hashes=[identifier_graph.objective_target.hash],
+                    endpoint="https://objective.test",
+                    temperature=0.5,
+                )
+            ),
+            identifier_graph.objective_target,
+        ),
+        (
+            (
+                await sqlite_instance.get_converter_identifiers_async(
+                    supported_input_types=["image_path", "text"],
+                    supported_output_types=["audio_path", "text"],
+                    sub_converter_hash=identifier_graph.nested_converter.hash,
+                )
+            ),
+            identifier_graph.converter,
+        ),
+        (
+            (
+                await sqlite_instance.get_scorer_identifiers_async(
+                    scorer_type="true_false",
+                    score_aggregator="AND_",
+                    prompt_target_hash=identifier_graph.adversarial_target.hash,
+                )
+            ),
+            identifier_graph.scorer,
+        ),
+        (
+            (
+                await sqlite_instance.get_scenario_identifiers_async(
+                    version=2,
+                    techniques=["OtherTechnique", "TestTechnique"],
+                    datasets=["dataset-b", "dataset-a"],
+                    objective_target_hash=identifier_graph.objective_target.hash,
+                    objective_scorer_hash=identifier_graph.scorer.hash,
+                )
+            ),
+            identifier_graph.scenario,
+        ),
+        (
+            (
+                await sqlite_instance.get_seed_identifiers_async(
+                    value_sha256="dataset-sha",
+                    data_type="text",
+                    dataset_name="dataset-a",
+                    is_general_technique=False,
+                )
+            ),
+            identifier_graph.dataset_seed,
+        ),
+        (
+            (
+                await sqlite_instance.get_attack_identifiers_async(
+                    adversarial_system_prompt="system prompt",
+                    adversarial_seed_prompt="seed prompt",
+                    objective_target_hash=identifier_graph.objective_target.hash,
+                    adversarial_chat_hash=identifier_graph.adversarial_target.hash,
+                    objective_scorer_hash=identifier_graph.scorer.hash,
+                )
+            ),
+            identifier_graph.attack,
+        ),
+        (
+            (
+                await sqlite_instance.get_attack_technique_identifiers_async(
+                    attack_identifier_hash=identifier_graph.attack.hash,
+                )
+            ),
+            identifier_graph.technique,
+        ),
+        (
+            (
+                await sqlite_instance.get_atomic_attack_identifiers_async(
+                    attack_technique_identifier_hash=identifier_graph.technique.hash,
+                )
+            ),
+            identifier_graph.atomic_attack,
+        ),
+    ]
+
+    for identifiers, expected in queries:
+        assert identifiers == [expected]
+        assert type(identifiers[0]) is type(expected)
+
+
+async def test_get_identifiers_common_filters_and_result_semantics(
+    sqlite_instance: MemoryInterface, identifier_graph: IdentifierGraph
+) -> None:
+    targets = await sqlite_instance.get_target_identifiers_async()
+    assert [identifier.hash for identifier in targets] == sorted(
+        [identifier_graph.objective_target.hash, identifier_graph.adversarial_target.hash]
+    )
+
+    duplicate_hashes = [identifier_graph.objective_target.hash, identifier_graph.objective_target.hash]
+    assert (await sqlite_instance.get_target_identifiers_async(identifier_hashes=duplicate_hashes)) == [
+        identifier_graph.objective_target
+    ]
+    assert (await sqlite_instance.get_target_identifiers_async(identifier_hashes=[])) == []
+    assert (await sqlite_instance.get_target_identifiers_async(class_name="missing")) == []
+
+
+async def test_get_identifiers_rejects_missing_identifier_json(sqlite_instance: MemoryInterface) -> None:
+    identifier_hash = "0" * 64
+    sqlite_instance._insert_entry(TargetIdentifierEntry(hash=identifier_hash, identifier_json=None))
+
+    with pytest.raises(ValueError, match="has no identifier JSON"):
+        (await sqlite_instance.get_target_identifiers_async(identifier_hashes=[identifier_hash]))
+
+
+async def test_get_identifiers_rejects_hash_mismatch(sqlite_instance: MemoryInterface) -> None:
+    target = TargetIdentifier(class_name="Target", class_module="tests.unit.memory")
+    identifier_hash = "f" * 64
+    sqlite_instance._insert_entry(TargetIdentifierEntry(hash=identifier_hash, identifier_json=target.model_dump()))
+
+    with pytest.raises(ValueError, match="does not match its stored JSON hash"):
+        (await sqlite_instance.get_target_identifiers_async(identifier_hashes=[identifier_hash]))

@@ -4,19 +4,28 @@
 """Tests for the ``blur_images`` flag across the pyrit.output module."""
 
 import io
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from PIL import Image
 
-from pyrit.models import MessagePiece, Score
+from pyrit.models import MessagePiece
 from pyrit.output.conversation.markdown import MarkdownConversationPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 
 
-class _ConcreteMarkdown(MarkdownConversationPrinter):
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
+class _NullConversationSource:
+    async def get_messages_async(self, *, conversation_id: str) -> list:
         return []
+
+    async def get_scores_async(self, *, prompt_ids: list[str]) -> list:
+        return []
+
+
+class _ConcreteMarkdown(MarkdownConversationPrinter):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(source=_NullConversationSource(), **kwargs)
 
 
 def _make_image_bytes(*, multicolor: bool = True) -> bytes:
@@ -190,27 +199,19 @@ def test_markdown_blur_failure_emits_text_link_to_original(tmp_path, monkeypatch
 
 
 def test_markdown_format_image_content_handles_cross_drive_path(tmp_path):
-    """``Path.relative_to`` raises ValueError when the path is not under cwd (e.g.,
-    on Windows when paths are on a different drive). The formatter must fall back
-    to the absolute path instead of propagating the error."""
+    """Cross-drive fallback should emit a file URI, not a bare absolute path."""
     image_path = str(tmp_path / "img.png")
 
     printer = _ConcreteMarkdown()
-    with patch("pathlib.Path.relative_to", side_effect=ValueError("cross-drive")):
+    with patch("pyrit.output.conversation.markdown.os.path.relpath", side_effect=ValueError("cross-drive")):
         lines = printer._format_image_content(image_path=image_path)
 
-    expected = str(Path(image_path).resolve()).replace("\\", "/")
+    expected = Path(image_path).resolve().as_uri()
     assert lines[0] == f"![Image]({expected})\n"
 
 
-def test_markdown_format_link_path_falls_back_to_absolute_when_outside_cwd(tmp_path, monkeypatch):
-    """Paths that are not under cwd must render as absolute paths (with POSIX
-    separators) — ``Path.relative_to`` raises ``ValueError`` in that case and
-    ``_format_link_path`` falls back to ``Path.resolve()``.
-
-    This is a deliberate behavior change from the previous ``os.path.relpath``
-    implementation, which would have produced a ``../../...`` chain.
-    """
+def test_markdown_format_link_path_uses_dotdot_relative_when_outside_cwd(tmp_path, monkeypatch):
+    """Paths outside cwd should be rendered as relative links when possible."""
     inside_cwd = tmp_path / "cwd"
     inside_cwd.mkdir()
     outside_dir = tmp_path / "elsewhere"
@@ -222,10 +223,9 @@ def test_markdown_format_link_path_falls_back_to_absolute_when_outside_cwd(tmp_p
 
     link = MarkdownConversationPrinter._format_link_path(str(outside_path))
 
-    expected = str(outside_path.resolve()).replace("\\", "/")
+    expected = os.path.relpath(outside_path.resolve(), inside_cwd.resolve()).replace("\\", "/")
     assert link == expected
-    # Never produces ".." dot-dot relative paths in the fallback branch.
-    assert ".." not in link
+    assert link.startswith("../")
 
 
 # --- Helpers / wiring ---

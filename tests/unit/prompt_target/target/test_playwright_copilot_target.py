@@ -372,6 +372,7 @@ class TestPlaywrightCopilotTarget:
 
         # Mock the helper methods
         with (
+            patch.object(target, "_clear_text_input_async") as mock_clear_text,
             patch.object(target, "_send_text_async") as mock_send_text,
             patch.object(target, "_upload_image_async") as mock_upload_image,
             patch.object(target, "_wait_for_response_async", return_value="AI response") as mock_wait,
@@ -379,6 +380,7 @@ class TestPlaywrightCopilotTarget:
             result = await target._interact_with_copilot_async(multimodal_request)
 
         # Verify text and image handling
+        mock_clear_text.assert_awaited_once()
         mock_send_text.assert_awaited_once()
         mock_upload_image.assert_awaited_once_with("/path/to/image.jpg")
         mock_wait.assert_awaited_once()

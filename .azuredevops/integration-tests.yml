@@ -20,3 +20,17 @@ jobs:
     newDir: integration_test_directory
     testsFolder: integration
     makeTarget: integration-test
+    # Run each group in a fresh pytest process to release memory between groups.
+    testBatches:
+      - tests/integration/ai_recruiter
+      - tests/integration/cli
+      - tests/integration/converter
+      - tests/integration/datasets
+      - tests/integration/embeddings
+      - tests/integration/executor
+      - tests/integration/executors
+      - tests/integration/memory
+      - tests/integration/message_normalizer
+      - tests/integration/scenarios
+      - tests/integration/score
+      - tests/integration/targets

@@ -1,4 +1,4 @@
-# 3. Memory Types
+# Memory Types
 
 There are several types of data you can retrieve from memory at any point in time using the `MemoryInterface`.
 
@@ -84,15 +84,15 @@ All seed types inherit from [`Seed`](../../../pyrit/models/seeds/seed.py), which
 
 - [`SeedObjective`](../../../pyrit/models/seeds/seed_objective.py) — The goal of an attack (e.g., "Generate hate speech content"). Always text. Cannot be a general technique.
 
-- [`SeedSimulatedConversation`](../../../pyrit/models/seeds/seed_simulated_conversation.py) — Configuration for dynamically generating multi-turn conversations. Specifies system prompt paths, number of turns, and sequence offsets. The actual generation happens in the executor layer.
+- [`SeedSimulatedConversation`](../../../pyrit/models/seeds/seed_simulated_conversation.py) — Configuration for dynamically generating multi-turn conversations. Carries the adversarial, simulated-target, and next-message system prompts, the number of turns, and sequence offsets. The actual generation happens in the executor layer.
 
 ### Seed Groups
 
 Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py) containers that enforce consistency (shared `prompt_group_id`, valid role sequences, no duplicate sequence numbers). Two specialized subclasses add further constraints:
 
-- [`SeedAttackGroup`](../../../pyrit/models/seeds/seed_attack_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
+- [`AttackSeedGroup`](../../../pyrit/models/seeds/attack_seed_group.py) — Requires exactly one `SeedObjective`. Represents a complete attack specification: an objective plus optional prompts or simulated conversation config.
 
-- [`SeedAttackTechniqueGroup`](../../../pyrit/models/seeds/seed_attack_technique_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
+- [`AttackTechniqueSeedGroup`](../../../pyrit/models/seeds/attack_technique_seed_group.py) — All seeds must have `is_general_technique=True` and no `SeedObjective` is allowed. Represents reusable attack techniques (jailbreaks, role-plays, etc.) that can be composed with any objective.
 
 
 ## Scores
@@ -108,20 +108,20 @@ Seeds are organized into [`SeedGroup`](../../../pyrit/models/seeds/seed_group.py
 - **`score_rationale`**: Explanation of why the score was assigned
 - **`scorer_class_identifier`**: Information about the scorer that generated this score
 - **`message_piece_id`**: The ID of the piece/response being scored
-- **`task`**: The original attacker's objective being evaluated
+- **`objective`**: The original attacker's objective being evaluated
 - **`score_metadata`**: Custom metadata specific to the scorer
 
 Scores enable automated evaluation of attack success, content harmfulness, and other metrics throughout PyRIT's red teaming workflows.
 
 ## AttackResults
 
-[`AttackResult`](../../../pyrit/models/attack_result.py) objects encapsulate the complete outcome of an attack execution, including metrics, evidence, and success determination. When an attack is run, the AttackResult is added to the database and can be queried later.
+[`AttackResult`](../../../pyrit/models/results/attack_result.py) objects encapsulate the complete outcome of an attack execution, including metrics, evidence, and success determination. When an attack is run, the AttackResult is added to the database and can be queried later.
 
 **Key Fields:**
 
+- **`attack_result_id`**: Unique ID of the result, allocated when the attack starts
 - **`conversation_id`**: The conversation that produced this result
 - **`objective`**: Natural-language description of the attacker's goal
-- **`attack_identifier`**: `ComponentIdentifier` identifying the attack strategy used
 - **`atomic_attack_identifier`**: Composite `ComponentIdentifier` combining the attack technique with seed identifiers from the dataset (see [ComponentIdentifiers](#componentidentifiers) below)
 - **`last_response`**: The final `MessagePiece` generated in the attack
 - **`last_score`**: The final score assigned to the last response
@@ -134,6 +134,19 @@ Scores enable automated evaluation of attack success, content harmfulness, and o
 - **`targeted_harm_categories`**: Harm categories this attack targeted, auto-populated from the attack's seed group
 
 `AttackResult` objects provide comprehensive reporting on attack campaigns, enabling analysis of red teaming effectiveness and vulnerability identification.
+
+### Conversations Owned by an Attack
+
+An attack allocates the ID of its `AttackResult` when execution starts. Conversation creators pass that ID explicitly through `Conversation.attack_result_id`, which is stored on the `Conversations` table. This covers the objective conversation and related ones, such as adversarial chat, scoring, converter and branch conversations, so a scorer or harness can find everything an attack exchanged:
+
+```python
+conversations = await memory.get_attack_result_conversations_async(attack_result_id=result.attack_result_id)
+pieces = await memory.get_message_pieces_async(attack_result_id=result.attack_result_id)
+```
+
+A conversation belongs to one attack execution. Registering a conversation that is already linked to a different execution raises a `ValueError`. Memory stores and checks the supplied owner; it does not infer ownership from the active execution. Conversation duplication retains the source owner unless the caller supplies a destination `attack_result_id`. History taken from an earlier attack, such as a prepended conversation, is copied into a new conversation owned by the new execution, and the original keeps its link. Conversations created by a child attack, for example inside `SequentialAttack`, are linked to the child's result ID. The backend also supplies ownership for manual attacks and their branches. Standalone conversations can have no owner.
+
+During execution the ID is available as `AttackContext.attack_result_id`, and `get_current_attack_result_id()` from `pyrit.common.attack_result_scope` returns it to any code running within the attack, including targets, scorers and converters. Manual sends establish the same scope with their existing attack result ID. A custom target can read it before it sends and pass it to the system under test, which can then tag the files, logs or traces it writes for that attack.
 
 ## ComponentIdentifiers
 

@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 import asyncio
+import sys
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Literal
 
-OutputFormat = Literal["pretty", "markdown"]
+OutputFormat = Literal["pretty", "markdown", "json", "html"]
 
 
 class Sink(ABC):
@@ -41,7 +43,12 @@ class StdoutSink(Sink):
         Args:
             data (str): The text to print.
         """
-        print(data, end="")
+        encoding = sys.stdout.encoding or "utf-8"
+        try:
+            data.encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            data = data.encode(encoding, errors="replace").decode(encoding)
+        sys.stdout.write(data)
 
 
 class FileSink(Sink):
@@ -65,7 +72,7 @@ class FileSink(Sink):
             raise ValueError(f"mode must be 'w' or 'a', got '{mode}'")
         self._path = path
         self._mode = mode
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
     async def write_async(self, data: str) -> None:
         """
@@ -74,12 +81,21 @@ class FileSink(Sink):
         Args:
             data (str): The text to write.
         """
-        async with self._lock:
-            await asyncio.to_thread(self._write_sync, data)
+        await asyncio.to_thread(self._write_sync, data)
 
     def _write_sync(self, data: str) -> None:
         """
         Write data to the file synchronously.
+
+        Args:
+            data (str): The text to write.
+        """
+        with self._lock:
+            self._write_unlocked_sync(data)
+
+    def _write_unlocked_sync(self, data: str) -> None:
+        """
+        Write data to the file without acquiring the lock.
 
         Args:
             data (str): The text to write.

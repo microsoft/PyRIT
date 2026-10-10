@@ -1,4 +1,102 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
+import { makeTarget } from "./_targets";
+import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+
+const MOBILE_VIEWPORT = { width: 390, height: 844 };
+const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
+const TOUR_STEP_COUNT = TOUR_STEPS.length;
+
+type TourViewportName = "mobile" | "desktop";
+
+async function expectMinimumTouchTarget(locator: Locator, minimum = 44): Promise<void> {
+  await expect(locator).toBeVisible();
+
+  const box = await locator.boundingBox();
+
+  expect(box).not.toBeNull();
+  expect(Math.round(box!.width)).toBeGreaterThanOrEqual(minimum);
+  expect(Math.round(box!.height)).toBeGreaterThanOrEqual(minimum);
+}
+
+async function expectTourContained(page: Page, dialog: Locator, checkTouchTargets: boolean): Promise<void> {
+  await expect(dialog).toBeVisible();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      })
+  );
+
+  await expect
+    .poll(async () => {
+      const box = await dialog.boundingBox();
+      const viewport = page.viewportSize();
+      const dimensions = await page.evaluate(() => ({
+        clientHeight: document.documentElement.clientHeight,
+        clientWidth: document.documentElement.clientWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        scrollWidth: document.documentElement.scrollWidth,
+      }));
+
+      return (
+        box !== null &&
+        viewport !== null &&
+        box.x >= 0 &&
+        box.x + box.width <= viewport.width + 1 &&
+        box.y >= 0 &&
+        box.y + box.height <= viewport.height + 1 &&
+        dimensions.scrollHeight <= dimensions.clientHeight + 1 &&
+        dimensions.scrollWidth <= dimensions.clientWidth + 1
+      );
+    })
+    .toBe(true);
+
+  const actions = dialog.getByRole("button");
+  const actionCount = await actions.count();
+
+  expect(actionCount).toBeGreaterThan(0);
+
+  for (let index = 0; index < actionCount; index += 1) {
+    const action = actions.nth(index);
+    await expect(action).toBeVisible();
+
+    if (checkTouchTargets) {
+      await expectMinimumTouchTarget(action);
+    }
+  }
+}
+
+async function expectTourContainedAndActionable(
+  page: Page,
+  viewportName: TourViewportName
+): Promise<void> {
+  await page.getByRole("button", { name: "Take a tour" }).click();
+
+  const dialog = page.getByRole("alertdialog");
+
+  for (let step = 0; step < TOUR_STEP_COUNT; step += 1) {
+    await expect(dialog).toContainText(`${step + 1} of ${TOUR_STEP_COUNT}`);
+    await expectTourContained(page, dialog, viewportName === "mobile");
+
+    if (viewportName === "desktop" && step === 0) {
+      const targetBox = await page.locator('[data-tour="sidebar-nav"]').boundingBox();
+      const dialogBox = await dialog.boundingBox();
+
+      expect(targetBox).not.toBeNull();
+      expect(dialogBox).not.toBeNull();
+      expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
+    }
+
+    if (step < TOUR_STEP_COUNT - 1) {
+      await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    }
+  }
+
+  await dialog.getByRole("button", { name: "Anchors Away!", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(/\/$/);
+}
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
@@ -13,24 +111,24 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-form-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
-    await page.getByTitle("Configuration").click();
-    await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
-    const setActiveBtn = page.getByRole("button", { name: /set active/i });
-    await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-    await setActiveBtn.click();
+    // Save an objective default, then open a new chat with that target.
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
+    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+    await objectiveDefault.selectOption({ index: 1 });
     await page.getByTitle("Chat").click();
 
     // Input should be accessible
@@ -51,13 +149,41 @@ test.describe("Accessibility", () => {
     const chatBtn = page.getByTitle("Chat");
     await expect(chatBtn).toBeVisible();
 
-    // Configuration button
-    const configBtn = page.getByTitle("Configuration");
+    // Registry button
+    const configBtn = page.getByTitle("Registry");
     await expect(configBtn).toBeVisible();
 
     // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
     const themeBtn = page.getByTitle(/^Theme:/);
     await expect(themeBtn).toBeVisible();
+  });
+
+  test("should restore focus to Feedback after closing its dialog with Escape", async ({ page }) => {
+    const feedbackButton = page.getByRole("button", { name: "Feedback" });
+    await expect(feedbackButton).toBeVisible();
+    await feedbackButton.focus();
+    await feedbackButton.press("Enter");
+
+    const dialog = page.getByRole("dialog", { name: "Send feedback" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(":focus")).toBeVisible();
+
+    await page.keyboard.press("Escape");
+
+    await expect(dialog).toBeHidden();
+    await expect(feedbackButton).toBeFocused();
+  });
+
+  test("should restore focus to Feedback after cancelling its dialog", async ({ page }) => {
+    const feedbackButton = page.getByRole("button", { name: "Feedback" });
+    await feedbackButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "Send feedback" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(feedbackButton).toBeFocused();
   });
 
   test("should be navigable with keyboard", async ({ page }) => {
@@ -76,6 +202,50 @@ test.describe("Accessibility", () => {
     await expect(page.locator(":focus")).toBeVisible();
   });
 
+  test("skip link is the first Tab stop, becomes visible on focus, and moves focus to main on activation", async ({
+    page,
+  }) => {
+    // Mock everything the app calls while booting, so this test does not
+    // depend on the dev-server proxy having a real backend behind it (see
+    // the same technique in labels-operation-picker.spec.ts). The shared
+    // beforeEach above already navigated once before these routes existed,
+    // so reload to get a fresh, intercepted navigation.
+    await page.route(/\/api\//, async (route) => {
+      const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+      const json = (body: unknown) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+      if (path === "/health") return json({ status: "healthy" });
+      if (path === "/auth/config") {
+        return json({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      }
+      if (path === "/version") return json(mockVersion({ display: "a11y-test" }));
+      if (path === "/labels") {
+        return json({ source: "attacks", labels: { operator: ["roakey"], operation: [] } });
+      }
+      if (path === "/attacks") return json({ items: [], total: 0, limit: 5, offset: 0 });
+      return json({});
+    });
+    await page.reload();
+
+    await expect(page.getByTitle("Home")).toBeVisible();
+
+    const skipLink = page.getByRole("link", { name: "Skip to main content" });
+    await expect(skipLink).not.toBeInViewport();
+
+    // See the note on "should be navigable with keyboard" above: dispatch
+    // through `body` to guarantee the document has focus when Tab fires.
+    await page.locator("body").press("Tab");
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeInViewport({ ratio: 1 });
+
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#main-content")).toBeFocused();
+  });
+
   test("should have proper focus management", async ({ page }) => {
     // Mock a target so the input is enabled
     await page.route(/\/api\/targets/, async (route) => {
@@ -84,24 +254,24 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-focus-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
-    await page.getByTitle("Configuration").click();
-    await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
-    const setActiveBtn = page.getByRole("button", { name: /set active/i });
-    await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-    await setActiveBtn.click();
+    // Save an objective default, then open a new chat with that target.
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
+    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+    await objectiveDefault.selectOption({ index: 1 });
     await page.getByTitle("Chat").click();
 
     const input = page.getByRole("textbox");
@@ -116,7 +286,7 @@ test.describe("Accessibility", () => {
     await expect(input).toBeFocused();
   });
 
-  test("should have accessible target table in config view", async ({ page }) => {
+  test("should have accessible target table in targets view", async ({ page }) => {
     // Mock targets API for consistent test
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill({
@@ -124,25 +294,111 @@ test.describe("Accessibility", () => {
         contentType: "application/json",
         body: JSON.stringify({
           items: [
-            {
+            makeTarget({
               target_registry_name: "a11y-test-target",
               target_type: "OpenAIChatTarget",
               endpoint: "https://test.com",
               model_name: "gpt-4o",
-            },
+            }),
+            makeTarget({
+              target_registry_name: "a11y-second-target",
+              target_type: "TextTarget",
+              endpoint: "https://test.com/text",
+              model_name: "text-model",
+            }),
           ],
           pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
         }),
       });
     });
 
-    // Navigate to config
-    await page.getByTitle("Configuration").click();
-    await expect(page.getByText("Target Configuration")).toBeVisible();
+    // Navigate to the registry
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("Target Registry")).toBeVisible();
 
     // Table should exist
     const table = page.getByRole("table");
     await expect(table).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Filter by type:", exact: true })).toBeVisible();
+  });
+
+  test("major views expose page headings and one primary navigation landmark", async ({ page }) => {
+    const navigation = page.getByRole("navigation", { name: "Primary" });
+
+    await expect(navigation).toHaveCount(1);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Welcome to Co-PyRIT" })
+    ).toBeVisible();
+    await expect(navigation.getByRole("button", { name: "Home" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+
+    const views = [
+      { button: "History", heading: "History" },
+      { button: "Registry", heading: "Target Registry" },
+      { button: "Chat", heading: "Chat" },
+    ];
+
+    for (const view of views) {
+      await navigation.getByRole("button", { name: view.button }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: view.heading })
+      ).toBeAttached();
+      await expect(page.locator("main h1")).toHaveCount(1);
+      await expect(navigation.getByRole("button", { name: view.button })).toHaveAttribute(
+        "aria-current",
+        "page"
+      );
+    }
+  });
+
+  test.describe("mobile touch context", () => {
+    test.use({ hasTouch: true });
+
+    test("mobile audit controls provide 44px touch targets", async ({ page }) => {
+      await page.setViewportSize(MOBILE_VIEWPORT);
+
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
+
+      await page.route(/\/api\/targets/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [
+              makeTarget({
+                target_registry_name: "mobile-touch-target",
+                target_type: "OpenAIChatTarget",
+                endpoint: "https://test.com",
+                model_name: "gpt-4o",
+              }),
+            ],
+            pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+          }),
+        });
+      });
+
+      await page.getByRole("button", { name: "Registry" }).click();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Target Registry" })
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
+    });
+
+    test("tour remains contained and actionable on mobile", async ({ page }) => {
+      await page.setViewportSize(MOBILE_VIEWPORT);
+      await expectTourContainedAndActionable(page, "mobile");
+    });
+  });
+
+  test("tour remains contained and actionable on desktop", async ({ page }) => {
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await expectTourContainedAndActionable(page, "desktop");
   });
 });
 

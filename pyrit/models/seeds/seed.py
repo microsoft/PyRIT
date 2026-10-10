@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 from jinja2 import StrictUndefined, Undefined
@@ -20,6 +20,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,7 +49,7 @@ def _ensure_aware_utc(value: Any) -> Any:
         except ValueError:
             return value
     if isinstance(value, datetime) and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 
@@ -121,6 +122,8 @@ class Seed(BaseModel):
     # Name of the dataset this prompt belongs to
     dataset_name: str | None = None
 
+    origin: SeedOrigin = SeedOrigin.UNKNOWN
+
     # Categories of harm associated with this prompt
     harm_categories: list[str] | None = Field(default_factory=list)
 
@@ -137,7 +140,7 @@ class Seed(BaseModel):
     source: str | None = None
 
     # Date when the prompt was added to the dataset
-    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # User who added the prompt to the dataset
     added_by: str | None = None
@@ -228,26 +231,6 @@ class Seed(BaseModel):
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
-
-    async def set_sha256_value_async(self) -> None:
-        """
-        Compute the SHA256 hash value asynchronously.
-
-        .. deprecated:: 0.15.0
-            Use ``pyrit.memory.storage.serializers.set_seed_sha256_async`` instead.
-            This method will be removed in 0.17.0.
-        """
-        import importlib
-
-        from pyrit.common.deprecation import print_deprecation_message
-
-        print_deprecation_message(
-            old_item="pyrit.models.seeds.seed.Seed.set_sha256_value_async",
-            new_item="pyrit.memory.storage.serializers.set_seed_sha256_async",
-            removed_in="0.17.0",
-        )
-        serializers = importlib.import_module("pyrit.memory.storage.serializers")
-        await serializers.set_seed_sha256_async(self)
 
     @staticmethod
     def escape_for_jinja(value: str) -> str:

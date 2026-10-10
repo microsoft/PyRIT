@@ -3,7 +3,6 @@
 
 """Concrete OpenAI Realtime event dispatcher for streaming sessions."""
 
-import base64
 import logging
 from typing import Any, ClassVar
 
@@ -12,6 +11,10 @@ from pyrit.prompt_target.common.realtime_audio import (
     RealtimeEventDispatcher,
     RealtimeTargetResult,
     RealtimeTurnState,
+)
+from pyrit.prompt_target.openai._openai_realtime_event_router import (
+    _OpenAIRealtimeEventKind,
+    _OpenAIRealtimeEventRouter,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,18 +35,19 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
     async def _route_event_async(self, *, event: Any, state: RealtimeTurnState | None) -> None:
         """Route an OpenAI Realtime event to the active turn or to an input-side callback."""
         event_type = getattr(event, "type", "")
+        event_kind = _OpenAIRealtimeEventRouter.classify_event(event_type)
 
         # Capture audio_start_ms from speech_started for the next committed event.
         # The server reports it reliably here but omits it from the commit event itself.
         # Do not return — the downstream state-aware branch still needs to fire the
         # barge-in cancel when speech starts mid-response.
-        if event_type == "input_audio_buffer.speech_started":
+        if event_kind is _OpenAIRealtimeEventKind.SPEECH_STARTED:
             speech_start = getattr(event, "audio_start_ms", None)
             if speech_start is not None:
                 self._pending_speech_start_ms = speech_start
 
         # Input-side events fire callbacks regardless of whether a turn is registered.
-        if event_type == "input_audio_buffer.committed":
+        if event_kind is _OpenAIRealtimeEventKind.INPUT_COMMITTED:
             item_id = getattr(event, "item_id", None)
             if item_id is None:
                 return
@@ -63,32 +67,33 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
         if state is None or state.completion.done():
             return
 
-        if event_type == "response.created":
+        _OpenAIRealtimeEventRouter.collect_response_delta(
+            event=event,
+            event_kind=event_kind,
+            audio_buffer=state.delivered_audio,
+            transcripts=state.delivered_transcripts,
+        )
+
+        if event_kind is _OpenAIRealtimeEventKind.RESPONSE_CREATED:
             state.is_responding = True
             response = getattr(event, "response", None)
             if response is not None:
                 state.last_response_id = getattr(response, "id", None)
             return
 
-        if event_type in ("response.output_item.added", "response.output_item.created"):
+        if event_kind is _OpenAIRealtimeEventKind.OUTPUT_ITEM:
             item = getattr(event, "item", None)
             if item is not None:
                 state.current_item_id = getattr(item, "id", None)
             return
 
-        if event_type in ("response.audio.delta", "response.output_audio.delta"):
-            delta = getattr(event, "delta", "")
-            if delta:
-                state.delivered_audio.extend(base64.b64decode(delta))
+        if event_kind is _OpenAIRealtimeEventKind.AUDIO_DELTA:
             return
 
-        if event_type in ("response.audio_transcript.delta", "response.output_audio_transcript.delta"):
-            delta = getattr(event, "delta", "")
-            if delta:
-                state.delivered_transcripts.append(delta)
+        if event_kind is _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA:
             return
 
-        if event_type == "response.done":
+        if event_kind is _OpenAIRealtimeEventKind.RESPONSE_DONE:
             response = getattr(event, "response", None)
             done_response_id = getattr(response, "id", None) if response is not None else None
             if state.last_response_id is not None and done_response_id != state.last_response_id:
@@ -103,7 +108,7 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
             )
             return
 
-        if event_type == "input_audio_buffer.speech_started" and state.is_responding:
+        if event_kind is _OpenAIRealtimeEventKind.SPEECH_STARTED and state.is_responding:
             await self._cancel_async(state=state)
             state.is_responding = False
             state.completion.set_result(
@@ -115,7 +120,7 @@ class _OpenAIRealtimeDispatcher(RealtimeEventDispatcher):
             )
             return
 
-        if event_type == "error":
+        if event_kind is _OpenAIRealtimeEventKind.ERROR:
             error = getattr(event, "error", None)
             code = getattr(error, "code", None) if error is not None else None
             message = getattr(error, "message", "unknown") if error is not None else "unknown"

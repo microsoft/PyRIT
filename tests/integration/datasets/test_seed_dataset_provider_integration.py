@@ -38,17 +38,22 @@ class TestSeedDatasetSmoke:
     """
 
     @pytest.mark.parametrize("name,provider_cls", _SMOKE_PROVIDERS, ids=[p[0] for p in _SMOKE_PROVIDERS])
-    async def test_fetch_dataset_smoke(self, name, provider_cls):
+    async def test_fetch_dataset_smoke(self, name, provider_cls, caplog):
         """
         Verify that a representative provider can be fetched successfully.
 
         Covers one local, one URL-remote, and one HuggingFace-remote provider
         to catch regressions in each fetch path without downloading all 58 datasets.
+
+        Also fails if any harm category encountered in the real data is unknown
+        (i.e., falls back to OTHER with a warning), so missing mappings are caught
+        against live dataset contents.
         """
         logger.info(f"Smoke testing provider: {name}")
 
         provider = provider_cls()
-        dataset = await provider.fetch_dataset_async(cache=False)
+        with caplog.at_level(logging.WARNING, logger="pyrit.models.harm_category"):
+            dataset = await provider.fetch_dataset_async(cache=False)
 
         assert isinstance(dataset, SeedDataset), f"{name} did not return a SeedDataset"
         assert len(dataset.seeds) > 0, f"{name} returned an empty dataset"
@@ -59,6 +64,13 @@ class TestSeedDatasetSmoke:
             assert seed.dataset_name == dataset.dataset_name, (
                 f"Seed dataset_name mismatch in {name}: {seed.dataset_name} != {dataset.dataset_name}"
             )
+
+        unknown_warnings = [r for r in caplog.records if "Unknown harm category" in r.message]
+        assert not unknown_warnings, (
+            f"{name} produced unknown harm categories that mapped to OTHER:\n"
+            + "\n".join(f"  - {r.message}" for r in unknown_warnings)
+            + "\nAdd alias mappings in HarmCategory._initialize_aliases or pass alias_overrides in the loader."
+        )
 
         logger.info(f"Smoke test passed for {name} with {len(dataset.seeds)} seeds")
 
@@ -86,7 +98,7 @@ class TestRemoteFilteringIntegration:
 
         captured_name = name
 
-        async def _fetch_dataset(self, *, cache=True):
+        async def _fetch_dataset_async(self: _RemoteDatasetLoader, *, cache: bool = True) -> SeedDataset:
             return SeedDataset(
                 seeds=[SeedPrompt(value="x", data_type="text")],
                 dataset_name=captured_name,
@@ -101,7 +113,7 @@ class TestRemoteFilteringIntegration:
             "__module__": __name__,
             # Concrete implementations satisfy ABC requirements
             "dataset_name": property(lambda self: captured_name),
-            "fetch_dataset_async": _fetch_dataset,
+            "_fetch_dataset_async": _fetch_dataset_async,
             "_fetch_from_url": lambda self, **kw: [],
         }
 
@@ -643,7 +655,7 @@ class TestHarmbenchMetadataInScenario:
         )
 
         # Verify seeds are queryable from memory (this is what scenarios do)
-        seed_groups = sqlite_instance.get_seed_groups(dataset_name="harmbench")
+        seed_groups = await sqlite_instance.get_seed_groups_async(dataset_name="harmbench")
         assert seed_groups is not None
         assert len(list(seed_groups)) > 0
 
@@ -660,7 +672,7 @@ class TestHarmbenchMetadataInScenario:
         from pyrit.executor.attack.core.attack_config import AttackScoringConfig
         from pyrit.prompt_target import TextTarget
         from pyrit.scenario.scenarios.foundry.red_team_agent import (
-            FoundryStrategy,
+            FoundryTechnique,
             RedTeamAgent,
         )
         from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -676,7 +688,7 @@ class TestHarmbenchMetadataInScenario:
 
         # Mock scorer to avoid Azure dependency
         mock_scorer = MagicMock(spec=TrueFalseScorer)
-        mock_scorer.get_identifier.return_value = ComponentIdentifier.from_dict({"__type__": "MockScorer"})
+        mock_scorer.get_identifier.return_value = ComponentIdentifier.model_validate({"__type__": "MockScorer"})
 
         target = TextTarget()
         rta = RedTeamAgent(
@@ -687,12 +699,15 @@ class TestHarmbenchMetadataInScenario:
         # This is the critical call — it loads seed groups from memory
         # and builds atomic attacks. If metadata broke the pipeline,
         # this would raise ValueError about missing seed_groups.
-        await rta.initialize_async(
-            objective_target=target,
-            max_concurrency=1,
-            scenario_strategies=[FoundryStrategy.Base64],
-            include_baseline=False,
+        rta.set_params_from_args(
+            args={
+                "objective_target": target,
+                "max_concurrency": 1,
+                "scenario_techniques": [FoundryTechnique.Base64],
+                "include_baseline": False,
+            }
         )
+        await rta.initialize_async()
 
         # Verify the scenario got objectives from harmbench
         attacks = rta._atomic_attacks

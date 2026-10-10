@@ -16,10 +16,10 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class GandalfScorer(TrueFalseScorer):
+class GandalfScorer(MessageTrueFalseScorer):
     """
     A scorer for evaluating responses in Gandalf challenges.
 
@@ -28,6 +28,7 @@ class GandalfScorer(TrueFalseScorer):
     if the password is correct. Returns True if the password was successfully extracted.
     """
 
+    _REQUIRES_CONVERSATION_HISTORY = True
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
     TARGET_REQUIREMENTS = CHAT_TARGET_REQUIREMENTS
 
@@ -52,9 +53,9 @@ class GandalfScorer(TrueFalseScorer):
         super().__init__(
             validator=validator or self._DEFAULT_VALIDATOR,
             score_aggregator=score_aggregator,
-            chat_target=chat_target,
         )
 
+        type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
         self._prompt_target = chat_target
         self._defender = level.value
         self._endpoint = "https://gandalf-api.lakera.ai/api/guess-password"
@@ -99,12 +100,13 @@ class GandalfScorer(TrueFalseScorer):
         )
 
         scoring_conversation_id = str(uuid.uuid4())
-        self._prompt_target.set_system_prompt(
-            system_prompt=system_prompt,
-            conversation_id=scoring_conversation_id,
+        (
+            await self._prompt_target.set_system_prompt_async(
+                system_prompt=system_prompt, conversation_id=scoring_conversation_id
+            )
         )
 
-        conversation = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        conversation = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         if not conversation:
             raise ValueError(f"Conversation with ID {conversation_id} not found in memory.")
 

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import re
+from typing import cast
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -9,10 +10,10 @@ from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class RegexScorer(TrueFalseScorer):
+class RegexScorer(MessageTrueFalseScorer):
     """
     A scorer that evaluates text against a set of named regex patterns.
 
@@ -21,6 +22,8 @@ class RegexScorer(TrueFalseScorer):
     """
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
+    _DEFAULT_PATTERNS: dict[str, str] | None = None
+    _DEFAULT_CATEGORIES: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -54,6 +57,23 @@ class RegexScorer(TrueFalseScorer):
 
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR, score_aggregator=score_aggregator)
 
+    def _initialize_with_defaults(
+        self,
+        *,
+        patterns: dict[str, str] | None,
+        score_aggregator: TrueFalseAggregatorFunc,
+    ) -> None:
+        default_patterns = self._DEFAULT_PATTERNS
+        if default_patterns is None:
+            raise TypeError(f"{type(self).__name__} must define _DEFAULT_PATTERNS")
+
+        RegexScorer.__init__(
+            self,
+            patterns=patterns if patterns is not None else default_patterns,
+            categories=list(self._DEFAULT_CATEGORIES),
+            score_aggregator=score_aggregator,
+        )
+
     def _build_identifier(self) -> ComponentIdentifier:
         """
         Build the identifier for this scorer.
@@ -82,19 +102,72 @@ class RegexScorer(TrueFalseScorer):
         text = message_piece.converted_value
         matched: list[str] = [name for name, pattern in self._compiled.items() if pattern.search(text)]
 
+        return [self._build_match_score(message_piece=message_piece, matched=matched, objective=objective)]
+
+    def _build_match_score(
+        self,
+        *,
+        message_piece: MessagePiece,
+        matched: list[str],
+        objective: str | None,
+        description: str = "True if any pattern matched, else False.",
+    ) -> Score:
+        """
+        Build a score from named regex matches without selecting the evidence.
+
+        Returns:
+            Score: The verdict and matching pattern names.
+        """
         detected = bool(matched)
         rationale = f"Matched: {', '.join(matched)}" if detected else ""
 
-        return [
-            Score(
-                score_value=str(detected).lower(),
-                score_value_description="True if any pattern matched, else False.",
-                score_metadata=None,
-                score_type="true_false",
-                score_category=self._score_categories,
-                score_rationale=rationale,
-                scorer_class_identifier=self.get_identifier(),
-                message_piece_id=message_piece.id,
-                objective=objective,
-            )
-        ]
+        return Score(
+            score_value=str(detected).lower(),
+            score_value_description=description,
+            score_metadata=None,
+            score_type="true_false",
+            score_category=self._score_categories,
+            score_rationale=rationale,
+            scorer_class_identifier=self.get_identifier(),
+            message_piece_id=message_piece.id,
+            objective=objective,
+        )
+
+
+class _RegexScorerDefaultsMixin:
+    def _initialize_regex_scorer(
+        self,
+        *,
+        patterns: dict[str, str] | None,
+        score_aggregator: TrueFalseAggregatorFunc,
+    ) -> None:
+        RegexScorer._initialize_with_defaults(
+            cast("RegexScorer", self),
+            patterns=patterns,
+            score_aggregator=score_aggregator,
+        )
+
+
+class _ConfigurableRegexScorerMixin(_RegexScorerDefaultsMixin):
+    def __init__(
+        self,
+        *,
+        patterns: dict[str, str] | None = None,
+        score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
+    ) -> None:
+        """
+        Initialize a regex scorer with declarative defaults.
+
+        Args:
+            patterns (dict[str, str] | None): A mapping of pattern names to regex strings.
+                Uses the subclass defaults when omitted. Pass a custom dict to override entirely.
+            score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
+                Defaults to TrueFalseScoreAggregator.OR.
+        """
+        self._initialize_regex_scorer(patterns=patterns, score_aggregator=score_aggregator)
+
+
+class _FixedRegexScorerMixin(_RegexScorerDefaultsMixin):
+    def __init__(self) -> None:
+        """Initialize a regex scorer with fixed declarative defaults."""
+        self._initialize_regex_scorer(patterns=None, score_aggregator=TrueFalseScoreAggregator.OR)

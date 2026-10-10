@@ -8,7 +8,8 @@ from types import MappingProxyType
 from typing import NoReturn, cast
 
 from pyrit.models.literals import PromptDataType
-from pyrit.models.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 
 __all__ = [
     "CapabilityHandlingPolicy",
@@ -39,7 +40,7 @@ class CapabilityHandlingPolicy:
     Design invariants
     -----------------
     * The policy is never consulted if the capability is already supported.
-    * Non-adaptable capabilities (e.g. ``supports_editable_history``) are not
+    * Non-adaptable capabilities (e.g. ``supports_multi_message_pieces``) are not
       represented here; requesting them on a target that lacks them always
       raises immediately.
     """
@@ -64,7 +65,7 @@ class CapabilityHandlingPolicy:
 
         Raises:
             KeyError: If no behavior exists for the capability. This occurs for
-            non-adaptable capabilities (e.g., supports_editable_history).
+            non-adaptable capabilities (e.g., supports_multi_message_pieces).
         """
         try:
             return self.behaviors[capability]
@@ -118,7 +119,7 @@ _GPT_4O = TargetCapabilities(
     supports_system_prompt=True,
     supports_json_output=True,
     supports_editable_history=True,
-    input_modalities=_TEXT_IMAGE_INPUT,
+    input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
     output_modalities=_TEXT_OUTPUT,
 )
 
@@ -129,7 +130,7 @@ _GPT_5 = TargetCapabilities(
     supports_json_schema=True,
     supports_json_output=True,
     supports_editable_history=True,
-    input_modalities=_TEXT_IMAGE_INPUT,
+    input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
     output_modalities=_TEXT_OUTPUT,
 )
 

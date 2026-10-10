@@ -6,32 +6,31 @@ Tests for the merged ``ConverterRegistry`` (buildable catalog + instance contain
 and its introspection helpers.
 """
 
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
 from pyrit.common import REQUIRED_VALUE
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType
-from pyrit.models.parameter import ComponentType
-from pyrit.prompt_converter import (
+from pyrit.converter import (
     Base64Converter,
     CaesarConverter,
+    Converter,
     ConverterResult,
     LLMGenericTextConverter,
     NoiseConverter,
     PersuasionConverter,
-    PromptConverter,
     TenseConverter,
     ToneConverter,
     TranslationConverter,
     VariationConverter,
 )
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType
+from pyrit.models.parameter import ComponentType
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry.components import (
     ConverterMetadata,
     ConverterRegistry,
-)
-from pyrit.registry.object_registries import (
     TargetRegistry,
 )
 from pyrit.registry.resolution import derive_parameters
@@ -59,7 +58,7 @@ class MockPromptTarget(PromptTarget):
         pass
 
 
-class MockTextConverter(PromptConverter):
+class MockTextConverter(Converter):
     """Mock text-to-text converter for testing."""
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -74,7 +73,7 @@ class MockTextConverter(PromptConverter):
         return ConverterResult(output_text=prompt, output_type="text")
 
 
-class MockImageConverter(PromptConverter):
+class MockImageConverter(Converter):
     """Mock image-to-text converter for testing."""
 
     SUPPORTED_INPUT_TYPES = ("image_path",)
@@ -89,7 +88,7 @@ class MockImageConverter(PromptConverter):
         return ConverterResult(output_text=prompt, output_type="text")
 
 
-class MockMultiModalConverter(PromptConverter):
+class MockMultiModalConverter(Converter):
     """Mock multi-modal converter accepting text and image input for testing."""
 
     SUPPORTED_INPUT_TYPES = ("text", "image_path")
@@ -116,6 +115,21 @@ def registry():
 # ---------------------------------------------------------------------------
 # Instance container (reached via the ``instances`` property)
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("converter_type", "parameter_name"),
+    [("AddImageVideoConverter", "video_path"), ("ImageOverlayConverter", "base_image")],
+)
+@pytest.mark.parametrize(
+    "source",
+    [Path("input.png"), "input.png", "https://account.blob.core.windows.net/container/input.png"],
+)
+def test_registry_preserves_path_or_str_inputs(
+    registry: ConverterRegistry, converter_type: str, parameter_name: str, source: Path | str
+) -> None:
+    instance = registry.create_instance(converter_type, **{parameter_name: source})
+    assert instance.get_identifier().params[parameter_name] == str(source)
 
 
 class TestConverterRegistrySingleton:
@@ -163,21 +177,63 @@ class TestConverterRegistryRegisterInstance:
 
         assert len(registry.instances) == 2
 
-    def test_register_instance_duplicate_name_overwrites(self, registry: ConverterRegistry):
+    def test_register_instance_duplicate_name_raises(self, registry: ConverterRegistry):
         converter1 = MockTextConverter()
         converter2 = MockImageConverter()
 
         registry.instances.register(converter1, name="shared_name")
-        registry.instances.register(converter2, name="shared_name")
 
-        assert len(registry.instances) == 1
-        assert registry.instances.get("shared_name") is converter2
+        with pytest.raises(ValueError, match="already exists"):
+            registry.instances.register(converter2, name="shared_name")
+
+        assert registry.instances.get("shared_name") is converter1
+
+    def test_create_named_instance_builds_and_stores_converter(self, registry: ConverterRegistry):
+        converter = registry.create_named_instance(name="base64", type_name="Base64Converter")
+
+        assert isinstance(converter, Base64Converter)
+        assert registry.instances.get("base64") is converter
+
+    def test_create_named_instance_stores_registry_metadata(self, registry: ConverterRegistry):
+        converter = registry.create_named_instance(
+            name="base64",
+            type_name="Base64Converter",
+            registry_metadata={"owned_artifact_paths": ["managed.dat"]},
+        )
+
+        entry = registry.instances.get_entry("base64")
+        assert entry is not None
+        assert entry.instance is converter
+        assert entry.metadata == {"owned_artifact_paths": ["managed.dat"]}
+
+    def test_create_instance_from_external_input_rejects_object_parameters(self, registry: ConverterRegistry):
+        with pytest.raises(ValueError, match="'jailbreak_template' of 'TextJailbreakConverter' cannot be set"):
+            registry.create_instance_from_external_input(
+                "TextJailbreakConverter", params={"jailbreak_template": {"template": "x"}}
+            )
+
+    def test_create_named_instance_selects_external_input_explicitly(self, registry: ConverterRegistry):
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            registry.create_named_instance(
+                name="math", type_name="MathObfuscationConverter", params={"rng": None}, external_input=True
+            )
+        assert registry.instances.get("math") is None
+
+        converter = registry.create_named_instance(
+            name="caesar", type_name="CaesarConverter", params={"caesar_offset": "3"}, external_input=True
+        )
+        assert registry.instances.get("caesar") is converter
+
+    @pytest.mark.parametrize("name", ["preview", "types"])
+    def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
+        with pytest.raises(ValueError, match="reserved"):
+            registry.create_named_instance(name=name, type_name="Base64Converter")
 
     def test_register_instance_rejects_non_converter(self, registry: ConverterRegistry):
         class NotAConverter:
             pass
 
-        with pytest.raises(TypeError, match="PromptConverter"):
+        with pytest.raises(TypeError, match="Converter"):
             registry.instances.register(NotAConverter())  # type: ignore[arg-type]
 
         assert len(registry.instances) == 0
@@ -261,8 +317,20 @@ class TestDiscovery:
         # concern) but must remain discoverable/buildable so agents can use it.
         assert "SelectiveTextConverter" in registry.get_class_names()
 
+    def test_discovers_prompt_template_converter(self, registry: ConverterRegistry):
+        assert "PromptTemplateConverter" in registry.get_class_names()
+
+    async def test_builds_deprecated_task_framing_converter_by_name(self, registry: ConverterRegistry):
+        # Deprecated until 1.4.0, but existing callers must still be able to build it by name.
+        with pytest.warns(
+            DeprecationWarning, match=r"TaskFramingConverter is deprecated and will be removed in 1\.4\.0"
+        ):
+            converter = registry.create_instance("TaskFramingConverter", task_template="Example {{ prompt }}")
+        result = await converter.convert_async(prompt="x")
+        assert result.output_text == "Example x"
+
     def test_does_not_register_base_class(self, registry: ConverterRegistry):
-        assert "PromptConverter" not in registry.get_class_names()
+        assert "Converter" not in registry.get_class_names()
 
     def test_keyed_by_exact_class_name(self, registry: ConverterRegistry):
         names = registry.get_class_names()
@@ -281,7 +349,7 @@ class TestGetClass:
             registry.get_class("NotARealConverter")
 
     def test_is_subclass_relationship(self, registry: ConverterRegistry):
-        assert issubclass(registry.get_class("Base64Converter"), PromptConverter)
+        assert issubclass(registry.get_class("Base64Converter"), Converter)
 
 
 class TestCreateInstance:
@@ -314,22 +382,22 @@ class TestCreateLLMConverter:
 
     def test_build_llm_converter_resolves_target_by_name(self, registry: ConverterRegistry):
         target = MockPromptTarget()
-        TargetRegistry.reset_instance()
-        TargetRegistry.get_registry_singleton().register_instance(target, name="my_target")
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().instances.register(target, name="my_target")
         try:
             converter = registry.create_instance("TenseConverter", converter_target="my_target", tense="past")
             assert isinstance(converter, TenseConverter)
             assert converter._converter_target is target
         finally:
-            TargetRegistry.reset_instance()
+            TargetRegistry.reset_registry_singleton()
 
     def test_build_llm_converter_unknown_target_raises(self, registry: ConverterRegistry):
-        TargetRegistry.reset_instance()
+        TargetRegistry.reset_registry_singleton()
         try:
             with pytest.raises(ValueError, match="not found"):
                 registry.create_instance("TenseConverter", converter_target="missing", tense="past")
         finally:
-            TargetRegistry.reset_instance()
+            TargetRegistry.reset_registry_singleton()
 
 
 class TestClassMetadata:
@@ -410,12 +478,14 @@ class _OptionalLiteralConverter:
 class TestDeriveParameters:
     """Tests for the converter-parameter derivation into the ``Parameter`` contract."""
 
-    def test_unwraps_optional_into_param_type(self) -> None:
+    def test_preserves_optional_annotation_and_scalar_display(self) -> None:
         from pyrit.models.identifiers import ConverterIdentifier
 
         params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
         offset_param = next(p for p in params if p.name == "offset")
-        assert offset_param.param_type is int
+        assert offset_param.param_type == int | None
+        assert offset_param.type_name == "int"
+        assert offset_param.coerce_value(None) is None
         assert offset_param.reference is None
         assert offset_param.is_string_coercible is True
 

@@ -106,6 +106,16 @@ class GlobalDefaultValues:
             parameter_name=parameter_name,
             include_subclasses=include_subclasses,
         )
+        # A re-registration under the opposite flag replaces the previous one
+        # entirely; keeping both would leave the older value reachable (the
+        # lookup checks the include_subclasses=True scope first) and subclasses
+        # stuck inheriting it.
+        opposite_scope = DefaultValueScope(
+            class_type=class_type,
+            parameter_name=parameter_name,
+            include_subclasses=not include_subclasses,
+        )
+        self._default_values.pop(opposite_scope, None)
         self._default_values[scope] = value
         logger.debug(f"Set default value for {class_type.__name__}.{parameter_name} = {value}")
 
@@ -125,14 +135,18 @@ class GlobalDefaultValues:
         Returns:
             Tuple of (found, value) where found indicates if a default was found.
         """
-        # First, try exact match
-        scope = DefaultValueScope(
-            class_type=class_type,
-            parameter_name=parameter_name,
-            include_subclasses=True,
-        )
-        if scope in self._default_values:
-            return True, self._default_values[scope]
+        # First, try exact match for both registration flags. A default
+        # registered with include_subclasses=False must still apply to the
+        # registered class itself - the flag only controls whether subclasses
+        # inherit the default.
+        for include_subclasses in (True, False):
+            scope = DefaultValueScope(
+                class_type=class_type,
+                parameter_name=parameter_name,
+                include_subclasses=include_subclasses,
+            )
+            if scope in self._default_values:
+                return True, self._default_values[scope]
 
         # Then, check parent classes if include_subclasses is True
         for existing_scope, value in self._default_values.items():
@@ -279,7 +293,7 @@ def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
                         f"Either pass the parameter explicitly or register a default using set_default_value()."
                     )
                 # If None was explicitly passed and parameter has REQUIRED_VALUE as default, also raise
-                elif param_value is None:
+                else:
                     # Check if the parameter's default in the signature is REQUIRED_VALUE
                     param_obj = sig.parameters.get(param_name)
                     if param_obj and isinstance(param_obj.default, _RequiredValueSentinel):

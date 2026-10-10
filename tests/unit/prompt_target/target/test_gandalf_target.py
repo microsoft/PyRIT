@@ -17,6 +17,7 @@ def test_gandalf_initializes(gandalf_target: GandalfTarget):
     assert gandalf_target
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_gandalf_sets_endpoint_and_rate_limit():
     target = GandalfTarget(level=GandalfLevel.LEVEL_1, max_requests_per_minute=15)
     identifier = target.get_identifier()
@@ -47,13 +48,3 @@ async def test_gandalf_validate_prompt_type(gandalf_target: GandalfTarget):
         " custom_configuration parameter accordingly",
     ):
         await gandalf_target.send_prompt_async(message=request)
-
-
-async def test_check_password_emits_deprecation_warning_and_delegates(gandalf_target: GandalfTarget):
-    from unittest.mock import AsyncMock, patch
-
-    with patch.object(gandalf_target, "check_password_async", new=AsyncMock(return_value=True)) as mock_async:
-        with pytest.warns(DeprecationWarning, match="check_password_async"):
-            result = await gandalf_target.check_password("secret")
-    assert result is True
-    mock_async.assert_awaited_once_with("secret")

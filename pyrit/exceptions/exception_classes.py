@@ -4,8 +4,9 @@
 import json
 import logging
 import os
+import uuid
 from abc import ABC
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from openai import RateLimitError
@@ -190,6 +191,25 @@ class ServerErrorException(PyritException):
         self.body = body
 
 
+class KeyVaultInitializationException(PyritException, ValueError):  # noqa: N818
+    """Exception raised when Key Vault-backed environment initialization fails."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 500,
+        message: str = "Key Vault environment initialization failed",
+    ) -> None:
+        """
+        Initialize a Key Vault initialization exception.
+
+        Args:
+            status_code (int): HTTP-style status code associated with the failure.
+            message (str): Human-readable failure description.
+        """
+        super().__init__(status_code=status_code, message=message)
+
+
 class EmptyResponseException(BadRequestException):
     """Exception class for empty response errors."""
 
@@ -203,6 +223,83 @@ class EmptyResponseException(BadRequestException):
 
         """
         super().__init__(status_code=status_code, message=message)
+
+
+class AdversarialChatResponseBlockedException(BadRequestException):
+    """Exception raised when an adversarial chat refuses or filters its response."""
+
+
+class AdversarialChatRefusedException(AdversarialChatResponseBlockedException):
+    """
+    Exception raised when the adversarial model itself declined to generate an attacker turn.
+
+    Subclasses ``AdversarialChatResponseBlockedException`` because both leave the attack
+    with no prompt to send, so existing handlers keep working. Callers that need to tell a
+    deliberate model refusal apart from an infrastructure content filter can catch this first.
+    """
+
+
+class ScorerLLMResponseBlockedException(BadRequestException):
+    """Exception raised when a scorer's own LLM response is blocked by content filtering."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int = 400,
+        message: str = "Scorer LLM response blocked",
+        observation_id: uuid.UUID | None = None,
+    ) -> None:
+        """
+        Initialize a scorer-response-blocked exception.
+
+        Args:
+            status_code (int): Status code for the error.
+            message (str): Error message.
+            observation_id (uuid.UUID | None): Collected failed-acquisition observation, if any.
+
+        """
+        super().__init__(status_code=status_code, message=message)
+        self.observation_id = observation_id
+
+
+class ScenarioPartialFailureException(PyritException, ValueError):  # noqa: N818
+    """
+    Exception raised when a scenario's atomic attack only partially completes.
+
+    ``ValueError`` remains a secondary base for compatibility with callers that
+    caught the legacy synthetic exception. New code should catch this dedicated type.
+    """
+
+    def __init__(
+        self,
+        *,
+        atomic_attack_name: str,
+        completed_count: int,
+        incomplete_objectives: Sequence[tuple[str, BaseException]],
+    ) -> None:
+        """
+        Initialize a scenario partial-failure exception.
+
+        Args:
+            atomic_attack_name (str): Name of the partially completed atomic attack.
+            completed_count (int): Number of objectives completed in the failed attempt.
+            incomplete_objectives (Sequence[tuple[str, BaseException]]): Objective failures.
+        """
+        self.atomic_attack_name = atomic_attack_name
+        self.completed_count = completed_count
+        self.incomplete_objectives = tuple(incomplete_objectives)
+        self.incomplete_count = len(self.incomplete_objectives)
+        self.total_count = self.completed_count + self.incomplete_count
+
+        super().__init__(
+            message=(
+                f"Atomic attack '{self.atomic_attack_name}' partially failed: "
+                f"{self.incomplete_count} of {self.total_count} objectives incomplete. "
+                "See attack results for details."
+            )
+        )
+        if self.incomplete_objectives:
+            self.__cause__ = self.incomplete_objectives[0][1]
 
 
 class InvalidJsonException(PyritException):
@@ -356,10 +453,10 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-# Empirically-observed markers in OpenAI / Azure OpenAI / MAI error payloads that
+# Documented or empirically observed markers in OpenAI / Azure OpenAI / MAI error payloads that
 # indicate the response was blocked by a content filter or safety system.
 #
-# There is no canonical spec for these - providers expose the signal through
+# Providers expose the signal through
 # different field names (``error.code``, ``finish_reason``, ``incomplete_details.reason``,
 # free-form ``error.message``) and the exact wording evolves over time. Rather than
 # try to track every (provider, field) combination as an exact match, we scan the
@@ -373,12 +470,17 @@ def pyrit_placeholder_retry(func: Callable[..., Any]) -> Callable[..., Any]:
 #   - ``policy_violation``         - Substring of Azure's ``content_policy_violation``
 #                                    and OpenAI moderation's ``usage_policy_violation``.
 #   - ``moderation_blocked``       - OpenAI moderation ``error.code``.
+#   - ``bio_policy`` / ``cyber_policy`` - Biological / cybersecurity policy blocks;
+#                                    observed in Azure OpenAI ``error.code`` on HTTP 400s
+#                                    and handled by OpenAI Codex.
 CONTENT_FILTER_MARKERS = frozenset(
     {
         "content_filter",
         "content_safety_violation",
         "policy_violation",
         "moderation_blocked",
+        "bio_policy",
+        "cyber_policy",
     }
 )
 

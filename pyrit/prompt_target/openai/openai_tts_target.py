@@ -4,6 +4,7 @@
 import logging
 from typing import Any, Literal
 
+from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
     pyrit_target_retry,
 )
@@ -30,6 +31,7 @@ class OpenAITTSTarget(OpenAITarget):
         )
     )
 
+    @forward_init_parameters
     def __init__(
         self,
         *,
@@ -104,8 +106,8 @@ class OpenAITTSTarget(OpenAITarget):
             },
         )
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the OpenAI TTS target.

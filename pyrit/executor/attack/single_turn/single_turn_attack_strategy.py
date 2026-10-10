@@ -15,6 +15,9 @@ from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStra
 from pyrit.models import AttackResult
 
 if TYPE_CHECKING:
+    from pyrit.executor.attack.component.prepended_conversation_config import (
+        PrependedConversationConfig,
+    )
     from pyrit.prompt_target import PromptTarget
 
 
@@ -30,9 +33,6 @@ class SingleTurnAttackContext(AttackContext[AttackParamsT]):
 
     # Unique identifier of the main conversation between the attacker and model
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-    # System prompt for chat-based targets
-    system_prompt: str | None = None
 
     # Arbitrary metadata that downstream attacks or scorers may attach
     metadata: dict[str, str | int] | None = None
@@ -51,6 +51,7 @@ class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], Atta
         objective_target: PromptTarget,
         context_type: type[SingleTurnAttackContext[Any]] = SingleTurnAttackContext,
         params_type: type[AttackParamsT] = AttackParameters,  # type: ignore[ty:invalid-parameter-default]
+        prepended_conversation_config: PrependedConversationConfig | None = None,
         logger: logging.Logger = logger,
     ) -> None:
         """
@@ -60,11 +61,14 @@ class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext[Any], Atta
             objective_target (PromptTarget): The target system to attack.
             context_type (type[SingleTurnAttackContext]): The type of context this strategy will use.
             params_type (type[AttackParamsT]): The type of parameters this strategy accepts.
+            prepended_conversation_config (PrependedConversationConfig | None): Policy for
+                prepended conversations. See ``AttackStrategy``.
             logger (logging.Logger): Logger instance for logging events and messages.
         """
         super().__init__(
             objective_target=objective_target,
             context_type=context_type,
             params_type=params_type,
+            prepended_conversation_config=prepended_conversation_config,
             logger=logger,
         )

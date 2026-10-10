@@ -1,30 +1,85 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import inspect
 import io
 import json
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
 )
-from pyrit.models import SeedDataset
+from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.models import SeedDataset, SeedObjective, SeedOrigin, SeedPrompt
 
 
 class ConcreteRemoteLoader(_RemoteDatasetLoader):
     @property
-    def dataset_name(self):
+    def dataset_name(self) -> str:
         return "test_remote"
 
-    async def fetch_dataset_async(self):
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         return SeedDataset(prompts=[])
 
 
 class TestRemoteDatasetLoader:
+    @pytest.mark.parametrize("implements_private_fetch", [False, True])
+    def test_public_fetch_override_raises_before_registration(self, implements_private_fetch: bool) -> None:
+        methods = {"fetch_dataset_async": ConcreteRemoteLoader._fetch_dataset_async}
+        if implements_private_fetch:
+            methods["_fetch_dataset_async"] = ConcreteRemoteLoader._fetch_dataset_async
+
+        with patch.dict(SeedDatasetProvider._registry, clear=True):
+            with pytest.raises(
+                TypeError, match="LegacyRemoteLoader.*Rename the implementation to _fetch_dataset_async"
+            ):
+                type(
+                    "LegacyRemoteLoader",
+                    (_RemoteDatasetLoader,),
+                    methods,
+                )
+
+            assert "LegacyRemoteLoader" not in SeedDatasetProvider._registry
+
+    async def test_abstract_intermediate_loader_and_concrete_discovery(self) -> None:
+        with patch.dict(SeedDatasetProvider._registry, clear=True):
+
+            class AbstractRemoteLoader(_RemoteDatasetLoader):
+                pass
+
+            assert inspect.isabstract(AbstractRemoteLoader)
+            assert "AbstractRemoteLoader" not in SeedDatasetProvider._registry
+
+            class RegisteredRemoteLoader(AbstractRemoteLoader):
+                @property
+                def dataset_name(self) -> str:
+                    return "registered_remote"
+
+                async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+                    return SeedDataset(seeds=[])
+
+            assert not inspect.isabstract(RegisteredRemoteLoader)
+            assert SeedDatasetProvider._registry["RegisteredRemoteLoader"] is RegisteredRemoteLoader
+
+            loader = RegisteredRemoteLoader()
+            dataset = SeedDataset(
+                seeds=[
+                    SeedObjective(value="Evaluate fraud safeguards."),
+                    SeedPrompt(value="Test prompt", data_type="text"),
+                ]
+            )
+            with patch.object(loader, "_fetch_dataset_async", new_callable=AsyncMock, return_value=dataset) as fetch:
+                result = await loader.fetch_dataset_async(cache=False)
+
+            assert result is dataset
+            assert all(seed.origin == SeedOrigin.REMOTE for seed in result.seeds)
+            fetch.assert_called_once_with(cache=False)
+
     def test_get_cache_file_name(self):
         loader = ConcreteRemoteLoader()
         name = loader._get_cache_file_name(source="http://example.com", file_type="json")
@@ -137,6 +192,39 @@ class TestRemoteDatasetLoader:
             file_type="json",
         )
 
+    def test_standardize_harm_categories_supports_one_to_many_alias(self):
+        loader = ConcreteRemoteLoader()
+
+        standardized = loader._standardize_harm_categories("sexual violence")
+
+        assert standardized == ["SEXUAL_CONTENT", "VIOLENT_CONTENT"]
+
+    def test_standardize_harm_categories_supports_dataset_overrides(self):
+        loader = ConcreteRemoteLoader()
+
+        standardized = loader._standardize_harm_categories(
+            "ableism",
+            alias_overrides={"ableism": ["HATE_SPEECH", "REPRESENTATIONAL"]},
+        )
+
+        assert standardized == ["HATE_SPEECH", "REPRESENTATIONAL"]
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, None),
+            ("", None),
+            ("not-a-date", None),
+            ("2026-06-15T14:54:11.981Z", datetime(2026, 6, 15, 14, 54, 11, 981000, tzinfo=UTC)),
+            (
+                "2025-09-20T04:09:11.080923+00:00",
+                datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=UTC),
+            ),
+        ],
+    )
+    def test_parse_datetime(self, value: str | None, expected: datetime | None) -> None:
+        assert ConcreteRemoteLoader._parse_datetime(value) == expected
+
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
@@ -145,6 +233,18 @@ class TestRemoteDatasetLoader:
                 source_type="public_url",
                 cache=False,
             )
+
+    def test_fetch_from_url_cache_false_does_not_write_temp_file(self, tmp_path):
+        """Fetching with cache=False must not abandon a dataset copy in the system temp dir."""
+        loader = ConcreteRemoteLoader()
+        source = tmp_path / "data.json"
+        source.write_text('[{"key": "value"}]', encoding="utf-8")
+
+        with patch("tempfile.NamedTemporaryFile") as tmp_file:
+            result = loader._fetch_from_url(source=str(source), source_type="file", cache=False)
+
+        assert result == [{"key": "value"}]
+        tmp_file.assert_not_called()
 
     def test_fetch_from_public_url_non_json_file_type(self):
         loader = ConcreteRemoteLoader()
@@ -239,6 +339,43 @@ class TestFetchZipFromUrl:
         cached = list((tmp_path / "seed-prompt-entries").glob("*.zip"))
         assert len(cached) == 1
 
+    async def test_interrupted_download_does_not_poison_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"x.json": '[{"k": "v"}]'})
+
+        def interrupted_chunks():
+            yield zip_bytes[:20]
+            raise RuntimeError("connection dropped")
+
+        interrupted_response = self._mock_streaming_response(b"")
+        interrupted_response.iter_content.return_value = interrupted_chunks()
+        successful_response = self._mock_streaming_response(zip_bytes)
+
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            side_effect=[interrupted_response, successful_response],
+        ) as mock_get:
+            loader = ConcreteRemoteLoader()
+            with pytest.raises(RuntimeError, match="connection dropped"):
+                await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=True)
+
+            cache_dir = tmp_path / "seed-prompt-entries"
+            assert list(cache_dir.iterdir()) == []
+
+            result = await loader._fetch_zip_from_url_async(
+                source=self.SOURCE,
+                inner_files=["x.json"],
+                cache=True,
+            )
+
+        assert result == {"x.json": [{"k": "v"}]}
+        assert mock_get.call_count == 2
+        assert len(list(cache_dir.glob("*.zip"))) == 1
+        assert not list(cache_dir.glob("*.part"))
+
     async def test_cache_false_does_not_persist_zip(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
@@ -274,3 +411,27 @@ class TestFetchZipFromUrl:
         loader = ConcreteRemoteLoader()
         with pytest.raises(ValueError, match="Invalid file_type"):
             await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["bad.parquet"], cache=False)
+
+
+class TestFetchFromHuggingFaceDownloadMode:
+    """The cache flag must drive the HuggingFace download_mode so cache=False re-downloads."""
+
+    async def test_cache_true_reuses_dataset(self):
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load:
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=True)
+
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.REUSE_DATASET_IF_EXISTS
+        assert mock_load.call_args.kwargs["cache_dir"] is not None
+
+    async def test_cache_false_forces_redownload(self):
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load:
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=False)
+
+        assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
+        assert mock_load.call_args.kwargs["cache_dir"] is None

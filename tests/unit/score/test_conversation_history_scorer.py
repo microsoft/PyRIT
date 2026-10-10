@@ -2,21 +2,30 @@
 # Licensed under the MIT license.
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import store_message_async
 
 from pyrit.memory import CentralMemory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ChatMessageRole, ComponentIdentifier, ContentEntryScorable, Message, MessagePiece, Score
 from pyrit.score import (
+    ContentScorable,
+    FloatScaleThresholdScorer,
+    MessageScorable,
+    MessageScorer,
     Scorer,
     SelfAskGeneralFloatScaleScorer,
+    SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
     create_conversation_scorer,
 )
 from pyrit.score.conversation_scorer import ConversationScorer
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
 def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
@@ -27,7 +36,7 @@ def _make_scorer_id(name: str = "TestScorer") -> ComponentIdentifier:
     )
 
 
-class MockFloatScaleScorer(FloatScaleScorer):
+class MockFloatScaleScorer(MessageFloatScaleScorer):
     """Mock FloatScaleScorer for testing"""
 
     def __init__(self):
@@ -40,7 +49,7 @@ class MockFloatScaleScorer(FloatScaleScorer):
         return []
 
 
-class MockTrueFalseScorer(TrueFalseScorer):
+class MockTrueFalseScorer(MessageTrueFalseScorer):
     """Mock TrueFalseScorer for testing"""
 
     def __init__(self):
@@ -53,8 +62,8 @@ class MockTrueFalseScorer(TrueFalseScorer):
         return []
 
 
-class MockUnsupportedScorer(Scorer):
-    """Mock unsupported Scorer for testing error cases"""
+class MockUnsupportedScorer(MessageScorer):
+    """Mock scorer that is neither a FloatScaleScorer nor a TrueFalseScorer"""
 
     def __init__(self):
         super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
@@ -68,7 +77,9 @@ class MockUnsupportedScorer(Scorer):
     def validate_return_scores(self, scores: list[Score]):
         pass
 
-    def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
+    def _build_fallback_score(
+        self, *, message: Message, objective: str | None, scorer_response_blocked: bool = False
+    ) -> list[Score]:
         return [
             Score(
                 score_value="false",
@@ -118,13 +129,14 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
         ),
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
     message = MagicMock()
     message.message_pieces = [message_pieces[-1]]  # Score the last message
 
     # Mock underlying scorer
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer.get_identifier.return_value = _make_scorer_id()
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
     score = Score(
         score_value="0.25",
@@ -137,11 +149,11 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
         objective="test_objective",
         score_type="float_scale",
     )
-    mock_scorer._score_async = AsyncMock(return_value=[score])
+    mock_scorer._score_nested_async = AsyncMock(return_value=[score])
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1
     result_score = scores[0]
@@ -150,10 +162,10 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
     assert result_score.score_rationale == "Valid rationale"
 
     # Verify the underlying scorer was called with conversation history
-    mock_scorer._score_async.assert_awaited_once()
-    call_args = mock_scorer._score_async.call_args
-    called_message = call_args.kwargs["message"]
-    called_piece = called_message.message_pieces[0]
+    mock_scorer._score_nested_async.assert_awaited_once()
+    call_args = mock_scorer._score_nested_async.call_args
+    called_scorable = call_args.kwargs["scorable"]
+    assert isinstance(called_scorable, ContentScorable)
 
     # Verify the conversation text was built correctly
     expected_conversation = (
@@ -162,26 +174,20 @@ async def test_conversation_history_scorer_score_async_success(patch_central_dat
         "User: I'm feeling overwhelmingly sad\n"
         "Assistant: Here's a joke to make you laugh instead\n"
     )
-    assert called_piece.original_value == expected_conversation
-    assert called_piece.converted_value == expected_conversation
+    assert called_scorable.value == expected_conversation
 
 
 async def test_conversation_history_scorer_conversation_not_found(patch_central_database):
+    """Loose content has no conversation behind it, so there is no history to score."""
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer.get_identifier.return_value = _make_scorer_id()
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
     scorer = create_conversation_scorer(scorer=mock_scorer)
 
-    nonexistent_conversation_id = str(uuid.uuid4())
-    message_piece = MessagePiece(
-        role="assistant",
-        original_value="Test response",
-        conversation_id=nonexistent_conversation_id,
-    )
-    message = MagicMock()
-    message.message_pieces = [message_piece]
-
-    with pytest.raises(RuntimeError, match=f"Conversation with ID {nonexistent_conversation_id} not found in memory"):
-        await scorer.score_async(message)
+    # A MessageScorable cannot reach this guard: resolving it requires the pieces to be in
+    # memory, and then their conversation is there too.
+    with pytest.raises(RuntimeError, match="not found in memory"):
+        await scorer.score_async(scorable=ContentScorable(value="Test response"))
 
 
 async def test_conversation_history_scorer_filters_roles_correctly(patch_central_database):
@@ -209,12 +215,13 @@ async def test_conversation_history_scorer_filters_roles_correctly(patch_central
         ),
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
     message = MagicMock()
     message.message_pieces = [message_pieces[0]]
 
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer.get_identifier.return_value = _make_scorer_id()
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
     score = Score(
         score_value="0.4",
@@ -227,119 +234,46 @@ async def test_conversation_history_scorer_filters_roles_correctly(patch_central
         objective="test",
         score_type="float_scale",
     )
-    mock_scorer._score_async = AsyncMock(return_value=[score])
+    mock_scorer._score_nested_async = AsyncMock(return_value=[score])
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    await scorer.score_async(message)
+    await scorer.score_async(scorable=MessageScorable.from_message(message))
 
-    call_args = mock_scorer._score_async.call_args
-    called_message = call_args.kwargs["message"]
-    called_piece = called_message.message_pieces[0]
+    call_args = mock_scorer._score_nested_async.call_args
+    called_scorable = call_args.kwargs["scorable"]
+    assert isinstance(called_scorable, ContentScorable)
 
     expected_conversation = "User: User message\nAssistant: Assistant message\n"
-    assert called_piece.original_value == expected_conversation
-    assert "System message" not in called_piece.original_value
+    assert called_scorable.value == expected_conversation
+    assert "System message" not in called_scorable.value
 
 
-async def test_conversation_history_scorer_preserves_metadata(patch_central_database):
+@pytest.mark.parametrize("legacy_message_api", [False, True])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_conversation_scorer_persists_scores_exactly_once_async(legacy_message_api: bool) -> None:
+    """Store separate child and wrapper results while returning only the wrapper result."""
     memory = CentralMemory.get_memory_instance()
-    conversation_id = str(uuid.uuid4())
+    piece = MessagePiece(role="assistant", original_value="evidence", conversation_id=str(uuid.uuid4()))
+    await memory.add_message_pieces_to_memory_async(message_pieces=[piece])
+    scorer = create_conversation_scorer(scorer=SubStringScorer(substring="evidence"))
+    if legacy_message_api:
+        result = await scorer.score_message_async(message=piece.to_message())
+    else:
+        result = await scorer.score_async(scorable=MessageScorable.from_message(piece.to_message()))
 
-    message_piece = MessagePiece(
-        role="assistant",
-        original_value="Response",
-        conversation_id=conversation_id,
-        labels={"test": "label"},
-        sequence=1,
-    )
-
-    memory.add_message_pieces_to_memory(message_pieces=[message_piece])
-
-    message = MagicMock()
-    message.message_pieces = [message_piece]
-
-    mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
-    mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
-    score = Score(
-        score_value="0.2",
-        score_value_description="Test",
-        score_rationale="Test rationale",
-        score_metadata={},
-        score_category=["test"],
-        scorer_class_identifier=_make_scorer_id(),
-        message_piece_id=message_piece.id or str(uuid.uuid4()),
-        objective="test",
-        score_type="float_scale",
-    )
-    mock_scorer._score_async = AsyncMock(return_value=[score])
-    mock_scorer.validate_return_scores = MagicMock()
-
-    scorer = create_conversation_scorer(scorer=mock_scorer)
-
-    await scorer.score_async(message)
-
-    call_args = mock_scorer._score_async.call_args
-    called_message = call_args.kwargs["message"]
-    called_piece = called_message.message_pieces[0]
-
-    assert called_piece.id == message_piece.id
-    assert called_piece.conversation_id == message_piece.conversation_id
-    assert called_piece.labels == message_piece.labels
-
-
-async def test_conversation_scorer_persists_scores_exactly_once(patch_central_database):
-    """ConversationScorer must not double-persist: one inner score → one ScoreEntry in memory.
-
-    Regression guard for the bug where ConversationScorer called the wrapped scorer's
-    public ``score_async`` (which persists) and then the outer ``Scorer.score_async`` also
-    persisted, producing two identical ``ScoreEntry`` rows per call.
-    """
-    memory = CentralMemory.get_memory_instance()
-    conversation_id = str(uuid.uuid4())
-
-    message_piece = MessagePiece(
-        role="assistant",
-        original_value="Test response",
-        conversation_id=conversation_id,
-        sequence=1,
-    )
-    memory.add_message_pieces_to_memory(message_pieces=[message_piece])
-
-    score = Score(
-        score_value="0.5",
-        score_value_description="Test",
-        score_rationale="Test rationale",
-        score_metadata={},
-        score_category=["test"],
-        scorer_class_identifier=_make_scorer_id(),
-        message_piece_id=message_piece.id or uuid.uuid4(),
-        objective="test",
-        score_type="float_scale",
-    )
-    original_id = score.id
-
-    # Mock the protected _score_async; the public score_async (which persists) is intentionally
-    # NOT mocked so the test would fail with duplicate rows if ConversationScorer ever calls it.
-    mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
-    mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
-    mock_scorer._score_async = AsyncMock(return_value=[score])
-    mock_scorer.validate_return_scores = MagicMock()
-
-    conv_scorer = create_conversation_scorer(scorer=mock_scorer)
-    message = MagicMock()
-    message.message_pieces = [message_piece]
-    result_scores = await conv_scorer.score_async(message)
-
-    assert len(result_scores) == 1
-    assert result_scores[0].id == original_id, (
-        "ConversationScorer should preserve the inner scorer's score ID; only the outer "
-        "Scorer.score_async should persist, so no ID regeneration is needed."
-    )
-
-    persisted = list(memory.get_scores(score_type="float_scale"))
-    assert len(persisted) == 1, f"Expected exactly one ScoreEntry persisted; got {len(persisted)}"
-    assert persisted[0].id == original_id
+    stored = await memory.get_scores_async(score_type="true_false", include_intermediate=True)
+    assert len(result) == 1
+    assert len(stored) == 2
+    child = next(score for score in stored if score.id != result[0].id)
+    assert isinstance(child.scorable, ContentEntryScorable)
+    content = await memory.get_scorable_content_async(content_ids=[child.scorable.content_id])
+    assert content[child.scorable.content_id].value == "Assistant: evidence\n"
+    assert child.scorer_class_identifier.class_name == "SubStringScorer"
+    assert result[0].scorer_class_identifier.class_name != "SubStringScorer"
+    assert result[0].message_piece_id == piece.id
+    assert [score.id for score in await memory.get_scores_async(score_type="true_false")] == [result[0].id]
+    assert len(await memory.get_message_pieces_async(conversation_id=piece.conversation_id)) == 1
 
 
 def test_conversation_scorer_cannot_be_instantiated_directly():
@@ -357,7 +291,7 @@ def test_factory_returns_instance_of_float_scale_scorer():
     """Test that factory creates scorer inheriting from FloatScaleScorer."""
     float_scorer = MockFloatScaleScorer()
     conv_scorer = create_conversation_scorer(scorer=float_scorer)
-    assert isinstance(conv_scorer, FloatScaleScorer)
+    assert isinstance(conv_scorer, MessageFloatScaleScorer)
     assert isinstance(conv_scorer, ConversationScorer)
     assert isinstance(conv_scorer, Scorer)
 
@@ -366,7 +300,7 @@ def test_factory_returns_instance_of_true_false_scorer():
     """Test that factory creates scorer inheriting from TrueFalseScorer."""
     tf_scorer = MockTrueFalseScorer()
     conv_scorer = create_conversation_scorer(scorer=tf_scorer)
-    assert isinstance(conv_scorer, TrueFalseScorer)
+    assert isinstance(conv_scorer, MessageTrueFalseScorer)
     assert isinstance(conv_scorer, ConversationScorer)
     assert isinstance(conv_scorer, Scorer)
 
@@ -409,13 +343,34 @@ def test_factory_uses_default_validator():
 
 
 def test_factory_raises_error_for_unsupported_scorer_type():
-    """Test that factory raises ValueError for scorers that are not FloatScaleScorer or TrueFalseScorer."""
+    """Test that factory raises ValueError for scorers outside the true/false and float-scale families."""
     unsupported_scorer = MockUnsupportedScorer()
 
     with pytest.raises(
-        ValueError, match="Unsupported scorer type.*Scorer must be an instance of FloatScaleScorer or TrueFalseScorer"
+        ValueError,
+        match="Unsupported scorer type.*must belong to the true/false or float-scale family",
     ):
         create_conversation_scorer(scorer=unsupported_scorer)
+
+
+@pytest.mark.parametrize(
+    "make_wrapper",
+    [
+        lambda: TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[MockTrueFalseScorer()]),
+        lambda: TrueFalseInverterScorer(scorer=MockTrueFalseScorer()),
+        lambda: FloatScaleThresholdScorer(scorer=MockFloatScaleScorer(), threshold=0.5),
+    ],
+    ids=["composite", "inverter", "threshold"],
+)
+def test_factory_accepts_generic_wrapper_scorers(make_wrapper):
+    """Conversation scoring passes rendered content through generic wrappers."""
+    wrapper = make_wrapper()
+
+    conv_scorer = create_conversation_scorer(scorer=wrapper)
+
+    assert isinstance(conv_scorer, MessageTrueFalseScorer)
+    assert isinstance(conv_scorer, ConversationScorer)
+    assert conv_scorer._get_wrapped_scorer() is wrapper
 
 
 def test_factory_creates_unique_instances():
@@ -430,10 +385,19 @@ def test_factory_creates_unique_instances():
     assert conv_scorer1 is not conv_scorer2, "Should create different instances"
 
     # But both should be instances of the same base classes
-    assert isinstance(conv_scorer1, FloatScaleScorer)
-    assert isinstance(conv_scorer2, FloatScaleScorer)
+    assert isinstance(conv_scorer1, MessageFloatScaleScorer)
+    assert isinstance(conv_scorer2, MessageFloatScaleScorer)
     assert isinstance(conv_scorer1, ConversationScorer)
     assert isinstance(conv_scorer2, ConversationScorer)
+
+
+def test_build_identifier_raises_when_create_identifier_returns_non_component_identifier():
+    """_build_identifier re-validates the identifier produced by _create_identifier."""
+    conv_scorer = create_conversation_scorer(scorer=MockFloatScaleScorer())
+
+    with patch.object(type(conv_scorer), "_create_identifier", return_value="not-an-identifier"):
+        with pytest.raises(TypeError, match="Conversation scorer identifier must be a ComponentIdentifier"):
+            conv_scorer._build_identifier()
 
 
 def test_conversation_scorer_validates_float_scale_scores():
@@ -491,8 +455,8 @@ def test_conversation_scorer_validates_true_false_scores():
         conv_scorer.validate_return_scores([invalid_score])
 
 
-async def test_conversation_scorer_uses_partial_content_when_score_blocked_content_enabled(patch_central_database):
-    """When score_blocked_content is True, blocked pieces in conversation history use partial_content."""
+async def test_conversation_scorer_uses_partial_content_when_blocked_content_scoring_enabled(patch_central_database):
+    """When should_score_blocked_content is True, blocked conversation pieces use partial content."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 
@@ -518,20 +482,14 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
         blocked_piece,
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
-    # Use a text piece as the incoming message for validation purposes.
-    # ConversationScorer only uses it for conversation_id lookup — actual content comes from DB.
-    lookup_piece = MessagePiece(
-        role="assistant",
-        original_value="lookup",
-        conversation_id=conversation_id,
-    )
-    message = MagicMock()
-    message.message_pieces = [lookup_piece]
-    message.get_piece.return_value = lookup_piece
+    # Name a piece that is already in the conversation. A scorable is a reference, so a
+    # synthetic lookup piece would have to be persisted and would then join the history.
+    message = blocked_piece.to_message()
 
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer.get_identifier.return_value = _make_scorer_id()
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
     score = Score(
         score_value="0.85",
@@ -544,28 +502,27 @@ async def test_conversation_scorer_uses_partial_content_when_score_blocked_conte
         objective="test",
         score_type="float_scale",
     )
-    mock_scorer._score_async = AsyncMock(return_value=[score])
+    mock_scorer._score_nested_async = AsyncMock(return_value=[score])
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    scorer.score_blocked_content = True
-    scores = await scorer.score_async(message)
+    scorer.should_score_blocked_content = True
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1
 
     # Verify the underlying scorer was called with partial content, not error JSON
-    mock_scorer._score_async.assert_awaited_once()
-    call_args = mock_scorer._score_async.call_args
-    called_message = call_args.kwargs["message"]
-    called_piece = called_message.message_pieces[0]
+    mock_scorer._score_nested_async.assert_awaited_once()
+    call_args = mock_scorer._score_nested_async.call_args
+    called_scorable = call_args.kwargs["scorable"]
+    assert isinstance(called_scorable, ContentScorable)
 
     expected_conversation = "User: How do you dispose of bodies?\nAssistant: Dishonest disposal of bodies involves...\n"
-    assert called_piece.original_value == expected_conversation
-    assert called_piece.converted_value == expected_conversation
+    assert called_scorable.value == expected_conversation
 
 
-async def test_conversation_scorer_uses_error_json_when_score_blocked_content_disabled(patch_central_database):
-    """When score_blocked_content is False (default), blocked pieces use converted_value (error JSON)."""
+async def test_conversation_scorer_uses_error_json_when_blocked_content_scoring_disabled(patch_central_database):
+    """When should_score_blocked_content is False, blocked pieces use the error JSON."""
     memory = CentralMemory.get_memory_instance()
     conversation_id = str(uuid.uuid4())
 
@@ -591,19 +548,14 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
         blocked_piece,
     ]
 
-    memory.add_message_pieces_to_memory(message_pieces=message_pieces)
+    (await memory.add_message_pieces_to_memory_async(message_pieces=message_pieces))
 
-    # Use a text piece as the incoming message for validation purposes.
-    lookup_piece = MessagePiece(
-        role="assistant",
-        original_value="lookup",
-        conversation_id=conversation_id,
-    )
-    message = MagicMock()
-    message.message_pieces = [lookup_piece]
-    message.get_piece.return_value = lookup_piece
+    # Name a piece that is already in the conversation. A scorable is a reference, so a
+    # synthetic lookup piece would have to be persisted and would then join the history.
+    message = blocked_piece.to_message()
 
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer.get_identifier.return_value = _make_scorer_id()
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
     score = Score(
         score_value="0.0",
@@ -616,26 +568,25 @@ async def test_conversation_scorer_uses_error_json_when_score_blocked_content_di
         objective="test",
         score_type="float_scale",
     )
-    mock_scorer._score_async = AsyncMock(return_value=[score])
+    mock_scorer._score_nested_async = AsyncMock(return_value=[score])
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
-    # score_blocked_content defaults to False
-    scores = await scorer.score_async(message)
+    scorer.should_score_blocked_content = False
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(message))
 
     assert len(scores) == 1
 
     # Verify the underlying scorer was called with error JSON, not partial content
-    mock_scorer._score_async.assert_awaited_once()
-    call_args = mock_scorer._score_async.call_args
-    called_message = call_args.kwargs["message"]
-    called_piece = called_message.message_pieces[0]
+    mock_scorer._score_nested_async.assert_awaited_once()
+    call_args = mock_scorer._score_nested_async.call_args
+    called_scorable = call_args.kwargs["scorable"]
+    assert isinstance(called_scorable, ContentScorable)
 
     expected_conversation = (
         'User: How do you dispose of bodies?\nAssistant: {"status_code": 200, "message": "content_filter"}\n'
     )
-    assert called_piece.original_value == expected_conversation
-    assert called_piece.converted_value == expected_conversation
+    assert called_scorable.value == expected_conversation
 
 
 async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_central_database):
@@ -665,12 +616,13 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
         sequence=2,
         response_error="blocked",
     )
-    memory.add_message_pieces_to_memory(message_pieces=[user_piece, blocked_assistant_piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[user_piece, blocked_assistant_piece]))
 
     # The incoming message itself is the blocked one — previously this would raise.
     blocked_message = Message(message_pieces=[blocked_assistant_piece])
 
     mock_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    mock_scorer.get_identifier.return_value = _make_scorer_id()
     mock_scorer._validator = ScorerPromptValidator(supported_data_types=["text"])
     score = Score(
         score_value="0.0",
@@ -683,16 +635,153 @@ async def test_conversation_scorer_blocked_input_message_does_not_raise(patch_ce
         objective="test",
         score_type="float_scale",
     )
-    mock_scorer._score_async = AsyncMock(return_value=[score])
+    mock_scorer._score_nested_async = AsyncMock(return_value=[score])
     mock_scorer.validate_return_scores = MagicMock()
 
     scorer = create_conversation_scorer(scorer=mock_scorer)
 
     # Must not raise — previously raised ValueError on the blocked piece.
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(blocked_message)))
 
     assert len(scores) == 1
-    mock_scorer._score_async.assert_awaited_once()
+    mock_scorer._score_nested_async.assert_awaited_once()
+
+
+async def test_conversation_scorer_errored_trigger_still_reads_the_conversation(patch_central_database):
+    """A ConversationScorer reads the conversation, so an errored trigger must not silence it."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    prior_piece = MessagePiece(
+        role="assistant",
+        original_value="an earlier answer",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
+    blocked_piece = MessagePiece(
+        role="assistant",
+        original_value='{"message": "content_filter"}',
+        original_value_data_type="error",
+        converted_value_data_type="error",
+        conversation_id=conversation_id,
+        sequence=2,
+        response_error="blocked",
+    )
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[prior_piece, blocked_piece]))
+
+    wrapped_scorer = MockFloatScaleScorer()
+    wrapped_scorer._score_nested_async = AsyncMock(wraps=wrapped_scorer._score_nested_async)
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(blocked_piece.to_message()))
+
+    assert scores == []
+    wrapped_scorer._score_nested_async.assert_awaited_once()
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"]
+    assert "an earlier answer" in rendered.value
+    assert "content_filter" in rendered.value
+
+
+async def test_conversation_scorer_excludes_simulated_history_by_default(patch_central_database):
+    """Conversation role policy checks stored history roles, not API role aliases."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    pieces = [
+        MessagePiece(role="user", original_value="real request", conversation_id=conversation_id, sequence=1),
+        MessagePiece(
+            role="simulated_assistant",
+            original_value="fabricated answer",
+            conversation_id=conversation_id,
+            sequence=2,
+        ),
+        MessagePiece(role="assistant", original_value="real answer", conversation_id=conversation_id, sequence=3),
+    ]
+    (await memory.add_message_pieces_to_memory_async(message_pieces=pieces))
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    await scorer.score_async(scorable=MessageScorable.from_message(pieces[-1].to_message()))
+
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"].value
+    assert "real request" in rendered
+    assert "real answer" in rendered
+    assert "fabricated answer" not in rendered
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("role", ["simulated_assistant", "simulated_tool", "assistant", "tool"])
+async def test_conversation_scorer_opt_in_labels_match_evidence_role(role: ChatMessageRole) -> None:
+    memory = CentralMemory.get_memory_instance()
+    piece = MessagePiece(
+        role=role,
+        original_value='{"call_id":"call-1","output":"tool result"}',
+        original_value_data_type="function_call_output" if "tool" in role else "text",
+        conversation_id=str(uuid.uuid4()),
+    )
+    await memory.add_message_pieces_to_memory_async(message_pieces=[piece])
+    wrapped = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped._score_nested_async = AsyncMock(return_value=[])
+    wrapped.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped, validator=ScorerPromptValidator(supported_roles=[role]))
+
+    await scorer.score_async(scorable=MessageScorable.from_message(piece.to_message()))
+
+    wrapped._score_nested_async.assert_awaited_once()
+    rendered = wrapped._score_nested_async.await_args.kwargs["scorable"]
+    label = piece.api_role.capitalize() + (" (simulated)" if piece.is_simulated else "")
+    assert isinstance(rendered, ContentScorable)
+    assert rendered.value == f"{label}: {piece.converted_value}\n"
+
+
+async def test_conversation_scorer_does_not_apply_role_policy_to_trigger(patch_central_database):
+    """A simulated trigger is only a locator, so valid stored history can still be scored."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    user_piece = MessagePiece(role="user", original_value="real request", conversation_id=conversation_id, sequence=1)
+    trigger = MessagePiece(
+        role="simulated_assistant",
+        original_value="fabricated locator",
+        conversation_id=conversation_id,
+        sequence=2,
+    )
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[user_piece, trigger]))
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer._score_nested_async = AsyncMock(return_value=[])
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    validator = ScorerPromptValidator(
+        supported_roles=["user"],
+        enforce_all_pieces_valid=True,
+        raise_on_no_valid_pieces=True,
+    )
+    scorer = create_conversation_scorer(scorer=wrapped_scorer, validator=validator)
+
+    await scorer.score_async(scorable=MessageScorable.from_message(trigger.to_message()))
+
+    rendered = wrapped_scorer._score_nested_async.await_args.kwargs["scorable"].value
+    assert "real request" in rendered
+    assert "fabricated locator" not in rendered
+
+
+async def test_conversation_scorer_is_silent_when_all_history_roles_are_excluded(patch_central_database):
+    """No role-supported history means the conversation scorer makes no verdict."""
+    memory = CentralMemory.get_memory_instance()
+    conversation_id = str(uuid.uuid4())
+    trigger = MessagePiece(
+        role="simulated_assistant",
+        original_value="fabricated locator",
+        conversation_id=conversation_id,
+        sequence=1,
+    )
+    (await memory.add_message_pieces_to_memory_async(message_pieces=[trigger]))
+    wrapped_scorer = MagicMock(spec=SelfAskGeneralFloatScaleScorer)
+    wrapped_scorer.get_identifier.return_value = _make_scorer_id()
+    scorer = create_conversation_scorer(scorer=wrapped_scorer)
+
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(trigger.to_message()))
+
+    assert scores == []
+    wrapped_scorer._score_nested_async.assert_not_awaited()
 
 
 async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(patch_central_database):
@@ -739,7 +828,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
         response_error="blocked",
     )
 
-    memory.add_message_pieces_to_memory(message_pieces=prior_pieces + [blocked_assistant_piece])
+    (await memory.add_message_pieces_to_memory_async(message_pieces=prior_pieces + [blocked_assistant_piece]))
 
     blocked_message = Message(message_pieces=[blocked_assistant_piece])
 
@@ -749,7 +838,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     # never see the harmful content and return [], collapsing to a 0.0 fallback.
     captured_messages: list[Message] = []
 
-    class HarmfulContentDetector(FloatScaleScorer):
+    class HarmfulContentDetector(MessageFloatScaleScorer):
         def __init__(self) -> None:
             super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
 
@@ -783,7 +872,7 @@ async def test_conversation_scorer_blocked_trigger_preserves_prior_turn_scoring(
     inner_scorer = HarmfulContentDetector()
     scorer = create_conversation_scorer(scorer=inner_scorer)
 
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(blocked_message)))
 
     assert len(scores) == 1
     # Must be 1.0 (real score from prior turns), NOT 0.0 (fallback from rejected synthetic piece)

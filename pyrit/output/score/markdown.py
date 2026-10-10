@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.models import Score
+from pyrit.models import Score, UndeterminedScoreError
 from pyrit.output.base import PrinterBase
 from pyrit.output.sink import Sink
 
@@ -36,13 +36,17 @@ class MarkdownScorePrinter(PrinterBase):
         """
         lines: list[str] = []
 
-        score_value = score.get_value()
-        if isinstance(score_value, bool):
+        try:
+            score_value = score.get_value()
+        except UndeterminedScoreError:
+            score_value = None
+
+        if score_value is None:
+            value_str = "**undetermined**"
+        elif isinstance(score_value, bool):
             value_str = str(score_value)
-        elif isinstance(score_value, (int, float)):
-            value_str = f"**{score_value:.2f}**" if isinstance(score_value, float) else f"**{score_value}**"
         else:
-            value_str = f"**{score_value}**"
+            value_str = f"**{score_value:.2f}**" if isinstance(score_value, float) else f"**{score_value}**"
 
         lines.append(f"{indent}- **Score Type:** {score.score_type}")
         lines.append(f"{indent}- **Value:** {value_str}")

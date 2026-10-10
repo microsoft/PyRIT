@@ -2,17 +2,16 @@
 # Licensed under the MIT license.
 
 import pathlib
-import random
 import uuid
 from typing import Any
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.converter.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )
-from pyrit.models import Message, MessagePiece, PromptDataType, SeedPrompt
-from pyrit.prompt_converter.prompt_converter import ConverterResult
+from pyrit.models import JsonResponseConfig, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
 
@@ -79,17 +78,20 @@ class FuzzerCrossOverConverter(FuzzerConverter):
 
         conversation_id = str(uuid.uuid4())
 
-        self.converter_target.set_system_prompt(
-            system_prompt=self.system_prompt,
-            conversation_id=conversation_id,
+        (
+            await self.converter_target.set_system_prompt_async(
+                system_prompt=self.system_prompt, conversation_id=conversation_id
+            )
         )
 
         formatted_prompt = f"===={self.template_label} BEGINS====\n{prompt}\n===={self.template_label} ENDS===="
         formatted_prompt += (
-            f"\n====TEMPLATE 2 BEGINS====\n{random.choice(self.prompt_templates)}\n====TEMPLATE 2 ENDS====\n"
+            "\n====TEMPLATE 2 BEGINS====\n"
+            f"{self._get_random_generator(stream='prompt-template').choice(self.prompt_templates)}"
+            "\n====TEMPLATE 2 ENDS====\n"
         )
 
-        prompt_metadata: dict[str, str | int] = {"response_format": "json"}
+        prompt_metadata = JsonResponseConfig(enabled=True).to_metadata()
         request = Message(
             message_pieces=[
                 MessagePiece(

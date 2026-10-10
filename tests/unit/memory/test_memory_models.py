@@ -1,40 +1,68 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Any, get_origin
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.orm import MappedColumn
 
+from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_models import (
+    AtomicAttackIdentifierEntry,
+    AtomicAttackSeedIdentifierEntry,
+    AttackIdentifierEntry,
+    AttackRequestConverterIdentifierEntry,
+    AttackResponseConverterIdentifierEntry,
     AttackResultEntry,
+    AttackTechniqueIdentifierEntry,
+    AttackTechniqueSeedIdentifierEntry,
+    Base,
+    ComponentIdentifierEntry,
     ConversationMessageWithSimilarity,
+    ConverterIdentifierEntry,
     EmbeddingDataEntry,
     EmbeddingMessageWithSimilarity,
     PromptMemoryEntry,
+    ScenarioIdentifierEntry,
     ScenarioResultEntry,
     ScoreEntry,
+    ScorerIdentifierEntry,
     SeedEntry,
+    SeedIdentifierEntry,
+    TargetIdentifierEntry,
     UTCDateTime,
     _load_identifier,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackTechniqueIdentifier,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    ConverterIdentifier,
     MessagePiece,
     ScenarioIdentifier,
     ScenarioResult,
     Score,
+    ScorerIdentifier,
+    SeedIdentifier,
     SeedObjective,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
+    TargetIdentifier,
 )
+from unit.mocks import make_scenario_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +77,6 @@ def _make_message_piece(**overrides) -> MessagePiece:
         "converted_value": "hello converted",
         "conversation_id": str(uuid.uuid4()),
         "sequence": 0,
-        "labels": {"label1": "value1"},
         "prompt_metadata": {"meta": "data"},
         "converter_identifiers": [ComponentIdentifier(class_name="NoOp", class_module="pyrit.converters")],
         "original_value_data_type": "text",
@@ -119,15 +146,15 @@ def test_utcdatetime_attaches_utc_to_naive_datetime():
     naive = datetime(2024, 1, 1, 12, 0, 0, tzinfo=None)  # noqa: DTZ001
     result = UTCDateTime().process_result_value(naive, dialect=MagicMock())
     assert result is not None
-    assert result.tzinfo == timezone.utc
+    assert result.tzinfo == UTC
     assert result.year == 2024
 
 
 def test_utcdatetime_leaves_aware_datetime_unchanged():
-    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     result = UTCDateTime().process_result_value(aware, dialect=MagicMock())
     assert result == aware
-    assert result.tzinfo == timezone.utc
+    assert result.tzinfo == UTC
 
 
 def test_utcdatetime_passes_through_none():
@@ -160,6 +187,187 @@ def test_load_identifier_injects_pyrit_version():
     loaded = _load_identifier(stored, pyrit_version="9.9.9")
     assert loaded is not None
     assert loaded.pyrit_version == "9.9.9"
+
+
+def test_scorer_identifier_entry_constructs_hash_only_sub_scorer_edges():
+    leaf = ScorerIdentifier(
+        class_name="LeafScorer",
+        class_module="pyrit.score",
+        scorer_type="float_scale",
+    )
+    nested = ScorerIdentifier(
+        class_name="NestedScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        sub_scorers=[leaf],
+    )
+    root = ScorerIdentifier(
+        class_name="RootScorer",
+        class_module="pyrit.score",
+        scorer_type="true_false",
+        sub_scorers=[nested, leaf],
+    )
+
+    entry = ScorerIdentifierEntry.from_domain_model(domain_model=root)
+
+    assert [edge.position for edge in entry.sub_scorers] == [0, 1]
+    assert [edge.child_hash for edge in entry.sub_scorers] == [nested.hash, leaf.hash]
+    assert all(edge.child is None for edge in entry.sub_scorers)
+
+
+@pytest.mark.parametrize(
+    ("identifier_type", "entry_type"),
+    [
+        (TargetIdentifier, TargetIdentifierEntry),
+        (ConverterIdentifier, ConverterIdentifierEntry),
+        (ScorerIdentifier, ScorerIdentifierEntry),
+        (ScenarioIdentifier, ScenarioIdentifierEntry),
+        (SeedIdentifier, SeedIdentifierEntry),
+        (AttackIdentifier, AttackIdentifierEntry),
+        (AttackTechniqueIdentifier, AttackTechniqueIdentifierEntry),
+        (AtomicAttackIdentifier, AtomicAttackIdentifierEntry),
+    ],
+)
+def test_identifier_entry_maps_promoted_children_by_cardinality(
+    identifier_type: type[ComponentIdentifier],
+    entry_type: type[ComponentIdentifierEntry[Any]],
+) -> None:
+    promoted_children = set(identifier_type.promoted_child_field_names())
+    collection_children = {
+        field_name
+        for field_name in promoted_children
+        if get_origin(identifier_type.model_fields[field_name].annotation) in (list, Sequence)
+    }
+    singular_children = promoted_children - collection_children
+
+    assert set(entry_type.CHILD_RELATIONSHIP_SPECS) == collection_children
+    assert set(entry_type.CHILD_HASH_COLUMNS) == singular_children
+    assert all(spec.edge_child_hash_attr for spec in entry_type.CHILD_RELATIONSHIP_SPECS.values())
+
+
+def test_identifier_child_relationships_delete_orphans() -> None:
+    for mapper in Base.registry.mappers:
+        entry_type = mapper.class_
+        if not issubclass(entry_type, ComponentIdentifierEntry):
+            continue
+
+        for field_name, spec in entry_type.CHILD_RELATIONSHIP_SPECS.items():
+            child_relationship = mapper.relationships[spec.relationship_name]
+            assert child_relationship.uselist, f"{entry_type.__name__}.{field_name} must be a collection"
+            assert "delete-orphan" in child_relationship.cascade, (
+                f"{entry_type.__name__}.{spec.relationship_name} must use cascade='all, delete-orphan'"
+            )
+
+
+@pytest.mark.parametrize(
+    ("identifier_type", "entry_type"),
+    [
+        (TargetIdentifier, TargetIdentifierEntry),
+        (ConverterIdentifier, ConverterIdentifierEntry),
+        (ScorerIdentifier, ScorerIdentifierEntry),
+        (ScenarioIdentifier, ScenarioIdentifierEntry),
+        (SeedIdentifier, SeedIdentifierEntry),
+        (AttackIdentifier, AttackIdentifierEntry),
+        (AttackTechniqueIdentifier, AttackTechniqueIdentifierEntry),
+        (AtomicAttackIdentifier, AtomicAttackIdentifierEntry),
+    ],
+)
+def test_identifier_entry_maps_promoted_scalars_to_columns(
+    identifier_type: type[ComponentIdentifier],
+    entry_type: type[ComponentIdentifierEntry[Any]],
+) -> None:
+    shared_columns = {name for name, value in vars(ComponentIdentifierEntry).items() if isinstance(value, MappedColumn)}
+    mapped_scalars = set(entry_type.__table__.columns.keys())
+    mapped_scalars -= shared_columns
+    mapped_scalars -= set(entry_type.CHILD_HASH_COLUMNS.values())
+
+    assert mapped_scalars == set(identifier_type.promoted_scalar_field_names())
+
+
+def test_identifier_entry_rejects_missing_promoted_scalar_column() -> None:
+    class IdentifierWithPromotedScalar(ComponentIdentifier):
+        promoted_value: str | None = None
+
+    table_name = "IncompleteIdentifierEntries"
+    try:
+        with pytest.raises(TypeError, match="has no mapped column for promoted scalar field.*promoted_value"):
+
+            class IncompleteIdentifierEntry(ComponentIdentifierEntry[IdentifierWithPromotedScalar]):
+                __tablename__ = table_name
+                __table_args__ = {"extend_existing": True}
+    finally:
+        table = Base.metadata.tables.get(table_name)
+        if table is not None:
+            Base.metadata.remove(table)
+
+
+async def test_atomic_attack_identifier_graph_persists_with_result_link(sqlite_instance: SQLiteMemory) -> None:
+    target = TargetIdentifier(class_name="Target", class_module="pyrit.prompt_target", model_name="model")
+    scorer = ScorerIdentifier(class_name="Scorer", class_module="pyrit.score", scorer_type="true_false")
+    converter = ConverterIdentifier(
+        class_name="Converter",
+        class_module="pyrit.prompt_converter",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+    )
+    technique_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="technique seed",
+        data_type="text",
+    )
+    dataset_seed = SeedIdentifier(
+        class_name="Seed",
+        class_module="pyrit.models",
+        value="dataset seed",
+        data_type="text",
+    )
+    attack = AttackIdentifier(
+        class_name="Attack",
+        class_module="pyrit.executor.attack",
+        objective_target=target,
+        objective_scorer=scorer,
+        request_converters=[converter],
+        response_converters=[converter],
+    )
+    technique = AttackTechniqueIdentifier(
+        class_name="AttackTechnique",
+        class_module="pyrit.scenario.core.attack_technique",
+        attack=attack,
+        technique_seeds=[technique_seed],
+    )
+    atomic = AtomicAttackIdentifier(
+        class_name="AtomicAttack",
+        class_module="pyrit.scenario.core.atomic_attack",
+        attack_technique=technique,
+        seed_identifiers=[technique_seed, dataset_seed],
+    )
+    result = AttackResult(conversation_id="conversation", objective="objective", atomic_attack_identifier=atomic)
+
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
+
+    async with await sqlite_instance.get_session_async() as session:
+        assert await session.scalar(select(AttackResultEntry.atomic_attack_identifier_hash)) == atomic.hash
+        assert await session.scalar(select(AtomicAttackIdentifierEntry.hash)) == atomic.hash
+        assert await session.scalar(select(AttackTechniqueIdentifierEntry.hash)) == technique.hash
+        assert await session.scalar(select(AttackIdentifierEntry.hash)) == attack.hash
+        assert len((await session.scalars(select(SeedIdentifierEntry))).all()) == 2
+
+        technique_edge = await session.scalar(select(AttackTechniqueSeedIdentifierEntry))
+        assert technique_edge is not None
+        assert (technique_edge.position, technique_edge.seed_identifier_hash) == (0, technique_seed.hash)
+        atomic_edges = (
+            await session.scalars(
+                select(AtomicAttackSeedIdentifierEntry).order_by(AtomicAttackSeedIdentifierEntry.position)
+            )
+        ).all()
+        assert [edge.seed_identifier_hash for edge in atomic_edges] == [technique_seed.hash, dataset_seed.hash]
+        request_edge = await session.scalar(select(AttackRequestConverterIdentifierEntry))
+        assert request_edge is not None
+        assert (request_edge.position, request_edge.converter_identifier_hash) == (0, converter.hash)
+        response_edge = await session.scalar(select(AttackResponseConverterIdentifierEntry))
+        assert response_edge is not None
+        assert (response_edge.position, response_edge.converter_identifier_hash) == (0, converter.hash)
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +410,19 @@ def test_embedding_message_with_similarity_forbids_extra():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestPromptMemoryEntry:
+    async def test_empty_converted_value_survives_persistence_reload(self, sqlite_instance: SQLiteMemory) -> None:
+        piece = _make_message_piece(original_value="Original nonempty source", converted_value="")
+        (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece]))
+
+        recovered = await sqlite_instance.get_message_pieces_async(prompt_ids=[str(piece.id)])
+
+        assert len(recovered) == 1
+        assert recovered[0] is not piece
+        assert recovered[0].original_value == "Original nonempty source"
+        assert recovered[0].converted_value == ""
+        assert recovered[0].original_value_data_type == "text"
+        assert recovered[0].converted_value_data_type == "text"
+
     def test_init_from_message_piece(self):
         piece = _make_message_piece()
         entry = PromptMemoryEntry(entry=piece)
@@ -249,9 +470,7 @@ class TestScoreEntry:
         assert entry.id == score.id
         assert entry.score_value == "0.9"
         assert entry.score_type == "float_scale"
-        assert entry.objective == "test objective"
-        # backward compat: task == objective
-        assert entry.task == "test objective"
+        assert entry.scored_expectation == {"schema_version": 1, "objective": "test objective", "conditions": []}
 
     def test_roundtrip_get_score(self):
         score = _make_score()
@@ -332,6 +551,32 @@ class TestSeedEntry:
         entry = SeedEntry(entry=seed)
         assert entry.parameters == ["param1", "param2"]
 
+    def test_get_seed_record_preserves_stored_fields_without_generated_defaults(self) -> None:
+        seed = _make_seed_prompt(
+            value="{{ unchanged }}",
+            value_sha256="stored-hash",
+            parameters=["unchanged"],
+            metadata={"source_id": 7},
+            response_json_schema={"type": "object"},
+        )
+        entry = SeedEntry(entry=seed)
+        entry.sequence = None
+
+        record = entry.get_seed_record()
+
+        assert isinstance(record, SeedRecord)
+        assert record.id == seed.id
+        assert record.value == "{{ unchanged }}"
+        assert record.value_sha256 == "stored-hash"
+        assert record.parameters == ["unchanged"]
+        assert record.sequence is None
+        assert record.prompt_group_id is None
+        assert record.metadata == {"source_id": 7}
+        assert record.response_json_schema == {"type": "object"}
+        assert record.date_added == seed.date_added
+        assert record.added_by == seed.added_by
+        assert "is_jinja_template" not in record.model_dump()
+
     # ---- response_json_schema persistence ---------------------------------
 
     def test_roundtrip_seed_prompt_preserves_inline_response_json_schema(self):
@@ -349,7 +594,7 @@ class TestSeedEntry:
 
     def test_roundtrip_seed_prompt_with_named_schema_kwarg(self):
         """Named-schema construction round-trips as the resolved body."""
-        from pyrit.models.json_schema_definition import get_common_json_schema
+        from pyrit.models import get_common_json_schema
 
         expected = get_common_json_schema("true_false_with_rationale")
         seed = _make_seed_prompt(response_json_schema_name="true_false_with_rationale")
@@ -397,7 +642,10 @@ class TestSeedEntry:
             name="obj1",
             dataset_name="ds",
             added_by="tester",
-            metadata={SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky", "owned": "by-caller"},
+            metadata={
+                SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky",
+                "owned": "by-caller",
+            },
         )
         entry = SeedEntry(entry=obj)
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
@@ -406,15 +654,97 @@ class TestSeedEntry:
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in (recovered.metadata or {})
         assert (recovered.metadata or {}).get("owned") == "by-caller"
 
+    def test_roundtrip_seed_simulated_conversation_preserves_prompts_and_version(self):
+        """A canonical record round-trips its prompts, value, hash, and recorded version."""
+        config = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            next_message_system_prompt=SeedPrompt(value="next", response_json_schema_name="adversarial_chat"),
+            pyrit_version="1.0.0",
+        )
+        config.value_sha256 = "canonical-hash"
+
+        recovered = SeedEntry(entry=config).get_seed()
+
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert recovered.adversarial_chat_system_prompt.value == "adversarial"
+        assert recovered.next_message_system_prompt is not None
+        assert recovered.next_message_system_prompt.response_json_schema is not None
+        assert recovered.pyrit_version == "1.0.0"
+        assert recovered.value == config.value
+        assert recovered.value_sha256 == "canonical-hash"
+
+    def test_legacy_path_record_reconstructs_prompts(self, tmp_path):
+        """A record written before normalization still loads, resolving its paths to prompts."""
+        adv_path = tmp_path / "adversarial.yaml"
+        adv_path.write_text("value: legacy adversarial\ndata_type: text")
+
+        seed = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="placeholder"),
+        )
+        entry = SeedEntry(entry=seed)
+        entry.value = json.dumps(
+            {
+                "num_turns": 2,
+                "sequence": 0,
+                "adversarial_chat_system_prompt_path": str(adv_path),
+                "simulated_target_system_prompt_path": None,
+                "next_message_system_prompt_path": None,
+                "pyrit_version": "1.0.0",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        entry.value_sha256 = "stale-path-hash"
+
+        with pytest.warns(DeprecationWarning, match="adversarial_chat_system_prompt_path"):
+            recovered = entry.get_seed()
+
+        assert isinstance(recovered, SeedSimulatedConversation)
+        assert recovered.adversarial_chat_system_prompt.value == "legacy adversarial"
+        # The compliant default fills in for the omitted simulated target.
+        assert recovered.simulated_target_system_prompt.name == "simulated_target_compliant"
+        assert recovered.next_message_system_prompt is None
+        assert recovered.pyrit_version == "1.0.0"
+        # The stored hash described the old path-shaped value, so it is not carried over.
+        assert recovered.value_sha256 is None
+
+    def test_legacy_record_with_missing_file_names_the_record(self, tmp_path):
+        """A legacy record pointing at a file this machine lacks fails with the record identified."""
+        seed = SeedSimulatedConversation(
+            num_turns=2,
+            adversarial_chat_system_prompt=SeedPrompt(value="placeholder"),
+            name="stale-technique",
+            dataset_name="legacy-dataset",
+        )
+        entry = SeedEntry(entry=seed)
+        entry.value = json.dumps(
+            {
+                "num_turns": 2,
+                "sequence": 0,
+                "adversarial_chat_system_prompt_path": str(tmp_path / "gone.yaml"),
+                "pyrit_version": "1.0.0",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        with pytest.raises(ValueError, match="stale-technique"):
+            entry.get_seed()
+
     def test_roundtrip_seed_simulated_conversation_strips_reserved_key(self):
         """SeedSimulatedConversation also has no schema field; reserved key must still be stripped."""
         from pyrit.models import SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY
 
         config = SeedSimulatedConversation(
             num_turns=3,
-            adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
-            simulated_target_system_prompt_path="/path/to/target.yaml",
-            metadata={SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky", "owned": "by-caller"},
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            simulated_target_system_prompt=SeedPrompt(value="target", parameters=["objective", "num_turns"]),
+            metadata={
+                SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY: "sneaky",
+                "owned": "by-caller",
+            },
         )
         entry = SeedEntry(entry=config)
         assert SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY not in entry.prompt_metadata
@@ -467,6 +797,16 @@ class TestAttackResultEntry:
         assert entry.outcome == "success"
         assert entry.outcome_reason == "jailbreak achieved"
 
+    def test_init_stores_automated_and_human_scores_separately(self):
+        automated_score = Score(id=uuid.uuid4(), score_value="False", score_type="true_false")
+        human_score = Score(id=uuid.uuid4(), score_value="True", score_type="true_false")
+        result = _make_attack_result(automated_score=automated_score, human_score=human_score)
+
+        entry = AttackResultEntry(entry=result)
+
+        assert entry.automated_score_id == automated_score.id
+        assert entry.human_score_id == human_score.id
+
     def test_init_with_pruned_conversations(self):
         refs = {
             ConversationReference(
@@ -490,6 +830,18 @@ class TestAttackResultEntry:
         result = _make_attack_result(related_conversations=refs)
         entry = AttackResultEntry(entry=result)
         assert entry.adversarial_chat_conversation_ids == ["adv1"]
+
+    def test_init_with_preparation_conversations(self):
+        refs = {
+            ConversationReference(
+                conversation_id="prep1",
+                conversation_type=ConversationType.PREPARATION,
+                description="preparation",
+            )
+        }
+        result = _make_attack_result(related_conversations=refs)
+        entry = AttackResultEntry(entry=result)
+        assert entry.preparation_conversation_ids == ["prep1"]
 
     def test_get_id_as_uuid_valid(self):
         obj = MagicMock()
@@ -529,7 +881,7 @@ class TestAttackResultEntry:
 
         # Simulate a stale attack_identifier column (as if it wasn't updated)
         stale_id = ComponentIdentifier(class_name="StaleAttack", class_module="pyrit.backend")
-        entry.attack_identifier = stale_id.to_dict()
+        entry.attack_identifier = stale_id.model_dump()
 
         round_tripped = entry.get_attack_result()
         strategy = round_tripped.get_attack_strategy_identifier()
@@ -546,17 +898,18 @@ class TestAttackResultEntry:
 class TestScenarioResultEntry:
     def _make_scenario_result(self, **overrides) -> ScenarioResult:
         defaults = {
-            "scenario_identifier": ScenarioIdentifier(name="test_scenario", description="desc"),
+            "scenario_name": "test_scenario",
+            "scenario_description": "desc",
             "objective_target_identifier": ComponentIdentifier(class_name="MockTarget", class_module="tests.mocks"),
             "attack_results": {},
             "objective_scorer_identifier": ComponentIdentifier(class_name="MockScorer", class_module="pyrit.score"),
             "scenario_run_state": "COMPLETED",
             "labels": {"env": "test"},
             "number_tries": 1,
-            "completion_time": datetime.now(tz=timezone.utc),
+            "completion_time": datetime.now(tz=UTC),
         }
         defaults.update(overrides)
-        return ScenarioResult(**defaults)
+        return make_scenario_result(**defaults)
 
     def test_init_from_scenario_result(self):
         sr = self._make_scenario_result()
@@ -570,28 +923,10 @@ class TestScenarioResultEntry:
         sr = self._make_scenario_result()
         entry = ScenarioResultEntry(entry=sr)
         recovered = entry.get_scenario_result()
-        assert recovered.scenario_identifier.name == "test_scenario"
+        assert recovered.scenario_name == "test_scenario"
         assert recovered.scenario_run_state == "COMPLETED"
         # attack_results should be empty after roundtrip (populated by memory_interface)
         assert recovered.attack_results == {}
-
-    def test_get_conversation_ids_by_attack_name(self):
-        attack_result = _make_attack_result()
-        sr = self._make_scenario_result(attack_results={"attack1": [attack_result]})
-        entry = ScenarioResultEntry(entry=sr)
-        conv_ids = entry.get_conversation_ids_by_attack_name()
-        assert "attack1" in conv_ids
-        assert len(conv_ids["attack1"]) == 1
-
-    def test_get_conversation_ids_by_attack_name_multiple_attacks(self):
-        result_a = _make_attack_result()
-        result_b = _make_attack_result()
-        result_c = _make_attack_result()
-        sr = self._make_scenario_result(attack_results={"attack1": [result_a, result_b], "attack2": [result_c]})
-        entry = ScenarioResultEntry(entry=sr)
-        conv_ids = entry.get_conversation_ids_by_attack_name()
-        assert len(conv_ids["attack1"]) == 2
-        assert len(conv_ids["attack2"]) == 1
 
     def test_str(self):
         sr = self._make_scenario_result()
@@ -599,8 +934,8 @@ class TestScenarioResultEntry:
         s = str(entry)
         assert "test_scenario" in s
 
-    def test_init_with_empty_attack_results(self):
-        sr = self._make_scenario_result(attack_results={})
-        entry = ScenarioResultEntry(entry=sr)
-        conv_ids = entry.get_conversation_ids_by_attack_name()
-        assert conv_ids == {}
+    def test_init_without_objective_target_raises(self):
+        """The denormalized target column is the filter key, so a targetless result is rejected."""
+        sr = self._make_scenario_result(objective_target_identifier=None)
+        with pytest.raises(ValueError, match="objective_target_identifier is required"):
+            ScenarioResultEntry(entry=sr)

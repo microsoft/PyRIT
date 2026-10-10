@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 4. Video Converters
+# # Video Converters
 #
 # Video converters enable transformations involving video files, particularly adding images to videos.
 #
@@ -31,7 +31,7 @@
 # %%
 import pathlib
 
-from pyrit.prompt_converter import AddImageVideoConverter
+from pyrit.converter import AddImageVideoConverter
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore

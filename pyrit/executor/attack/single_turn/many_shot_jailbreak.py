@@ -60,7 +60,7 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         """
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (AttackConverterConfig, Optional): Configuration for the prompt converters.
+            attack_converter_config (AttackConverterConfig, Optional): Configuration for the converters.
             attack_scoring_config (AttackScoringConfig, Optional): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer, Optional): Normalizer for handling prompts.
             max_attempts_on_failure (int, Optional): Maximum number of attempts to retry on failure. Defaults to 0.

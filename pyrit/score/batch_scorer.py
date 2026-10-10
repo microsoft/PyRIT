@@ -10,7 +10,9 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     Message,
     MessagePiece,
+    MessageScorable,
     Score,
+    ScoringExpectation,
     group_message_pieces_into_conversations,
 )
 from pyrit.score.scorer import Scorer
@@ -46,7 +48,6 @@ class BatchScorer:
         self,
         *,
         scorer: Scorer,
-        attack_id: str | uuid.UUID | None = None,
         conversation_id: str | uuid.UUID | None = None,
         prompt_ids: list[str] | list[uuid.UUID] | None = None,
         labels: dict[str, str] | None = None,
@@ -64,7 +65,6 @@ class BatchScorer:
 
         Args:
             scorer (Scorer): The Scorer object to use for scoring.
-            attack_id (str | uuid.UUID | None): The ID of the attack. Defaults to None.
             conversation_id (str | uuid.UUID | None): The ID of the conversation. Defaults to None.
             prompt_ids (list[str] | list[uuid.UUID] | None): A list of prompt IDs. Defaults to None.
             labels (dict[str, str] | None): A dictionary of labels. Defaults to None.
@@ -87,8 +87,7 @@ class BatchScorer:
             ValueError: If no entries match the provided filters.
         """
         message_pieces: Sequence[MessagePiece] = []
-        message_pieces = self._memory.get_message_pieces(
-            attack_id=attack_id,
+        message_pieces = await self._memory.get_message_pieces_async(
             conversation_id=conversation_id,
             prompt_ids=prompt_ids,
             labels=labels,
@@ -114,8 +113,10 @@ class BatchScorer:
         for conversation in conversations:
             responses.extend(conversation)
 
-        return await scorer.score_prompts_batch_async(
-            messages=responses, objectives=[objective] * len(responses), batch_size=self._batch_size
+        return await scorer.score_batch_async(
+            scorables=[MessageScorable.from_message(response) for response in responses],
+            expectations=[ScoringExpectation(objective=objective) for _ in responses],
+            batch_size=self._batch_size,
         )
 
     def _remove_duplicates(self, messages: Sequence[MessagePiece]) -> list[MessagePiece]:

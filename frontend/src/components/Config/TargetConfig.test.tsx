@@ -1,15 +1,23 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
+import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import TargetConfig from "./TargetConfig";
 import { targetsApi } from "../../services/api";
-import type { TargetInstance } from "../../types";
+import type { TargetInstance, TargetListResponse } from "../../types";
 
 jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
   },
+}));
+
+let mockRuntimeGeneration = "generation-1";
+
+jest.mock("@/hooks/useRuntime", () => ({
+  useRuntime: () => ({ generation: mockRuntimeGeneration, ready: true, state: "ready" }),
 }));
 
 jest.mock("./CreateTargetDialog", () => {
@@ -45,31 +53,39 @@ const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
-}) => <FluentProvider theme={webLightTheme}>{children}</FluentProvider>;
+}) => (
+  <UserPreferencesProvider accountKey="local">
+    <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
+  </UserPreferencesProvider>
+);
 
 const sampleTargets: TargetInstance[] = [
-  {
+  makeTarget({
     target_registry_name: "openai_chat_gpt4",
     target_type: "OpenAIChatTarget",
     endpoint: "https://api.openai.com",
     model_name: "gpt-4",
-  },
-  {
+  }),
+  makeTarget({
     target_registry_name: "openai_image_dalle",
     target_type: "OpenAIImageTarget",
     endpoint: "https://api.openai.com",
     model_name: "dall-e-3",
-  },
+  }),
 ];
 
 describe("TargetConfig", () => {
   const defaultProps = {
-    activeTarget: null as TargetInstance | null,
-    onSetActiveTarget: jest.fn(),
+    defaultObjectiveTarget: null as TargetInstance | null,
+    defaultAdversarialTarget: null as TargetInstance | null,
+    onSetDefaultObjectiveTarget: jest.fn(),
+    onSetDefaultAdversarialTarget: jest.fn(),
   };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.clear();
+    mockRuntimeGeneration = "generation-1";
   });
 
   it("should show loading state initially", () => {
@@ -81,6 +97,9 @@ describe("TargetConfig", () => {
       </TestWrapper>
     );
 
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Target Registry" })
+    ).toBeInTheDocument();
     expect(screen.getByText("Loading targets...")).toBeInTheDocument();
   });
 
@@ -102,6 +121,24 @@ describe("TargetConfig", () => {
     });
   });
 
+  it("should load every registry page before offering defaults", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({
+        items: [sampleTargets[0]],
+        pagination: { limit: 200, has_more: true, next_cursor: "second-page" },
+      })
+      .mockResolvedValueOnce({
+        items: [sampleTargets[1]],
+        pagination: { limit: 200, has_more: false },
+      });
+    render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
+    expect(await screen.findByText("openai_image_dalle")).toBeInTheDocument();
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledWith(200, "second-page");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Default objective target" }), sampleTargets[1].target_registry_name);
+    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[1]);
+  });
+
   it("should show empty state when no targets", async () => {
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
@@ -117,6 +154,16 @@ describe("TargetConfig", () => {
     await waitFor(() => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
+    expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/register available prompt targets automatically/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("airt", { selector: "code" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: ".pyrit_conf_example" })
+    ).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it(
@@ -142,8 +189,9 @@ describe("TargetConfig", () => {
     20000
   );
 
-  it("should call onSetActiveTarget when Set Active is clicked", async () => {
-    const onSetActiveTarget = jest.fn();
+  it("should set the objective default", async () => {
+    const user = userEvent.setup();
+    const onSetDefaultObjectiveTarget = jest.fn();
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -153,7 +201,7 @@ describe("TargetConfig", () => {
       <TestWrapper>
         <TargetConfig
           {...defaultProps}
-          onSetActiveTarget={onSetActiveTarget}
+          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
         />
       </TestWrapper>
     );
@@ -162,13 +210,12 @@ describe("TargetConfig", () => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
-    const setActiveButtons = screen.getAllByText("Set Active");
-    await userEvent.click(setActiveButtons[0]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Default objective target" }), sampleTargets[0].target_registry_name);
 
-    expect(onSetActiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
+    expect(onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
   });
 
-  it("should show Active badge for active target", async () => {
+  it("should show the objective default badge", async () => {
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -178,17 +225,19 @@ describe("TargetConfig", () => {
       <TestWrapper>
         <TargetConfig
           {...defaultProps}
-          activeTarget={sampleTargets[0]}
+          defaultObjectiveTarget={sampleTargets[0]}
         />
       </TestWrapper>
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByRole("combobox", { name: "Default objective target" })).toHaveValue(sampleTargets[0].target_registry_name);
     });
   });
 
   it("should refresh targets when Refresh button is clicked", async () => {
+    const user = userEvent.setup();
+    const onTargetsLoaded = jest.fn();
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -196,7 +245,7 @@ describe("TargetConfig", () => {
 
     render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} />
+        <TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
 
@@ -205,12 +254,133 @@ describe("TargetConfig", () => {
     });
 
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(1);
+    expect(onTargetsLoaded).toHaveBeenCalledWith(sampleTargets);
 
-    await userEvent.click(screen.getByText("Refresh"));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
 
     await waitFor(() => {
       expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
     });
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
+  });
+
+  it("should keep table filters, expanded rows, and defaults across a runtime reload", async () => {
+    const user = userEvent.setup();
+    const imageCapabilities = {
+      supports_multi_turn: true,
+      supports_json_schema: false,
+      supports_json_output: false,
+      supports_system_prompt: true,
+      supported_input_modalities: ["text", "image_path"],
+      supported_output_modalities: ["text"],
+    };
+    const roundRobin = makeTarget({
+      target_registry_name: "rr_image",
+      target_type: "RoundRobinTarget",
+      capabilities: imageCapabilities,
+      target_specific_params: { weights: [1, 1] },
+      inner_targets: [
+        { target_registry_name: "inner_a", target_type: "OpenAIChatTarget" },
+        { target_registry_name: "inner_b", target_type: "OpenAIChatTarget" },
+      ],
+    });
+    const textTarget = makeTarget({
+      target_registry_name: "text_only",
+      target_type: "OpenAIChatTarget",
+      capabilities: { ...imageCapabilities, supported_input_modalities: ["text"] },
+    });
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [roundRobin, textTarget],
+      pagination: { limit: 200, has_more: false },
+    });
+    const onTargetsLoaded = jest.fn();
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
+      </TestWrapper>
+    );
+    await user.click(await screen.findByRole("combobox", { name: "Filter by input:" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Image" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Expand inner targets" }));
+    const scrollRegion = screen.getByTestId("target-table-scroll-region");
+
+    mockRuntimeGeneration = "generation-2";
+    rerender(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} defaultObjectiveTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
+      </TestWrapper>
+    );
+    await waitFor(() => {
+      expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByTestId("target-table-scroll-region")).toBe(scrollRegion);
+    expect(screen.getByRole("combobox", { name: "Filter by input:" })).toHaveValue("Inputs: Image");
+    expect(screen.queryByRole("row", { name: /text_only/ })).not.toBeInTheDocument();
+    expect(screen.getByText("#1 inner_a")).toBeInTheDocument();
+    const defaults = within(screen.getByRole("region", { name: "Target defaults" }));
+    expect(defaults.getByRole("combobox", { name: "Default objective target" })).toHaveValue("rr_image");
+  });
+
+  it("should drop a filter chosen while a runtime reload is still loading", async () => {
+    const user = userEvent.setup();
+    const textCapabilities = {
+      supports_multi_turn: true,
+      supports_json_schema: false,
+      supports_json_output: false,
+      supports_system_prompt: true,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["text"],
+    };
+    const imageTarget = makeTarget({
+      target_registry_name: "image_chat",
+      target_type: "OpenAIChatTarget",
+      capabilities: { ...textCapabilities, supported_input_modalities: ["text", "image_path"] },
+    });
+    const textTarget = makeTarget({
+      target_registry_name: "text_chat",
+      target_type: "OpenAIChatTarget",
+      capabilities: textCapabilities,
+    });
+    mockedTargetsApi.listTargets.mockResolvedValueOnce({
+      items: [imageTarget, textTarget],
+      pagination: { limit: 200, has_more: false },
+    });
+    const { rerender } = render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+    await screen.findByRole("combobox", { name: "Filter by input:" });
+
+    let resolveReload: (response: TargetListResponse) => void = () => {};
+    mockedTargetsApi.listTargets.mockReturnValueOnce(
+      new Promise<TargetListResponse>((resolve) => {
+        resolveReload = resolve;
+      })
+    );
+    mockRuntimeGeneration = "generation-2";
+    rerender(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+    await waitFor(() => {
+      expect(mockedTargetsApi.listTargets).toHaveBeenCalledTimes(2);
+    });
+    await user.click(screen.getByRole("combobox", { name: "Filter by input:" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: "Image" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("row", { name: /text_chat/ })).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveReload({ items: [textTarget], pagination: { limit: 200, has_more: false } });
+    });
+
+    expect(screen.getByRole("row", { name: /text_chat/ })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Filter by input:" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("should open create dialog when New Target is clicked", async () => {
@@ -235,13 +405,15 @@ describe("TargetConfig", () => {
   });
 
   it("should refresh list after target creation", async () => {
+    const user = userEvent.setup();
+    const onTargetsLoaded = jest.fn();
     mockedTargetsApi.listTargets
       .mockResolvedValueOnce({ items: [], pagination: { limit: 200, has_more: false } })
       .mockResolvedValueOnce({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
 
     render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} />
+        <TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
 
@@ -249,13 +421,18 @@ describe("TargetConfig", () => {
       expect(screen.getByText("No Targets Configured")).toBeInTheDocument();
     });
 
-    // Open dialog and trigger create
-    await userEvent.click(screen.getByText("New Target"));
-    await userEvent.click(screen.getByTestId("dialog-create"));
+    expect(onTargetsLoaded).toHaveBeenCalledWith([]);
+    await user.click(screen.getByRole("button", { name: "New Target" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "New Target" }));
+    await user.click(screen.getByRole("button", { name: "Create", exact: true }));
 
     await waitFor(() => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
+    expect(onTargetsLoaded).toHaveBeenCalledTimes(2);
+    expect(onTargetsLoaded).toHaveBeenLastCalledWith(sampleTargets);
   });
 
   it("should display target type, endpoint, and model", async () => {
@@ -281,7 +458,7 @@ describe("TargetConfig", () => {
 
   it("should display target_specific_params like reasoning_effort", async () => {
     const targetsWithParams: TargetInstance[] = [
-      {
+      makeTarget({
         target_registry_name: "azure_responses",
         target_type: "OpenAIResponseTarget",
         endpoint: "https://api.openai.com",
@@ -291,7 +468,7 @@ describe("TargetConfig", () => {
           reasoning_summary: "auto",
           max_output_tokens: 4096,
         },
-      },
+      }),
     ];
 
     mockedTargetsApi.listTargets.mockResolvedValue({
@@ -316,12 +493,12 @@ describe("TargetConfig", () => {
 
   it("should show dash when no target_specific_params", async () => {
     const targetsNoParams: TargetInstance[] = [
-      {
+      makeTarget({
         target_registry_name: "simple_target",
         target_type: "TextTarget",
         endpoint: "http://localhost",
         model_name: "text",
-      },
+      }),
     ];
 
     mockedTargetsApi.listTargets.mockResolvedValue({
@@ -389,4 +566,5 @@ describe("TargetConfig", () => {
     await userEvent.click(screen.getByTestId("dialog-close"));
     expect(screen.queryByTestId("create-dialog")).not.toBeInTheDocument();
   });
+
 });

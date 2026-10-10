@@ -11,19 +11,28 @@
 # %% [markdown]
 # # Listing Available Classes
 #
-# Use `get_names()` to see what's available, or `list_metadata()` for detailed information.
+# Use `get_class_names()` to see what's available, or `get_all_registered_class_metadata()` for detailed information.
 
 # %%
 from pyrit.registry import ScenarioRegistry
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup.initializers import LoadDefaultDatasets, TechniqueInitializer
+
+dataset_initializer = LoadDefaultDatasets()
+dataset_initializer.set_params_from_args(args={"dataset_names": ["garak_slur_terms_en", "garak_web_html_js"]})
+await initialize_pyrit_async(
+    memory_db_type=IN_MEMORY,
+    initializers=[TechniqueInitializer(), dataset_initializer],
+)  # type: ignore
 
 registry = ScenarioRegistry.get_registry_singleton()
 
 # Get all registered names
-names = registry.get_names()
+names = registry.get_class_names()
 print(f"Available scenarios: {names[:5]}...")  # Show first 5
 
 # Get detailed metadata
-metadata = registry.list_metadata()
+metadata = registry.get_all_registered_class_metadata()
 for item in metadata[:2]:  # Show first 2
     print(f"\n{item.class_name}:")
     print(f"  Description: {item.class_description[:80]}...")
@@ -46,18 +55,16 @@ print(f"Class name: {scenario_class.__name__}")
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import LoadDefaultDatasets
 
-await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[LoadDefaultDatasets()])  # type: ignore
 target = OpenAIChatTarget()
 
 # Option 1: Get class then instantiate
 encoding_class = registry.get_class("garak.encoding")
 scenario = encoding_class()  # type: ignore
 
-# Pass dataset configuration to initialize_async
-await scenario.initialize_async(objective_target=target)  # type: ignore
+# Set the objective target, then initialize
+scenario.set_params_from_args(args={"objective_target": target})  # type: ignore
+await scenario.initialize_async()  # type: ignore
 
 # Option 2: Use create_instance() shortcut
 # scenario = registry.create_instance("garak.encoding", objective_target=my_target, ...)
@@ -92,11 +99,11 @@ from pyrit.registry import InitializerRegistry
 initializer_registry = InitializerRegistry.get_registry_singleton()
 
 # Get all registered names
-initializer_names = initializer_registry.get_names()
+initializer_names = initializer_registry.get_class_names()
 print(f"Available initializers: {initializer_names[:5]}...")  # Show first 5
 
 # Get detailed metadata
-for init_item in initializer_registry.list_metadata()[:2]:  # Show first 2
+for init_item in initializer_registry.get_all_registered_class_metadata()[:2]:  # Show first 2
     print(f"\n{init_item.registry_name}:")
     print(f"  Class: {init_item.class_name}")
     print(f"  Description: {init_item.class_description[:80]}...")

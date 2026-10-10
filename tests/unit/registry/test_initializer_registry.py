@@ -3,16 +3,14 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.registry.class_registries.base_class_registry import ClassEntry
-from pyrit.registry.class_registries.initializer_registry import (
-    PYRIT_PATH,
-    InitializerRegistry,
-)
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.models.parameter import Parameter
+from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
+from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
 @pytest.fixture
@@ -47,8 +45,7 @@ def test_build_metadata_uses_docstring_description():
             pass
 
     registry = InitializerRegistry(lazy_discovery=True)
-    entry = ClassEntry(registered_class=FakeInitializer)
-    metadata = registry._build_metadata("fake", entry)
+    metadata = registry._build_metadata("fake", FakeInitializer)
 
     assert metadata.class_description == "A fake initializer for testing."
     assert metadata.class_name == "FakeInitializer"
@@ -60,7 +57,7 @@ def test_build_metadata_uses_docstring_description():
 # ============================================================================
 
 _VALID_SCRIPT = """
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 class ScriptTestInitializer(PyRITInitializer):
     \"\"\"A test initializer from script.\"\"\"
@@ -143,8 +140,8 @@ def test_register_from_content_rejects_duplicate_name(lazy_registry):
 def test_register_from_content_ignores_imported_classes(lazy_registry):
     """Test that imported base classes are not registered."""
     script = """
-from pyrit.setup.initializers.simple import SimpleInitializer
-from pyrit.setup.initializers.pyrit_initializer import PyRITInitializer
+from pyrit.setup.initializers.targets import TargetInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 class LocalOnlyInitializer(PyRITInitializer):
     \"\"\"Local only.\"\"\"
@@ -175,6 +172,99 @@ def test_unregister_and_cleanup_removes_entry_and_file(lazy_registry):
         assert not (tmp_dir / "cleanup_test.py").exists()
 
 
+def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_registry: InitializerRegistry) -> None:
+    """Test that failed storage cleanup leaves the runtime registration retryable."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"custom": _VALID_SCRIPT}
+    storage.delete_script.side_effect = OSError("storage unavailable")
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["custom"] = _ParamInitializer
+
+    with pytest.raises(OSError, match="storage unavailable"):
+        lazy_registry.unregister_and_cleanup("custom")
+
+    assert lazy_registry.get_class("custom") is _ParamInitializer
+
+
+def test_unregister_and_cleanup_removes_invalid_stored_source(lazy_registry: InitializerRegistry) -> None:
+    """Test invalid stored scripts can be removed without a runtime registration."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"invalid": "not Python"}
+    lazy_registry._custom_storage = storage
+
+    lazy_registry.unregister_and_cleanup("invalid")
+
+    storage.delete_script.assert_called_once_with("invalid")
+
+
+def test_unregister_and_cleanup_removes_source_shadowed_by_builtin(lazy_registry: InitializerRegistry) -> None:
+    """Test deleting stored source preserves a built-in registration with the same name."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"builtin": _VALID_SCRIPT}
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["builtin"] = _ParamInitializer
+    lazy_registry._builtin_names.add("builtin")
+
+    lazy_registry.unregister_and_cleanup("builtin")
+
+    storage.delete_script.assert_called_once_with("builtin")
+    assert lazy_registry.get_class("builtin") is _ParamInitializer
+
+
+def test_register_from_content_uses_configured_storage(lazy_registry: InitializerRegistry, tmp_path: Path) -> None:
+    """Test runtime registration persists source in the configured directory."""
+    lazy_registry.configure_custom_scripts_source(str(tmp_path))
+
+    lazy_registry.register_from_content(name="custom", script_content=_VALID_SCRIPT)
+
+    assert (tmp_path / "custom.py").read_text(encoding="utf-8") == _VALID_SCRIPT
+    assert lazy_registry.get_class("custom").__name__ == "ScriptTestInitializer"
+
+    lazy_registry.unregister_and_cleanup("custom")
+
+    assert not (tmp_path / "custom.py").exists()
+
+
+def test_register_stored_initializers_loads_configured_source(
+    lazy_registry: InitializerRegistry, tmp_path: Path
+) -> None:
+    """Test startup registration loads scripts from the configured directory."""
+    (tmp_path / "restored.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    lazy_registry.configure_custom_scripts_source(str(tmp_path))
+
+    lazy_registry.register_stored_initializers()
+
+    assert lazy_registry.get_class("restored").__name__ == "ScriptTestInitializer"
+
+
+def test_register_stored_initializers_skips_duplicate_and_invalid_names(
+    lazy_registry: InitializerRegistry,
+) -> None:
+    """Test that one bad stored script does not prevent startup registration."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"duplicate": _VALID_SCRIPT, "INVALID": _VALID_SCRIPT}
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["duplicate"] = _ParamInitializer
+
+    lazy_registry.register_stored_initializers()
+
+    assert lazy_registry.get_class_names() == ["duplicate"]
+
+
+def test_list_stored_initializer_sources_includes_display_paths(lazy_registry: InitializerRegistry) -> None:
+    """Test listing stored source content with its display-safe location."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.display_source = "C:/custom"
+    storage.list_scripts.return_value = {"custom": _VALID_SCRIPT}
+    storage.get_script_source.return_value = "C:/custom/custom.py"
+    lazy_registry._custom_storage = storage
+
+    assert lazy_registry.list_stored_initializer_sources() == (
+        "C:/custom",
+        [("custom", _VALID_SCRIPT, "C:/custom/custom.py")],
+    )
+
+
 def test_unregister_and_cleanup_rejects_builtin(lazy_registry):
     """Test that unregister_and_cleanup raises ValueError for built-in initializers."""
 
@@ -182,8 +272,7 @@ def test_unregister_and_cleanup_rejects_builtin(lazy_registry):
         async def initialize_async(self) -> None:
             pass
 
-    entry = ClassEntry(registered_class=BuiltinInit)
-    lazy_registry._class_entries["builtin_test"] = entry
+    lazy_registry._classes["builtin_test"] = BuiltinInit
     lazy_registry._builtin_names.add("builtin_test")
 
     with pytest.raises(ValueError, match="Cannot remove built-in"):
@@ -199,8 +288,7 @@ def test_is_builtin_returns_true_for_discovered_initializers(lazy_registry):
         async def initialize_async(self) -> None:
             pass
 
-    entry = ClassEntry(registered_class=FakeInit)
-    lazy_registry._class_entries["fake"] = entry
+    lazy_registry._classes["fake"] = FakeInit
     lazy_registry._builtin_names.add("fake")
 
     assert lazy_registry.is_builtin("fake") is True
@@ -213,3 +301,275 @@ def test_is_builtin_returns_false_for_custom_initializers(lazy_registry):
         lazy_registry.register_from_content(name="custom", script_content=_VALID_SCRIPT)
 
     assert lazy_registry.is_builtin("custom") is False
+
+
+# ============================================================================
+# create_from_script_paths Tests
+# ============================================================================
+
+
+def _write_initializer_script(directory: Path, filename: str, *class_names: str) -> Path:
+    """Write a script defining one or more PyRITInitializer subclasses."""
+    body = "from pyrit.setup.pyrit_initializer import PyRITInitializer\n\n"
+    for class_name in class_names:
+        body += (
+            f"class {class_name}(PyRITInitializer):\n    async def initialize_async(self) -> None:\n        pass\n\n"
+        )
+    script_path = directory / filename
+    script_path.write_text(body)
+    return script_path
+
+
+def test_create_from_script_paths_loads_multiple_classes(lazy_registry):
+    """Test that all initializer subclasses defined in a file are instantiated."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        script_path = _write_initializer_script(Path(temp_dir), "multi.py", "FirstInit", "SecondInit")
+
+        instances = lazy_registry.create_from_script_paths(script_paths=[script_path])
+
+        assert {type(i).__name__ for i in instances} == {"FirstInit", "SecondInit"}
+        # Loading does not add the classes to the catalog.
+        assert lazy_registry.get_class_names() == []
+
+
+def test_create_from_script_paths_rejects_non_python_file(lazy_registry):
+    """Test that a non-.py path raises ValueError."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        bad_path = Path(temp_dir) / "not_python.txt"
+        bad_path.write_text("hello")
+
+        with pytest.raises(ValueError, match="must be a Python file"):
+            lazy_registry.create_from_script_paths(script_paths=[bad_path])
+
+
+def test_create_from_script_paths_no_subclass_raises_value_error(lazy_registry):
+    """Test that a file defining no initializer subclass raises ValueError."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        empty_path = Path(temp_dir) / "empty.py"
+        empty_path.write_text("x = 1\n")
+
+        with pytest.raises(ValueError, match="must contain at least one"):
+            lazy_registry.create_from_script_paths(script_paths=[empty_path])
+
+
+def test_create_from_script_paths_missing_file_raises(lazy_registry):
+    """Test that a missing script path raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        lazy_registry.create_from_script_paths(script_paths=["definitely_missing_script.py"])
+
+
+# ============================================================================
+# create_and_configure Tests
+# ============================================================================
+
+
+class _ParamInitializer(PyRITInitializer):
+    """An initializer that accepts a single declared parameter."""
+
+    @property
+    def supported_parameters(self) -> list[Parameter]:
+        return [Parameter(name="mode", description="Operation mode", default="fast")]
+
+    async def initialize_async(self) -> None:
+        pass
+
+
+def test_create_and_configure_builds_and_sets_params(lazy_registry):
+    """Test that create_and_configure returns a configured instance with params set."""
+    lazy_registry.register_class(_ParamInitializer, name="param_init")
+
+    instance = lazy_registry.create_and_configure("param_init", initializer_params={"mode": "slow"})
+
+    assert isinstance(instance, _ParamInitializer)
+    assert instance.params == {"mode": ["slow"]}
+
+
+def test_create_and_configure_without_params_leaves_instance_unconfigured(lazy_registry):
+    """Test that create_and_configure returns an unconfigured instance when no params are given."""
+    lazy_registry.register_class(_ParamInitializer, name="param_init")
+
+    instance = lazy_registry.create_and_configure("param_init")
+
+    assert isinstance(instance, _ParamInitializer)
+    assert instance.params == {}
+
+
+def test_create_and_configure_unknown_param_raises_value_error(lazy_registry):
+    """Test that an unknown parameter raises ValueError during configuration."""
+    lazy_registry.register_class(_ParamInitializer, name="param_init")
+
+    with pytest.raises(ValueError, match="unknown parameter"):
+        lazy_registry.create_and_configure("param_init", initializer_params={"bogus": "x"})
+
+
+def test_create_and_configure_unknown_name_raises_key_error(lazy_registry):
+    """Test that an unregistered name raises KeyError."""
+    with pytest.raises(KeyError):
+        lazy_registry.create_and_configure("does_not_exist")
+
+
+# ============================================================================
+# Discovery / registration edge-case Tests
+# ============================================================================
+
+_SOLO_SCRIPT = (
+    "from pyrit.setup.pyrit_initializer import PyRITInitializer\n\n"
+    "class SoloInitializer(PyRITInitializer):\n"
+    "    async def initialize_async(self) -> None:\n"
+    "        pass\n"
+)
+
+
+def test_discover_directory_registers_and_lists_metadata():
+    """Test that a directory discovery path scans, registers, and builds metadata for initializers."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        (Path(temp_dir) / "solo.py").write_text(_SOLO_SCRIPT)
+
+        registry = InitializerRegistry(discovery_path=Path(temp_dir), lazy_discovery=False)
+
+        assert "solo" in registry
+        metadata = registry.get_all_registered_class_metadata()
+        assert any(m.registry_name == "solo" for m in metadata)
+
+
+def test_discover_single_file_registers_builtin():
+    """Test that a discovery path pointing at a single file registers it as built-in."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        script = Path(temp_dir) / "solo.py"
+        script.write_text(_SOLO_SCRIPT)
+
+        registry = InitializerRegistry(discovery_path=script, lazy_discovery=False)
+
+        assert "solo" in registry
+        assert registry.is_builtin("solo") is True
+        assert registry.is_builtin("not_registered") is False
+
+
+def test_discover_missing_path_registers_nothing():
+    """Test that a non-existent discovery path logs a warning and registers nothing."""
+    missing = Path(tempfile.gettempdir()) / "pyrit_missing_initializers_dir_xyz"
+    registry = InitializerRegistry(discovery_path=missing, lazy_discovery=False)
+
+    assert registry.get_class_names() == []
+
+
+def test_discover_single_file_load_failure_registers_nothing():
+    """Test that a file that fails to import is skipped without raising."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        bad = Path(temp_dir) / "bad.py"
+        bad.write_text("def bad syntax(:\n")
+
+        registry = InitializerRegistry(discovery_path=bad, lazy_discovery=False)
+
+        assert registry.get_class_names() == []
+
+
+def test_register_initializer_collision_keeps_first(lazy_registry):
+    """Test that a registry-name collision keeps the first registration."""
+
+    class DupInitializer(PyRITInitializer):
+        async def initialize_async(self) -> None:
+            pass
+
+    lazy_registry._register_initializer(initializer_class=DupInitializer, builtin=True)
+    lazy_registry._register_initializer(initializer_class=DupInitializer)
+
+    assert lazy_registry.get_class("dup") is DupInitializer
+
+
+def test_register_initializer_swallows_registration_errors(lazy_registry):
+    """Test that a failure inside register_class is logged and swallowed."""
+
+    class BadInitializer(PyRITInitializer):
+        async def initialize_async(self) -> None:
+            pass
+
+    with patch.object(lazy_registry, "register_class", side_effect=RuntimeError("boom")):
+        lazy_registry._register_initializer(initializer_class=BadInitializer)
+
+    assert "bad" not in lazy_registry
+
+
+def test_build_metadata_instantiation_failure_returns_fallback(lazy_registry):
+    """Test that _build_metadata falls back when the initializer cannot be instantiated."""
+
+    class ExplodingInitializer(PyRITInitializer):
+        """Exploding."""
+
+        def __init__(self) -> None:
+            raise RuntimeError("cannot construct")
+
+        async def initialize_async(self) -> None:
+            pass
+
+    metadata = lazy_registry._build_metadata("exploding", ExplodingInitializer)
+
+    assert metadata.class_description == "Error loading initializer metadata"
+    assert metadata.required_env_vars == ()
+
+
+def test_load_module_from_path_no_spec_raises():
+    """Test that _load_module_from_path raises when an import spec cannot be created."""
+    with patch(
+        "pyrit.registry.components.initializer_registry.importlib.util.spec_from_file_location",
+        return_value=None,
+    ):
+        with pytest.raises(ValueError, match="Could not load initializer script"):
+            InitializerRegistry._load_module_from_path(file_path=Path("nope.py"), module_name="nope")
+
+
+def test_create_from_script_paths_instantiation_failure_raises(lazy_registry):
+    """Test that a script whose only initializer fails to instantiate raises ValueError."""
+    script = (
+        "from pyrit.setup.pyrit_initializer import PyRITInitializer\n\n"
+        "class BoomInitializer(PyRITInitializer):\n"
+        "    def __init__(self):\n"
+        "        raise RuntimeError('boom')\n"
+        "    async def initialize_async(self) -> None:\n"
+        "        pass\n"
+    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir) / "boom.py"
+        path.write_text(script)
+
+        with pytest.raises(ValueError, match="must contain at least one"):
+            lazy_registry.create_from_script_paths(script_paths=[path])
+
+
+def test_register_from_content_write_failure_raises(lazy_registry):
+    """Test that an OSError while writing the script surfaces as ValueError."""
+    with patch.object(InitializerRegistry, "_get_custom_scripts_dir", return_value=Path(tempfile.mkdtemp())):
+        with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+            with pytest.raises(ValueError, match="Failed to write initializer script"):
+                lazy_registry.register_from_content(name="write_fail", script_content=_VALID_SCRIPT)
+
+
+def test_register_from_content_temporary_write_failure_does_not_touch_storage(
+    lazy_registry: InitializerRegistry,
+) -> None:
+    """Test that failure to materialize source does not touch persistent storage."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    lazy_registry._custom_storage = storage
+
+    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+        with pytest.raises(ValueError, match="Failed to write initializer script"):
+            lazy_registry.register_from_content(name="write_fail", script_content=_VALID_SCRIPT)
+
+    storage.save_script.assert_not_called()
+    storage.delete_script.assert_not_called()
+
+
+def test_unregister_and_cleanup_unknown_name_raises(lazy_registry):
+    """Test that unregistering an unknown, non-built-in name raises KeyError."""
+    with pytest.raises(KeyError, match="not found in registry"):
+        lazy_registry.unregister_and_cleanup("nonexistent")
+
+
+def test_get_custom_scripts_dir_creates_directory():
+    """Test that _get_custom_scripts_dir returns and creates the managed directory."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", Path(temp_dir)):
+            result = InitializerRegistry._get_custom_scripts_dir()
+
+        assert result == Path(temp_dir) / "custom_initializers"
+        assert result.exists()

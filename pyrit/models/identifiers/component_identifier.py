@@ -22,7 +22,7 @@ import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, Self, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -34,12 +34,13 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from typing_extensions import Self, TypeAliasType
+from typing_extensions import TypeAliasType
 
 import pyrit
-from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pyrit.models.parameter import ComponentType
 
 #: The set of value types allowed inside ``ComponentIdentifier.params``. Params
@@ -145,8 +146,8 @@ def _build_hash_dict(
         for name, child in sorted(children.items()):
             if isinstance(child, ComponentIdentifier):
                 children_hashes[name] = child.hash
-            elif isinstance(child, list):
-                children_hashes[name] = [c.hash for c in child if isinstance(c, ComponentIdentifier)]
+            else:
+                children_hashes[name] = [c.hash for c in child]
         if children_hashes:
             hash_dict[ComponentIdentifier.KEY_CHILDREN] = children_hashes
 
@@ -324,7 +325,8 @@ class ComponentIdentifier(BaseModel):
             ``ComponentIdentifier``, in field-definition order.
         """
         base_fields = set(ComponentIdentifier.model_fields)
-        return tuple(name for name in cls.model_fields if name not in base_fields)
+        promoted_fields: tuple[str, ...] = tuple(name for name in cls.model_fields if name not in base_fields)
+        return promoted_fields
 
     @classmethod
     def _promoted_param_fields(cls) -> tuple[str, ...]:
@@ -345,6 +347,35 @@ class ComponentIdentifier(BaseModel):
             tuple[str, ...]: Promoted child field names, in field-definition order.
         """
         return tuple(n for n in cls._promoted_fields() if cls._is_child_field(cls.model_fields[n].annotation))
+
+    @classmethod
+    def promoted_scalar_field_names(cls) -> tuple[str, ...]:
+        """
+        Get names of this identifier's promoted scalar (param) fields — the DB-column projection.
+
+        Returns:
+            tuple[str, ...]: Promoted scalar field names.
+        """
+        return cls._promoted_param_fields()
+
+    @classmethod
+    def promoted_child_field_names(cls) -> tuple[str, ...]:
+        """
+        Get names of this identifier's promoted child fields.
+
+        Returns:
+            tuple[str, ...]: Promoted child field names.
+        """
+        return cls._promoted_child_fields()
+
+    def promoted_scalar_values(self) -> dict[str, Any]:
+        """
+        Get this identifier's promoted scalar fields as ``{name: value}`` (children/targets excluded).
+
+        Returns:
+            dict[str, Any]: Promoted scalar field names and values.
+        """
+        return {name: getattr(self, name) for name in self._promoted_param_fields()}
 
     @classmethod
     def get_reference_component_types(cls) -> dict[str, ComponentType]:
@@ -380,6 +411,36 @@ class ComponentIdentifier(BaseModel):
             references[arg_name] = child_type.component_type
 
         return references
+
+    @classmethod
+    def get_sensitive_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names whose values must be obscured in user interfaces.
+
+        Returns:
+            frozenset[str]: Sensitive constructor parameter names.
+        """
+        return frozenset({"api_key", "auth_token", "github_token", "hf_access_token", "sas_token"})
+
+    @classmethod
+    def get_multiline_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names whose values require multiline controls.
+
+        Returns:
+            frozenset[str]: Multiline constructor parameter names.
+        """
+        return frozenset[str]()
+
+    @classmethod
+    def get_identity_conflicting_parameter_names(cls) -> frozenset[str]:
+        """
+        Get constructor parameter names that override identity-based authentication.
+
+        Returns:
+            frozenset[str]: Identity-conflicting constructor parameter names.
+        """
+        return frozenset[str]()
 
     @classmethod
     def get_class_attribute_values(cls, target_cls: type) -> dict[str, Any]:
@@ -499,7 +560,7 @@ class ComponentIdentifier(BaseModel):
 
         params_dict = data.get("params")
         if isinstance(params_dict, dict):
-            collisions = set(params_dict) & RESERVED_PARAM_NAMES
+            collisions: set[str] = {str(name) for name in params_dict} & RESERVED_PARAM_NAMES
             if collisions:
                 raise ValueError(f"ComponentIdentifier params must not use reserved names: {sorted(collisions)}")
 
@@ -624,7 +685,7 @@ class ComponentIdentifier(BaseModel):
             for name, child in self.children.items():
                 if isinstance(child, ComponentIdentifier):
                     serialized_children[name] = child.model_dump(mode=mode)
-                elif isinstance(child, list):
+                else:
                     serialized_children[name] = [c.model_dump(mode=mode) for c in child]
             result[self.KEY_CHILDREN] = serialized_children
 
@@ -743,7 +804,7 @@ class ComponentIdentifier(BaseModel):
         obj: object,
         *,
         params: dict[str, Any] | None = None,
-        children: dict[str, ComponentIdentifier | list[ComponentIdentifier]] | None = None,
+        children: Mapping[str, ComponentIdentifier | list[ComponentIdentifier] | None] | None = None,
         attributes: dict[str, Any] | None = None,
         **promoted: Any,
     ) -> Self:
@@ -758,7 +819,7 @@ class ComponentIdentifier(BaseModel):
             obj: The live object whose class metadata will populate the
                 identifier.
             params: Optional behavioral params.
-            children: Optional child identifiers.
+            children: Optional child identifiers; None-valued entries are omitted.
             attributes: Optional identity-bearing state (hashed, but excluded from
                 the eval hash and not a constructor input). ``None`` values dropped.
             **promoted: Optional promoted typed fields (for subclasses). Passed
@@ -855,42 +916,6 @@ class ComponentIdentifier(BaseModel):
                     hashes.add(child.eval_hash)
                 hashes.update(child._collect_child_eval_hashes())
         return hashes
-
-    # ------------------------------------------------------------------
-    # Deprecated shims — kept for one release cycle
-    # ------------------------------------------------------------------
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Return the flat storage dict (deprecated; use ``model_dump`` instead).
-
-        Returns:
-            The flat dict representation.
-        """
-        print_deprecation_message(
-            old_item="ComponentIdentifier.to_dict",
-            new_item="ComponentIdentifier.model_dump",
-            removed_in="0.16.0",
-        )
-        return self.model_dump()
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ComponentIdentifier:
-        """
-        Reconstruct from a flat dict (deprecated; use ``model_validate`` instead).
-
-        Args:
-            data: The flat storage dict.
-
-        Returns:
-            A new ComponentIdentifier.
-        """
-        print_deprecation_message(
-            old_item="ComponentIdentifier.from_dict",
-            new_item="ComponentIdentifier.model_validate",
-            removed_in="0.16.0",
-        )
-        return cls.model_validate(data)
 
 
 class Identifiable(ABC):

@@ -12,158 +12,49 @@ Targets can be:
 - Retrieved from registry (pre-registered at startup or created earlier)
 """
 
+import asyncio
 import logging
-import os
+import uuid
 from functools import lru_cache
-from typing import Any, ClassVar
-from urllib.parse import urlparse
+from typing import Any, Literal
 
-from pyrit import prompt_target
-from pyrit.auth import get_azure_async_token_provider, get_azure_openai_auth
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetInstance,
     TargetListResponse,
+    TargetTypeEntry,
+    TargetTypeResponse,
 )
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
-from pyrit.prompt_target.openai.openai_target import OpenAITarget
-from pyrit.prompt_target.round_robin_target import RoundRobinTarget
-from pyrit.registry.object_registries import TargetRegistry
+from pyrit.common import REQUIRED_VALUE
+from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.parameter import Parameter
+from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
 
-# Recognised Azure OpenAI / AI Foundry hostname suffixes. Used for strict
-# endpoint validation when Entra ID auth is requested, so a bearer token is
-# only ever issued for a known Microsoft-operated endpoint.
-_AZURE_OPENAI_HOSTNAME_SUFFIXES = (
-    ".openai.azure.com",
-    ".ai.azure.com",
-    ".services.ai.azure.com",
-    ".cognitiveservices.azure.com",
-)
-
-# Recognised Azure Machine Learning managed online endpoint hostname suffixes.
-# Used for the same strict endpoint validation when issuing Entra ID tokens
-# against an AML scope.
-_AZURE_ML_HOSTNAME_SUFFIXES = (".inference.ml.azure.com",)
-
-
-def _is_azure_openai_endpoint(endpoint: str) -> bool:
-    """
-    Return True if ``endpoint`` resolves to a known Azure OpenAI / AI Foundry host.
-    Uses a strict hostname-suffix check (not a substring search).
-
-    Args:
-        endpoint (str): The endpoint URL to validate.
-
-    Returns:
-        bool: True if the endpoint's hostname ends with a recognised Azure suffix;
-            False otherwise
-    """
-    hostname = (urlparse(endpoint).hostname or "").lower()
-    return any(hostname.endswith(suffix) for suffix in _AZURE_OPENAI_HOSTNAME_SUFFIXES)
-
-
-def _is_azure_ml_endpoint(endpoint: str) -> bool:
-    """
-    Return True if ``endpoint`` resolves to a known AML managed host.
-    Uses a strict hostname-suffix check (not a substring search).
-
-    Args:
-        endpoint (str): The endpoint URL to validate.
-
-    Returns:
-        bool: True if the endpoint's hostname ends with a recognised AML suffix;
-            False otherwise.
-    """
-    hostname = (urlparse(endpoint).hostname or "").lower()
-    return any(hostname.endswith(suffix) for suffix in _AZURE_ML_HOSTNAME_SUFFIXES)
-
-
-def _resolve_api_key_env_var(target_class: type) -> str | None:
-    """
-    Return the api_key environment variable name for a target class.
-
-    Args:
-        target_class (type): The target class to inspect.
-
-    Returns:
-        str | None: The env var name, or None if the class does not declare one.
-    """
-    if issubclass(target_class, AzureMLChatTarget):
-        env_var = getattr(target_class, "api_key_environment_variable", None)
-        return env_var if isinstance(env_var, str) and env_var else None
-    if issubclass(target_class, OpenAITarget):
-        try:
-            instance = target_class.__new__(target_class)
-            instance._set_openai_env_configuration_vars()
-        except Exception:
-            return None
-        env_var = getattr(instance, "api_key_environment_variable", None)
-        return env_var if isinstance(env_var, str) and env_var else None
-    return None
-
-
-def _build_target_class_registry() -> dict[str, type]:
-    """
-    Build a registry mapping target class names to their classes.
-
-    Uses the prompt_target module's __all__ to discover all available targets.
-
-    Returns:
-        Dict mapping class name (str) to class (type).
-    """
-    registry: dict[str, type] = {}
-    for name in prompt_target.__all__:
-        cls = getattr(prompt_target, name, None)
-        if cls is not None and isinstance(cls, type) and issubclass(cls, PromptTarget):
-            registry[name] = cls
-    return registry
-
-
-# Module-level class registry (built once on import)
-_TARGET_CLASS_REGISTRY: dict[str, type] = _build_target_class_registry()
+_ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
+    "OpenAITarget": frozenset({"endpoint", "model_name"}),
+    "AzureBlobStorageTarget": frozenset({"container_url"}),
+    "AzureMLChatTarget": frozenset({"endpoint"}),
+    "HackAPromptTarget": frozenset({"cookie", "session_id"}),
+    "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
+    "PromptShieldTarget": frozenset({"endpoint"}),
+}
 
 
 class TargetService:
     """
     Service for managing target instances.
 
-    Uses TargetRegistry as the sole source of truth.
-    API metadata is derived from the target objects' identifiers.
+    Uses TargetRegistry as the sole source of truth for class discovery,
+    parameter coercion, reference resolution, and construction. Endpoint
+    validation remains owned by the target classes.
     """
-
-    # Scope for Azure Machine Learning managed online endpoints.
-    _AZURE_ML_SCOPE: ClassVar[str] = "https://ml.azure.com/.default"
 
     def __init__(self) -> None:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
-
-    def _get_target_class(self, *, target_type: str) -> type:
-        """
-        Get the target class for a given type name.
-
-        Looks up the class in the module-level target class registry.
-
-        Args:
-            target_type: The exact class name of the target (e.g., 'TextTarget').
-
-        Returns:
-            The target class.
-
-        Raises:
-            ValueError: If the target type is not found.
-        """
-        cls = _TARGET_CLASS_REGISTRY.get(target_type)
-        if cls is None:
-            raise ValueError(
-                f"Target type '{target_type}' not found. Available types: {sorted(_TARGET_CLASS_REGISTRY.keys())}"
-            )
-        return cls
 
     def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
         """
@@ -192,13 +83,18 @@ class TargetService:
         """
         items = [
             self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
-            for entry in self._registry.get_all_instances()
+            for entry in self._registry.instances.get_all_instances()
         ]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
         next_cursor = page[-1].target_registry_name if has_more and page else None
         return TargetListResponse(
             items=page,
-            pagination=PaginationInfo(limit=limit, has_more=has_more, next_cursor=next_cursor, prev_cursor=cursor),
+            pagination=PaginationInfo(
+                limit=limit,
+                has_more=has_more,
+                next_cursor=next_cursor,
+                prev_cursor=cursor,
+            ),
         )
 
     @staticmethod
@@ -227,7 +123,7 @@ class TargetService:
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.get_instance_by_name(target_registry_name)
+        obj = self._registry.instances.get(target_registry_name)
         if obj is None:
             return None
         return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
@@ -239,14 +135,103 @@ class TargetService:
         Returns:
             The PromptTarget object if found, None otherwise.
         """
-        return self._registry.get_instance_by_name(target_registry_name)
+        return self._registry.instances.get(target_registry_name)
+
+    @staticmethod
+    def _get_supported_auth_modes(auth_modes: tuple[str, ...]) -> list[Literal["api_key", "identity"]]:
+        """
+        Validate and narrow registry authentication modes for the type response.
+
+        Args:
+            auth_modes (tuple[str, ...]): Authentication modes declared by a target class.
+
+        Returns:
+            list[Literal["api_key", "identity"]]: Validated authentication modes.
+
+        Raises:
+            ValueError: If a target class declares an unsupported authentication mode.
+        """
+        supported_auth_modes: list[Literal["api_key", "identity"]] = []
+        for auth_mode in auth_modes:
+            if auth_mode == "api_key" or auth_mode == "identity":
+                supported_auth_modes.append(auth_mode)
+                continue
+            raise ValueError(f"Unsupported target authentication mode: {auth_mode!r}")
+        return supported_auth_modes
+
+    def _project_target_parameters(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> list[Parameter]:
+        """
+        Project registry parameters into the API contract.
+
+        Environment-backed values remain optional in Python constructors so targets
+        can resolve them from dotenv configuration. The GUI must still collect them
+        explicitly, so the API marks those values required without changing the
+        target constructor signatures.
+
+        Args:
+            target_type (str): Registered target class name.
+            parameters (tuple[Parameter, ...]): Constructor parameters derived by the registry.
+
+        Returns:
+            list[Parameter]: Parameters projected for dynamic form generation.
+        """
+        target_cls = self._registry.get_class(target_type)
+        required_names = frozenset().union(
+            *(_ENV_BACKED_REQUIRED_PARAMETERS.get(base.__name__, frozenset()) for base in target_cls.__mro__)
+        )
+        return [
+            parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
+            for parameter in parameters
+        ]
+
+    async def list_target_types_async(self) -> TargetTypeResponse:
+        """
+        List all available target types from the target class registry.
+
+        Returns every target that external callers can build, with the
+        constructor parameters they may supply, each described in the form callers
+        send it, and the auth modes it supports, all projected from the registry's
+        ``TargetMetadata``; targets that need a Python object for a required
+        parameter are left out. Deciding which entries to surface to a
+        user is a presentation concern owned by the caller (e.g. the frontend),
+        not this service.
+
+        Returns:
+            TargetTypeResponse containing all available target classes.
+        """
+        metadata_items = await asyncio.to_thread(self._registry.get_all_registered_class_metadata)
+        items: list[TargetTypeEntry] = [
+            TargetTypeEntry(
+                target_type=metadata.class_name,
+                parameters=[
+                    parameter.for_external_catalog()
+                    for parameter in self._project_target_parameters(
+                        target_type=metadata.class_name,
+                        parameters=metadata.parameters,
+                    )
+                    if parameter.is_external_input
+                ],
+                supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
+                description=metadata.class_description or None,
+            )
+            for metadata in metadata_items
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+        ]
+        return TargetTypeResponse(items=items)
 
     async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
         """
         Create a new target instance from API request.
 
-        Instantiates the target with the given type and params,
-        then registers it in the registry under its registry name.
+        Class discovery, strict parameter validation, scalar coercion, registry
+        reference resolution, and construction are owned by the
+        ``TargetRegistry``. Endpoint trust and identity token minting are owned
+        by the target classes themselves. This service only enforces the
+        request-level auth contract: for ``identity`` it confirms the target
+        supports it and omits the api_key plus any registry-flagged
+        identity-conflicting parameters so the target validates its own
+        endpoint and authenticates itself. The response is built before the
+        target is registered, so a failed request leaves no registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -255,197 +240,42 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: if any of the following occur:
-                - Target type in request is not found in the class registry;
-                - Entra ID auth is requested but the target type does not support it;
-                - Entra ID auth is requested for an OpenAI target or AzureMLChatTarget
-                    but the endpoint is not valid (not managed by correct hosts);
-                - If auth_mode='api_key' is set for a target but no key is supplied;
-                - For RoundRobinTarget: if target_registry_names are missing, any name
-                    is not found, or inner targets fail compatibility checks.
+            ValueError: If the target type is not registered or identity auth is
+                requested but unsupported by the target type. Construction errors
+                (unknown params, incompatible inner targets, unrecognized identity
+                endpoints) are raised by the registry / target classes.
         """
-        target_class = self._get_target_class(target_type=request.type)
-
-        # RoundRobinTarget needs special handling: the user passes registry names
-        # of existing targets, and we resolve them to live objects.
-        if request.type == "RoundRobinTarget":
-            target_obj = self._create_round_robin_target(params=dict(request.params))
-        else:
-            # Copy params so we can modify values (eg api_key) without changing request.params.
-            params: dict[str, Any] = dict(request.params)
-
-            if request.auth_mode == "entra":
-                params = self._apply_entra_auth(target_class=target_class, target_type=request.type, params=params)
-            else:
-                self._validate_api_key_auth(target_class=target_class, params=params)
-
-            target_obj = target_class(**params)
-
-        self._registry.register_instance(target_obj)
-
-        target_registry_name = target_obj.get_identifier().unique_name
-        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-
-    def _create_round_robin_target(self, *, params: dict[str, Any]) -> RoundRobinTarget:
-        """
-        Resolve registry names to target objects and create a RoundRobinTarget.
-
-        Targets resolving to the same ``ComponentIdentifier.hash`` are deduplicated
-        before construction (mirroring ``TargetInitializer._auto_group_targets``)
-        so duplicate registry aliases for the same underlying endpoint do not
-        produce a rotation that hits one target twice. If fewer than 2 distinct
-        targets remain after dedup, a ``ValueError`` is raised.
-
-        The RoundRobinTarget constructor validates all compatibility requirements
-        (same class, same configuration, same behavioral params, ≥2 targets).
-
-        Args:
-            params: Must contain ``target_registry_names`` (list of registry name
-                strings). May contain ``weights`` (list of positive ints) of the
-                same length as ``target_registry_names``; weights for deduped
-                entries are dropped along with their target.
-
-        Returns:
-            A new RoundRobinTarget wrapping the resolved (deduped) targets.
-
-        Raises:
-            ValueError: If fewer than 2 names are supplied, a name is not found
-                in the registry, weights length does not match, dedup leaves
-                fewer than 2 distinct targets, or the RoundRobinTarget
-                constructor rejects the combination.
-        """
-        registry_names: list[str] = params.get("target_registry_names", [])
-        if len(registry_names) < 2:
-            raise ValueError("RoundRobinTarget requires at least 2 target_registry_names in params.")
-
-        raw_weights: list[int] | None = params.get("weights") or None
-        if raw_weights is not None and len(raw_weights) != len(registry_names):
+        if request.type not in self._registry:
             raise ValueError(
-                f"weights length ({len(raw_weights)}) must match target_registry_names length ({len(registry_names)})."
+                f"Target type '{request.type}' not found. Available types: {self._registry.get_class_names()}"
             )
 
-        # Deduplicate by ComponentIdentifier hash: two registry entries that
-        # resolve to the same identifier (same endpoint, model, api_version, etc.)
-        # would just hit the same target twice in the rotation. This mirrors the
-        # dedup in TargetInitializer._auto_group_targets so user-driven and
-        # auto-grouped flows behave the same.
-        seen_hashes: set[str | None] = set()
-        resolved_targets: list[PromptTarget] = []
-        resolved_weights: list[int] = []
-        duplicates: list[str] = []
-        for idx, name in enumerate(registry_names):
-            target_obj = self._registry.get_instance_by_name(name)
-            if target_obj is None:
-                raise ValueError(f"Target '{name}' not found in the registry.")
-            target_hash = target_obj.get_identifier().hash
-            if target_hash in seen_hashes:
-                duplicates.append(name)
-                logger.debug(f"Skipping duplicate target '{name}' (hash {target_hash}) in RoundRobinTarget creation")
-                continue
-            seen_hashes.add(target_hash)
-            resolved_targets.append(target_obj)
-            if raw_weights is not None:
-                resolved_weights.append(raw_weights[idx])
+        target_cls = self._registry.get_class(request.type)
+        params: dict[str, Any] = dict(request.params)
 
-        if len(resolved_targets) < 2:
-            raise ValueError(
-                f"RoundRobinTarget requires at least 2 distinct targets, but the provided names "
-                f"resolved to {len(resolved_targets)} unique target(s) after deduplication. "
-                f"Duplicate names skipped: {duplicates}. Please select targets with different "
-                f"endpoints or configurations."
-            )
+        if request.auth_mode == "identity":
+            if "identity" not in target_cls.supported_auth_modes:
+                raise ValueError(f"Target type '{request.type}' does not support identity-based authentication.")
+            # Omit any api_key so the target validates its own endpoint and authenticates itself.
+            params.pop("api_key", None)
+            # Omit any other parameter the registry metadata marks as conflicting with
+            # identity-based auth (e.g. AzureBlobStorageTarget's sas_token), so a caller
+            # can't silently override the selected auth mode by also supplying it.
+            metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+            if metadata is not None:
+                for parameter in metadata.parameters:
+                    if parameter.identity_conflicting:
+                        params.pop(parameter.name, None)
+        params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
 
-        weights = resolved_weights if raw_weights is not None else None
-
-        # The constructor validates same-class, same-config, behavioral consistency, etc.
-        return RoundRobinTarget(targets=resolved_targets, weights=weights)
-
-    @staticmethod
-    def _apply_entra_auth(*, target_class: type, target_type: str, params: dict[str, Any]) -> dict[str, Any]:
-        """
-        Replace ``api_key`` in ``params`` with an Entra ID token provider for
-        the given target class.
-
-        Args:
-            target_class (type): The target class being instantiated
-            target_type (str): The user-facing target type name
-            params (dict[str, Any]): The target constructor parameters from the request
-
-        Returns:
-            dict[str, Any]: A new params dict with ``api_key`` replaced by an async
-            token-provider callable suitable for the target class.
-
-        Raises:
-            ValueError: If the target type does not support Entra ID, if an
-                OpenAI target is given a non-Azure endpoint, or if an
-                AzureMLChatTarget is given a non-AML endpoint.
-        """
-        new_params = dict(params)
-        if "api_key" in new_params:
-            logger.debug("Discarding 'api_key' from params because auth_mode='entra'.")
-            new_params.pop("api_key", None)
-
-        if issubclass(target_class, OpenAITarget):
-            endpoint = new_params.get("endpoint")
-            if not isinstance(endpoint, str) or not endpoint:
-                raise ValueError("Entra ID authentication requires an 'endpoint' in params.")
-            if not _is_azure_openai_endpoint(endpoint):
-                raise ValueError(
-                    "Entra ID authentication requires an Azure endpoint "
-                    f"(*.openai.azure.com or *.ai.azure.com). Got: {endpoint}"
-                )
-            new_params["api_key"] = get_azure_openai_auth(endpoint)
-            return new_params
-
-        if issubclass(target_class, AzureMLChatTarget):
-            endpoint = new_params.get("endpoint")
-            if not isinstance(endpoint, str) or not endpoint:
-                raise ValueError("Entra ID authentication requires an 'endpoint' in params.")
-            if not _is_azure_ml_endpoint(endpoint):
-                raise ValueError(
-                    "Entra ID authentication for AzureMLChatTarget requires an AML endpoint "
-                    f"(*.inference.ml.azure.com). Got: {endpoint}"
-                )
-            new_params["api_key"] = get_azure_async_token_provider(TargetService._AZURE_ML_SCOPE)
-            return new_params
-
-        raise ValueError(
-            f"Target type '{target_type}' does not support Entra ID authentication. "
-            "Supported types are OpenAI-family targets and AzureMLChatTarget."
-        )
-
-    @staticmethod
-    def _validate_api_key_auth(*, target_class: type, params: dict[str, Any]) -> None:
-        """
-        Enforce that ``auth_mode='api_key'`` actually has a usable key.
-
-        Targets that do not authenticate via an api_key (e.g. ``TextTarget``)
-        are skipped since they have no env var and the underlying
-        constructor does not take any ``api_key`` arguments.
-
-        Args:
-            target_class (type): The target class being instantiated.
-            params (dict[str, Any]): The constructor parameters from the request.
-
-        Raises:
-            ValueError: If no API key is provided in params or in the relevant
-                environment variable for a target class that authenticates via
-                an API key.
-        """
-        env_var = _resolve_api_key_env_var(target_class)
-        if env_var is None:
-            return
-
-        if params.get("api_key"):
-            return
-        if os.environ.get(env_var):
-            return
-
-        raise ValueError(
-            f"auth_mode='api_key' requires an API key but none was provided. "
-            f"Pass 'api_key' in params or set the {env_var} environment variable. "
-            "To authenticate with Microsoft Entra ID instead, set auth_mode='entra'."
-        )
+        # LEGACY COMPATIBILITY: The current configuration UI omits the name.
+        # Remove this generated fallback after that UI sends an explicit name.
+        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
+        self._registry.instances.validate_name_available(target_registry_name)
+        target_obj = self._registry.create_instance_from_external_input(request.type, params=params)
+        target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+        self._registry.instances.register(target_obj, name=target_registry_name)
+        return target
 
 
 @lru_cache(maxsize=1)

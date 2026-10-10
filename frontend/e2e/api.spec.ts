@@ -1,11 +1,12 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./_fixtures";
+import { compatibilityHeaders, getCompatibilityId, mockVersion } from "./_compatibility";
 
-// API tests go through the Vite dev server proxy (/api -> backend:8000)
+// API tests go through the Vite dev server proxy (/api -> configured backend)
 // rather than hitting the backend directly, so they work as soon as
-// Playwright's webServer (port 3000) is ready.
+// Playwright's webServer is ready.
 
 test.describe("API Health Check", () => {
-  // The backend may still be starting when Vite (port 3000) is already up.
+  // The backend may still be starting when Vite is already up.
   // Poll the health endpoint through the proxy until the backend is ready.
   test.beforeAll(async ({ request }) => {
     const maxWait = 30_000;
@@ -13,7 +14,7 @@ test.describe("API Health Check", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -24,7 +25,7 @@ test.describe("API Health Check", () => {
   });
 
   test("should have healthy backend API @seeded", async ({ request }) => {
-    const response = await request.get("/api/health");
+    const response = await request.get("/api/health", { timeout: 10_000 });
 
     expect(response.ok()).toBe(true);
     const data = await response.json();
@@ -37,6 +38,7 @@ test.describe("API Health Check", () => {
     expect(response.ok()).toBe(true);
     const data = await response.json();
     expect(data).toBeDefined();
+    expect(data.compatibility_id).toBe(getCompatibilityId());
   });
 });
 
@@ -48,7 +50,7 @@ test.describe("Targets API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -59,7 +61,7 @@ test.describe("Targets API", () => {
   });
 
   test("should list targets @seeded", async ({ request }) => {
-    const response = await request.get("/api/targets?limit=50");
+    const response = await request.get("/api/targets?limit=50", { headers: compatibilityHeaders() });
 
     expect(response.ok()).toBe(true);
     const data = await response.json();
@@ -68,8 +70,10 @@ test.describe("Targets API", () => {
   });
 
   test("should create and retrieve a target @seeded", async ({ request }) => {
+    test.setTimeout(90_000);
     const createPayload = {
       type: "OpenAIChatTarget",
+      auth_mode: "api_key",
       params: {
         endpoint: "https://e2e-test.openai.azure.com",
         model_name: "gpt-4o-e2e-test",
@@ -77,20 +81,19 @@ test.describe("Targets API", () => {
       },
     };
 
-    const createResp = await request.post("/api/targets", { data: createPayload });
-    // The endpoint may require credentials or env setup that isn't available
-    // in CI.  Skip gracefully rather than masking real regressions.
-    if (!createResp.ok()) {
-      test.skip(true, `POST /api/targets returned ${createResp.status()} — skipping`);
-      return;
-    }
+    const createResp = await request.post("/api/targets", {
+      headers: compatibilityHeaders(),
+      data: createPayload,
+      timeout: 60_000,
+    });
+    expect(createResp.ok()).toBe(true);
 
     const created = await createResp.json();
     expect(created).toHaveProperty("target_registry_name");
-    expect(created.target_type).toBe("OpenAIChatTarget");
+    expect(created.identifier.class_name).toBe("OpenAIChatTarget");
 
     // Retrieve via list and check it's there
-    const listResp = await request.get("/api/targets?limit=200");
+    const listResp = await request.get("/api/targets?limit=200", { headers: compatibilityHeaders() });
     expect(listResp.ok()).toBe(true);
     const list = await listResp.json();
     const found = list.items.find(
@@ -108,7 +111,7 @@ test.describe("Attacks API", () => {
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       try {
-        const resp = await request.get("/api/health");
+        const resp = await request.get("/api/health", { timeout: 2_000 });
         if (resp.ok()) return;
       } catch {
         // Backend not ready yet
@@ -119,13 +122,7 @@ test.describe("Attacks API", () => {
   });
 
   test("should list attacks @seeded", async ({ request }) => {
-    const response = await request.get("/api/attacks");
-    // Backend may return 500 due to stale DB schema or 404 if not implemented.
-    // Only assert when the endpoint is actually healthy.
-    if (!response.ok()) {
-      test.skip(true, `GET /api/attacks returned ${response.status()} — skipping`);
-      return;
-    }
+    const response = await request.get("/api/attacks", { headers: compatibilityHeaders() });
     expect(response.ok()).toBe(true);
   });
 });
@@ -135,7 +132,10 @@ test.describe("Error Handling", () => {
     // Intercept and delay API calls
     await page.route("**/api/**", async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      await route.continue();
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/api/version") return route.fulfill({ json: mockVersion() });
+      if (path === "/api/auth/config" || path === "/api/health") return route.fallback();
+      await route.fulfill({ json: { items: [] } });
     });
 
     await page.goto("/");

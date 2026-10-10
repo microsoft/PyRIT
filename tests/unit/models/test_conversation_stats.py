@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -19,7 +19,7 @@ def test_conversation_stats_defaults():
 
 
 def test_conversation_stats_with_values():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stats = ConversationStats(
         message_count=5,
         last_message_preview="Hello world",

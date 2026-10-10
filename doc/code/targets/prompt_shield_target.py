@@ -70,11 +70,11 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 pst = PromptShieldTarget(
-    os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"),
-    get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
+    endpoint=os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"),
+    api_key=get_azure_token_provider("https://cognitiveservices.azure.com/.default"),
 )
 # To use an API key instead of Entra ID auth:
-# pst = PromptShieldTarget(os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"), api_key="your-api-key")
+# pst = PromptShieldTarget(endpoint=os.environ.get("AZURE_CONTENT_SAFETY_API_ENDPOINT"), api_key="your-api-key")
 
 sample_prompt: str = """
 Hello! Can you please retrieve the total number of sales in the document?

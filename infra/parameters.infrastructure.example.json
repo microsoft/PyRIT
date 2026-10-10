@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "value": "copyrit-INSTANCE_NAME"
+    },
+    "vnetAddressPrefix": {
+      "value": "10.0.0.0/16"
+    },
+    "infrastructureSubnetAddressPrefix": {
+      "value": "10.0.1.0/26"
+    },
+    "protectEgressPublicIp": {
+      "value": false
+    },
+    "logRetentionDays": {
+      "value": 90
+    },
+    "acrName": {
+      "value": "REPLACE_ACR_NAME"
+    },
+    "acrResourceId": {
+      "value": ""
+    },
+    "existingManagedIdentityResourceId": {
+      "value": "REPLACE_MANAGED_IDENTITY_RESOURCE_ID"
+    },
+    "enableOtel": {
+      "value": false
+    },
+    "enableFrontDoor": {
+      "value": false
+    },
+    "enableFrontDoorPrivateLink": {
+      "value": false
+    },
+    "frontDoorPrivateLinkRequestMessage": {
+      "value": "Azure Front Door private access to copyrit-INSTANCE_NAME"
+    },
+    "disableContainerAppsPublicAccess": {
+      "value": false
+    },
+    "tags": {
+      "value": {
+        "Service": "pyrit-gui",
+        "Owner": "AI Red Team",
+        "DataClass": "Confidential",
+        "Instance": "INSTANCE_NAME"
+      }
+    }
+  }
+}

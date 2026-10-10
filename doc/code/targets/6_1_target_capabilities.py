@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 6.1 Target Capabilities
+# # Target Capabilities
 #
 # Every `PromptTarget` carries a `TargetConfiguration` that declares what it natively supports, what to do
 # when a capability is missing, and how to adapt the conversation when adaptation is permitted. This notebook
@@ -26,6 +26,46 @@
 #
 # See [Target Capabilities](./0_prompt_targets.md#target-capabilities) in the overview for the full list
 # of capability flags.
+
+# %% [markdown]
+# ## Tool-call history
+#
+# Tool history is declared through the `function_call` and `function_call_output`
+# input modalities. Support describes the configured adapter and AI endpoint together.
+# To probe it, use `discover_target_capabilities_async` with `capabilities=[]` and
+# `test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})}`.
+# Discovery does not apply its result unless `apply=True`. An unsuccessful history
+# probe retains existing declarations rather than treating a timeout as no support.
+#
+# The probe sends synthetic function-call history with a matching result. It
+# disables local execution and removes configured tool declarations for supported
+# adapters. It cannot control tools inside an opaque remote agent. OpenAI Responses
+# declares support by default; OpenAI Chat and LiteLLM use known model support
+# or model metadata. Unknown deployments use conservative defaults.
+#
+# For example, these are the structured payloads for a synthetic history pair:
+#
+# ```python
+# from pyrit.models import MessagePiece
+#
+# call = MessagePiece(
+#     role="simulated_assistant",
+#     original_value='{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}',
+#     original_value_data_type="function_call",
+# )
+# result = MessagePiece(
+#     role="simulated_tool",
+#     original_value='{"type":"function_call_output","call_id":"call_1","output":"synthetic value"}',
+#     original_value_data_type="function_call_output",
+# )
+# ```
+#
+# Supply both pieces as prior messages in the same conversation before the next
+# user message. Require both input modalities and native `MULTI_TURN` and
+# `EDITABLE_HISTORY` when the attack needs structured history. Otherwise, an ADAPT
+# policy can turn history into text placeholders; memory keeps the original pieces.
+# Default message scorers exclude both simulated roles. Tool execution scoring
+# requires trace evidence, not fake call or result messages.
 
 # %% [markdown]
 # ## 1. Inspect a real target's configuration
@@ -88,7 +128,7 @@ for flag in (
 #
 # Components that need particular capabilities declare them as a `TargetRequirements` and validate at
 # construction time. PyRIT ships a `CHAT_TARGET_REQUIREMENTS` constant for the common case of needing
-# multi-turn + editable history — the replacement for the deprecated `PromptChatTarget` type check.
+# multi-turn + editable history — the replacement for the former `PromptChatTarget` type check.
 #
 # `TargetRequirements.validate` collects every missing capability and raises a single `ValueError` so
 # callers see all violations at once.
@@ -304,7 +344,7 @@ from pyrit.prompt_target import discover_target_capabilities_async
 def _ok_response():
     return [
         Message(
-            [
+            message_pieces=[
                 MessagePiece(
                     role="assistant",
                     original_value="ok",

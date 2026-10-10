@@ -10,6 +10,9 @@ lerna-debug.log*
 dist/
 dist-ssr/
 *.local
+*.tsbuildinfo
+/vite.config.d.ts
+/vite.config.js
 
 # Editor
 .vscode/*
@@ -29,5 +32,6 @@ dist-ssr/
 
 # Testing
 coverage/
+blob-report/
 playwright-report/
 test-results/

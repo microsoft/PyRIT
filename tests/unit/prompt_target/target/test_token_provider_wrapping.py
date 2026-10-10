@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
+import inspect
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -32,7 +32,7 @@ class TestTokenProviderWrapping:
 
         result = ensure_async_token_provider(async_token_provider)
         assert result is async_token_provider
-        assert asyncio.iscoroutinefunction(result)
+        assert inspect.iscoroutinefunction(result)
 
     def test_sync_token_provider_wrapped(self):
         """Test that synchronous token providers are automatically wrapped."""
@@ -45,7 +45,7 @@ class TestTokenProviderWrapping:
         # Should return a different callable (the wrapper)
         assert result is not sync_token_provider
         assert callable(result)
-        assert asyncio.iscoroutinefunction(result)
+        assert inspect.iscoroutinefunction(result)
 
     async def test_wrapped_sync_provider_returns_correct_token(self):
         """Test that wrapped synchronous token provider returns the correct token."""
@@ -147,7 +147,7 @@ class TestOpenAITargetWithTokenProviders:
             # The api_key should be a callable
             api_key_arg = call_kwargs["api_key"]
             assert callable(api_key_arg)
-            assert asyncio.iscoroutinefunction(api_key_arg)
+            assert inspect.iscoroutinefunction(api_key_arg)
 
             # Verify the wrapped token provider returns correct value
             token = await api_key_arg()
@@ -234,7 +234,7 @@ class TestOpenAITargetWithTokenProviders:
             call_kwargs = mock_openai.call_args[1]
             wrapped_provider = call_kwargs["api_key"]
 
-            assert asyncio.iscoroutinefunction(wrapped_provider)
+            assert inspect.iscoroutinefunction(wrapped_provider)
 
             # Verify it returns the correct token
             token = await wrapped_provider()

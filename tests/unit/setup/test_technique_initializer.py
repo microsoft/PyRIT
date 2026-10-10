@@ -1,0 +1,845 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Tests for TechniqueInitializer and the technique group catalogs."""
+
+import hashlib
+import re
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+import yaml
+from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
+
+from pyrit.common.path import DOCS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.converter import CharNoiseConverter, CharSwapConverter, RandomCapitalLettersConverter
+from pyrit.executor.attack import (
+    AttackScoringConfig,
+    CrescendoAttack,
+    PAIRAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SkeletonKeyAttack,
+)
+from pyrit.models import SeedPrompt
+from pyrit.prompt_target import PromptTarget
+from pyrit.registry import TargetRegistry
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.score import TrueFalseScorer
+from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
+from pyrit.setup.initializers import TechniqueInitializer
+from pyrit.setup.initializers.techniques import (
+    build_technique_factories,
+    core,
+    extra,
+)
+
+CORE_TECHNIQUE_NAMES: list[str] = [
+    "role_play_movie_script",
+    "role_play_video_game",
+    "role_play_trivia_game",
+    "role_play_persuasion",
+    "role_play_persuasion_written",
+    "many_shot",
+    "tap",
+    "crescendo_simulated",
+    "red_teaming",
+    "context_compliance",
+    "bijection",
+    "code_attack",
+    "crescendo_movie_director",
+    "crescendo_history_lecture",
+    "crescendo_journalist_interview",
+    "flip",
+]
+
+EXTRA_TECHNIQUE_NAMES: list[str] = [
+    "pair",
+    "skeleton_key",
+    "best_of_n",
+    "violent_durian",
+    "goat",
+    "split_payload",
+    "code_attack_framed",
+]
+
+PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
+    "crescendo_movie_director",
+    "crescendo_history_lecture",
+    "crescendo_journalist_interview",
+]
+
+ROLE_PLAY_TECHNIQUE_NAMES: list[str] = [
+    "role_play_movie_script",
+    "role_play_video_game",
+    "role_play_trivia_game",
+    "role_play_persuasion",
+    "role_play_persuasion_written",
+]
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def reset_registries():
+    """Reset technique and target registries between tests."""
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
+    yield
+    AttackTechniqueRegistry.reset_registry_singleton()
+    TargetRegistry.reset_registry_singleton()
+
+
+@pytest.fixture
+def mock_adversarial_target():
+    """A mock adversarial target registered as 'adversarial_chat' so resolution succeeds."""
+    target = MagicMock(spec=PromptTarget)
+    target.capabilities.includes.return_value = True
+    registry = TargetRegistry.get_registry_singleton()
+    registry.instances.register(target, name="adversarial_chat")
+    return target
+
+
+# ---------------------------------------------------------------------------
+# Group catalogs (core.py / extra.py)
+# ---------------------------------------------------------------------------
+
+
+class TestCoreGroupCatalog:
+    """Tests for ``core.get_technique_factories()``."""
+
+    def test_returns_expected_names(self):
+        names = {f.name for f in core.get_technique_factories()}
+        assert names == set(CORE_TECHNIQUE_NAMES)
+
+    def test_factories_do_not_bake_in_group_tag(self):
+        """The ``core`` group tag is injected by build_technique_factories, not baked in here."""
+        for factory in core.get_technique_factories():
+            assert "core" not in factory.technique_tags
+            assert "extra" not in factory.technique_tags
+
+
+class TestExtraGroupCatalog:
+    """Tests for ``extra.get_technique_factories()``."""
+
+    def test_returns_expected_names(self):
+        names = {f.name for f in extra.get_technique_factories()}
+        assert names == set(EXTRA_TECHNIQUE_NAMES)
+
+    def test_factories_do_not_bake_in_group_tag(self):
+        for factory in extra.get_technique_factories():
+            assert "extra" not in factory.technique_tags
+            assert "core" not in factory.technique_tags
+
+    def test_violent_durian_has_max_turns_three(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "violent_durian")
+        assert factory._attack_kwargs == {"max_turns": 3}
+
+    def test_pair_uses_pair_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "pair")
+        assert factory.attack_class is PAIRAttack
+
+    def test_skeleton_key_uses_skeleton_key_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
+        assert factory.attack_class is SkeletonKeyAttack
+
+    def test_skeleton_key_tagged_single_turn(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
+        assert factory.technique_tags == ["single_turn"]
+
+    def test_skeleton_key_is_non_adversarial(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "skeleton_key")
+        assert factory.uses_adversarial is False
+
+    def test_best_of_n_configures_prompt_sending_attack(self) -> None:
+        factory = next(f for f in extra.get_technique_factories() if f.name == "best_of_n")
+        assert factory.attack_class is PromptSendingAttack
+        assert factory._attack_kwargs["max_attempts_on_failure"] == 19
+
+        converter_config = factory._attack_kwargs["attack_converter_config"]
+        converters = [configuration.converters[0] for configuration in converter_config.request_converters]
+        assert len(converters) == 3
+        assert isinstance(converters[0], CharSwapConverter)
+        assert isinstance(converters[1], RandomCapitalLettersConverter)
+        assert isinstance(converters[2], CharNoiseConverter)
+        assert converters[0]._word_selection_strategy._proportion == pytest.approx(0.4**0.5)
+        assert converters[1].percentage == pytest.approx(0.4**0.5 * 100)
+        assert converters[2].noise_probability == pytest.approx(0.4**3)
+
+    def test_split_payload_uses_crescendo_attack(self):
+        factory = next(f for f in extra.get_technique_factories() if f.name == "split_payload")
+        assert factory.attack_class is CrescendoAttack
+
+
+# ---------------------------------------------------------------------------
+# build_technique_factories (the protocol aggregator)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTechniqueFactories:
+    """Tests for the group-selection and tag-injection behavior."""
+
+    def test_core_group_injects_core_tag(self):
+        factories = build_technique_factories(groups=["core"])
+        assert {f.name for f in factories} == set(CORE_TECHNIQUE_NAMES)
+        for factory in factories:
+            assert "core" in factory.technique_tags
+
+    def test_extra_group_injects_extra_tag(self):
+        factories = build_technique_factories(groups=["extra"])
+        assert {f.name for f in factories} == set(EXTRA_TECHNIQUE_NAMES)
+        for factory in factories:
+            assert "extra" in factory.technique_tags
+
+    def test_default_returns_all_groups(self):
+        names = {f.name for f in build_technique_factories()}
+        assert names == set(CORE_TECHNIQUE_NAMES) | set(EXTRA_TECHNIQUE_NAMES)
+
+    def test_unknown_group_raises(self):
+        with pytest.raises(ValueError, match="Unknown technique group"):
+            build_technique_factories(groups=["does_not_exist"])
+
+    def test_factory_names_are_unique(self):
+        names = [f.name for f in build_technique_factories()]
+        assert len(names) == len(set(names))
+
+    def test_factory_descriptions_are_available_for_catalogs(self):
+        factories = build_technique_factories()
+        assert all(factory.description for factory in factories)
+
+
+# ---------------------------------------------------------------------------
+# TechniqueInitializer class metadata
+# ---------------------------------------------------------------------------
+
+
+class TestTechniqueInitializerBasic:
+    """Tests for TechniqueInitializer class metadata."""
+
+    def test_can_be_created(self):
+        assert TechniqueInitializer() is not None
+
+    def test_required_env_vars_is_empty(self):
+        assert TechniqueInitializer().required_env_vars == []
+
+    def test_description_is_nonempty_string(self):
+        description = TechniqueInitializer().description
+        assert isinstance(description, str)
+        assert description
+
+    def test_tags_parameter_defaults_to_core(self):
+        params = {p.name: p for p in TechniqueInitializer().supported_parameters}
+        assert "tags" in params
+        assert params["tags"].default == ["core"]
+
+
+# ---------------------------------------------------------------------------
+# Persona-driven crescendo factories (a subset of the core group)
+# ---------------------------------------------------------------------------
+
+
+class TestPersonaCrescendoFactories:
+    """Tests for the persona-driven crescendo entries in the core catalog."""
+
+    @staticmethod
+    def _persona_factories():
+        all_factories = build_technique_factories(groups=["core"])
+        return [f for f in all_factories if f.name in PERSONA_CRESCENDO_TECHNIQUE_NAMES]
+
+    def test_returns_three_factories(self):
+        assert len(self._persona_factories()) == 3
+
+    def test_all_use_prompt_sending_attack(self):
+        for f in self._persona_factories():
+            assert f.attack_class is PromptSendingAttack
+
+    def test_all_have_seed_technique_with_simulated_conversation(self):
+        for f in self._persona_factories():
+            assert f.seed_technique is not None
+            assert f.seed_technique.has_simulated_conversation
+
+    def test_all_tagged_core_single_turn(self):
+        for f in self._persona_factories():
+            assert "core" in f.technique_tags
+            assert "single_turn" in f.technique_tags
+
+    def test_seed_technique_num_turns_matches_canonical_default(self):
+        """Persona variants share the canonical num_turns=3 of crescendo_simulated."""
+        for f in self._persona_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.num_turns == 3
+
+    def test_seed_technique_carries_resolved_adversarial_prompt(self):
+        for f in self._persona_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.adversarial_chat_system_prompt.value
+            assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
+
+
+class TestPersonaCrescendoYamls:
+    """Tests for the persona-driven crescendo YAML files."""
+
+    @pytest.mark.parametrize("technique_name", PERSONA_CRESCENDO_TECHNIQUE_NAMES)
+    def test_yaml_loads_with_required_parameters(self, technique_name):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "max_turns"],
+        )
+        assert sp.parameters == ["objective", "max_turns"]
+
+    @pytest.mark.parametrize("technique_name", PERSONA_CRESCENDO_TECHNIQUE_NAMES)
+    def test_yaml_renders_with_objective_and_max_turns(self, technique_name):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "max_turns"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=7)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "7" in rendered
+
+    @pytest.mark.parametrize("technique_name", PERSONA_CRESCENDO_TECHNIQUE_NAMES)
+    def test_yaml_has_no_em_or_en_dashes(self, technique_name):
+        """Author convention: persona YAMLs avoid em-dashes and en-dashes."""
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
+        text = path.read_text(encoding="utf-8")
+        # Literal em-dash and en-dash characters used as needles for absence assertions on the YAMLs
+        assert "–" not in text, f"{technique_name}.yaml contains an en-dash"
+        assert "—" not in text, f"{technique_name}.yaml contains an em-dash"
+
+
+class TestContextComplianceTechnique:
+    """Tests for the context_compliance simulated-conversation technique."""
+
+    @staticmethod
+    def _context_compliance_factory():
+        factories = {f.name: f for f in build_technique_factories(groups=["core"])}
+        return factories["context_compliance"]
+
+    def test_uses_prompt_sending_attack(self):
+        factory = self._context_compliance_factory()
+        assert factory.attack_class is PromptSendingAttack
+
+    def test_has_simulated_conversation_seed_technique(self):
+        factory = self._context_compliance_factory()
+        assert factory.seed_technique is not None
+        assert factory.seed_technique.has_simulated_conversation
+
+    def test_seed_technique_uses_single_turn(self):
+        factory = self._context_compliance_factory()
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.num_turns == 1
+
+    def test_seed_technique_uses_custom_simulated_target_prompt(self):
+        factory = self._context_compliance_factory()
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.simulated_target_system_prompt.name == "simulated_target_context_compliance"
+        assert sim.simulated_target_system_prompt.parameters == ["objective", "num_turns"]
+        # No LLM-generated next message: the final turn is a fixed affirmation instead.
+        assert sim.next_message_system_prompt is None
+
+    def test_final_user_message_is_fixed_affirmation(self):
+        factory = self._context_compliance_factory()
+        # The fixed "yes." final turn is appended as a static SeedPrompt after the
+        # simulated conversation's sequence range (user seq 0, assistant seq 1 -> "yes." seq 2).
+        prompts = list(factory.seed_technique.prompts)
+        assert len(prompts) == 1
+        yes_prompt = prompts[0]
+        assert yes_prompt.value == "yes."
+        assert yes_prompt.role == "user"
+        assert yes_prompt.sequence == 2
+
+    def test_adversarial_prompt_is_resolved(self):
+        factory = self._context_compliance_factory()
+        sim = factory.seed_technique.simulated_conversation_config
+        assert sim is not None
+        assert sim.adversarial_chat_system_prompt.value
+        assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
+
+    def test_tagged_core_single_turn_light(self):
+        factory = self._context_compliance_factory()
+        assert "core" in factory.technique_tags
+        assert "single_turn" in factory.technique_tags
+        assert "light" in factory.technique_tags
+
+
+class TestContextComplianceYamls:
+    """Tests for the context_compliance technique YAML files."""
+
+    def test_adversarial_yaml_loads_with_required_objective(self):
+        path = Path(EXECUTOR_RED_TEAM_PATH) / "context_compliance" / "context_compliance.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=1)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+
+    def test_simulated_target_yaml_loads_with_required_parameters(self):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "simulated_target" / "context_compliance_target.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "num_turns"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", num_turns=1)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "1" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Role-play factories (simulated-conversation personas in the core group)
+# ---------------------------------------------------------------------------
+
+
+class TestRolePlayFactories:
+    """Tests for the role-play simulated-conversation entries in the core catalog."""
+
+    @staticmethod
+    def _role_play_factories():
+        all_factories = build_technique_factories(groups=["core"])
+        return [f for f in all_factories if f.name in ROLE_PLAY_TECHNIQUE_NAMES]
+
+    def test_returns_five_factories(self):
+        assert len(self._role_play_factories()) == len(ROLE_PLAY_TECHNIQUE_NAMES)
+
+    def test_all_use_prompt_sending_attack(self):
+        for f in self._role_play_factories():
+            assert f.attack_class is PromptSendingAttack
+
+    def test_all_have_seed_technique_with_simulated_conversation(self):
+        for f in self._role_play_factories():
+            assert f.seed_technique is not None
+            assert f.seed_technique.has_simulated_conversation
+
+    def test_all_tagged_core_single_turn_light(self):
+        for f in self._role_play_factories():
+            assert "core" in f.technique_tags
+            assert "single_turn" in f.technique_tags
+            assert "light" in f.technique_tags
+
+    def test_seed_technique_num_turns_matches_role_play_default(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.num_turns == 2
+
+    def test_seed_technique_carries_resolved_adversarial_prompt(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.adversarial_chat_system_prompt.value
+            assert sim.adversarial_chat_system_prompt.parameters == ["objective", "max_turns"]
+
+    def test_all_use_role_play_next_message_prompt(self):
+        for f in self._role_play_factories():
+            sim = f.seed_technique.simulated_conversation_config
+            assert sim is not None
+            assert sim.next_message_system_prompt is not None
+            assert sim.next_message_system_prompt.name == "role_play_next_message_generator"
+            assert sim.next_message_system_prompt.parameters == ["objective", "conversation_context"]
+
+
+class TestRolePlayYamls:
+    """Tests for the role-play persona YAML files."""
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_loads_with_required_parameters(self, technique_name):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "max_turns"],
+        )
+        assert sp.parameters == ["objective", "max_turns"]
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_renders_with_objective_and_max_turns(self, technique_name):
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        sp = SeedPrompt.from_yaml_with_required_parameters(
+            template_path=path,
+            required_parameters=["objective", "max_turns"],
+        )
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", max_turns=7)
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "7" in rendered
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_has_no_em_or_en_dashes(self, technique_name):
+        """Author convention: persona YAMLs avoid em-dashes and en-dashes."""
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        text = path.read_text(encoding="utf-8")
+        # Literal em-dash and en-dash characters used as needles for absence assertions on the YAMLs
+        assert "–" not in text, f"{technique_name}.yaml contains an en-dash"
+        assert "—" not in text, f"{technique_name}.yaml contains an em-dash"
+
+
+# ---------------------------------------------------------------------------
+# Initializer registration
+# ---------------------------------------------------------------------------
+
+
+class TestTechniqueInitializerRegistration:
+    """Tests that initialize_async wires factories into the registry per the tags param."""
+
+    async def test_default_registers_only_core(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        await init.initialize_async()
+
+        names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
+        assert set(CORE_TECHNIQUE_NAMES) <= names
+        assert "skeleton_key" not in names
+        assert "pair" not in names
+        assert "violent_durian" not in names
+        assert "split_payload" not in names
+
+    async def test_registered_core_factory_carries_core_tag(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        await init.initialize_async()
+
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["role_play_movie_script"]
+        assert "core" in factory.technique_tags
+
+    async def test_extra_tag_registers_extra_techniques(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["extra"]}
+        await init.initialize_async()
+
+        names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
+        assert set(EXTRA_TECHNIQUE_NAMES) <= names
+
+    async def test_all_tag_registers_everything(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["all"]}
+        await init.initialize_async()
+
+        names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
+        assert (set(CORE_TECHNIQUE_NAMES) | set(EXTRA_TECHNIQUE_NAMES)) <= names
+
+    async def test_persona_factories_carry_seed_technique(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        await init.initialize_async()
+
+        factories = AttackTechniqueRegistry.get_registry_singleton().get_factories()
+        for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
+            assert factories[name].seed_technique is not None
+
+    async def test_idempotent(self, mock_adversarial_target):
+        """Calling initialize_async twice does not duplicate or overwrite entries."""
+        init = TechniqueInitializer()
+        await init.initialize_async()
+
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        first_names = set(registry.instances.get_names())
+        first_factory = registry.get_factories()["crescendo_movie_director"]
+
+        await init.initialize_async()
+        second_names = set(registry.instances.get_names())
+        second_factory = registry.get_factories()["crescendo_movie_director"]
+
+        assert first_names == second_names
+        assert first_factory is second_factory
+
+    async def test_falls_back_to_default_target_when_registry_empty(self):
+        """With no 'adversarial_chat' in TargetRegistry, lazy resolution at create()-time
+        falls back to OpenAIChatTarget(temperature=1.2).
+        """
+        fallback_target = MagicMock(spec=PromptTarget)
+        with patch(
+            "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
+            return_value=fallback_target,
+        ) as mock_openai:
+            init = TechniqueInitializer()
+            await init.initialize_async()
+
+            mock_openai.assert_not_called()
+
+            registry = AttackTechniqueRegistry.get_registry_singleton()
+            factories = registry.get_factories()
+            for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
+                config = factories[name]._build_adversarial_config()
+                assert config.target is fallback_target
+
+            mock_openai.assert_any_call(temperature=1.2)
+
+
+# ---------------------------------------------------------------------------
+# Violent Durian (opt-in extra technique)
+# ---------------------------------------------------------------------------
+
+
+class TestViolentDurianTechnique:
+    """Tests for the opt-in violent_durian entry in the extra catalog."""
+
+    @staticmethod
+    def _violent_durian_factory():
+        return next(f for f in build_technique_factories(groups=["extra"]) if f.name == "violent_durian")
+
+    def test_in_extra_catalog(self):
+        names = {f.name for f in build_technique_factories(groups=["extra"])}
+        assert "violent_durian" in names
+
+    def test_tagged_extra_not_core_or_default(self):
+        factory = self._violent_durian_factory()
+        assert "core" not in factory.technique_tags
+        assert "default" not in factory.technique_tags
+        assert set(factory.technique_tags) == {"multi_turn", "extra"}
+
+    def test_uses_red_teaming_attack_with_adversarial(self):
+        factory = self._violent_durian_factory()
+        assert factory.attack_class is RedTeamingAttack
+        assert factory.uses_adversarial is True
+
+    def test_has_max_turns_three(self):
+        factory = self._violent_durian_factory()
+        assert factory._attack_kwargs == {"max_turns": 3}
+
+    def test_data_paths_resolve_to_files(self):
+        assert (EXECUTOR_RED_TEAM_PATH / "violent_durian.yaml").exists()
+        assert (EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml").exists()
+
+    def test_seed_prompt_yaml_renders_objective(self):
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "violent_durian_seed_prompt.yaml")
+        assert sp.parameters == ["objective"]
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "durian" in rendered.lower()
+
+    def test_criminal_persona_scorer_yaml_resolves(self):
+        assert TrueFalseQuestionPaths.CRIMINAL_PERSONA.value.exists()
+
+    async def test_registered_when_extra_selected(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["extra"]}
+        await init.initialize_async()
+
+        assert "violent_durian" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
+
+
+# ---------------------------------------------------------------------------
+# GOAT (opt-in extra technique)
+# ---------------------------------------------------------------------------
+
+
+class TestGoatTechnique:
+    """Tests for the opt-in goat entry in the extra catalog."""
+
+    def test_paper_citation_resolves_in_bibliography(self) -> None:
+        references = (DOCS_PATH / "references.bib").read_text(encoding="utf-8")
+        bibliography = (DOCS_PATH / "bibliography.md").read_text(encoding="utf-8")
+        reference_keys = re.findall(r"(?m)^@\w+\s*\{\s*([^,\s]+)\s*,", references)
+        hidden_keys = re.findall(r"@([A-Za-z0-9_:-]+)", bibliography)
+        assert reference_keys.count("pavlova2024goat") == 1
+        assert hidden_keys == sorted(set(hidden_keys))
+        assert set(hidden_keys) == set(reference_keys)
+        entry = re.search(r"(?ms)^@article\{pavlova2024goat,\n(.*?)^\}", references)
+        assert entry is not None
+        assert re.search(r"url\s*=\s*\{https://arxiv\.org/abs/2410\.01606\}", entry.group(1))
+        assert re.search(r"year\s*=\s*\{2024\}", entry.group(1))
+
+    @pytest.mark.parametrize(
+        ("filename", "expected_value_sha256"),
+        [
+            ("goat.yaml", "c27e79aaf99a7a2f79f2739ff99890114fb46df82c4a3ec89722d8d961bfb6fa"),
+            ("goat_initial_prompt.yaml", "37838e0267f6cd18d03a532e063281a2fc35dd1868a2a3b919aed337e1d9a387"),
+            ("goat_follow_up_prompt.yaml", "b2a50f66dea6c763d3f3bc7f457e398790452b914bf798e6d7b60ffa53cc39db"),
+        ],
+    )
+    def test_prompt_credits_paper_and_adaptation(self, *, filename: str, expected_value_sha256: str) -> None:
+        seed_prompt = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / filename)
+        assert "[@pavlova2024goat]" in (seed_prompt.description or "")
+        assert "Adapted for PyRIT by AI Red Team" in (seed_prompt.description or "")
+        assert seed_prompt.source == "https://arxiv.org/abs/2410.01606"
+        assert seed_prompt.groups == ["Meta"]
+        assert seed_prompt.authors == [
+            "Maya Pavlova",
+            "Erik Brinkman",
+            "Krithika Iyer",
+            "V\u00edtor Albiero",
+            "Joanna Bitton",
+            "Hailey Nguyen",
+            "Joe Li",
+            "Cristian Canton Ferrer",
+            "Ivan Evtimov",
+            "Aaron Grattafiori",
+        ]
+        prompt_data = yaml.safe_load((EXECUTOR_RED_TEAM_PATH / filename).read_text(encoding="utf-8"))
+        assert hashlib.sha256(prompt_data["value"].encode("utf-8")).hexdigest() == expected_value_sha256
+
+    @staticmethod
+    def _goat_factory():
+        return next(f for f in build_technique_factories(groups=["extra"]) if f.name == "goat")
+
+    def test_in_extra_catalog(self):
+        names = {f.name for f in build_technique_factories(groups=["extra"])}
+        assert "goat" in names
+
+    def test_tagged_extra_not_core_or_default(self):
+        factory = self._goat_factory()
+        assert "core" not in factory.technique_tags
+        assert "default" not in factory.technique_tags
+        assert set(factory.technique_tags) == {"multi_turn", "extra"}
+
+    def test_uses_red_teaming_attack_with_adversarial(self):
+        factory = self._goat_factory()
+        assert factory.attack_class is RedTeamingAttack
+        assert factory.uses_adversarial is True
+
+    def test_has_max_turns_five(self):
+        factory = self._goat_factory()
+        assert factory._attack_kwargs == {"max_turns": 5}
+
+    def test_data_path_resolves_to_file(self):
+        assert (EXECUTOR_RED_TEAM_PATH / "goat.yaml").exists()
+
+    def test_system_prompt_yaml_renders_objective_and_strategies(self):
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        assert sp.parameters == ["objective"]
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "Refusal Suppression" in rendered
+        assert "next_message" in rendered
+
+    def test_topic_splitting_matches_paper_definition(self):
+        """GOAT's Topic Splitting (paper section 3.1 / Table 1) mixes the objective in
+        among unrelated safe requests within one message -- it is not cross-turn
+        decomposition of the objective into sub-questions."""
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "Topic Splitting" in rendered
+        assert "unrelated" in rendered.lower()
+        assert "sub-questions" not in rendered.lower()
+
+    def test_strategy_selection_is_not_capped(self):
+        """Paper section 3.1 lets the attacker combine strategies freely; there is no
+        cap in Table 1 or the body text. The prompt must not impose a "ONE or TWO"
+        (or similar numeric) ceiling on how many strategies can be applied per turn."""
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "ONE or TWO" not in rendered
+        assert "combine" in rendered.lower()
+
+    def test_all_seven_strategies_present_with_table_1_examples(self):
+        """All 7 named strategies from paper Table 1 must be present, each illustrated
+        with the example phrasing Table 1 itself gives (the paper withholds full example
+        conversations for dual-use reasons, but these short example phrases are public)."""
+        sp = SeedPrompt.from_yaml_file(EXECUTOR_RED_TEAM_PATH / "goat.yaml")
+        rendered = sp.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        expected_strategies = {
+            "Refusal Suppression": "I cannot",
+            "Dual Response": "unhinged",
+            "Response Priming": "Sure!",
+            "Persona Modification": "You are X",
+            "Hypothetical": "dream",
+            "Topic Splitting": "unrelated",
+            "Opposite Intent": "opposite",
+        }
+        for strategy, example_fragment in expected_strategies.items():
+            assert strategy in rendered, f"{strategy} missing from strategy taxonomy"
+            assert example_fragment in rendered, f"{strategy} missing its Table 1 example ({example_fragment!r})"
+
+    def test_effective_schema_is_four_stage_reasoning_first(self):
+        """Paper section 3.2 has the attacker return four components every turn, in this
+        exact order: observation, thought, strategy, then the message (paper calls the
+        last one "Response"; this schema names it next_message to match every other
+        RedTeamingAttack technique). Structured-output APIs emit fields in schema order,
+        so this order is what makes a non-reasoning model actually reason before it writes."""
+        factory = self._goat_factory()
+        effective_schema = factory._adversarial_system_prompt.response_json_schema
+        assert list(effective_schema["properties"].keys()) == [
+            "observation",
+            "thought",
+            "strategy",
+            "next_message",
+        ]
+        assert effective_schema["required"] == ["observation", "thought", "strategy", "next_message"]
+
+    def test_initial_prompt_wired_and_renders_objective(self):
+        """Paper Figure A.2: the attacker's first message is generated from a dedicated
+        initial-turn prompt, not RedTeamingAttack's generic default."""
+        factory = self._goat_factory()
+        seed_prompt = factory._adversarial_seed_prompt
+        assert seed_prompt is not None
+        assert isinstance(seed_prompt, SeedPrompt)
+        rendered = seed_prompt.render_template_value(objective="UNIQUE_TEST_OBJECTIVE")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+
+    def test_follow_up_prompt_wired_and_renders_objective_and_feedback(self):
+        """Paper Figure A.3: per-turn follow-up prompts are attacker-specific, not
+        RedTeamingAttack's generic '{{ feedback_text }}' default. The factory's
+        adversarial_prompt_template pass-through (added alongside this technique) is what
+        makes this possible without a new executor."""
+        factory = self._goat_factory()
+        template = factory._adversarial_prompt_template
+        assert template is not None
+        assert isinstance(template, SeedPrompt)
+        rendered = template.render_template_value(objective="UNIQUE_TEST_OBJECTIVE", feedback_text="UNIQUE_FEEDBACK")
+        assert "UNIQUE_TEST_OBJECTIVE" in rendered
+        assert "UNIQUE_FEEDBACK" in rendered
+
+    def test_effective_adversarial_config_uses_goat_prompts(self):
+        """The built AttackAdversarialConfig must actually carry the baked initial/follow-up
+        prompts through to a fresh attack instance, not just hold them unused on the factory."""
+        factory = self._goat_factory()
+        config = factory._build_adversarial_config(create_time_target=MagicMock(spec=PromptTarget))
+        assert isinstance(config.first_message, SeedPrompt)
+        assert "objective" in (config.first_message.parameters or [])
+        assert isinstance(config.adversarial_prompt_template, SeedPrompt)
+        assert "feedback_text" in (config.adversarial_prompt_template.parameters or [])
+
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_created_attack_scores_every_turn_without_judge_feedback(self):
+        """Paper section 3.3: GOAT's attacker never sees judge output. The created attack must
+        disable score feedback while still scoring every turn (early stopping), leave the
+        scenario's shared config unchanged, and carry the setting into its eval identity."""
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        objective_scorer.get_identifier.return_value = get_mock_scorer_identifier()
+        scenario_scoring = AttackScoringConfig(objective_scorer=objective_scorer)
+
+        attack = (
+            self._goat_factory()
+            .create(
+                objective_target=MockPromptTarget(),
+                attack_scoring_config=scenario_scoring,
+                adversarial_chat=MockPromptTarget(),
+            )
+            .attack
+        )
+
+        assert isinstance(attack, RedTeamingAttack)
+        applied = attack.get_attack_scoring_config()
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
+        assert attack._score_last_turn_only is False
+        assert scenario_scoring.use_score_as_feedback is True
+        assert attack.get_identifier().params["use_score_as_feedback"] is False
+
+    async def test_registered_when_extra_selected(self, mock_adversarial_target):
+        init = TechniqueInitializer()
+        init.params = {"tags": ["extra"]}
+        await init.initialize_async()
+
+        assert "goat" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+
+class TestTechniqueInitializerDiscovery:
+    """Tests that the initializer is auto-discovered by InitializerRegistry."""
+
+    def test_initializer_is_discovered(self):
+        from pyrit.registry import InitializerRegistry
+
+        registry = InitializerRegistry()
+        names = set(registry.get_class_names())
+        assert "technique" in names

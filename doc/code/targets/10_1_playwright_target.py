@@ -8,7 +8,7 @@
 #       jupytext_version: 1.19.0
 # ---
 # %% [markdown]
-# # 10.1 Generic Playwright Target
+# # Generic Playwright Target
 #
 # This notebook demonstrates how to interact with the **Playwright Target** in PyRIT.
 #
@@ -23,6 +23,7 @@
 # To run the Flask app, you also must [download](https://ollama.com/download) and run Ollama, making sure the flask is using a correct model. For example, `ollama run llama3.2:1b` runs the Llama 3.2 1B model.
 #
 # Additionally, you need to install playwright by executing `playwright install`.
+
 # %% [markdown]
 # ## Example: Interacting with a Web Application using `PlaywrightTarget`
 #

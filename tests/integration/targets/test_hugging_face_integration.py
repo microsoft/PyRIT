@@ -45,7 +45,7 @@ def hf_chat_target(hf_token, hf_endpoint, sqlite_instance) -> OpenAIChatTarget:
         endpoint=hf_endpoint,
         api_key=hf_token,
         model_name=DEFAULT_HF_MODEL,
-        max_tokens=30,
+        extra_body_parameters={"max_tokens": 30},
     )
 
 
@@ -65,7 +65,6 @@ def hf_response_target(hf_token, hf_endpoint, sqlite_instance) -> OpenAIResponse
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_chat_completion_basic(hf_chat_target):
     """Verify a simple prompt returns a non-empty response via the HF router."""
     msg = MessagePiece(role="user", original_value="What is 2+2? Answer with just the number.").to_message()
@@ -79,14 +78,13 @@ async def test_chat_completion_basic(hf_chat_target):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_chat_completion_with_temperature(hf_token, hf_endpoint, sqlite_instance):
     """Verify temperature param is accepted by the HF router."""
     target = OpenAIChatTarget(
         endpoint=hf_endpoint,
         api_key=hf_token,
         model_name=DEFAULT_HF_MODEL,
-        max_tokens=30,
+        extra_body_parameters={"max_tokens": 30},
         temperature=0.7,
     )
 
@@ -101,7 +99,6 @@ async def test_chat_completion_with_temperature(hf_token, hf_endpoint, sqlite_in
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_chat_completion_identifier(hf_chat_target):
     """Verify the component identifier reflects the HF endpoint and model."""
     identifier = hf_chat_target.get_identifier()
@@ -115,7 +112,6 @@ async def test_chat_completion_identifier(hf_chat_target):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_response_api_basic(hf_response_target):
     """Verify a simple prompt returns a non-empty response via the Responses API."""
     msg = MessagePiece(role="user", original_value="What is 2+2? Answer with just the number.").to_message()
@@ -129,7 +125,6 @@ async def test_response_api_basic(hf_response_target):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_response_api_with_temperature(hf_token, hf_endpoint, sqlite_instance):
     """Verify temperature param is accepted by the Responses API on HF."""
     target = OpenAIResponseTarget(
@@ -151,7 +146,6 @@ async def test_response_api_with_temperature(hf_token, hf_endpoint, sqlite_insta
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_response_api_identifier(hf_response_target):
     """Verify the component identifier reflects the HF endpoint and model."""
     identifier = hf_response_target.get_identifier()

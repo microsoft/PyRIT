@@ -1,8 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
+import threading
 from asyncio import Task
+from collections.abc import Coroutine
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +25,31 @@ def is_torch_installed():
         return True
     except ModuleNotFoundError:
         return False
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+async def test_send_cancellation_does_not_cancel_shared_model_load(patch_central_database):
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    load_started = asyncio.Event()
+    load_release = asyncio.Event()
+
+    async def load_model_async() -> None:
+        load_started.set()
+        await load_release.wait()
+
+    shared_load = asyncio.ensure_future(load_model_async())
+    target.load_model_and_tokenizer_task = shared_load
+    wait_task = asyncio.ensure_future(target._wait_for_model_and_tokenizer_async())
+    await load_started.wait()
+
+    wait_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await wait_task
+
+    assert not shared_load.cancelled()
+    load_release.set()
+    await shared_load
+    await target._wait_for_model_and_tokenizer_async()
 
 
 # Fixture to mock get_required_value
@@ -92,16 +121,19 @@ class AwaitableTask(AsyncMock):
 
 @pytest.fixture(autouse=True)
 def mock_create_task():
+    def _close_coroutine(coroutine: Coroutine[Any, Any, None]) -> AwaitableTask:
+        coroutine.close()
+        return AwaitableTask(spec=Task)
+
     with patch("asyncio.create_task") as mock_task:
-        # Return an AwaitableTask that can be awaited
-        mock_task.return_value = AwaitableTask(spec=Task)
+        mock_task.side_effect = _close_coroutine
         yield mock_task
 
 
 @pytest.fixture(autouse=True)
 def mock_download_specific_files_async():
     with patch(
-        "pyrit.prompt_target.hugging_face.hugging_face_chat_target.download_specific_files_async",
+        "pyrit.common.download_hf_model.download_specific_files_async",
         new_callable=AsyncMock,
     ) as mock:
         yield mock
@@ -148,6 +180,7 @@ async def test_hf_initialization_with_necessary_files(patch_central_database, mo
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_is_model_id_valid_true():
     # Simulate valid model ID
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
@@ -157,6 +190,7 @@ async def test_is_model_id_valid_true():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_is_model_id_valid_false():
     # Simulate invalid model ID by causing an exception
     with patch("transformers.PretrainedConfig.from_pretrained", side_effect=Exception("Invalid model")):
@@ -167,11 +201,59 @@ async def test_is_model_id_valid_false():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_and_tokenizer():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     await hf_chat.load_model_and_tokenizer_async()
     assert hf_chat.model is not None
     assert hf_chat.tokenizer is not None
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+async def test_load_model_and_tokenizer_keeps_event_loop_schedulable(patch_central_database):
+    """The blocking `transformers` import/model load must run off the event loop.
+
+    `_load_from_path` is patched to block a real OS thread (via `threading.Event`) rather than
+    sleeping, so if it ran directly on the event loop this test would deadlock/timeout instead of
+    merely running slow -- a deterministic failure signal rather than a flaky timing assertion.
+    """
+    HuggingFaceChatTarget.disable_cache()
+    try:
+        hf_chat = HuggingFaceChatTarget(model_id="test_model_event_loop_probe", use_cuda=False)
+
+        load_started = threading.Event()
+        load_release = threading.Event()
+
+        def _blocking_load(path: str, **kwargs: Any) -> None:
+            load_started.set()
+            assert load_release.wait(timeout=5), "load_release was never set; test would hang otherwise"
+            hf_chat.tokenizer = MagicMock()
+            hf_chat.model = MagicMock()
+            hf_chat.model.to.return_value = hf_chat.model
+
+        with patch.object(hf_chat, "_load_from_path", side_effect=_blocking_load) as mock_load_from_path:
+            load_task = asyncio.ensure_future(hf_chat.load_model_and_tokenizer_async())
+
+            # Confirm the blocking call actually started on a worker thread before probing.
+            assert await asyncio.to_thread(load_started.wait, 5)
+            assert not load_task.done()
+
+            # While the worker thread is parked on `load_release`, the event loop itself must
+            # still be able to schedule and complete unrelated work. If `_load_from_path` (and the
+            # `transformers` import it performs) ran directly on the event loop, this would never
+            # get a chance to run and `asyncio.wait_for` would raise `TimeoutError`.
+            probe_result = await asyncio.wait_for(asyncio.sleep(0, result="probe-completed"), timeout=2)
+            assert probe_result == "probe-completed"
+            assert not load_task.done()
+
+            load_release.set()
+            await asyncio.wait_for(load_task, timeout=5)
+
+        mock_load_from_path.assert_called_once()
+        assert hf_chat.model is not None
+        assert hf_chat.tokenizer is not None
+    finally:
+        HuggingFaceChatTarget.enable_cache()
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
@@ -219,6 +301,7 @@ async def test_missing_chat_template_error():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_invalid_prompt_request_validation():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     # Await the background task to prevent warnings
@@ -248,6 +331,7 @@ async def test_invalid_prompt_request_validation():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_with_missing_files():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, necessary_files=["file1", "file2"])
     await hf_chat.load_model_and_tokenizer_async()
@@ -271,6 +355,7 @@ def test_enable_disable_cache():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_with_model_path():
     """Test loading a model from a local directory (`model_path`)."""
     model_path = "./mock_local_model_path"
@@ -281,6 +366,7 @@ async def test_load_model_with_model_path():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_load_model_with_trust_remote_code():
     """Test loading a remote model requiring `trust_remote_code=True`."""
     model_id = "mock_remote_model"
@@ -291,6 +377,7 @@ async def test_load_model_with_trust_remote_code():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_init_with_both_model_id_and_model_path_raises():
     """Ensure providing both `model_id` and `model_path` raises an error."""
     with pytest.raises(ValueError) as excinfo:
@@ -299,6 +386,7 @@ def test_init_with_both_model_id_and_model_path_raises():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_load_model_without_model_id_or_path():
     """Ensure initializing without `model_id` or `model_path` raises an error."""
     with pytest.raises(ValueError) as excinfo:
@@ -307,6 +395,7 @@ def test_load_model_without_model_id_or_path():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 async def test_optional_kwargs_args_passed_when_loading_model(mock_transformers):
     """Test loading a model from a local directory (`model_path`) with optional keyword arguments."""
     mock_tokenizer_from_pretrained, mock_model_from_pretrained = mock_transformers
@@ -342,6 +431,7 @@ async def test_hugging_face_chat_sets_endpoint_and_rate_limit(patch_central_data
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_identifier_includes_generation_params():
     """New generation params (top_k, do_sample, repetition_penalty, random_seed) appear in the identifier."""
     target = HuggingFaceChatTarget(
@@ -362,6 +452,7 @@ def test_identifier_includes_generation_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_identifier_excludes_none_generation_params():
     """None-valued generation params are excluded from the identifier (backward compatibility)."""
     target = HuggingFaceChatTarget(
@@ -376,7 +467,6 @@ def test_identifier_excludes_none_generation_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_generate_passes_new_params():
     """Verify top_k, do_sample, repetition_penalty are forwarded to model.generate()."""
@@ -405,7 +495,6 @@ async def test_generate_passes_new_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_generate_omits_none_params():
     """When optional params are None, they should not be passed to model.generate()."""
@@ -431,6 +520,7 @@ async def test_generate_omits_none_params():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_random_seed_calls_manual_seed_at_init():
     """When random_seed is set, torch.manual_seed is called during construction."""
     with patch("torch.manual_seed") as mock_manual_seed:
@@ -443,6 +533,7 @@ def test_random_seed_calls_manual_seed_at_init():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_no_random_seed_does_not_call_manual_seed():
     """When random_seed is None, torch.manual_seed is not called."""
     with patch("torch.manual_seed") as mock_manual_seed:
@@ -454,6 +545,7 @@ def test_no_random_seed_does_not_call_manual_seed():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_set_random_seed_reseeds_rng():
     """Calling set_random_seed updates the seed and immediately re-seeds the RNG."""
     target = HuggingFaceChatTarget(
@@ -467,6 +559,7 @@ def test_set_random_seed_reseeds_rng():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_sampling_params_without_do_sample_warns():
     """Setting temperature != 1.0 without do_sample=True emits a warning."""
     with pytest.warns(UserWarning, match="do_sample is not True"):
@@ -478,6 +571,7 @@ def test_sampling_params_without_do_sample_warns():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_sampling_params_with_do_sample_no_warning():
     """Setting temperature != 1.0 with do_sample=True does not warn."""
     import warnings
@@ -493,6 +587,7 @@ def test_sampling_params_with_do_sample_no_warning():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
 def test_default_params_no_warning():
     """Default parameters (temperature=1.0, top_p=1.0) do not trigger warning."""
     import warnings
@@ -506,7 +601,6 @@ def test_default_params_no_warning():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_full_conversation_sent_to_chat_template():
     """Verify system and user messages from the full conversation are sent to the chat template."""
@@ -542,7 +636,6 @@ async def test_full_conversation_sent_to_chat_template():
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-@pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
 async def test_effective_generation_config_in_metadata():
     """Verify effective generation config is stored in response prompt_metadata."""
@@ -578,15 +671,3 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
-
-
-@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
-async def test_load_model_and_tokenizer_emits_deprecation_warning_and_delegates():
-    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
-    # Await the background task to avoid warnings about pending coroutines
-    await target.load_model_and_tokenizer_task
-
-    with patch.object(target, "load_model_and_tokenizer_async", new=AsyncMock()) as mock_async:
-        with pytest.warns(DeprecationWarning, match="load_model_and_tokenizer_async"):
-            await target.load_model_and_tokenizer()
-    mock_async.assert_awaited_once()

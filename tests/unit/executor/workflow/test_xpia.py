@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.executor.workflow.xpia import (
     XPIAContext,
@@ -12,8 +13,8 @@ from pyrit.executor.workflow.xpia import (
     XPIAStatus,
     XPIAWorkflow,
 )
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.memory import MemoryInterface
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import Scorer
 
@@ -36,6 +37,18 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
     )
 
 
+def _mock_score(*, value: object, is_undetermined: bool = False) -> MagicMock:
+    """Create a Score mock with the model fields used during Pydantic validation."""
+    score = MagicMock(
+        spec=Score,
+        scored_expectation=None,
+        observation_ids=[],
+        is_undetermined=is_undetermined,
+    )
+    score.get_value.return_value = value
+    return score
+
+
 @pytest.fixture
 def mock_attack_setup_target() -> MagicMock:
     """Create a mock attack setup target."""
@@ -56,7 +69,7 @@ def mock_scorer() -> MagicMock:
 @pytest.fixture
 def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer."""
-    normalizer = MagicMock(spec=PromptNormalizer)
+    normalizer = get_mock_prompt_normalizer()
     normalizer.send_prompt_async = AsyncMock()
     return normalizer
 
@@ -93,7 +106,7 @@ def workflow(
     workflow = XPIAWorkflow(
         attack_setup_target=mock_attack_setup_target, scorer=mock_scorer, prompt_normalizer=mock_prompt_normalizer
     )
-    workflow._memory = MagicMock()
+    workflow._memory = MagicMock(spec=MemoryInterface)
     return workflow
 
 
@@ -197,8 +210,7 @@ class TestXPIAWorkflowPerform:
         mock_response.get_value.return_value = "Attack setup response"
         mock_prompt_normalizer.send_prompt_async.return_value = mock_response
 
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = 0.8
+        mock_score = _mock_score(value=0.8)
         mock_scorer.score_text_async.return_value = [mock_score]
 
         # Execute workflow
@@ -238,7 +250,7 @@ class TestXPIAWorkflowPerform:
         workflow = XPIAWorkflow(
             attack_setup_target=mock_attack_setup_target, scorer=None, prompt_normalizer=mock_prompt_normalizer
         )
-        workflow._memory = MagicMock()
+        workflow._memory = MagicMock(spec=MemoryInterface)
 
         # Setup mock responses
         mock_response = MagicMock()
@@ -329,7 +341,6 @@ class TestXPIAWorkflowPerform:
         # Check that message was passed (converted from seed_group)
         assert "message" in call_args.kwargs
         assert call_args.kwargs["target"] == workflow._attack_setup_target
-        assert call_args.kwargs["labels"] == valid_context.memory_labels
         assert call_args.kwargs["conversation_id"] == valid_context.attack_setup_target_conversation_id
 
     @patch("pyrit.executor.workflow.xpia.CentralMemory")
@@ -338,7 +349,7 @@ class TestXPIAWorkflowPerform:
     ) -> None:
         """Test that execute processing adds response to memory."""
         # Setup mock memory
-        mock_memory_instance = MagicMock()
+        mock_memory_instance = MagicMock(spec=MemoryInterface)
         mock_memory_class.get_memory_instance.return_value = mock_memory_instance
 
         # Patch the workflow's _memory attribute to use our mock
@@ -351,8 +362,8 @@ class TestXPIAWorkflowPerform:
         assert response == "Processing response"
 
         # Verify memory addition
-        mock_memory_instance.add_message_to_memory.assert_called_once()
-        call_args = mock_memory_instance.add_message_to_memory.call_args
+        mock_memory_instance.add_message_to_memory_async.assert_called_once()
+        call_args = mock_memory_instance.add_message_to_memory_async.call_args
         assert call_args.kwargs["request"] is not None
         assert isinstance(call_args.kwargs["request"], Message)
 
@@ -383,7 +394,7 @@ class TestXPIAWorkflowExecution:
         """Test execute_async with valid parameters."""
         # Create workflow with mocked PromptNormalizer
         with patch("pyrit.executor.workflow.xpia.PromptNormalizer") as mock_normalizer_class:
-            mock_normalizer = MagicMock()
+            mock_normalizer = get_mock_prompt_normalizer()
             mock_normalizer.send_prompt_async = AsyncMock()
             mock_normalizer_class.return_value = mock_normalizer
 
@@ -426,7 +437,7 @@ class TestXPIAWorkflowExecution:
         """Test that execute_async raises error with invalid attack_content type."""
         # Create workflow with mocked PromptNormalizer
         with patch("pyrit.executor.workflow.xpia.PromptNormalizer") as mock_normalizer_class:
-            mock_normalizer = MagicMock()
+            mock_normalizer = get_mock_prompt_normalizer()
             mock_normalizer.send_prompt_async = AsyncMock()
             mock_normalizer_class.return_value = mock_normalizer
 
@@ -444,7 +455,7 @@ class TestXPIAWorkflowExecution:
         """Test that execute_async raises error with invalid processing_callback type."""
         # Create workflow with mocked PromptNormalizer
         with patch("pyrit.executor.workflow.xpia.PromptNormalizer") as mock_normalizer_class:
-            mock_normalizer = MagicMock()
+            mock_normalizer = get_mock_prompt_normalizer()
             mock_normalizer.send_prompt_async = AsyncMock()
             mock_normalizer_class.return_value = mock_normalizer
 
@@ -466,7 +477,7 @@ class TestXPIAWorkflowExecution:
         """Test that execute_async raises error with invalid memory_labels type."""
         # Create workflow with mocked PromptNormalizer
         with patch("pyrit.executor.workflow.xpia.PromptNormalizer") as mock_normalizer_class:
-            mock_normalizer = MagicMock()
+            mock_normalizer = get_mock_prompt_normalizer()
             mock_normalizer.send_prompt_async = AsyncMock()
             mock_normalizer_class.return_value = mock_normalizer
 
@@ -485,7 +496,7 @@ class TestXPIAWorkflowExecution:
         """Test that execute_async raises error when attack_content is missing."""
         # Create workflow with mocked PromptNormalizer
         with patch("pyrit.executor.workflow.xpia.PromptNormalizer") as mock_normalizer_class:
-            mock_normalizer = MagicMock()
+            mock_normalizer = get_mock_prompt_normalizer()
             mock_normalizer.send_prompt_async = AsyncMock()
             mock_normalizer_class.return_value = mock_normalizer
 
@@ -540,8 +551,7 @@ class TestXPIAResult:
 
     def test_success_property_with_positive_score(self) -> None:
         """Test success property returns True for positive score."""
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = 0.8
+        mock_score = _mock_score(value=0.8)
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -549,8 +559,7 @@ class TestXPIAResult:
 
     def test_success_property_with_zero_score(self) -> None:
         """Test success property returns False for zero score."""
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = 0.0
+        mock_score = _mock_score(value=0.0)
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -558,8 +567,7 @@ class TestXPIAResult:
 
     def test_success_property_with_negative_score(self) -> None:
         """Test success property returns False for negative score."""
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = -0.5
+        mock_score = _mock_score(value=-0.5)
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -573,8 +581,7 @@ class TestXPIAResult:
 
     def test_success_property_with_non_numeric_score(self) -> None:
         """Test success property returns False for non-numeric score."""
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = "invalid"
+        mock_score = _mock_score(value="invalid")
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -582,8 +589,7 @@ class TestXPIAResult:
 
     def test_status_property_success(self) -> None:
         """Test status property returns SUCCESS for successful attack."""
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = 0.8
+        mock_score = _mock_score(value=0.8)
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -591,8 +597,7 @@ class TestXPIAResult:
 
     def test_status_property_failure(self) -> None:
         """Test status property returns FAILURE for failed attack."""
-        mock_score = MagicMock(spec=Score)
-        mock_score.get_value.return_value = 0.0
+        mock_score = _mock_score(value=0.0)
 
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=mock_score)
 
@@ -602,6 +607,23 @@ class TestXPIAResult:
         """Test status property returns UNKNOWN when no score is provided."""
         result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=None)
 
+        assert result.status == XPIAStatus.UNKNOWN
+
+    def test_status_property_unknown_for_undetermined_score(self) -> None:
+        score = Score(
+            score_value=None,
+            status=ScoreStatus.UNDETERMINED,
+            score_type="float_scale",
+            score_category=["test"],
+            score_value_description="No verdict",
+            score_rationale="The scorer could not reach a verdict.",
+            score_metadata={},
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=_mock_scorer_id(),
+        )
+        result = XPIAResult(processing_conversation_id="test-id", processing_response="test response", score=score)
+
+        assert result.success is False
         assert result.status == XPIAStatus.UNKNOWN
 
 

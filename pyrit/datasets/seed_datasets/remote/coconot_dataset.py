@@ -82,7 +82,14 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         "Hannaneh Hajishirzi",
     ]
 
-    _GROUPS: ClassVar[list[str]] = ["Allen Institute for AI"]
+    _GROUPS: ClassVar[list[str]] = [
+        "Allen Institute for Artificial Intelligence",
+        "University of Washington",
+        "The Ohio State University",
+        "Microsoft Research",
+        "Samaya AI",
+        "NVIDIA",
+    ]
 
     HF_DATASET_NAME: str = "allenai/coconot"
 
@@ -124,7 +131,7 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         return self.SPLITS
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the CoCoNot subset and return it as a SeedDataset.
 
@@ -202,10 +209,15 @@ class _CoCoNotBaseDataset(_RemoteDatasetLoader):
         if response:
             metadata["response"] = response
 
+        # CoCoNot's noncompliance taxonomy (incomplete/unsupported/indeterminate/
+        # humanizing/safety) is not a harm taxonomy, so harm categories are left
+        # empty while the native category stays in metadata.
+        harm_categories: list[str] = []
+
         return SeedObjective(
             value=row["prompt"],
             dataset_name=self.dataset_name,
-            harm_categories=[category] if category else [],
+            harm_categories=harm_categories,
             description=self.DEFAULT_DESCRIPTION,
             source=source_url,
             authors=self._AUTHORS,

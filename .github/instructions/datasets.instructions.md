@@ -4,15 +4,17 @@ applyTo: "pyrit/datasets/seed_datasets/**"
 
 # Seed Dataset Loader Guidelines
 
+**Responsibility**: Seed dataset loaders (`SeedDatasetProvider` subclasses) are the single place to manage the prompts/objectives for a source. They load seeds into `CentralMemory`; components then retrieve seeds from memory — components never read from a loader directly.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): a loader defines and holds seeds; it must not select or combine which seeds an attack uses (that's a scenario/attack technique) or render/parameterize prompts at send time (converters/normalizers). Flag such bleed in review.
+
 These rules apply when adding or modifying loaders under `pyrit/datasets/seed_datasets/`.
 Style rules from `style-guide.instructions.md` (async `_async` suffix, keyword-only args, type hints, enums-over-Literals) still apply and are not repeated here.
 
 The keyword-only `__init__` rule is **enforced at class-definition time** by
 `SeedDatasetProvider.__init_subclass__` calling `enforce_keyword_only_init` (see
 `pyrit/common/brick_contract.py`). Loaders with positional `__init__` params raise
-`TypeError` at import time; existing offenders may set `_brick_legacy_init = True`
-to opt into a one-release grace period that downgrades the error to a
-`DeprecationWarning(removed_in="0.16.0")`.
+`TypeError` at import time.
 
 ## Use SeedObjective for behavior/goal rows; SeedPrompt for literal messages
 
@@ -28,7 +30,11 @@ When in doubt: if the row reads as "an instruction the red-teamer wants the mode
 Concrete loader classes are private (leading underscore, e.g. `_HarmBenchDataset`) and must implement:
 
 - a `dataset_name` property returning the short snake_case name used by `CentralMemory`,
-- `async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset`.
+- `async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset`.
+
+Return the dataset without setting origin. The base class's public `fetch_dataset_async`
+assigns `SeedOrigin.REMOTE` to every seed, including when reading an explicit source file
+or a cached download. Do not override that public method.
 
 Use the inherited helpers — do not re-implement them:
 
@@ -36,7 +42,9 @@ Use the inherited helpers — do not re-implement them:
 - `await self._fetch_from_huggingface(dataset_name=..., split=..., cache=..., token=...)` for HF Hub,
 - `self._validate_enum(value, EnumCls, "label")` / `self._validate_enums(values, EnumCls, "label")` for enum filter validation.
 
-Local YAML-backed datasets subclass `_LocalDatasetLoader` instead; the conventions below about metadata, enums, and tests still apply.
+Local YAML-backed datasets subclass `_LocalDatasetLoader` instead; shared YAML loading
+assigns `SeedOrigin.LOCAL` when origin is omitted and rejects an explicit conflicting origin.
+The conventions below about metadata, enums, and tests still apply.
 
 ## Document HuggingFace gating and accept a `token`
 
@@ -71,7 +79,7 @@ class _MyDataset(_RemoteDatasetLoader):
     HF_DATASET_NAME: str = "owner/my-dataset"
     harm_categories: list[str] = ["harassment", "violence"]
     modalities: list[str] = ["text"]
-    size: str = "medium"   # tiny <10, small 10-99, medium 100-499, large 500-4999, huge 5000+
+    size: str = "medium"  # tiny <10, small 10-99, medium 100-499, large 500-4999, huge 5000+
     tags: set[str] = {"default", "safety"}
 ```
 

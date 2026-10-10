@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 9. Rate Limit (RPM) Threshold
+# # Rate Limit (RPM) Threshold
 #
 # Some targets have a specific Rate Limit (Requests Per Minute) they can handle. In order to abide by this limitation
 # and avoid exceptions, you can configure `max_requests_per_minute` on the target before using it with an attack.

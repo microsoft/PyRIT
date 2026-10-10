@@ -9,7 +9,7 @@
 # ---
 
 # %% [markdown]
-# # 1. Loading Built-in Datasets
+# # Loading Built-in Datasets
 #
 # PyRIT includes many built-in datasets to help you get started with AI red teaming. While PyRIT aims to be unopinionated about what constitutes harmful content, it provides easy mechanisms to use datasets—whether built-in, community-contributed, or your own custom datasets.
 #
@@ -32,7 +32,9 @@
 # Do-Not-Answer [@wang2023donotanswer],
 # EquityMedQA [@pfohl2024equitymedqa],
 # FigStep [@gong2025figstep],
+# FORTRESS [@knight2025fortress],
 # HarmBench [@mazeika2024harmbench],
+# HarmEval [@banerjee2025safeinfer],
 # HarmfulQA [@bhardwaj2023harmfulqa],
 # JailbreakBench [@chao2024jailbreakbench],
 # JailbreakV-28K [@luo2024jailbreakv],
@@ -46,6 +48,7 @@
 # OR-Bench [@cui2024orbench],
 # PKU-SafeRLHF [@ji2024pkusaferlhf],
 # SALAD-Bench [@li2024saladbench],
+# SemGuard [@abughallous2026semguard],
 # SimpleSafetyTests [@vidgen2023simplesafetytests],
 # SIUO [@wang2025siuo],
 # SORRY-Bench [@xie2024sorrybench],
@@ -55,6 +58,8 @@
 # ToxicChat [@lin2023toxicchat],
 # VLSU [@palaskar2025vlsu],
 # VLGuard [@zong2024vlguard],
+# WildGuard [@han2024wildguard],
+# XL-SafetyBench [@choi2026xlsafetybench],
 # XSTest [@rottger2023xstest],
 # AILuminate [@ghosh2025ailuminate],
 # Transphobia Awareness [@scheuerman2025transphobia],
@@ -66,8 +71,13 @@
 # (`garak_pypi_packages`, `garak_npm_packages`, `garak_crates_packages`,
 # `garak_rubygems_packages`, `garak_dart_packages`, `garak_perl_packages`,
 # `garak_raku_packages`), system-prompt libraries (`garak_drh_system_prompts`,
-# `garak_tm_system_prompts`), and an audio jailbreak set
-# (`garak_audio_achilles_heel`).
+# `garak_tm_system_prompts`), exploitation echo corpora (`garak_exploitation_sql_injection`,
+# `garak_exploitation_python_code_execution`), PromptInject context and technique templates
+# (`prompt_inject_contexts`, `prompt_inject_techniques`), API-key probe corpora (`garak_api_key_services`,
+# `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
+# the API-key service-to-pattern map (`garak_api_key_service_patterns`),
+# an audio jailbreak set
+# (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 
 # %%
 from pyrit.datasets import SeedDatasetProvider
@@ -101,7 +111,6 @@ for dataset in datasets:
 # The following example demonstrates adding datasets to memory. For comprehensive details on memory capabilities, see the [memory documentation](../memory/0_memory.md) and [seed database guide](../memory/8_seed_database.ipynb).
 
 # %%
-
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 
 memory = CentralMemory().get_memory_instance()
@@ -109,4 +118,4 @@ memory = CentralMemory().get_memory_instance()
 await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyrit")
 
 # Memory has flexible querying capabilities
-memory.get_seeds(harm_categories=["illegal"], seed_type="objective")
+(await memory.get_seeds_async(harm_categories=["illegal"], seed_type="objective"))

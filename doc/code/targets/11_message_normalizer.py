@@ -5,11 +5,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.0
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
-# # 11. MessageNormalizer
+# # MessageNormalizer
 #
 # MessageNormalizers convert PyRIT's `Message` format into other formats that specific targets require. Different LLMs and APIs expect messages in different formats:
 #
@@ -20,6 +20,35 @@
 #
 # The `MessageNormalizer` classes handle these conversions, making it easy to work with any target regardless of its expected input format.
 #
+# ## Memory is canonical, the normalized payload is not
+#
+# A normalizer builds a **target-facing view at send time**. It is never written back to memory.
+#
+# This matters most for a target that cannot accept editable history. If you prepend eight
+# structured turns to a conversation, memory keeps eight structured turns, and the UI, scorers,
+# resume, and exports all see eight turns. `HistorySquashNormalizer` flattens those turns into
+# a single prompt only for the wire, then discards the flattened copy. The two representations
+# are expected to differ.
+#
+# Flattening the conversation in memory instead would break scoring, resume, and evaluation for
+# the sake of one target's wire format. If a prepended piece is not text (an image, for example),
+# the flattened view holds a text placeholder and the normalizer logs a warning, because the
+# target receives a description instead of the media.
+#
+# For prepended history on a target without editable history, PyRIT:
+#
+# 1. Converts and persists the structured prepended messages.
+# 2. Converts the live request.
+# 3. Applies the per-send `EDITABLE_HISTORY` normalizer selected by
+#    `PrependedConversationConfig`.
+# 4. Applies the target's remaining capability normalizers.
+# 5. Serializes the normalized view and invokes the provider.
+#
+# The attack-owned `PrependedHistorySendContext` records the persisted prepended-message boundary.
+# Stateful targets consume it after the first successful target invocation; failed or cancelled
+# invocations retain it for retry. Stateless targets reuse it for each current request. Targets
+# interact with that state only through an internal `TargetSendContext` protocol at the send boundary.
+#
 # ## Base Classes
 #
 # There are two base normalizer types:
@@ -27,6 +56,31 @@
 # - **`MessageStringNormalizer`**: Converts `list[Message]` → `str` (e.g., to ChatML format)
 #
 # Some normalizers implement both interfaces.
+
+# %% [markdown]
+# ## Two History-Squashing Scopes
+#
+# PyRIT uses `HistorySquashNormalizer` in two places that adapt different target capabilities:
+#
+# - **Multi-turn support** answers whether the target can continue a conversation across sends.
+# - **Editable-history support** answers whether PyRIT can supply or rewrite earlier turns before
+#   sending the current message.
+#
+# | Target capabilities | Prepended-history behavior |
+# |---|---|
+# | Multi-turn with editable history | Send the structured history directly; no history squashing is needed. |
+# | Multi-turn without editable history | A context-scoped `HistorySquashNormalizer` encodes the prepended history and first live message into the initial request. Later turns use the target's own conversation state. |
+# | Single-turn without editable history | The context-scoped `HistorySquashNormalizer` first produces one message. The target's ordinary use of the same normalizer then sees one message and does nothing. |
+#
+# The first-turn distinction comes from the attack-owned prepended-history send context, not from a
+# separate normalizer implementation. The context applies its configured `HistorySquashNormalizer`
+# once to bootstrap prepended history for a target that cannot accept caller-supplied prior turns.
+# Its key use case is a multi-turn, server-managed target without editable history.
+#
+# The target's ordinary capability pipeline independently uses `HistorySquashNormalizer` for a target
+# without multi-turn support. Both scopes preserve original-versus-converted text views and keep
+# non-text pieces from the current request separate. The context-scoped use can supply a custom
+# formatter; the ordinary use defaults to `[Conversation History]` and `[Current Message]` sections.
 
 # %%
 from pyrit.models import Message
@@ -82,7 +136,13 @@ print(json_output)
 # %% [markdown]
 # ## GenericSystemSquashNormalizer
 #
-# Some models don't support system messages. The `GenericSystemSquashNormalizer` merges the system message into the first user message using a standardized instruction format.
+# Some models don't support system messages. The `GenericSystemSquashNormalizer` combines consecutive
+# system messages in their original order and merges them into the user message immediately following
+# them. If no user immediately follows, it converts the system messages to a user message in their
+# original position.
+#
+# For example, `system: Policy`, `system: Persona`, `user: Question` becomes one user message containing
+# the Policy and Persona instructions followed by the Question.
 #
 # The format is:
 # ```
@@ -171,7 +231,7 @@ print(formatted)
 # The `TokenizerTemplateNormalizer` supports different strategies for handling system messages:
 #
 # - **`keep`**: Pass system messages as-is (default)
-# - **`squash`**: Merge system into first user message using `GenericSystemSquashNormalizer`
+# - **`squash`**: Merge system messages into the following user message using `GenericSystemSquashNormalizer`
 # - **`ignore`**: Drop system messages entirely
 # - **`developer`**: Change system role to developer role (for newer OpenAI models)
 
@@ -203,7 +263,6 @@ print(custom_formatted)
 # You can create custom normalizers by extending the base classes.
 
 # %%
-
 from pyrit.message_normalizer import MessageStringNormalizer
 from pyrit.models import Message
 

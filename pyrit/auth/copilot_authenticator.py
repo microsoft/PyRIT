@@ -6,13 +6,12 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)
@@ -152,20 +151,6 @@ class CopilotAuthenticator(Authenticator):
         """
         return self._current_claims or {}
 
-    async def get_claims(self) -> dict[str, Any]:  # pyrit-async-suffix-exempt
-        """
-        Return the JWT claims (deprecated alias of ``get_claims_async``).
-
-        Returns:
-            dict[str, Any]: The JWT claims decoded from the access token.
-        """
-        print_deprecation_message(
-            old_item="CopilotAuthenticator.get_claims",
-            new_item="CopilotAuthenticator.get_claims_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_claims_async()
-
     @staticmethod
     def _create_persistent_cache(cache_file: str, fallback_to_plaintext: bool = False) -> Any:
         """
@@ -232,8 +217,8 @@ class CopilotAuthenticator(Authenticator):
 
             expires_at = token_data.get("expires_at")
             if expires_at:
-                expiry_time = datetime.fromtimestamp(expires_at, tz=timezone.utc)
-                current_time = datetime.now(timezone.utc)
+                expiry_time = datetime.fromtimestamp(expires_at, tz=UTC)
+                current_time = datetime.now(UTC)
 
                 # This should prevent most mid-request failures due to token expiration
                 expiry_with_buffer = expiry_time - timedelta(seconds=self.EXPIRY_BUFFER_SECONDS)
@@ -280,11 +265,11 @@ class CopilotAuthenticator(Authenticator):
             "access_token": token,
             "token_type": "Bearer",
             "claims": self._current_claims,
-            "cached_at": datetime.now(timezone.utc).timestamp(),
+            "cached_at": datetime.now(UTC).timestamp(),
         }
 
         if expires_in:
-            expires_at = datetime.now(timezone.utc).timestamp() + expires_in
+            expires_at = datetime.now(UTC).timestamp() + expires_in
             token_data["expires_at"] = expires_at
             token_data["expires_in"] = expires_in
 
@@ -374,7 +359,7 @@ class CopilotAuthenticator(Authenticator):
         """
         from playwright.async_api import async_playwright  # type: ignore[ty:unresolved-import]
 
-        bearer_token = None
+        bearer_token: str | None = None
         token_expires_in = None
 
         async with async_playwright() as playwright:
@@ -408,7 +393,10 @@ class CopilotAuthenticator(Authenticator):
                                     try:
                                         data = json.loads(text)
                                         if "access_token" in data:
-                                            bearer_token = data["access_token"]
+                                            token = data["access_token"]
+                                            if not isinstance(token, str):
+                                                raise TypeError("OAuth access_token must be a string")
+                                            bearer_token = token
                                             token_expires_in = data.get("expires_in")
                                             logger.info("Captured bearer token from JSON response.")
 

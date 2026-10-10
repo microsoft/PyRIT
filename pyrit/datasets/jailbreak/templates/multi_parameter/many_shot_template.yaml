@@ -39,8 +39,8 @@ groups:
   - University of Toronto
   - Vector Institute
   - Constellation
-  - Stanford
-  - Harvard
+  - Stanford University
+  - Harvard University
 source: https://www.anthropic.com/research/many-shot-jailbreaking
 parameters:
   - prompt

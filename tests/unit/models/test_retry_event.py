@@ -1,9 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from pyrit.models.retry_event import RetryEvent
 
@@ -23,11 +21,11 @@ class TestRetryEvent:
         assert evt.endpoint is None
         assert evt.elapsed_seconds == 0.0
         assert evt.timestamp is not None
-        assert evt.timestamp.tzinfo is timezone.utc
+        assert evt.timestamp.tzinfo is UTC
 
     def test_full_construction(self) -> None:
         """RetryEvent constructed with all args stores them correctly."""
-        ts = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 5, 7, 12, 0, 0, tzinfo=UTC)
         evt = RetryEvent(
             attempt_number=3,
             function_name="send_prompt_async",
@@ -123,14 +121,3 @@ class TestRetryEvent:
         assert evt.timestamp.month == 5
         assert evt.timestamp.hour == 12
         assert evt.timestamp.minute == 30
-
-    def test_to_dict_from_dict_deprecated_wrappers_still_work(self) -> None:
-        """Deprecated to_dict / from_dict wrappers still round-trip correctly."""
-        original = RetryEvent(attempt_number=4, function_name="fn", exception_type="Boom")
-        with pytest.warns(DeprecationWarning):
-            payload = original.to_dict()
-        with pytest.warns(DeprecationWarning):
-            restored = RetryEvent.from_dict(payload)
-        assert restored.attempt_number == 4
-        assert restored.function_name == "fn"
-        assert restored.exception_type == "Boom"

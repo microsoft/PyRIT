@@ -3,14 +3,22 @@
 
 """Unit tests for the unified Parameter model and its coercion methods."""
 
+from collections.abc import Callable, Collection, Sequence
 from enum import Enum
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal, Union
 
 import pytest
+from pydantic import ValidationError
 
+from pyrit.common import REQUIRED_VALUE
 from pyrit.models import Parameter
-from pyrit.models.parameter import ComponentType, RegistryReference, _is_scalar_param_type
-from pyrit.registry.resolution import display_choices
+from pyrit.models.parameter import (
+    ComponentType,
+    RegistryReference,
+    _is_scalar_param_type,
+    display_choices,
+)
 
 
 class _Speed(Enum):
@@ -60,14 +68,199 @@ class TestParameter:
     def test_parameter_is_immutable(self) -> None:
         p = Parameter(name="x", description="d")
 
-        with pytest.raises((AttributeError, TypeError)):
+        with pytest.raises(ValidationError):
             p.name = "y"  # type: ignore[misc]
+
+
+class TestParameterSerialization:
+    """``Parameter.model_dump`` projects the live type into JSON-friendly display fields."""
+
+    def test_scalar_with_default(self) -> None:
+        dumped = Parameter(name="n", description="d", default=5, param_type=int).model_dump()
+
+        assert dumped == {
+            "name": "n",
+            "description": "d",
+            "default": "5",
+            "type_name": "int",
+            "required": False,
+            "choices": None,
+            "is_list": False,
+            "reference_type": None,
+            "variants": None,
+            "sensitive": False,
+            "multiline": False,
+            "identity_conflicting": False,
+        }
+
+    def test_excludes_live_only_fields(self) -> None:
+        dumped = Parameter(name="n", description="d", param_type=int).model_dump()
+
+        assert "param_type" not in dumped
+        assert "reference" not in dumped
+        assert "destination" not in dumped
+
+    def test_reference_type_serializes_component_family(self) -> None:
+        parameter = Parameter(
+            name="target",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET),
+        )
+        dumped = parameter.model_dump()
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["reference_type"] == "target"
+        assert dumped["type_name"] == "str"
+        assert dumped["is_list"] is False
+        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=str)
+        assert restored.reference_type == "target"
+
+    def test_sensitive_round_trips(self) -> None:
+        parameter = Parameter(
+            name="token",
+            description="d",
+            param_type=str,
+            sensitive=True,
+            multiline=True,
+            identity_conflicting=True,
+        )
+
+        restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+        assert restored.sensitive is True
+        assert restored.multiline is True
+        assert restored.identity_conflicting is True
+
+    def test_list_reference_shape_round_trips(self) -> None:
+        parameter = Parameter(
+            name="targets",
+            description="d",
+            reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object]),
+        )
+
+        dumped = parameter.model_dump()
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert restored.reference == RegistryReference(component_type=ComponentType.TARGET, annotation=list[str])
+
+    def test_required_default_serializes_to_none(self) -> None:
+        p = Parameter(name="mode", description="d", default=REQUIRED_VALUE, param_type=Literal["a", "b"])
+        dumped = p.model_dump()
+
+        assert dumped["required"] is True
+        assert dumped["default"] is None
+        assert dumped["type_name"] == "str"
+        assert dumped["choices"] == ["a", "b"]
+
+    def test_enum_default_serializes_to_member_value(self) -> None:
+        dumped = Parameter(name="speed", description="d", default=_Speed.FAST, param_type=_Speed).model_dump()
+
+        assert dumped["default"] == "fast"
+        assert dumped["choices"] == ["fast", "slow"]
+
+    def test_list_type_is_flagged(self) -> None:
+        dumped = Parameter(name="tags", description="d", default=["x"], param_type=list[str]).model_dump()
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert dumped["default"] == ["x"]
+
+    def test_constrained_list_surfaces_element_choices(self) -> None:
+        dumped = Parameter(name="tags", description="d", default=["fast"], param_type=list[_Speed]).model_dump()
+
+        assert dumped["type_name"] == "list[str]"
+        assert dumped["is_list"] is True
+        assert dumped["choices"] == ["fast", "slow"]
+
+    def test_list_default_serializes_elementwise(self) -> None:
+        """A list default is preserved as a list of display strings, not flattened to ``"['1', '2']"``."""
+        dumped = Parameter(name="nums", description="d", default=[1, 2], param_type=list[int]).model_dump()
+
+        assert dumped["default"] == ["1", "2"]
+
+    def test_optional_scalar_unwraps_to_base_name(self) -> None:
+        """``Optional[int]`` renders the base scalar name, matching choices/coercion."""
+        dumped = Parameter(name="n", description="d", param_type=int | None).model_dump()
+
+        assert dumped["type_name"] == "int"
+
+    def test_optional_list_preserves_display_and_coercion(self) -> None:
+        parameter = Parameter(name="values", description="", param_type=list[int] | None)
+        parameter.validate()
+        assert parameter.type_name == "list[int]"
+        assert parameter.is_list
+        assert parameter.coerce_value(None) is None
+        assert parameter.coerce_value(["1"]) == [1]
+
+    def test_path_round_trip_preserves_coercion(self) -> None:
+        dumped = Parameter(name="input_path", description="d", param_type=Path).model_dump()
+
+        restored = Parameter.model_validate(dumped)
+
+        assert dumped["type_name"] == "Path"
+        assert restored.param_type is Path
+        assert restored.coerce_value("images/input.jpg") == Path("images/input.jpg")
+
+    def test_optional_path_is_path(self) -> None:
+        parameter = Parameter(name="input_path", description="d", param_type=Path | None)
+
+        assert parameter.is_path is True
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    [Path | str, str | Path, Path | str | None, str | Path | None, Union[str, Path]],  # noqa: UP007
+)
+def test_path_or_str_contract_round_trip(annotation: object) -> None:
+    parameter = Parameter(name="source", description="d", param_type=annotation)
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+    url = "https://account.blob.core.windows.net/container/input.png?versionid=123"
+    path = Path("input.png")
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.is_path is False
+        assert candidate.is_path_or_str is True
+        assert candidate.is_string_coercible is True
+        assert candidate.type_name == "Path | str"
+        assert candidate.is_list is False
+        assert candidate.coerce_value(url) == url
+        assert candidate.coerce_value(path) is path
+        assert candidate.coerce_value("input.png") == "input.png"
+        with pytest.raises(ValueError, match="expects a Path or str"):
+            candidate.coerce_value(123)
+
+
+@pytest.mark.parametrize("annotation", [str, Path, Path | int, str | int, Path | str | int, list[Path | str]])
+def test_path_or_str_does_not_match_other_types(annotation: object) -> None:
+    parameter = Parameter(name="source", description="d", param_type=annotation)
+    assert parameter.is_path_or_str is False
+
+
+def test_optional_path_or_str_accepts_none() -> None:
+    parameter = Parameter(name="source", description="d", param_type=Path | str | None)
+    assert parameter.coerce_value(None) is None
+
+
+def test_list_path_or_str_contract_round_trip() -> None:
+    parameter = Parameter(name="sources", description="d", param_type=list[Path | str])
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+    values = [Path("input.png"), "https://account.blob.core.windows.net/container/input.png"]
+
+    for candidate in (parameter, restored):
+        candidate.validate()
+        assert candidate.type_name == "list[Path | str]"
+        assert candidate.is_list is True
+        assert candidate.is_string_coercible is False
+        assert candidate.coerce_value(values) == values
 
 
 class TestIsScalarParamType:
     """``_is_scalar_param_type`` recognizes plain and constrained scalars."""
 
-    @pytest.mark.parametrize("annotation", [str, int, float, bool, Literal["a", "b"], _Speed])
+    @pytest.mark.parametrize("annotation", [str, int, float, bool, Path, Literal["a", "b"], _Speed])
     def test_scalar_forms(self, annotation: object) -> None:
         assert _is_scalar_param_type(annotation) is True
 
@@ -77,7 +270,7 @@ class TestIsScalarParamType:
 
 
 class TestDisplayChoices:
-    """``display_choices`` (now in the registry layer) derives the allowed set from the type."""
+    """``display_choices`` derives the allowed set from a constrained-scalar type."""
 
     def test_literal_returns_args(self) -> None:
         assert display_choices(Literal["fast", "slow"]) == ("fast", "slow")
@@ -92,16 +285,23 @@ class TestDisplayChoices:
     def test_unconstrained_returns_none(self, annotation: object) -> None:
         assert display_choices(annotation) is None
 
+    def test_constrained_list_unwraps_to_element_choices(self) -> None:
+        assert display_choices(list[Literal["a", "b"]]) == ("a", "b")
+        assert display_choices(list[_Speed]) == ("fast", "slow")
+
 
 class TestIsStringCoercible:
     """``Parameter.is_string_coercible`` reflects whether a string token can supply the value."""
 
-    @pytest.mark.parametrize("param_type", [str, int, float, bool, Literal["a", "b"]])
+    @pytest.mark.parametrize(
+        "param_type",
+        [str, int, float, bool, Path, Literal["a", "b"], _Speed, int | None, _Speed | None],
+    )
     def test_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
         assert p.is_string_coercible is True
 
-    @pytest.mark.parametrize("param_type", [None, list[str], _Speed, _Unsupported])
+    @pytest.mark.parametrize("param_type", [None, list[str], _Unsupported])
     def test_non_coercible_value_types(self, param_type: object) -> None:
         p = Parameter(name="x", description="d", param_type=param_type)
         assert p.is_string_coercible is False
@@ -112,6 +312,10 @@ class TestIsStringCoercible:
             description="d",
             reference=RegistryReference(component_type=ComponentType.TARGET),
         )
+        assert p.is_string_coercible is False
+
+    def test_opaque_is_never_coercible(self) -> None:
+        p = Parameter(name="value", description="d", param_type=str, opaque=True)
         assert p.is_string_coercible is False
 
 
@@ -158,6 +362,10 @@ class TestCoerceValueScalars:
         p = Parameter(name="s", description="d", param_type=str)
         assert p.coerce_value("hello") == "hello"
 
+    def test_path(self) -> None:
+        p = Parameter(name="path", description="d", param_type=Path)
+        assert p.coerce_value("images/input.jpg") == Path("images/input.jpg")
+
     def test_int_invalid_raises(self) -> None:
         p = Parameter(name="n", description="d", param_type=int)
         with pytest.raises(ValueError, match="could not be coerced to int"):
@@ -195,6 +403,10 @@ class TestCoerceValueConstrainedScalars:
         p = Parameter(name="speed", description="d", param_type=_Speed)
         assert p.coerce_value(_Speed.SLOW) is _Speed.SLOW
 
+    def test_optional_enum_by_value(self) -> None:
+        p = Parameter(name="speed", description="d", param_type=_Speed | None)
+        assert p.coerce_value("slow") is _Speed.SLOW
+
     def test_enum_invalid_raises(self) -> None:
         p = Parameter(name="speed", description="d", param_type=_Speed)
         with pytest.raises(ValueError, match="one of"):
@@ -230,6 +442,11 @@ class TestCoerceValueLists:
 class TestCoerceValuePassthrough:
     """Reference / arbitrary / None param_types pass through unchanged."""
 
+    @pytest.mark.parametrize("param_type", [int | None, _Speed | None, list[str] | None])
+    def test_optional_type_accepts_none(self, param_type: object) -> None:
+        p = Parameter(name="value", description="d", param_type=param_type)
+        assert p.coerce_value(None) is None
+
     def test_param_type_none_returns_distinct_object(self) -> None:
         raw = ["a", "b"]
         coerced = Parameter(name="opts", description="d").coerce_value(raw)
@@ -254,13 +471,25 @@ class TestCoerceValuePassthrough:
         )
         assert p.coerce_value("my_target") == "my_target"
 
+    def test_opaque_param_passes_value_through_by_identity(self) -> None:
+        """An opaque parameter returns the live object unchanged — never coerced or copied."""
+        live = {"converter": object()}
+        p = Parameter(name="technique_converters", description="d", opaque=True)
+        assert p.coerce_value(live) is live
+
+    def test_opaque_param_does_not_deepcopy_none(self) -> None:
+        """Opaque takes precedence over the ``param_type=None`` deep-copy passthrough."""
+        raw = ["a", "b"]
+        coerced = Parameter(name="cfg", description="d", opaque=True).coerce_value(raw)
+        assert coerced is raw
+
 
 class TestValidate:
     """``Parameter.validate`` accepts supported forms and tolerates defaulted others."""
 
     @pytest.mark.parametrize(
         "param_type",
-        [None, str, int, float, bool, Literal["a", "b"], _Speed, list[str], list[int], list[Literal["a", "b"]]],
+        [None, str, int, float, bool, Path, Literal["a", "b"], _Speed, list[str], list[int], list[Literal["a", "b"]]],
     )
     def test_supported_forms_ok(self, param_type: object) -> None:
         Parameter(name="x", description="d", param_type=param_type).validate()
@@ -282,9 +511,13 @@ class TestValidate:
         )
         p.validate()
 
+    def test_opaque_param_is_valid_without_param_type_or_default(self) -> None:
+        """An opaque parameter needs neither a ``param_type`` nor a default to validate."""
+        Parameter(name="technique_converters", description="d", opaque=True).validate()
+
 
 class TestCoercionParity:
-    """Derivation feeds ``coerce_value`` the unwrapped type, so coercion round-trips."""
+    """Derived annotations use the same coercion as declared parameters."""
 
     @pytest.mark.parametrize(
         "annotation, raw, expected",
@@ -308,3 +541,145 @@ class TestCoercionParity:
         param = next(p for p in derive_parameters(cls=_Holder) if p.name == "value")
 
         assert param.coerce_value(raw) == expected
+
+
+class TestIsExternalInput:
+    """``is_external_input`` marks the parameters REST, CLI, and GUI callers may supply."""
+
+    @pytest.mark.parametrize(
+        "param_type",
+        [
+            str,
+            int | None,
+            Path,
+            Path | str,
+            Literal["a", "b"],
+            _Speed,
+            list[str],
+            list[_Speed] | None,
+            Sequence[str],
+            Collection[str] | None,
+            Sequence[_Speed],
+            str | list[str],
+            str | Callable[[], str] | None,
+            _Speed | str,
+            int | tuple[int, int],
+            int | Literal["4", "8"],
+            str | dict[str, str],
+            str | _Unsupported,
+            Collection[str] | _Unsupported,
+        ],
+    )
+    def test_supported_external_types(self, param_type: object) -> None:
+        assert Parameter(name="p", description="d", param_type=param_type).is_external_input
+
+    @pytest.mark.parametrize(
+        "param_type",
+        [
+            None,
+            Any,
+            "SeedPrompt | None",
+            _Unsupported,
+            Callable[[], str],
+            tuple[int, int],
+            dict[str, str],
+            set[str],
+            list[Path],
+            list[Path | str],
+            Collection[Path],
+            Sequence[Path | str] | None,
+            _Speed | Path,
+            str | Path | int,
+            str | list[Path],
+            _Unsupported | Path,
+            list[list[str]],
+            Sequence[list[str]],
+            tuple[int, int] | _Unsupported,
+        ],
+    )
+    def test_other_types_take_python_objects_only(self, param_type: object) -> None:
+        assert not Parameter(name="p", description="d", param_type=param_type).is_external_input
+
+    def test_references_and_structured_inputs_are_external(self) -> None:
+        reference = Parameter(
+            name="t", description="d", reference=RegistryReference(component_type=ComponentType.TARGET)
+        )
+        structured = Parameter(name="s", description="d", param_type=_Unsupported, variants={"one": []})
+
+        assert reference.is_external_input
+        assert structured.is_external_input
+
+    def test_opaque_parameter_is_not_external(self) -> None:
+        assert not Parameter(name="o", description="d", param_type=str, opaque=True).is_external_input
+
+
+class TestForExternalCatalog:
+    """``for_external_catalog`` describes a parameter in the form external callers send it."""
+
+    @pytest.mark.parametrize(
+        ("param_type", "type_name", "is_list", "choices"),
+        [
+            (Collection[str], "list[str]", True, None),
+            (Sequence[int] | None, "list[int]", True, None),
+            (Collection[_Speed], "list[str]", True, ["fast", "slow"]),
+            (int | tuple[int, int], "int", False, None),
+            (int | Literal["4", "8", "12"], "int", False, None),
+            (str | list[str], "str", False, None),
+            (Sequence[str] | str, "list[str]", True, None),
+            (_Speed | str, "_Speed", False, ["fast", "slow"]),
+            (str | Callable[[], str] | None, "str", False, None),
+        ],
+    )
+    def test_describes_the_external_form(
+        self, param_type: object, type_name: str, is_list: bool, choices: list[str] | None
+    ) -> None:
+        parameter = Parameter(name="p", description="d", param_type=param_type, default=None)
+
+        described = parameter.for_external_catalog().model_dump(mode="json")
+
+        assert (described["type_name"], described["is_list"], described["choices"]) == (type_name, is_list, choices)
+        assert parameter.param_type == param_type
+
+    def test_flat_enum_collection_matches_the_enum_list_contract(self) -> None:
+        listed = Parameter(name="p", description="d", param_type=list[_Speed]).model_dump(mode="json")
+        collected = Parameter(name="p", description="d", param_type=Collection[_Speed]).for_external_catalog()
+
+        assert collected.model_dump(mode="json") == listed
+
+    @pytest.mark.parametrize("param_type", [str, int | None, Path | str, list[str], Literal["a", "b"], _Speed])
+    def test_external_forms_are_returned_unchanged(self, param_type: object) -> None:
+        parameter = Parameter(name="p", description="d", param_type=param_type)
+
+        assert parameter.for_external_catalog() is parameter
+
+    def test_references_and_structured_inputs_are_returned_unchanged(self) -> None:
+        reference = Parameter(
+            name="t",
+            description="d",
+            param_type=Collection[str],
+            reference=RegistryReference(component_type=ComponentType.TARGET),
+        )
+        structured = Parameter(name="s", description="d", param_type=_Unsupported, variants={"one": []})
+
+        assert reference.for_external_catalog() is reference
+        assert structured.for_external_catalog() is structured
+
+    def test_keeps_defaults_the_external_form_can_hold(self) -> None:
+        parameter = Parameter(name="font_size", description="d", param_type=int | tuple[int, int], default=15)
+
+        assert parameter.for_external_catalog().model_dump(mode="json")["default"] == "15"
+
+    def test_leaves_out_defaults_the_external_form_cannot_hold(self) -> None:
+        parameter = Parameter(name="font_size", description="d", param_type=int | tuple[int, int], default=(8, 20))
+
+        described = parameter.for_external_catalog()
+
+        assert described.model_dump(mode="json")["default"] is None
+        assert not described.required
+        assert parameter.default == (8, 20)
+
+    def test_coercion_keeps_every_alternative(self) -> None:
+        parameter = Parameter(name="replace", description="d", param_type=str | list[str], default=REQUIRED_VALUE)
+
+        assert parameter.for_external_catalog().required
+        assert parameter.coerce_value(["a", "b"]) == ["a", "b"]

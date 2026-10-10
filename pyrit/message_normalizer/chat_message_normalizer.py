@@ -36,7 +36,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
             Defaults to False for backward compatibility.
         system_message_behavior: How to handle system messages before conversion.
             - "keep": Keep system messages as-is (default)
-            - "squash": Merge system message into first user message
+            - "squash": Merge system messages into the following user message
             - "ignore": Drop system messages entirely
     """
 

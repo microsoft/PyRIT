@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright (c) Microsoft Corporation.
+Licensed under the MIT license.
+Artwork newly authored for PyRIT with Copilot assistance, not adapted from third-party art.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="none">
+  <g stroke="#b8c6f0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.55">
+    <path d="m1210 70 114 71 126-32 68 86-45 98"/>
+    <path d="m1085 909 95-61 64-47 111-89 67 109 96-28 42 113"/>
+    <path d="m1244 801 178 20-88 114"/>
+    <path d="m72 821 126 60 143-33 75 79"/>
+  </g>
+  <g fill="#b8c6f0">
+    <circle cx="1210" cy="70" r="3"/>
+    <circle cx="1324" cy="141" r="3.5"/>
+    <circle cx="1518" cy="195" r="3"/>
+    <circle cx="1473" cy="293" r="3.5"/>
+    <circle cx="1085" cy="909" r="3"/>
+    <circle cx="1180" cy="848" r="3.5"/>
+    <circle cx="1355" cy="712" r="4"/>
+    <circle cx="1422" cy="821" r="3.5"/>
+    <circle cx="1518" cy="793" r="3"/>
+    <circle cx="1560" cy="906" r="3.5"/>
+    <circle cx="1334" cy="935" r="3"/>
+    <circle cx="72" cy="821" r="3"/>
+    <circle cx="341" cy="848" r="3.5"/>
+    <circle cx="416" cy="927" r="3"/>
+  </g>
+  <g fill="#b8c6f0" opacity="0.7">
+    <circle cx="52" cy="381" r="1.8"/>
+    <circle cx="113" cy="660" r="2"/>
+    <circle cx="401" cy="72" r="1.5"/>
+    <circle cx="731" cy="45" r="1.5"/>
+    <circle cx="892" cy="87" r="2"/>
+    <circle cx="1072" cy="163" r="1.5"/>
+    <circle cx="1183" cy="342" r="1.8"/>
+    <circle cx="1392" cy="377" r="2"/>
+    <circle cx="1580" cy="426" r="1.8"/>
+    <circle cx="1457" cy="524" r="2"/>
+    <circle cx="1555" cy="631" r="1.5"/>
+    <circle cx="1251" cy="625" r="1.5"/>
+    <circle cx="999" cy="833" r="2"/>
+    <circle cx="764" cy="948" r="2.5"/>
+    <circle cx="537" cy="907" r="1.8"/>
+    <circle cx="78" cy="949" r="2"/>
+    <circle cx="457" cy="985" r="1.5"/>
+  </g>
+  <g fill="#faf0d8">
+    <path d="m1450 100 2 7 7 2-7 2-2 7-2-7-7-2 7-2Z"/>
+    <path d="m1244 790 3 8 8 3-8 3-3 8-3-8-8-3 8-3Z"/>
+    <path d="m1549 450 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z"/>
+    <path d="m1025 943 2 6 6 2-6 2-2 6-2-6-6-2 6-2Z"/>
+    <path d="m198 873 2 6 6 2-6 2-2 6-2-6-6-2 6-2Z"/>
+    <path d="m1150 48 1.5 4.5 4.5 1.5-4.5 1.5-1.5 4.5-1.5-4.5-4.5-1.5 4.5-1.5Z"/>
+    <circle cx="1363" cy="61" r="2.5"/>
+    <circle cx="1507" cy="572" r="2"/>
+    <circle cx="1118" cy="752" r="2"/>
+    <circle cx="872" cy="924" r="2.5"/>
+    <circle cx="289" cy="967" r="2"/>
+  </g>
+</svg>

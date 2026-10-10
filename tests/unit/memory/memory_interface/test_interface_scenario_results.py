@@ -1,28 +1,36 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
-from unit.mocks import get_mock_scorer_identifier
+from unit.mocks import get_mock_scorer_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_models import (
+    ScenarioIdentifierEntry,
+    ScenarioResultEntry,
+    ScorerIdentifierEntry,
+    TargetIdentifierEntry,
+)
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
     IdentifierFilter,
     IdentifierType,
-    ScenarioIdentifier,
-    ScenarioResult,
+    ScenarioRunState,
+    ScorerIdentifier,
+    TargetIdentifier,
 )
 
 
 @pytest.fixture
-def sample_attack_results(sqlite_instance: MemoryInterface):
+async def sample_attack_results(sqlite_instance: MemoryInterface):
     """Fixture that creates and adds sample attack results to memory."""
     attack_results = [create_attack_result(f"conv_{i}", f"Objective {i}") for i in range(1, 4)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
     return attack_results
 
 
@@ -44,13 +52,6 @@ def create_scenario_result(
     attack_results: dict[str, list[AttackResult]] | None = None,
 ):
     """Helper function to create ScenarioResult."""
-    scenario_identifier = ScenarioIdentifier(
-        name=name,
-        description=description,
-        scenario_version=version,
-        init_data={"test_key": "test_value"},
-    )
-
     if attack_results is None:
         attack_results = {}
 
@@ -59,15 +60,17 @@ def create_scenario_result(
         class_module="tests.unit.memory",
     )
 
-    return ScenarioResult(
-        scenario_identifier=scenario_identifier,
+    return make_scenario_result(
+        scenario_name=name,
+        scenario_version=version,
+        scenario_description=description,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results=attack_results,
         objective_scorer_identifier=scorer_identifier,
     )
 
 
-def test_add_and_retrieve_scenario_results(sqlite_instance: MemoryInterface, sample_attack_results):
+async def test_add_and_retrieve_scenario_results(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test adding scenario results to memory and retrieving them without filters."""
     # Create scenario results using the fixture's attack results
     scenario_result1 = create_scenario_result(
@@ -85,18 +88,59 @@ def test_add_and_retrieve_scenario_results(sqlite_instance: MemoryInterface, sam
     )
 
     # Add scenario results to memory
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result1, scenario_result2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1, scenario_result2]))
 
     # Verify they were added by querying all scenario results
-    all_scenarios = sqlite_instance.get_scenario_results()
+    all_scenarios = await sqlite_instance.get_scenario_results_async()
     assert len(all_scenarios) == 2
 
     # Verify the data was stored correctly
-    scenario_names = {scenario.scenario_identifier.name for scenario in all_scenarios}
+    scenario_names = {scenario.scenario_name for scenario in all_scenarios}
     assert scenario_names == {"Scenario 1", "Scenario 2"}
 
 
-def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_results):
+async def test_add_scenario_results_persists_identifier_graph(sqlite_instance: MemoryInterface):
+    target = TargetIdentifier(
+        class_name="TestTarget",
+        class_module="tests.unit.memory",
+        model_name="test-model",
+    )
+    scorer = ScorerIdentifier(
+        class_name="TestScorer",
+        class_module="tests.unit.memory",
+        scorer_type="true_false",
+        prompt_target=target,
+    )
+    results = [
+        make_scenario_result(
+            scenario_name="PersistedScenario",
+            scenario_version=2,
+            techniques=["TechniqueA"],
+            datasets=["DatasetA"],
+            objective_target_identifier=target,
+            objective_scorer_identifier=scorer,
+            attack_results={},
+        )
+        for _ in range(2)
+    ]
+
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=results))
+
+    scenario_rows = sqlite_instance._query_entries(ScenarioIdentifierEntry)
+    result_rows = sqlite_instance._query_entries(ScenarioResultEntry)
+    assert len(scenario_rows) == 1
+    assert scenario_rows[0].hash == results[0].scenario_identifier.hash
+    assert scenario_rows[0].version == 2
+    assert scenario_rows[0].techniques == ["TechniqueA"]
+    assert scenario_rows[0].datasets == ["DatasetA"]
+    assert scenario_rows[0].objective_target_hash == target.hash
+    assert scenario_rows[0].objective_scorer_hash == scorer.hash
+    assert {row.scenario_identifier_hash for row in result_rows} == {scenario_rows[0].hash}
+    assert len(sqlite_instance._query_entries(TargetIdentifierEntry)) == 1
+    assert len(sqlite_instance._query_entries(ScorerIdentifierEntry)) == 1
+
+
+async def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test retrieving scenario results filtered by name."""
     # Create and add scenario results
     scenario_result1 = create_scenario_result(
@@ -107,15 +151,15 @@ def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_results)
         name="Production Scenario",
         attack_results={"Attack2": [sample_attack_results[1]]},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result1, scenario_result2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1, scenario_result2]))
 
     # Query by name substring
-    results = sqlite_instance.get_scenario_results(scenario_name="Test")
+    results = await sqlite_instance.get_scenario_results_async(scenario_name="Test")
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Test Scenario Alpha"
+    assert results[0].scenario_name == "Test Scenario Alpha"
 
 
-def test_filter_by_version(sqlite_instance: MemoryInterface, sample_attack_results):
+async def test_filter_by_version(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test retrieving scenario results filtered by version."""
     # Create and add scenario results with different versions
     scenario_result1 = create_scenario_result(
@@ -128,44 +172,47 @@ def test_filter_by_version(sqlite_instance: MemoryInterface, sample_attack_resul
         version=2,
         attack_results={"Attack2": [sample_attack_results[1]]},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result1, scenario_result2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1, scenario_result2]))
 
     # Query by version
-    results = sqlite_instance.get_scenario_results(scenario_version=2)
+    results = await sqlite_instance.get_scenario_results_async(scenario_version=2)
     assert len(results) == 1
-    assert results[0].scenario_identifier.version == 2
+    assert results[0].scenario_version == 2
 
 
-def test_filter_by_ids(sqlite_instance: MemoryInterface, sample_attack_results):
+async def test_filter_by_ids(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test retrieving scenario results by their IDs."""
     # Create and add scenario results
     scenario_result1 = create_scenario_result(
         name="Scenario 1",
         attack_results={"Attack1": [sample_attack_results[0]]},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result1])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result1]))
 
     # Query by ID using the scenario result's id
-    results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result1.id)])
+    results = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[str(scenario_result1.id)])
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Scenario 1"
+    assert results[0].scenario_name == "Scenario 1"
     assert results[0].id == scenario_result1.id
 
 
-def test_empty_ids_returns_empty(sqlite_instance: MemoryInterface):
+async def test_empty_ids_returns_empty(sqlite_instance: MemoryInterface):
     """Test that empty ID list returns empty results."""
-    results = sqlite_instance.get_scenario_results(scenario_result_ids=[])
+    results = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[])
     assert len(results) == 0
 
 
-def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
+async def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
     """Test that retrieving scenario results populates attack_results correctly."""
     scenario_result = create_scenario_result(name="Multi-Attack Scenario", attack_results={})
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     sid = scenario_result.id
     attack_result1 = _make_attack_result_for_scenario(
-        scenario_result_id=sid, atomic_attack_name="PromptInjection", objective_index=0, conversation_id="conv_1"
+        scenario_result_id=sid,
+        atomic_attack_name="PromptInjection",
+        objective_index=0,
+        conversation_id="conv_1",
     )
     attack_result2 = _make_attack_result_for_scenario(
         scenario_result_id=sid,
@@ -175,12 +222,19 @@ def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
         outcome=AttackOutcome.FAILURE,
     )
     attack_result3 = _make_attack_result_for_scenario(
-        scenario_result_id=sid, atomic_attack_name="Crescendo", objective_index=0, conversation_id="conv_3"
+        scenario_result_id=sid,
+        atomic_attack_name="Crescendo",
+        objective_index=0,
+        conversation_id="conv_3",
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Retrieve and verify attack_results are populated
-    results = sqlite_instance.get_scenario_results()
+    results = await sqlite_instance.get_scenario_results_async()
     assert len(results) == 1
 
     retrieved_scenario = results[0]
@@ -200,34 +254,37 @@ def test_attack_results_populated_correctly(sqlite_instance: MemoryInterface):
     assert crescendo_results[0].conversation_id == "conv_3"
 
 
-def test_attack_order_preserved(sqlite_instance: MemoryInterface):
+async def test_attack_order_preserved(sqlite_instance: MemoryInterface):
     """Hydration sorts each atomic attack's results by ``timestamp`` (which
     monotonically tracks insertion order under normal sequential execution)."""
     scenario_result = create_scenario_result(name="Ordered Scenario", attack_results={})
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     sid = scenario_result.id
     # Insert in a specific order; hydration must surface them in the same order.
     attack_results = [
         _make_attack_result_for_scenario(
-            scenario_result_id=sid, atomic_attack_name="Attack1", objective_index=i, conversation_id=f"conv_{i}"
+            scenario_result_id=sid,
+            atomic_attack_name="Attack1",
+            objective_index=i,
+            conversation_id=f"conv_{i}",
         )
         for i in range(5)
     ]
     for ar in attack_results:
-        sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+        (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
-    results = sqlite_instance.get_scenario_results()
+    results = await sqlite_instance.get_scenario_results_async()
     retrieved_attacks = results[0].attack_results["Attack1"]
 
     retrieved_conv_ids = [ar.conversation_id for ar in retrieved_attacks]
     assert retrieved_conv_ids == [f"conv_{i}" for i in range(5)]
 
 
-def test_stores_conversation_ids_only(sqlite_instance: MemoryInterface):
+async def test_stores_conversation_ids_only(sqlite_instance: MemoryInterface):
     """Test that scenario results expose AttackResult objects with conversation IDs after hydration."""
     scenario_result = create_scenario_result(name="Test Scenario", attack_results={})
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     ar = _make_attack_result_for_scenario(
         scenario_result_id=scenario_result.id,
@@ -235,9 +292,9 @@ def test_stores_conversation_ids_only(sqlite_instance: MemoryInterface):
         objective_index=0,
         conversation_id="conv_1",
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
-    results = sqlite_instance.get_scenario_results(scenario_result_ids=[str(scenario_result.id)])
+    results = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[str(scenario_result.id)])
     assert len(results) == 1
 
     retrieved_result = results[0]
@@ -246,67 +303,95 @@ def test_stores_conversation_ids_only(sqlite_instance: MemoryInterface):
     assert retrieved_result.attack_results["Attack1"][0].conversation_id == "conv_1"
 
 
-def test_handles_empty_attack_results(sqlite_instance: MemoryInterface):
+async def test_handles_empty_attack_results(sqlite_instance: MemoryInterface):
     """Test that scenario results can be created with no attack results."""
     # Create scenario result with no attacks
     scenario_result = create_scenario_result(
         name="Empty Scenario",
         attack_results={},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     # Retrieve and verify
-    results = sqlite_instance.get_scenario_results()
+    results = await sqlite_instance.get_scenario_results_async()
     assert len(results) == 1
     assert len(results[0].attack_results) == 0
 
 
-def test_preserves_metadata(sqlite_instance: MemoryInterface):
+async def test_terminal_state_updates_completion_time_only_on_terminal_transition(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    old_completion = datetime(2020, 1, 1, tzinfo=UTC)
+    scenario_result = create_scenario_result(name="Timing Scenario")
+    scenario_result.completion_time = old_completion
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+
+    (
+        await sqlite_instance.update_scenario_run_state_async(
+            scenario_result_id=str(scenario_result.id),
+            scenario_run_state=ScenarioRunState.IN_PROGRESS,
+        )
+    )
+    in_progress = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=str(scenario_result.id))
+    assert in_progress is not None
+    assert in_progress.completion_time == old_completion
+
+    (
+        await sqlite_instance.update_scenario_run_state_async(
+            scenario_result_id=str(scenario_result.id),
+            scenario_run_state=ScenarioRunState.COMPLETED,
+        )
+    )
+    completed = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=str(scenario_result.id))
+    assert completed is not None
+    assert completed.completion_time > old_completion
+
+
+async def test_preserves_metadata(sqlite_instance: MemoryInterface):
     """Test that scenario metadata is preserved correctly."""
 
     # Create scenario result with metadata
-    scenario_identifier = ScenarioIdentifier(
-        name="Metadata Test Scenario",
-        description="A test scenario with metadata",
-        scenario_version=3,
-        init_data={"param1": "value1", "param2": 42},
-    )
-
     scorer_identifier = ComponentIdentifier(
         class_name="TestScorer",
         class_module="test.module",
     )
 
-    scenario_result = ScenarioResult(
-        scenario_identifier=scenario_identifier,
+    scenario_result = make_scenario_result(
+        scenario_name="Metadata Test Scenario",
+        scenario_version=3,
+        scenario_description="A test scenario with metadata",
+        params={"param1": "value1", "param2": 42},
         objective_target_identifier=ComponentIdentifier(
-            class_name="test_target", class_module="test", params={"endpoint": "https://example.com"}
+            class_name="test_target",
+            class_module="test",
+            params={"endpoint": "https://example.com"},
         ),
         attack_results={},
         objective_scorer_identifier=scorer_identifier,
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     # Retrieve and verify metadata
-    results = sqlite_instance.get_scenario_results()
+    results = await sqlite_instance.get_scenario_results_async()
     assert len(results) == 1
 
     retrieved = results[0]
-    assert retrieved.scenario_identifier.name == "Metadata Test Scenario"
-    assert retrieved.scenario_identifier.description == "A test scenario with metadata"
-    assert retrieved.scenario_identifier.version == 3
-    assert retrieved.scenario_identifier.init_data == {"param1": "value1", "param2": 42}
+    assert retrieved.scenario_name == "Metadata Test Scenario"
+    assert retrieved.scenario_description == "A test scenario with metadata"
+    assert retrieved.scenario_version == 3
+    assert retrieved.scenario_identifier.params["param1"] == "value1"
+    assert retrieved.scenario_identifier.params["param2"] == 42
     assert retrieved.objective_target_identifier.params["endpoint"] == "https://example.com"
     # objective_scorer_identifier is now a ComponentIdentifier, check its properties
     assert retrieved.objective_scorer_identifier.class_name == "TestScorer"
     assert retrieved.objective_scorer_identifier.class_module == "test.module"
 
 
-def test_multiple_scenarios_with_attacks(sqlite_instance: MemoryInterface):
+async def test_multiple_scenarios_with_attacks(sqlite_instance: MemoryInterface):
     """Test retrieving multiple scenarios with their attack results populated."""
     scenario1 = create_scenario_result(name="Scenario 1", attack_results={})
     scenario2 = create_scenario_result(name="Scenario 2", attack_results={})
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2]))
 
     all_attack_results = [
         _make_attack_result_for_scenario(
@@ -325,27 +410,31 @@ def test_multiple_scenarios_with_attacks(sqlite_instance: MemoryInterface):
         )
         for i in range(3)
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=all_attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=all_attack_results))
 
     # Retrieve all scenarios
-    results = sqlite_instance.get_scenario_results()
+    results = await sqlite_instance.get_scenario_results_async()
     assert len(results) == 2
 
     # Verify each scenario has the correct attack results
     for result in results:
-        if result.scenario_identifier.name == "Scenario 1":
+        if result.scenario_name == "Scenario 1":
             assert len(result.attack_results["Attack1"]) == 5
-        elif result.scenario_identifier.name == "Scenario 2":
+        elif result.scenario_name == "Scenario 2":
             assert len(result.attack_results["Attack2"]) == 3
 
 
-def test_filter_by_name_and_version(sqlite_instance: MemoryInterface):
+async def test_filter_by_name_and_version(sqlite_instance: MemoryInterface):
     """Test querying with both name and version filters."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
     attack_result3 = create_attack_result("conv_3", "Objective 3")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Create multiple versions of scenarios with similar names
     scenarios = [
@@ -353,228 +442,248 @@ def test_filter_by_name_and_version(sqlite_instance: MemoryInterface):
         create_scenario_result(name="Test Scenario", version=2, attack_results={"A2": [attack_result2]}),
         create_scenario_result(name="Other Scenario", version=1, attack_results={"A3": [attack_result3]}),
     ]
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=scenarios)
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios))
 
     # Query with both filters
-    results = sqlite_instance.get_scenario_results(scenario_name="Test", scenario_version=2)
+    results = await sqlite_instance.get_scenario_results_async(scenario_name="Test", scenario_version=2)
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Test Scenario"
-    assert results[0].scenario_identifier.version == 2
+    assert results[0].scenario_name == "Test Scenario"
+    assert results[0].scenario_version == 2
 
 
-def test_filter_by_labels(sqlite_instance: MemoryInterface, sample_attack_results):
+async def test_filter_by_labels(sqlite_instance: MemoryInterface, sample_attack_results):
     """Test scenario results with labels."""
     # Create scenario with labels
-    scenario_identifier = ScenarioIdentifier(name="Labeled Scenario", scenario_version=1)
-    scenario_result = ScenarioResult(
-        scenario_identifier=scenario_identifier,
+    scenario_result = make_scenario_result(
+        scenario_name="Labeled Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack1": [sample_attack_results[0]]},
         labels={"environment": "testing", "team": "red-team"},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     # Query by labels
-    results = sqlite_instance.get_scenario_results(labels={"environment": "testing"})
+    results = await sqlite_instance.get_scenario_results_async(labels={"environment": "testing"})
     assert len(results) == 1
     assert results[0].labels == {"environment": "testing", "team": "red-team"}
 
 
-def test_filter_by_multiple_labels(sqlite_instance: MemoryInterface):
+async def test_filter_by_multiple_labels(sqlite_instance: MemoryInterface):
     """Test filtering scenario results by multiple labels."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
     # Create scenarios with different labels
-    scenario1_identifier = ScenarioIdentifier(name="Scenario 1", scenario_version=1)
-    scenario1 = ScenarioResult(
-        scenario_identifier=scenario1_identifier,
+    scenario1 = make_scenario_result(
+        scenario_name="Scenario 1",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack1": [attack_result1]},
         labels={"environment": "testing", "team": "red-team"},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2_identifier = ScenarioIdentifier(name="Scenario 2", scenario_version=1)
-    scenario2 = ScenarioResult(
-        scenario_identifier=scenario2_identifier,
+    scenario2 = make_scenario_result(
+        scenario_name="Scenario 2",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack2": [attack_result2]},
         labels={"environment": "production", "team": "red-team"},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2]))
 
     # Query requiring both labels to match
-    results = sqlite_instance.get_scenario_results(labels={"environment": "testing", "team": "red-team"})
+    results = await sqlite_instance.get_scenario_results_async(labels={"environment": "testing", "team": "red-team"})
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Scenario 1"
+    assert results[0].scenario_name == "Scenario 1"
 
 
-def test_filter_by_completion_time(sqlite_instance: MemoryInterface):
+async def test_filter_by_completion_time(sqlite_instance: MemoryInterface):
     """Test scenario results with completion time filtering."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
     attack_result3 = create_attack_result("conv_3", "Objective 3")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Create scenarios with different completion times
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
     last_week = now - timedelta(days=7)
 
-    scenario1_identifier = ScenarioIdentifier(name="Recent Scenario", scenario_version=1)
-    scenario1 = ScenarioResult(
-        scenario_identifier=scenario1_identifier,
+    scenario1 = make_scenario_result(
+        scenario_name="Recent Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack1": [attack_result1]},
         completion_time=now,
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2_identifier = ScenarioIdentifier(name="Yesterday Scenario", scenario_version=1)
-    scenario2 = ScenarioResult(
-        scenario_identifier=scenario2_identifier,
+    scenario2 = make_scenario_result(
+        scenario_name="Yesterday Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack2": [attack_result2]},
         completion_time=yesterday,
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario3_identifier = ScenarioIdentifier(name="Old Scenario", scenario_version=1)
-    scenario3 = ScenarioResult(
-        scenario_identifier=scenario3_identifier,
+    scenario3 = make_scenario_result(
+        scenario_name="Old Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack3": [attack_result3]},
         completion_time=last_week,
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2, scenario3]))
 
     # Query scenarios after yesterday
-    results = sqlite_instance.get_scenario_results(added_after=yesterday)
+    results = await sqlite_instance.get_scenario_results_async(added_after=yesterday)
     assert len(results) == 2
-    result_names = {r.scenario_identifier.name for r in results}
+    result_names = {r.scenario_name for r in results}
     assert "Recent Scenario" in result_names
     assert "Yesterday Scenario" in result_names
 
     # Query scenarios before yesterday
-    results = sqlite_instance.get_scenario_results(added_before=yesterday)
+    results = await sqlite_instance.get_scenario_results_async(added_before=yesterday)
     assert len(results) == 2
-    result_names = {r.scenario_identifier.name for r in results}
+    result_names = {r.scenario_name for r in results}
     assert "Yesterday Scenario" in result_names
     assert "Old Scenario" in result_names
 
 
-def test_filter_by_pyrit_version(sqlite_instance: MemoryInterface):
+async def test_filter_by_pyrit_version(sqlite_instance: MemoryInterface):
     """Test filtering scenario results by PyRIT version."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
     # Create scenarios with different PyRIT versions
-    scenario1_identifier = ScenarioIdentifier(name="Old Version Scenario", scenario_version=1, pyrit_version="0.4.0")
-    scenario1 = ScenarioResult(
-        scenario_identifier=scenario1_identifier,
+    scenario1 = make_scenario_result(
+        scenario_name="Old Version Scenario",
+        scenario_version=1,
+        pyrit_version="0.4.0",
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2_identifier = ScenarioIdentifier(name="New Version Scenario", scenario_version=1, pyrit_version="0.5.0")
-    scenario2 = ScenarioResult(
-        scenario_identifier=scenario2_identifier,
+    scenario2 = make_scenario_result(
+        scenario_name="New Version Scenario",
+        scenario_version=1,
+        pyrit_version="0.5.0",
         objective_target_identifier=ComponentIdentifier(class_name="test_target", class_module="test"),
         attack_results={"Attack2": [attack_result2]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2]))
 
     # Query by PyRIT version
-    results = sqlite_instance.get_scenario_results(pyrit_version="0.5.0")
+    results = await sqlite_instance.get_scenario_results_async(pyrit_version="0.5.0")
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "New Version Scenario"
-    assert results[0].scenario_identifier.pyrit_version == "0.5.0"
+    assert results[0].scenario_name == "New Version Scenario"
+    assert results[0].pyrit_version == "0.5.0"
 
 
-def test_filter_by_target_endpoint(sqlite_instance: MemoryInterface):
+async def test_filter_by_target_endpoint(sqlite_instance: MemoryInterface):
     """Test filtering scenario results by target endpoint."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
     attack_result3 = create_attack_result("conv_3", "Objective 3")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Create scenarios with different target endpoints
-    scenario1_identifier = ScenarioIdentifier(name="Azure Scenario", scenario_version=1)
-    scenario1 = ScenarioResult(
-        scenario_identifier=scenario1_identifier,
+    scenario1 = make_scenario_result(
+        scenario_name="Azure Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
-            class_name="OpenAI", class_module="test", params={"endpoint": "https://myresource.openai.azure.com"}
+            class_name="OpenAI",
+            class_module="test",
+            params={"endpoint": "https://myresource.openai.azure.com"},
         ),
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2_identifier = ScenarioIdentifier(name="OpenAI Scenario", scenario_version=1)
-    scenario2 = ScenarioResult(
-        scenario_identifier=scenario2_identifier,
+    scenario2 = make_scenario_result(
+        scenario_name="OpenAI Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
-            class_name="OpenAI", class_module="test", params={"endpoint": "https://api.openai.com/v1"}
+            class_name="OpenAI",
+            class_module="test",
+            params={"endpoint": "https://api.openai.com/v1"},
         ),
         attack_results={"Attack2": [attack_result2]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario3_identifier = ScenarioIdentifier(name="No Endpoint Scenario", scenario_version=1)
-    scenario3 = ScenarioResult(
-        scenario_identifier=scenario3_identifier,
+    scenario3 = make_scenario_result(
+        scenario_name="No Endpoint Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(class_name="Local", class_module="test"),
         attack_results={"Attack3": [attack_result3]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2, scenario3]))
 
     # Query by endpoint (case-insensitive substring match)
-    results = sqlite_instance.get_scenario_results(objective_target_endpoint="azure")
+    results = await sqlite_instance.get_scenario_results_async(objective_target_endpoint="azure")
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Azure Scenario"
+    assert results[0].scenario_name == "Azure Scenario"
 
     # Query for OpenAI endpoints
-    results = sqlite_instance.get_scenario_results(objective_target_endpoint="openai")
+    results = await sqlite_instance.get_scenario_results_async(objective_target_endpoint="openai")
     assert len(results) == 2
-    result_names = {r.scenario_identifier.name for r in results}
+    result_names = {r.scenario_name for r in results}
     assert "Azure Scenario" in result_names
     assert "OpenAI Scenario" in result_names
 
 
-def test_filter_by_target_model_name(sqlite_instance: MemoryInterface):
+async def test_filter_by_target_model_name(sqlite_instance: MemoryInterface):
     """Test filtering scenario results by target model name."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
     attack_result3 = create_attack_result("conv_3", "Objective 3")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Create scenarios with different model names
-    scenario1_identifier = ScenarioIdentifier(name="GPT-4 Scenario", scenario_version=1)
-    scenario1 = ScenarioResult(
-        scenario_identifier=scenario1_identifier,
+    scenario1 = make_scenario_result(
+        scenario_name="GPT-4 Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
-            class_name="OpenAI", class_module="test", params={"model_name": "gpt-4-0613"}
+            class_name="OpenAI",
+            class_module="test",
+            params={"model_name": "gpt-4-0613"},
         ),
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2_identifier = ScenarioIdentifier(name="GPT-4o Scenario", scenario_version=1)
-    scenario2 = ScenarioResult(
-        scenario_identifier=scenario2_identifier,
+    scenario2 = make_scenario_result(
+        scenario_name="GPT-4o Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
             class_name="OpenAI", class_module="test", params={"model_name": "gpt-4o"}
         ),
@@ -582,44 +691,47 @@ def test_filter_by_target_model_name(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario3_identifier = ScenarioIdentifier(name="GPT-3.5 Scenario", scenario_version=1)
-    scenario3 = ScenarioResult(
-        scenario_identifier=scenario3_identifier,
+    scenario3 = make_scenario_result(
+        scenario_name="GPT-3.5 Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
-            class_name="OpenAI", class_module="test", params={"model_name": "gpt-3.5-turbo"}
+            class_name="OpenAI",
+            class_module="test",
+            params={"model_name": "gpt-3.5-turbo"},
         ),
         attack_results={"Attack3": [attack_result3]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2, scenario3])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2, scenario3]))
 
     # Query by model name (case-insensitive substring match)
-    results = sqlite_instance.get_scenario_results(objective_target_model_name="gpt-4")
+    results = await sqlite_instance.get_scenario_results_async(objective_target_model_name="gpt-4")
     assert len(results) == 2
-    result_names = {r.scenario_identifier.name for r in results}
+    result_names = {r.scenario_name for r in results}
     assert "GPT-4 Scenario" in result_names
     assert "GPT-4o Scenario" in result_names
 
     # Query for GPT-3.5
-    results = sqlite_instance.get_scenario_results(objective_target_model_name="3.5")
+    results = await sqlite_instance.get_scenario_results_async(objective_target_model_name="3.5")
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "GPT-3.5 Scenario"
+    assert results[0].scenario_name == "GPT-3.5 Scenario"
 
 
-def test_combined_filters(sqlite_instance: MemoryInterface):
+async def test_combined_filters(sqlite_instance: MemoryInterface):
     """Test combining multiple filters together."""
     # Create attack results
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
     # Create scenarios with various properties
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     yesterday = now - timedelta(days=1)
 
-    scenario1_identifier = ScenarioIdentifier(name="Test Scenario", scenario_version=1, pyrit_version="0.5.0")
-    scenario1 = ScenarioResult(
-        scenario_identifier=scenario1_identifier,
+    scenario1 = make_scenario_result(
+        scenario_name="Test Scenario",
+        scenario_version=1,
+        pyrit_version="0.5.0",
         objective_target_identifier=ComponentIdentifier(
             class_name="OpenAI",
             class_module="test",
@@ -631,9 +743,10 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
 
-    scenario2_identifier = ScenarioIdentifier(name="Test Scenario", scenario_version=1, pyrit_version="0.4.0")
-    scenario2 = ScenarioResult(
-        scenario_identifier=scenario2_identifier,
+    scenario2 = make_scenario_result(
+        scenario_name="Test Scenario",
+        scenario_version=1,
+        pyrit_version="0.4.0",
         objective_target_identifier=ComponentIdentifier(
             class_name="Azure",
             class_module="test",
@@ -644,17 +757,17 @@ def test_combined_filters(sqlite_instance: MemoryInterface):
         completion_time=yesterday,
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2]))
 
     # Query with multiple filters
-    results = sqlite_instance.get_scenario_results(
+    results = await sqlite_instance.get_scenario_results_async(
         scenario_name="Test",
         pyrit_version="0.5.0",
         objective_target_model_name="gpt-4",
         labels={"environment": "testing"},
     )
     assert len(results) == 1
-    assert results[0].scenario_identifier.pyrit_version == "0.5.0"
+    assert results[0].pyrit_version == "0.5.0"
     assert "gpt-4" in results[0].objective_target_identifier.params["model_name"]
 
 
@@ -684,24 +797,23 @@ def _make_attack_result_for_scenario(
     )
 
 
-def test_get_scenario_results_loads_attack_results_via_foreign_key(sqlite_instance: MemoryInterface):
-    """When AttackResultEntry rows carry the attribution_parent_id foreign key,
-    hydration picks them up directly — without needing the legacy
-    attack_results_json manifest. This is the path that makes mid-AtomicAttack
-    interruption-recovery work."""
+async def test_get_scenario_results_loads_attack_results_via_foreign_key(
+    sqlite_instance: MemoryInterface,
+):
+    """Hydration loads AttackResults through the attribution_parent_id foreign key."""
     scenario_result = create_scenario_result(
         name="ForeignKey-only Scenario",
-        attack_results={},  # manifest intentionally empty
+        attack_results={},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
 
     sid = scenario_result.id
     ar1 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
     ar2 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=1)
     ar3 = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="b", objective_index=0)
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    [result] = sqlite_instance.get_scenario_results(scenario_result_ids=[str(sid)])
+    [result] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[str(sid)])
     assert set(result.attack_results.keys()) == {"a", "b"}
     assert [r.conversation_id for r in result.attack_results["a"]] == [
         "conv-a-0",
@@ -710,11 +822,13 @@ def test_get_scenario_results_loads_attack_results_via_foreign_key(sqlite_instan
     assert [r.conversation_id for r in result.attack_results["b"]] == ["conv-b-0"]
 
 
-def test_get_attack_results_filters_by_scenario_result_id(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_filters_by_scenario_result_id(
+    sqlite_instance: MemoryInterface,
+):
     """get_attack_results gains a scenario_result_id filter — replaces the
     removed error_attack_result_ids_json lookup path."""
     scenario_result = create_scenario_result(name="Filter Scenario")
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
     sid = scenario_result.id
 
     ok = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
@@ -726,19 +840,24 @@ def test_get_attack_results_filters_by_scenario_result_id(sqlite_instance: Memor
     )
     # An unrelated AttackResult NOT linked to this scenario should be excluded.
     unrelated = create_attack_result("unrelated-conv", "unrelated-obj")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ok, err, unrelated])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ok, err, unrelated]))
 
-    all_for_scenario = sqlite_instance.get_attack_results(scenario_result_id=str(sid))
-    assert {r.conversation_id for r in all_for_scenario} == {ok.conversation_id, err.conversation_id}
+    all_for_scenario = await sqlite_instance.get_attack_results_async(scenario_result_id=str(sid))
+    assert {r.conversation_id for r in all_for_scenario} == {
+        ok.conversation_id,
+        err.conversation_id,
+    }
 
-    only_errors = sqlite_instance.get_attack_results(
+    only_errors = await sqlite_instance.get_attack_results_async(
         scenario_result_id=str(sid),
         outcome=AttackOutcome.ERROR.value,
     )
     assert [r.conversation_id for r in only_errors] == [err.conversation_id]
 
 
-def test_delete_scenario_sets_attack_result_foreign_key_to_null(sqlite_instance: MemoryInterface):
+async def test_delete_scenario_sets_attack_result_foreign_key_to_null(
+    sqlite_instance: MemoryInterface,
+):
     """ON DELETE SET NULL: deleting the parent ScenarioResultEntry nulls the
     attribution_parent_id foreign key on its linked AttackResultEntries but
     the AttackResultEntries survive (attribution_data is retained as
@@ -749,59 +868,163 @@ def test_delete_scenario_sets_attack_result_foreign_key_to_null(sqlite_instance:
     ON DELETE SET NULL clause works. Production deployments using SQL Server
     enforce foreign keys by default.
     """
-    from contextlib import closing
-
     from sqlalchemy import text as _sql_text
 
     from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
 
     scenario_result = create_scenario_result(name="To Be Deleted")
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
     sid = scenario_result.id
 
     ar = _make_attack_result_for_scenario(scenario_result_id=sid, atomic_attack_name="a", objective_index=0)
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
     # Enable foreign keys for the delete and verify the SET NULL clause fires.
-    with closing(sqlite_instance.get_session()) as session:
+    def delete_scenario(session):
         session.execute(_sql_text("PRAGMA foreign_keys = ON"))
         session.query(ScenarioResultEntry).filter_by(id=sid).delete()
         session.commit()
 
+    await run_memory_session_async(memory=sqlite_instance, operation=delete_scenario)
+
     # The AttackResult survives, but its foreign key is now NULL.
     # attribution_data is retained as historical provenance.
-    with closing(sqlite_instance.get_session()) as session:
+    def check_attack(session):
         entry = session.query(AttackResultEntry).filter_by(conversation_id=ar.conversation_id).one()
         assert entry.attribution_parent_id is None
         assert entry.attribution_data == {"parent_collection": "a"}
 
+    await run_memory_session_async(memory=sqlite_instance, operation=check_attack)
 
-def test_update_scenario_run_state_targeted_update_preserves_manifest(sqlite_instance: MemoryInterface):
-    """update_scenario_run_state must be a targeted UPDATE — it must not
-    re-serialize the whole row and clobber the manifest column during the
-    deprecation window."""
+
+async def test_update_scenario_run_state_updates_state_and_error_fields(
+    sqlite_instance: MemoryInterface,
+):
+    """update_scenario_run_state updates persisted state and error details."""
     scenario_result = create_scenario_result(
         name="Targeted Update",
-        attack_results={"a": []},  # baseline manifest
+        attack_results={"a": []},
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario_result])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
     sid = str(scenario_result.id)
 
-    sqlite_instance.update_scenario_run_state(
+    (
+        await sqlite_instance.update_scenario_run_state_async(
+            scenario_result_id=sid,
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message="boom",
+            error_type="RuntimeError",
+        )
+    )
+
+    # State and error fields updated.
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
+    assert hydrated.error_message == "boom"
+    assert hydrated.error_type == "RuntimeError"
+
+    (
+        await sqlite_instance.update_scenario_run_state_async(
+            scenario_result_id=sid,
+            scenario_run_state=ScenarioRunState.COMPLETED,
+        )
+    )
+
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.COMPLETED
+    assert hydrated.error_message is None
+    assert hydrated.error_type is None
+
+
+async def test_try_update_scenario_run_state_updates_when_the_state_matches(
+    sqlite_instance: MemoryInterface,
+):
+    """The compare-and-set applies when the row is still in one of the expected states."""
+    scenario_result = create_scenario_result(name="CAS Match", attack_results={"a": []})
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+    sid = str(scenario_result.id)
+    (
+        await sqlite_instance.update_scenario_run_state_async(
+            scenario_result_id=sid, scenario_run_state=ScenarioRunState.CREATED
+        )
+    )
+
+    updated = await sqlite_instance.try_update_scenario_run_state_async(
         scenario_result_id=sid,
-        scenario_run_state="FAILED",
+        expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
         error_message="boom",
         error_type="RuntimeError",
     )
 
-    # State and error fields updated.
-    [hydrated] = sqlite_instance.get_scenario_results(scenario_result_ids=[sid])
-    assert hydrated.scenario_run_state == "FAILED"
+    assert updated is True
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.FAILED
     assert hydrated.error_message == "boom"
     assert hydrated.error_type == "RuntimeError"
 
 
-def test_get_scenario_results_by_target_identifier_filter_hash(sqlite_instance: MemoryInterface):
+async def test_try_update_scenario_run_state_preserves_a_terminal_state(
+    sqlite_instance: MemoryInterface,
+):
+    """A run cancelled while preparation was draining must keep its cancellation."""
+    scenario_result = create_scenario_result(name="CAS Mismatch", attack_results={"a": []})
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))
+    sid = str(scenario_result.id)
+    (
+        await sqlite_instance.update_scenario_run_state_async(
+            scenario_result_id=sid,
+            scenario_run_state=ScenarioRunState.CANCELLED,
+            error_message="Run was cancelled by user",
+            error_type="CancelledError",
+        )
+    )
+
+    updated = await sqlite_instance.try_update_scenario_run_state_async(
+        scenario_result_id=sid,
+        expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+        scenario_run_state=ScenarioRunState.FAILED,
+        error_message="boom",
+        error_type="RuntimeError",
+    )
+
+    assert updated is False
+    [hydrated] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[sid])
+    assert hydrated.scenario_run_state == ScenarioRunState.CANCELLED
+    assert hydrated.error_message == "Run was cancelled by user"
+    assert hydrated.error_type == "CancelledError"
+
+
+async def test_try_update_scenario_run_state_reports_a_missing_row(
+    sqlite_instance: MemoryInterface,
+):
+    """A run that is gone is not an error here; the caller only needs to know nothing changed."""
+    assert (
+        await sqlite_instance.try_update_scenario_run_state_async(
+            scenario_result_id=str(uuid4()),
+            expected_states={ScenarioRunState.CREATED},
+            scenario_run_state=ScenarioRunState.FAILED,
+        )
+    ) is False
+
+
+async def test_try_update_scenario_run_state_rejects_empty_expected_states(
+    sqlite_instance: MemoryInterface,
+):
+    """An empty set would silently never match, which would hide the bug it exists to prevent."""
+    with pytest.raises(ValueError, match="expected_states"):
+        (
+            await sqlite_instance.try_update_scenario_run_state_async(
+                scenario_result_id=str(uuid4()),
+                expected_states=set(),
+                scenario_run_state=ScenarioRunState.FAILED,
+            )
+        )
+
+
+async def test_get_scenario_results_by_target_identifier_filter_hash(
+    sqlite_instance: MemoryInterface,
+):
     """Test filtering scenario results by identifier filter."""
     target_id_1 = ComponentIdentifier(
         class_name="OpenAI",
@@ -816,24 +1039,26 @@ def test_get_scenario_results_by_target_identifier_filter_hash(sqlite_instance: 
 
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
-    scenario1 = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="Scenario OpenAI", scenario_version=1),
+    scenario1 = make_scenario_result(
+        scenario_name="Scenario OpenAI",
+        scenario_version=1,
         objective_target_identifier=target_id_1,
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    scenario2 = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="Scenario Azure", scenario_version=1),
+    scenario2 = make_scenario_result(
+        scenario_name="Scenario Azure",
+        scenario_version=1,
         objective_target_identifier=target_id_2,
         attack_results={"Attack2": [attack_result2]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2]))
 
     # Filter by target hash
-    results = sqlite_instance.get_scenario_results(
+    results = await sqlite_instance.get_scenario_results_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.TARGET,
@@ -844,10 +1069,12 @@ def test_get_scenario_results_by_target_identifier_filter_hash(sqlite_instance: 
         ],
     )
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Scenario OpenAI"
+    assert results[0].scenario_name == "Scenario OpenAI"
 
 
-def test_get_scenario_results_by_target_identifier_filter_endpoint(sqlite_instance: MemoryInterface):
+async def test_get_scenario_results_by_target_identifier_filter_endpoint(
+    sqlite_instance: MemoryInterface,
+):
     """Test filtering scenario results by identifier filter with endpoint."""
     target_id_1 = ComponentIdentifier(
         class_name="OpenAI",
@@ -862,24 +1089,26 @@ def test_get_scenario_results_by_target_identifier_filter_endpoint(sqlite_instan
 
     attack_result1 = create_attack_result("conv_1", "Objective 1")
     attack_result2 = create_attack_result("conv_2", "Objective 2")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
-    scenario1 = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="Scenario OpenAI", scenario_version=1),
+    scenario1 = make_scenario_result(
+        scenario_name="Scenario OpenAI",
+        scenario_version=1,
         objective_target_identifier=target_id_1,
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    scenario2 = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="Scenario Azure", scenario_version=1),
+    scenario2 = make_scenario_result(
+        scenario_name="Scenario Azure",
+        scenario_version=1,
         objective_target_identifier=target_id_2,
         attack_results={"Attack2": [attack_result2]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1, scenario2])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1, scenario2]))
 
     # Filter by endpoint partial match
-    results = sqlite_instance.get_scenario_results(
+    results = await sqlite_instance.get_scenario_results_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.TARGET,
@@ -890,16 +1119,19 @@ def test_get_scenario_results_by_target_identifier_filter_endpoint(sqlite_instan
         ],
     )
     assert len(results) == 1
-    assert results[0].scenario_identifier.name == "Scenario OpenAI"
+    assert results[0].scenario_name == "Scenario OpenAI"
 
 
-def test_get_scenario_results_by_target_identifier_filter_no_match(sqlite_instance: MemoryInterface):
+async def test_get_scenario_results_by_target_identifier_filter_no_match(
+    sqlite_instance: MemoryInterface,
+):
     """Test that TargetIdentifierFilter returns empty when nothing matches."""
     attack_result1 = create_attack_result("conv_1", "Objective 1")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1]))
 
-    scenario1 = ScenarioResult(
-        scenario_identifier=ScenarioIdentifier(name="Test Scenario", scenario_version=1),
+    scenario1 = make_scenario_result(
+        scenario_name="Test Scenario",
+        scenario_version=1,
         objective_target_identifier=ComponentIdentifier(
             class_name="OpenAI",
             class_module="test",
@@ -908,9 +1140,9 @@ def test_get_scenario_results_by_target_identifier_filter_no_match(sqlite_instan
         attack_results={"Attack1": [attack_result1]},
         objective_scorer_identifier=get_mock_scorer_identifier(),
     )
-    sqlite_instance.add_scenario_results_to_memory(scenario_results=[scenario1])
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario1]))
 
-    results = sqlite_instance.get_scenario_results(
+    results = await sqlite_instance.get_scenario_results_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.TARGET,
@@ -921,3 +1153,22 @@ def test_get_scenario_results_by_target_identifier_filter_no_match(sqlite_instan
         ],
     )
     assert len(results) == 0
+
+
+async def test_add_scenario_result_without_objective_target_raises(sqlite_instance: MemoryInterface):
+    """Persisting a targetless scenario result fails loudly instead of writing an unqueryable row."""
+    attack_result = create_attack_result("conv_1", "Objective 1")
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
+
+    scenario = make_scenario_result(
+        scenario_name="Targetless Scenario",
+        scenario_version=1,
+        objective_target_identifier=None,
+        attack_results={"Attack1": [attack_result]},
+        objective_scorer_identifier=get_mock_scorer_identifier(),
+    )
+
+    with pytest.raises(ValueError, match="objective_target_identifier is required"):
+        (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
+
+    assert (await sqlite_instance.get_scenario_results_async(scenario_name="Targetless Scenario")) == []

@@ -6,10 +6,13 @@ import base64
 import logging
 import re
 import wave
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
 
+from pyrit.common import forward_init_parameters
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.exceptions import (
     pyrit_target_retry,
@@ -24,6 +27,10 @@ from pyrit.prompt_target.common.realtime_audio import (
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
+from pyrit.prompt_target.openai._openai_realtime_event_router import (
+    _OpenAIRealtimeEventKind,
+    _OpenAIRealtimeEventRouter,
+)
 from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
     _OpenAIRealtimeStreamingSession,
 )
@@ -32,7 +39,7 @@ from pyrit.prompt_target.openai.openai_target import OpenAITarget
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from pyrit.prompt_normalizer import PromptConverterConfiguration, PromptNormalizer
+    from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +47,70 @@ logger = logging.getLogger(__name__)
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
 # For best quality, OpenAI recommends using "marin" or "cedar".
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
+
+
+@dataclass
+class _RealtimeReceiveState:
+    """
+    Per-turn state for ``RealtimeTarget.receive_events_async``.
+
+    The turn binds to the first ``response.created`` id it sees, and events tagged with
+    any other response id are stale. The soft-finish deadline is fixed by the first
+    ``audio.done`` and is never extended by later events.
+    """
+
+    #: Seconds to wait for ``response.done`` after ``audio.done`` before soft-finishing.
+    GRACE_PERIOD_SEC: ClassVar[float] = 1.0
+
+    audio_buffer: bytearray = field(default_factory=bytearray)
+    transcripts: list[str] = field(default_factory=list)
+    response_id: str | None = None
+    accepted_event_count: int = 0
+    completion_deadline: float | None = None
+
+    def accepts(self, *, event_kind: _OpenAIRealtimeEventKind, event_response_id: str | None) -> bool:
+        """
+        Bind the turn to its response and report whether an event belongs to this turn.
+
+        Args:
+            event_kind (_OpenAIRealtimeEventKind): The classified event kind.
+            event_response_id (str | None): The response id carried by the event, if any.
+
+        Returns:
+            bool: False when the event carries a response id other than the bound one.
+        """
+        if event_kind is _OpenAIRealtimeEventKind.RESPONSE_CREATED and self.response_id is None:
+            self.response_id = event_response_id
+            return True
+        return event_response_id is None or event_response_id == self.response_id
+
+    def start_completion_grace(self, *, clock: Callable[[], float]) -> None:
+        """
+        Fix the soft-finish deadline on the first ``audio.done``; later calls leave it unchanged.
+
+        Args:
+            clock (Callable[[], float]): Monotonic clock, read only when the deadline is set.
+        """
+        if self.completion_deadline is None:
+            self.completion_deadline = clock() + self.GRACE_PERIOD_SEC
+
+    def owns_response_done(self) -> bool:
+        """
+        Whether a ``response.done`` belongs to this turn rather than a prior turn's soft-finish.
+
+        Returns:
+            bool: True when audio has arrived or other accepted events preceded it.
+        """
+        return bool(self.audio_buffer) or self.accepted_event_count > 1
+
+    def to_result(self) -> RealtimeTargetResult:
+        """
+        Build the turn result from the accumulated audio and transcripts.
+
+        Returns:
+            RealtimeTargetResult: The received audio bytes and transcript fragments.
+        """
+        return RealtimeTargetResult(audio_bytes=bytes(self.audio_buffer), transcripts=self.transcripts)
 
 
 class RealtimeTarget(OpenAITarget):
@@ -80,6 +151,7 @@ class RealtimeTarget(OpenAITarget):
     #: of truth for both atomic (send_text/send_audio) and streaming session paths.
     SAMPLE_RATE_HZ: ClassVar[int] = 24000
 
+    @forward_init_parameters
     def __init__(
         self,
         *,
@@ -125,11 +197,10 @@ class RealtimeTarget(OpenAITarget):
         audio_chunks: "AsyncIterator[bytes]",
         prompt_normalizer: "PromptNormalizer",
         conversation_id: str | None = None,
-        request_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
-        response_converter_configurations: "list[PromptConverterConfiguration] | None" = None,
+        request_converter_configurations: "list[ConverterConfiguration] | None" = None,
+        response_converter_configurations: "list[ConverterConfiguration] | None" = None,
         prepended_conversation: list[Message] | None = None,
         server_vad: bool | ServerVadConfig = True,
-        attack_identifier: "ComponentIdentifier | None" = None,
         persist_prepended_conversation: bool = True,
     ) -> "_OpenAIRealtimeStreamingSession":
         """
@@ -149,8 +220,6 @@ class RealtimeTarget(OpenAITarget):
             server_vad: Server-side voice activity detection. ``True`` (default) enables
                 VAD with default tuning. Pass a ``ServerVadConfig`` for custom tuning, or
                 ``False`` to disable (sending streaming config will then raise).
-            attack_identifier: Deprecated. This parameter is ignored and will be removed in
-                release 0.17.0.
             persist_prepended_conversation: When ``True`` (default), the session writes
                 ``prepended_conversation`` to memory itself. Pass ``False`` when the
                 caller already persisted the prepended conversation (e.g. via
@@ -163,12 +232,6 @@ class RealtimeTarget(OpenAITarget):
             (but not yielded). The session owns its websocket connection + dispatcher
             for the duration of ``run_async``.
         """
-        if attack_identifier is not None:
-            print_deprecation_message(
-                old_item="open_streaming_session(..., attack_identifier=...)",
-                new_item="open_streaming_session(...)",
-                removed_in="0.17.0",
-            )
         return _OpenAIRealtimeStreamingSession(
             target=self,
             audio_chunks=audio_chunks,
@@ -362,7 +425,7 @@ class RealtimeTarget(OpenAITarget):
         resolved_conversation = (
             conversation
             if conversation is not None
-            else list(self._memory.get_conversation_messages(conversation_id=conversation_id))
+            else list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
         )
         system_prompt = self._get_system_prompt_from_conversation(conversation=resolved_conversation)
         config_variables = self._set_system_prompt_and_config_vars(system_prompt=system_prompt)
@@ -370,17 +433,6 @@ class RealtimeTarget(OpenAITarget):
         connection = self._get_connection(conversation_id=conversation_id)
         await connection.session.update(session=config_variables)
         logger.info("Session configuration sent")
-
-    async def send_config(  # pyrit-async-suffix-exempt
-        self, *, conversation_id: str, conversation: list[Message] | None = None
-    ) -> None:
-        """Use ``send_config_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.send_config",
-            new_item="pyrit.prompt_target.RealtimeTarget.send_config_async",
-            removed_in="0.16.0",
-        )
-        await self.send_config_async(conversation_id=conversation_id, conversation=conversation)
 
     def _get_system_prompt_from_conversation(self, *, conversation: list[Message]) -> str:
         """
@@ -401,8 +453,8 @@ class RealtimeTarget(OpenAITarget):
         # Return default system prompt if none found in conversation
         return "You are a helpful AI assistant"
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to the OpenAI realtime target.
@@ -433,10 +485,14 @@ class RealtimeTarget(OpenAITarget):
             connection = await self._connect_async(conversation_id=conversation_id)
             self._existing_conversation[conversation_id] = connection
 
-            # Only send config when creating a new connection
-            await self.send_config_async(conversation_id=conversation_id, conversation=normalized_conversation)
-            # Give the server a moment to process the session update
-            await asyncio.sleep(0.5)
+            try:
+                # Only send config when creating a new connection
+                await self.send_config_async(conversation_id=conversation_id, conversation=normalized_conversation)
+                # Give the server a moment to process the session update
+                await asyncio.sleep(0.5)
+            except BaseException:
+                await self.reset_conversation_async(conversation_id=conversation_id)
+                raise
 
         response_type = request.converted_value_data_type
 
@@ -494,39 +550,54 @@ class RealtimeTarget(OpenAITarget):
                 logger.warning(f"Error closing realtime client: {e}")
             self._realtime_client = None
 
-    async def cleanup_target(self) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_target_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_target",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_target_async",
-            removed_in="0.16.0",
-        )
-        await self.cleanup_target_async()
+    async def reset_conversation_async(self, *, conversation_id: str) -> None:
+        """
+        Disconnects from the Realtime API for a specific conversation.
+
+        Closes the cached connection for ``conversation_id`` and drops it from
+        ``_existing_conversation``. Errors while closing are logged and
+        swallowed, and an unknown conversation id is a no-op, so this is safe
+        to call from attack lifecycle cleanup.
+
+        Args:
+            conversation_id (str): The conversation ID to disconnect from.
+
+        Raises:
+            asyncio.CancelledError: If cleanup is cancelled, after the connection finishes closing.
+        """
+        connection = self._existing_conversation.pop(conversation_id, None)
+        if not connection:
+            return
+
+        close_task = asyncio.ensure_future(connection.close())
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as cancellation_error:
+            try:
+                await close_task
+            except BaseException as close_error:
+                raise cancellation_error from close_error
+            raise
+        except Exception as e:
+            logger.warning(f"Error closing connection for {conversation_id}: {e}")
+        else:
+            logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
 
     async def cleanup_conversation_async(self, conversation_id: str) -> None:
         """
-        Disconnects from the Realtime API for a specific conversation.
+        Disconnect from the Realtime API for a specific conversation.
+
+        Deprecated. Use ``reset_conversation_async`` instead.
 
         Args:
             conversation_id (str): The conversation ID to disconnect from.
         """
-        connection = self._existing_conversation.get(conversation_id)
-        if connection:
-            try:
-                await connection.close()
-                logger.info(f"Disconnected from {self._endpoint} with conversation ID: {conversation_id}")
-            except Exception as e:
-                logger.warning(f"Error closing connection for {conversation_id}: {e}")
-            del self._existing_conversation[conversation_id]
-
-    async def cleanup_conversation(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``cleanup_conversation_async`` instead; this is a deprecated alias."""
         print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation",
-            new_item="pyrit.prompt_target.RealtimeTarget.cleanup_conversation_async",
-            removed_in="0.16.0",
+            old_item="RealtimeTarget.cleanup_conversation_async",
+            new_item="RealtimeTarget.reset_conversation_async",
+            removed_in="1.3.0",
         )
-        await self.cleanup_conversation_async(conversation_id=conversation_id)
+        await self.reset_conversation_async(conversation_id=conversation_id)
 
     async def _connect_async(self, *, conversation_id: str) -> Any:
         """
@@ -580,33 +651,6 @@ class RealtimeTarget(OpenAITarget):
 
         return data.value
 
-    async def save_audio(  # pyrit-async-suffix-exempt
-        self,
-        audio_bytes: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: str | None = None,
-    ) -> str:
-        """
-        Use ``save_audio_async`` instead; this is a deprecated alias.
-
-        Returns:
-            str: Same as ``save_audio_async``.
-        """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.save_audio",
-            new_item="pyrit.prompt_target.RealtimeTarget.save_audio_async",
-            removed_in="0.16.0",
-        )
-        return await self.save_audio_async(
-            audio_bytes,
-            num_channels=num_channels,
-            sample_width=sample_width,
-            sample_rate=sample_rate,
-            output_filename=output_filename,
-        )
-
     async def send_response_create_async(self, conversation_id: str) -> None:
         """
         Send response.create using OpenAI client.
@@ -617,22 +661,14 @@ class RealtimeTarget(OpenAITarget):
         connection = self._get_connection(conversation_id=conversation_id)
         await connection.response.create()
 
-    async def send_response_create(self, conversation_id: str) -> None:  # pyrit-async-suffix-exempt
-        """Use ``send_response_create_async`` instead; this is a deprecated alias."""
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.send_response_create",
-            new_item="pyrit.prompt_target.RealtimeTarget.send_response_create_async",
-            removed_in="0.16.0",
-        )
-        await self.send_response_create_async(conversation_id=conversation_id)
-
     async def receive_events_async(self, conversation_id: str) -> RealtimeTargetResult:
         """
         Continuously receive events from the OpenAI Realtime API connection.
 
         Uses a robust "soft-finish" strategy to handle cases where response.done
-        may not arrive. After receiving audio.done, waits for a grace period
-        before soft-finishing if no response.done arrives.
+        may not arrive. The first audio.done fixes a deadline one grace period
+        later; if no response.done arrives by then, the turn soft-finishes. Later
+        events never extend that deadline.
 
         Args:
             conversation_id: conversation ID
@@ -641,148 +677,185 @@ class RealtimeTarget(OpenAITarget):
             RealtimeTargetResult with audio data and transcripts
 
         Raises:
-            asyncio.TimeoutError: If waiting for events times out.
+            TimeoutError: If waiting for events times out.
             ConnectionError: If connection is not valid
             RuntimeError: If server returns an error
         """
         connection = self._get_connection(conversation_id=conversation_id)
-
-        result = RealtimeTargetResult()
-        audio_done_received = False
-        current_turn_event_count = 0
-        grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
+        state = _RealtimeReceiveState()
+        clock = asyncio.get_running_loop().time
 
         try:
-            # Create event iterator
             event_iter = connection.__aiter__()
-
             while True:
-                # If we've seen audio.done, wait with a short timeout for response.done
-                # Otherwise, wait indefinitely for events
-                timeout = grace_period_sec if audio_done_received else None
-
-                try:
-                    event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    # Soft-finish: audio.done was received but no response.done after grace period
-                    if audio_done_received:
-                        logger.warning(
-                            f"Soft-finishing: No response.done {grace_period_sec}s after audio.done. "
-                            f"Audio bytes: {len(result.audio_bytes)}"
-                        )
-                        break
-                    # Should not happen if timeout is None, but re-raise if it does
-                    raise
-                except StopAsyncIteration:
-                    # Connection closed normally
-                    logger.debug("Event stream ended")
+                event = await self._next_receive_event_async(event_iter=event_iter, state=state, clock=clock)
+                if event is None or self._apply_receive_event(event=event, state=state, clock=clock):
                     break
-                except Exception as conn_err:
-                    # Handle websockets connection errors as soft-finish if we have audio
-                    if "ConnectionClosed" in str(type(conn_err).__name__) and result.audio_bytes:
-                        logger.warning(
-                            f"Connection closed without response.done (likely API issue). "
-                            f"Audio bytes received: {len(result.audio_bytes)}. Soft-finishing."
-                        )
-                        break
-                    # Re-raise if not a connection close or no audio received
-                    raise
-
-                event_type = event.type
-                current_turn_event_count += 1
-                logger.debug(f"Processing event type: {event_type}")
-
-                if event_type == "response.done":
-                    self._handle_response_done_event(event=event, result=result)
-                    if result.audio_bytes or current_turn_event_count > 1:
-                        # Legitimate response.done: either we have audio, or other events
-                        # (e.g. response.created) preceded it, confirming it belongs to this turn.
-                        logger.debug("Received response.done - finishing normally")
-                        break
-                    # Stale response.done from a previous turn's soft-finish that was
-                    # left unconsumed in the WebSocket buffer. This is the very first
-                    # event received, so it can't belong to the current turn. Skip it
-                    # and continue waiting for the current turn's events.
-                    logger.debug(
-                        "Received response.done as first event with no audio data — "
-                        "likely a stale event from a prior turn's soft-finish. Skipping."
-                    )
-
-                elif event_type == "error":
-                    error_message = event.error.message if hasattr(event.error, "message") else str(event.error)
-                    error_type = event.error.type if hasattr(event.error, "type") else "unknown"
-                    logger.error(f"Received 'error' event: [{error_type}] {error_message}")
-                    raise RuntimeError(f"Server error: [{error_type}] {error_message}")
-
-                elif event_type in ["response.audio.delta", "response.output_audio.delta"]:
-                    audio_data = base64.b64decode(event.delta)
-                    result.audio_bytes += audio_data
-                    logger.debug(f"Decoded {len(audio_data)} bytes of audio data")
-
-                elif event_type in ["response.audio.done", "response.output_audio.done"]:
-                    logger.debug(f"Received audio.done - will soft-finish in {grace_period_sec}s if no response.done")
-                    audio_done_received = True
-
-                elif event_type in ["response.audio_transcript.delta", "response.output_audio_transcript.delta"]:
-                    # Capture transcript deltas as they arrive (needed when response.done never comes)
-                    if hasattr(event, "delta") and event.delta:
-                        result.transcripts.append(event.delta)
-                        logger.debug(f"Captured transcript delta: {event.delta[:50]}...")
-
-                elif event_type in ["response.output_text.done"]:
-                    logger.debug("Received text.done")
-
-                # Handle lifecycle events that we can safely log
-                elif event_type in [
-                    "session.created",
-                    "session.updated",
-                    "conversation.created",
-                    "conversation.item.created",
-                    "conversation.item.added",
-                    "conversation.item.done",
-                    "input_audio_buffer.committed",
-                    "input_audio_buffer.speech_started",
-                    "input_audio_buffer.speech_stopped",
-                    "conversation.item.input_audio_transcription.completed",
-                    "response.created",
-                    "response.output_item.added",
-                    "response.output_item.created",
-                    "response.output_item.done",
-                    "response.content_part.added",
-                    "response.content_part.done",
-                    "response.audio_transcript.done",
-                    "response.output_audio_transcript.done",
-                    "response.output_text.delta",
-                    "rate_limits.updated",
-                ]:
-                    logger.debug(f"Lifecycle event '{event_type}'")
-
-                else:
-                    logger.debug(f"Unhandled event type '{event_type}'")
-
         except Exception as e:
             logger.error(f"An unexpected error occurred for conversation {conversation_id}: {e}")
             raise
 
+        result = state.to_result()
         logger.debug(
             f"Completed receive_events with {len(result.transcripts)} transcripts "
             f"and {len(result.audio_bytes)} bytes of audio"
         )
         return result
 
-    async def receive_events(self, conversation_id: str) -> RealtimeTargetResult:  # pyrit-async-suffix-exempt
+    @staticmethod
+    async def _next_receive_event_async(
+        *, event_iter: Any, state: _RealtimeReceiveState, clock: Callable[[], float]
+    ) -> Any | None:
         """
-        Use ``receive_events_async`` instead; this is a deprecated alias.
+        Wait for the next server event, bounded by the turn's fixed soft-finish deadline.
+
+        Args:
+            event_iter (Any): The connection's async event iterator.
+            state (_RealtimeReceiveState): The current turn state.
+            clock (Callable[[], float]): Monotonic clock the deadline is measured against.
 
         Returns:
-            RealtimeTargetResult: Same as ``receive_events_async``.
+            Any | None: The next event, or None when the turn should finish without one
+                (stream ended, grace period expired, or connection closed after audio arrived).
+
+        Raises:
+            TimeoutError: If a timeout occurs before any audio.done was received.
         """
-        print_deprecation_message(
-            old_item="pyrit.prompt_target.RealtimeTarget.receive_events",
-            new_item="pyrit.prompt_target.RealtimeTarget.receive_events_async",
-            removed_in="0.16.0",
+        timeout = None if state.completion_deadline is None else max(0.0, state.completion_deadline - clock())
+        try:
+            return await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
+        except TimeoutError:
+            if state.completion_deadline is None:
+                raise
+            logger.warning(
+                f"Soft-finishing: No response.done {state.GRACE_PERIOD_SEC}s after audio.done. "
+                f"Audio bytes: {len(state.audio_buffer)}"
+            )
+        except StopAsyncIteration:
+            logger.debug("Event stream ended")
+        except Exception as conn_err:
+            # Treat a websockets close as a soft-finish only once some audio has arrived.
+            if "ConnectionClosed" not in type(conn_err).__name__ or not state.audio_buffer:
+                raise
+            logger.warning(
+                f"Connection closed without response.done (likely API issue). "
+                f"Audio bytes received: {len(state.audio_buffer)}. Soft-finishing."
+            )
+        return None
+
+    @staticmethod
+    def _apply_receive_event(*, event: Any, state: _RealtimeReceiveState, clock: Callable[[], float]) -> bool:
+        """
+        Apply one server event to the per-turn receive state.
+
+        Args:
+            event (Any): The server event.
+            state (_RealtimeReceiveState): The turn state to update.
+            clock (Callable[[], float]): Monotonic clock used to fix the soft-finish deadline.
+
+        Returns:
+            bool: True when the event completes the turn.
+
+        Raises:
+            RuntimeError: If the server sends an error event.
+            ServerErrorException: If response.done reports a failed response.
+        """
+        event_type = event.type
+        event_kind = _OpenAIRealtimeEventRouter.classify_event(event_type)
+        event_response_id = _OpenAIRealtimeEventRouter.get_response_id(event=event)
+        if not state.accepts(event_kind=event_kind, event_response_id=event_response_id):
+            logger.debug(
+                f"Skipping event '{event_type}' for response {event_response_id}; "
+                f"current response is {state.response_id}"
+            )
+            return False
+
+        state.accepted_event_count += 1
+        logger.debug(f"Processing event type: {event_type}")
+        audio_size_before = len(state.audio_buffer)
+        _OpenAIRealtimeEventRouter.collect_response_delta(
+            event=event,
+            event_kind=event_kind,
+            audio_buffer=state.audio_buffer,
+            transcripts=state.transcripts,
         )
-        return await self.receive_events_async(conversation_id=conversation_id)
+
+        if event_kind is _OpenAIRealtimeEventKind.RESPONSE_DONE:
+            return RealtimeTarget._apply_response_done(event=event, state=state)
+        if event_kind is _OpenAIRealtimeEventKind.ERROR:
+            raise RuntimeError(f"Server error: {RealtimeTarget._describe_server_error(event=event)}")
+        if event_kind is _OpenAIRealtimeEventKind.AUDIO_DONE:
+            logger.debug(f"Received audio.done - will soft-finish in {state.GRACE_PERIOD_SEC}s if no response.done")
+            state.start_completion_grace(clock=clock)
+            return False
+
+        RealtimeTarget._log_receive_event(
+            event=event, event_kind=event_kind, decoded_audio_bytes=len(state.audio_buffer) - audio_size_before
+        )
+        return False
+
+    @staticmethod
+    def _apply_response_done(*, event: Any, state: _RealtimeReceiveState) -> bool:
+        """
+        Handle a response.done event for the current turn.
+
+        Args:
+            event (Any): The response.done event.
+            state (_RealtimeReceiveState): The turn state.
+
+        Returns:
+            bool: True when the event completes the turn, False when it is a stale
+                leftover from a prior turn's soft-finish.
+        """
+        RealtimeTarget._handle_response_done_event(event=event, transcript_count=len(state.transcripts))
+        if state.owns_response_done():
+            logger.debug("Received response.done - finishing normally")
+            return True
+        # A response.done arriving as the very first event, with no audio, is left over in the
+        # WebSocket buffer from a prior turn's soft-finish. Skip it and keep waiting.
+        logger.debug(
+            "Received response.done as first event with no audio data — "
+            "likely a stale event from a prior turn's soft-finish. Skipping."
+        )
+        return False
+
+    @staticmethod
+    def _describe_server_error(*, event: Any) -> str:
+        """
+        Log a server error event and describe it.
+
+        Args:
+            event (Any): The error event.
+
+        Returns:
+            str: The error formatted as ``[type] message``.
+        """
+        error_message = event.error.message if hasattr(event.error, "message") else str(event.error)
+        error_type = event.error.type if hasattr(event.error, "type") else "unknown"
+        logger.error(f"Received 'error' event: [{error_type}] {error_message}")
+        return f"[{error_type}] {error_message}"
+
+    @staticmethod
+    def _log_receive_event(*, event: Any, event_kind: _OpenAIRealtimeEventKind, decoded_audio_bytes: int) -> None:
+        """
+        Log a non-terminal event that only feeds the accumulated response.
+
+        Args:
+            event (Any): The server event.
+            event_kind (_OpenAIRealtimeEventKind): The classified event kind.
+            decoded_audio_bytes (int): Audio bytes the event added to the buffer.
+        """
+        if event_kind is _OpenAIRealtimeEventKind.AUDIO_DELTA:
+            logger.debug(f"Decoded {decoded_audio_bytes} bytes of audio data")
+        elif event_kind is _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA:
+            if getattr(event, "delta", ""):
+                logger.debug(f"Captured transcript delta: {event.delta[:50]}...")
+        elif event_kind is _OpenAIRealtimeEventKind.OUTPUT_TEXT_DONE:
+            logger.debug("Received text.done")
+        elif _OpenAIRealtimeEventRouter.is_lifecycle_event(event_kind):
+            logger.debug(f"Lifecycle event '{event.type}'")
+        else:
+            logger.debug(f"Unhandled event type '{event.type}'")
 
     def _get_connection(self, *, conversation_id: str) -> Any:
         """
@@ -803,13 +876,13 @@ class RealtimeTarget(OpenAITarget):
         return connection
 
     @staticmethod
-    def _handle_response_done_event(*, event: Any, result: RealtimeTargetResult) -> None:
+    def _handle_response_done_event(*, event: Any, transcript_count: int) -> None:
         """
         Process a response.done event from OpenAI client.
 
         Args:
             event: The event object from OpenAI client
-            result: RealtimeTargetResult to update
+            transcript_count: Number of transcript fragments received so far, for logging
 
         Raises:
             ValueError: If event structure doesn't match expectations
@@ -832,7 +905,7 @@ class RealtimeTarget(OpenAITarget):
 
         # We used to extract transcript here, but now we collect it from delta events
         # to support soft-finish when response.done doesn't arrive
-        logger.debug(f"Response completed successfully with {len(result.transcripts)} transcript fragments")
+        logger.debug(f"Response completed successfully with {transcript_count} transcript fragments")
 
     @staticmethod
     def _extract_error_details(*, response: Any) -> str:
@@ -876,24 +949,22 @@ class RealtimeTarget(OpenAITarget):
         connection = self._get_connection(conversation_id=conversation_id)
 
         # Start listening for responses
-        receive_tasks = asyncio.create_task(self.receive_events_async(conversation_id=conversation_id))
+        receive_task = asyncio.create_task(self.receive_events_async(conversation_id=conversation_id))
 
         logger.info(f"Sending text message: {text}")
 
-        # Send conversation item
-        await connection.conversation.item.create(
-            item={
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": text}],
-            }
-        )
-
-        # Request response from model
-        await self.send_response_create_async(conversation_id=conversation_id)
-
-        # Wait for response - receive_events has its own soft-finish logic
-        result = await receive_tasks
+        try:
+            await connection.conversation.item.create(
+                item={
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                }
+            )
+            await self.send_response_create_async(conversation_id=conversation_id)
+            result = await receive_task
+        finally:
+            await self._cancel_receive_task_async(receive_task=receive_task)
 
         if not result.audio_bytes:
             raise RuntimeError("No audio received from the server.")
@@ -924,16 +995,9 @@ class RealtimeTarget(OpenAITarget):
         """
         connection = self._get_connection(conversation_id=conversation_id)
 
-        with wave.open(filename, "rb") as wav_file:
-            # Read WAV parameters
-            num_channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()  # Should be 2 bytes for PCM16
-            frame_rate = wav_file.getframerate()
-            num_frames = wav_file.getnframes()
+        audio_content, num_channels, sample_width, frame_rate = await asyncio.to_thread(self._read_wav_file, filename)
 
-            audio_content = wav_file.readframes(num_frames)
-
-        receive_tasks = asyncio.create_task(self.receive_events_async(conversation_id=conversation_id))
+        receive_task = asyncio.create_task(self.receive_events_async(conversation_id=conversation_id))
 
         try:
             audio_base64 = base64.b64encode(audio_content).decode("utf-8")
@@ -947,22 +1011,27 @@ class RealtimeTarget(OpenAITarget):
                     "content": [{"type": "input_audio", "audio": audio_base64}],
                 }
             )
-
+            logger.debug("Sending response.create")
+            await self.send_response_create_async(conversation_id=conversation_id)
+            logger.debug("Waiting for response events...")
+            result = await receive_task
         except Exception as e:
             logger.error(f"Error sending audio: {e}")
             raise
+        finally:
+            await self._cancel_receive_task_async(receive_task=receive_task)
 
-        logger.debug("Sending response.create")
-        await self.send_response_create_async(conversation_id=conversation_id)
-
-        logger.debug("Waiting for response events...")
-        # Wait for response - receive_events has its own soft-finish logic
-        result = await receive_tasks
         if not result.audio_bytes:
             raise RuntimeError("No audio received from the server.")
 
         output_audio_path = await self.save_audio_async(result.audio_bytes, num_channels, sample_width, frame_rate)
         return output_audio_path, result
+
+    async def _cancel_receive_task_async(self, *, receive_task: asyncio.Task[RealtimeTargetResult]) -> None:
+        """Cancel and retrieve a Realtime receive task."""
+        if not receive_task.done():
+            receive_task.cancel()
+        await asyncio.gather(receive_task, return_exceptions=True)
 
     async def _construct_message_from_response_async(self, response: Any, request: Any) -> Message:
         """
@@ -970,3 +1039,23 @@ class RealtimeTarget(OpenAITarget):
         This implementation exists to satisfy the abstract base class requirement.
         """
         raise NotImplementedError("RealtimeTarget uses receive_events for message construction")
+
+    @staticmethod
+    def _read_wav_file(filename: str) -> tuple[bytes, int, int, int]:
+        """
+        Read raw audio frames and format metadata from a WAV file.
+
+        Args:
+            filename (str): Path to the WAV file to read.
+
+        Returns:
+            tuple[bytes, int, int, int]: The raw audio frames, number of channels,
+                sample width in bytes, and frame rate.
+        """
+        with wave.open(filename, "rb") as wav_file:
+            return (
+                wav_file.readframes(wav_file.getnframes()),
+                wav_file.getnchannels(),
+                wav_file.getsampwidth(),
+                wav_file.getframerate(),
+            )

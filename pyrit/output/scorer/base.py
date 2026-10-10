@@ -4,7 +4,6 @@
 from abc import abstractmethod
 from typing import Any
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import ComponentIdentifier
 from pyrit.output.base import PrinterBase
 
@@ -57,28 +56,3 @@ class ScorerPrinterBase(PrinterBase):
         Returns:
             str: The rendered scorer information text.
         """
-
-    async def print_objective_scorer(
-        self, *, scorer_identifier: ComponentIdentifier
-    ) -> None:  # pyrit-async-suffix-exempt
-        """
-        Use ``write_async`` instead. This method is deprecated.
-
-        Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier.
-        """
-        print_deprecation_message(old_item="print_objective_scorer", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(scorer_identifier=scorer_identifier)
-
-    async def print_harm_scorer(
-        self, *, scorer_identifier: ComponentIdentifier, harm_category: str
-    ) -> None:  # pyrit-async-suffix-exempt
-        """
-        Use ``write_async`` instead. This method is deprecated.
-
-        Args:
-            scorer_identifier (ComponentIdentifier): The scorer identifier.
-            harm_category (str): The harm category.
-        """
-        print_deprecation_message(old_item="print_harm_scorer", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)

@@ -1,66 +1,77 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
+# ruff: noqa: F401
 
 """Registry module for PyRIT class and object registries."""
 
-from pyrit.registry.base import RegistryProtocol
-from pyrit.registry.class_registries import (
-    BaseClassRegistry,
-    ClassEntry,
-    InitializerMetadata,
-    InitializerRegistry,
-    ScenarioMetadata,
-    ScenarioParameterMetadata,
-    ScenarioRegistry,
-)
-from pyrit.registry.components import (
-    ConverterMetadata,
-    ConverterRegistry,
-)
-from pyrit.registry.discovery import (
-    discover_in_directory,
-    discover_in_package,
-    discover_subclasses_in_loaded_modules,
-)
-from pyrit.registry.instance_registry import (
-    DefaultInstanceRegistry,
-    InstanceRegistry,
-    SupportsInstances,
-)
-from pyrit.registry.object_registries import (
-    AttackTechniqueRegistry,
-    BaseInstanceRegistry,
-    RegistryEntry,
-    RetrievableInstanceRegistry,
-    ScorerRegistry,
-    TargetRegistry,
-)
-from pyrit.registry.registry import Registry
-from pyrit.registry.tag_query import TagQuery
+from typing import TYPE_CHECKING
 
-__all__ = [
-    "AttackTechniqueRegistry",
-    "BaseClassRegistry",
-    "BaseInstanceRegistry",
-    "ConverterRegistry",
-    "ConverterMetadata",
-    "DefaultInstanceRegistry",
-    "InstanceRegistry",
-    "Registry",
-    "RetrievableInstanceRegistry",
-    "SupportsInstances",
-    "ClassEntry",
-    "discover_in_directory",
-    "discover_in_package",
-    "discover_subclasses_in_loaded_modules",
-    "InitializerMetadata",
-    "InitializerRegistry",
-    "RegistryEntry",
-    "RegistryProtocol",
-    "ScenarioMetadata",
-    "ScenarioParameterMetadata",
-    "ScenarioRegistry",
-    "ScorerRegistry",
-    "TargetRegistry",
-    "TagQuery",
-]
+from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
+
+if TYPE_CHECKING:
+    from pyrit.registry.components import (
+        AttackRegistry,
+        AttackTechniqueMetadata,
+        AttackTechniqueRegistry,
+        ConverterMetadata,
+        ConverterRegistry,
+        InitializerMetadata,
+        InitializerRegistry,
+        ScenarioMetadata,
+        ScenarioRegistry,
+        ScorerMetadata,
+        ScorerRegistry,
+        TargetMetadata,
+        TargetRegistry,
+    )
+    from pyrit.registry.discovery import discover_in_directory
+    from pyrit.registry.instance_registry import (
+        DefaultInstanceRegistry,
+        InstanceRegistry,
+        RegistryEntry,
+        SupportsInstances,
+    )
+    from pyrit.registry.registry import InstanceHoldingRegistry, ParamBagRegistry, Registry
+    from pyrit.registry.registry_metadata import RegistryMetadata
+    from pyrit.registry.tag_query import TagQuery
+
+_LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AttackRegistry": "pyrit.registry.components",
+    "AttackTechniqueRegistry": "pyrit.registry.components",
+    "AttackTechniqueMetadata": "pyrit.registry.components",
+    "ConverterRegistry": "pyrit.registry.components",
+    "ConverterMetadata": "pyrit.registry.components",
+    "DefaultInstanceRegistry": "pyrit.registry.instance_registry",
+    "InstanceRegistry": "pyrit.registry.instance_registry",
+    "InstanceHoldingRegistry": "pyrit.registry.registry",
+    "ParamBagRegistry": "pyrit.registry.registry",
+    "Registry": "pyrit.registry.registry",
+    "RegistryMetadata": "pyrit.registry.registry_metadata",
+    "SupportsInstances": "pyrit.registry.instance_registry",
+    "discover_in_directory": "pyrit.registry.discovery",
+    "InitializerMetadata": "pyrit.registry.components",
+    "InitializerRegistry": "pyrit.registry.components",
+    "RegistryEntry": "pyrit.registry.instance_registry",
+    "ScenarioMetadata": "pyrit.registry.components",
+    "ScenarioRegistry": "pyrit.registry.components",
+    "ScorerRegistry": "pyrit.registry.components",
+    "ScorerMetadata": "pyrit.registry.components",
+    "TargetRegistry": "pyrit.registry.components",
+    "TargetMetadata": "pyrit.registry.components",
+    "TagQuery": "pyrit.registry.tag_query",
+}
+
+__all__ = list(_LAZY_EXPORTS)
+
+
+def __getattr__(name: str) -> object:
+    return resolve_lazy_export(
+        name=name,
+        module_name=__name__,
+        module_globals=globals(),
+        exports=_LAZY_EXPORTS,
+    )
+
+
+def __dir__() -> list[str]:
+    return get_lazy_dir(module_globals=globals(), exports=_LAZY_EXPORTS)

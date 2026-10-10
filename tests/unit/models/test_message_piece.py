@@ -4,25 +4,49 @@
 import os
 import tempfile
 import uuid
-import warnings
 from collections.abc import MutableSequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from unit.mocks import get_sample_conversations
 
+from pyrit.converter import Base64Converter
+from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
+    ChatMessageRole,
     ComponentIdentifier,
     Message,
     MessagePiece,
+    RequestTraceContext,
     Score,
     construct_response_from_request,
+    flatten_to_message_pieces,
     group_conversation_message_pieces_by_sequence,
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
-from pyrit.prompt_converter import Base64Converter
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_role", "api_role"),
+    [("assistant", "simulated_assistant", "assistant"), ("tool", "simulated_tool", "tool"), ("user", "user", "user")],
+)
+def test_simulated_history_provenance(
+    *, role: ChatMessageRole, expected_role: ChatMessageRole, api_role: ChatMessageRole
+) -> None:
+    piece = MessagePiece(role=role, original_value="history")
+    piece.prompt_metadata.update(RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata())
+    piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
+    piece.set_simulated_role()
+    piece.set_simulated_role()
+    restored = MessagePiece.model_validate_json(piece.model_dump_json())
+    assert restored.role == expected_role
+    assert restored.api_role == api_role
+    assert restored.is_simulated is (role != "user")
+    assert restored.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] is True
+    assert RequestTraceContext.from_metadata(restored.prompt_metadata) is None
+    assert RequestTraceContext.REQUEST_METADATA_KEY not in restored.prompt_metadata
 
 
 @pytest.fixture
@@ -39,8 +63,27 @@ def test_id_set():
     assert entry.id is not None
 
 
+@pytest.mark.parametrize(
+    ("converted_fields", "expected_value"),
+    [
+        ({}, "Original source"),
+        ({"converted_value": None}, "Original source"),
+        ({"converted_value": ""}, ""),
+        ({"converted_value": "Converted"}, "Converted"),
+    ],
+)
+def test_converted_value_defaults_only_when_missing_or_null(
+    *, converted_fields: dict[str, str | None], expected_value: str
+) -> None:
+    piece = MessagePiece.model_validate({"role": "user", "original_value": "Original source", **converted_fields})
+
+    assert piece.original_value == "Original source"
+    assert piece.converted_value == expected_value
+    assert MessagePiece.model_validate(piece.model_dump()).converted_value == expected_value
+
+
 def test_datetime_set():
-    fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=UTC)
     with patch("pyrit.models.messages.message_piece.datetime") as mock_datetime:
         mock_datetime.now.return_value = fake_now
         entry = MessagePiece(
@@ -49,7 +92,7 @@ def test_datetime_set():
             converted_value="Hello",
         )
     assert entry.timestamp == fake_now
-    mock_datetime.now.assert_called_once_with(tz=timezone.utc)
+    mock_datetime.now.assert_called_once_with(tz=UTC)
 
 
 def test_converters_serialize():
@@ -66,7 +109,7 @@ def test_converters_serialize():
     converter = entry.converter_identifiers[0]
 
     assert converter.class_name == "Base64Converter"
-    assert converter.class_module == "pyrit.prompt_converter.base64_converter"
+    assert converter.class_module == "pyrit.converter.base64_converter"
 
 
 async def test_hashes_generated():
@@ -75,7 +118,7 @@ async def test_hashes_generated():
         original_value="Hello1",
         converted_value="Hello2",
     )
-    await entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(entry)
     assert entry.original_value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
     assert entry.converted_value_sha256 == "be98c2510e417405647facb89399582fc499c3de4452b3014857f92e6baad9a9"
 
@@ -94,7 +137,7 @@ async def test_hashes_generated_files():
             original_value_data_type="image_path",
             converted_value_data_type="audio_path",
         )
-        await entry.set_sha256_values_async()
+        await set_message_piece_sha256_async(entry)
         assert entry.original_value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
         assert entry.converted_value_sha256 == "948edbe7ede5aa7423476ae29dcd7d61e7711a071aea0d83698377effa896525"
 
@@ -294,7 +337,7 @@ def test_group_conversation_message_pieces(sample_conversations: MutableSequence
     all_pieces: list[MessagePiece] = []
     for response in sample_conversations:
         if response.message_pieces[0].conversation_id == sample_conversations[0].message_pieces[0].conversation_id:
-            pieces = response.flatten_to_message_pieces([response])
+            pieces = flatten_to_message_pieces([response])
             all_pieces.extend(pieces)
 
     # Filter to get pieces from the same conversation
@@ -311,7 +354,7 @@ def test_group_conversation_message_pieces_multiple_groups(
     # Get pieces from the first conversation
     all_pieces: list[MessagePiece] = []
     for response in sample_conversations:
-        pieces = response.flatten_to_message_pieces([response])
+        pieces = flatten_to_message_pieces([response])
         all_pieces.extend(pieces)
 
     # Filter to get pieces from the same conversation and add another piece
@@ -352,7 +395,7 @@ async def test_message_piece_sets_original_sha256():
     )
 
     entry.original_value = "newvalue"
-    await entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(entry)
     assert entry.original_value_sha256 == "70e01503173b8e904d53b40b3ebb3bded5e5d3add087d3463a4b1abe92f1a8ca"
 
 
@@ -362,7 +405,7 @@ async def test_message_piece_sets_converted_sha256():
         original_value="Hello",
     )
     entry.converted_value = "newvalue"
-    await entry.set_sha256_values_async()
+    await set_message_piece_sha256_async(entry)
     assert entry.converted_value_sha256 == "70e01503173b8e904d53b40b3ebb3bded5e5d3add087d3463a4b1abe92f1a8ca"
 
 
@@ -374,7 +417,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id=id1,
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=2,
         ),
         MessagePiece(
@@ -382,7 +425,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id=id2,
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=1,
         ),
         MessagePiece(
@@ -390,7 +433,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id=id3,
             original_value="Hello 3",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc),
+            timestamp=datetime.now(tz=UTC),
             sequence=3,
         ),
     ]
@@ -433,7 +476,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 4",
             conversation_id="conv2",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=5),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=5),
             sequence=2,
             id=id4,
         ),
@@ -441,7 +484,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=15),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=15),
             sequence=1,
             id=id1,
         ),
@@ -449,7 +492,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 3",
             conversation_id="conv2",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=1,
             id=id3,
         ),
@@ -457,7 +500,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=2,
             id=id2,
         ),
@@ -502,7 +545,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
 
 
 def test_order_message_pieces_by_conversation_same_timestamp():
-    timestamp = datetime.now(tz=timezone.utc)
+    timestamp = datetime.now(tz=UTC)
     id1, id2, id3, id4 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
     pieces = [
@@ -608,7 +651,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             role="user",
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc),
+            timestamp=datetime.now(tz=UTC),
             sequence=2,
             id=id2,
         ),
@@ -616,7 +659,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             role="user",
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc),
+            timestamp=datetime.now(tz=UTC),
             sequence=1,
             id=id1,
         ),
@@ -643,6 +686,25 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
     assert sort_message_pieces(pieces) == expected
 
 
+def test_order_message_pieces_with_same_sequence_by_timestamp():
+    earlier_piece = MessagePiece(
+        role="user",
+        original_value="first",
+        conversation_id="conv1",
+        timestamp=datetime.now(tz=UTC) - timedelta(seconds=1),
+        sequence=1,
+    )
+    later_piece = MessagePiece(
+        role="user",
+        original_value="second",
+        conversation_id="conv1",
+        timestamp=datetime.now(tz=UTC),
+        sequence=1,
+    )
+
+    assert sort_message_pieces([later_piece, earlier_piece]) == [earlier_piece, later_piece]
+
+
 def test_message_piece_to_dict():
     entry = MessagePiece(
         role="user",
@@ -650,12 +712,11 @@ def test_message_piece_to_dict():
         converted_value="Hello",
         conversation_id="test_conversation",
         sequence=1,
-        labels={"label1": "value1"},
         prompt_metadata={"key": "metadata"},
         converter_identifiers=[
             ComponentIdentifier(
                 class_name="Base64Converter",
-                class_module="pyrit.prompt_converter.base64_converter",
+                class_module="pyrit.converter.base64_converter",
                 params={"supported_input_types": ["text"], "supported_output_types": ["text"]},
             )
         ],
@@ -663,7 +724,7 @@ def test_message_piece_to_dict():
         converted_value_data_type="text",
         response_error="none",
         original_prompt_id=uuid.uuid4(),
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
     )
 
     result = entry.model_dump(mode="json")
@@ -674,7 +735,6 @@ def test_message_piece_to_dict():
         "conversation_id",
         "sequence",
         "timestamp",
-        "labels",
         "prompt_metadata",
         "converter_identifiers",
         "original_value_data_type",
@@ -696,9 +756,8 @@ def test_message_piece_to_dict():
     assert result["sequence"] == entry.sequence
     # Pydantic v2 serializes UTC datetimes with a trailing "Z" rather than "+00:00".
     assert result["timestamp"] == entry.timestamp.isoformat().replace("+00:00", "Z")
-    assert result["labels"] == entry.labels
     assert result["prompt_metadata"] == entry.prompt_metadata
-    assert result["converter_identifiers"] == [conv.to_dict() for conv in entry.converter_identifiers]
+    assert result["converter_identifiers"] == [conv.model_dump(mode="json") for conv in entry.converter_identifiers]
     assert result["original_value_data_type"] == entry.original_value_data_type
     assert result["original_value"] == entry.original_value
     assert result["original_value_sha256"] == entry.original_value_sha256
@@ -802,6 +861,41 @@ def test_message_piece_has_error_and_is_blocked_consistency():
     assert blocked_entry.is_blocked() is True
     assert blocked_entry.has_error() is True
 
+
+def test_adversarial_placeholder_factory_defaults():
+    piece = MessagePiece.adversarial_placeholder()
+
+    assert piece.role == "user"
+    assert piece.original_value == ""
+    assert piece.original_value_data_type == "text"
+    assert piece.is_adversarial_placeholder() is True
+    assert piece.prompt_metadata.get("adversarial_placeholder") is True
+
+
+@pytest.mark.parametrize("role", ["user", "assistant", "system"])
+def test_adversarial_placeholder_factory_custom_role(role):
+    piece = MessagePiece.adversarial_placeholder(role=role)
+
+    assert piece.role == role
+    assert piece.is_adversarial_placeholder() is True
+
+
+def test_is_adversarial_placeholder_returns_false_for_plain_piece():
+    plain = MessagePiece(role="user", original_value="hello")
+
+    assert plain.is_adversarial_placeholder() is False
+    assert "adversarial_placeholder" not in plain.prompt_metadata
+
+
+def test_is_adversarial_placeholder_returns_false_when_flag_is_false():
+    piece = MessagePiece(
+        role="user",
+        original_value="",
+        prompt_metadata={"adversarial_placeholder": False},
+    )
+
+    assert piece.is_adversarial_placeholder() is False
+
     # Test that not all errors are blocks
     error_entry = MessagePiece(
         role="assistant",
@@ -899,7 +993,7 @@ def test_set_piece_not_in_memory_sets_flag():
 
 
 def test_to_dict_from_dict_roundtrip():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     scorer_id = ComponentIdentifier(
         class_name="SelfAskTrueFalseScorer",
@@ -916,7 +1010,7 @@ def test_to_dict_from_dict_roundtrip():
     )
     converter_id = ComponentIdentifier(
         class_name="Base64Converter",
-        class_module="pyrit.prompt_converter",
+        class_module="pyrit.converter",
     )
     score = Score(
         score_value="true",
@@ -925,7 +1019,7 @@ def test_to_dict_from_dict_roundtrip():
         score_rationale="clearly met",
         scorer_class_identifier=scorer_id,
         message_piece_id="mp-score-ref",
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
     )
     original = MessagePiece(
         id="12345678-aaaa-bbbb-cccc-000000000001",
@@ -936,7 +1030,7 @@ def test_to_dict_from_dict_roundtrip():
         converted_value_sha256="def456",
         conversation_id="conv-1",
         sequence=2,
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
         prompt_metadata={"doc_type": "text"},
         converter_identifiers=[converter_id],
         original_value_data_type="text",
@@ -995,7 +1089,7 @@ class TestCopyLineageFrom:
         assert target.conversation_id == "conv-A"
         assert target.prompt_metadata == {"k": "v"}
 
-    def test_labels_and_metadata_are_shallow_copied(self) -> None:
+    def test__metadata_are_shallow_copied(self) -> None:
         source = self._make_piece()
         source.prompt_metadata = {"meta": "1"}
 
@@ -1029,7 +1123,7 @@ class TestPhase3PydanticMigration:
     """Phase 3 §F.2 sanity tests for the MessagePiece Pydantic migration."""
 
     def test_to_dict_golden_shape(self) -> None:
-        ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
         piece_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
         conv_id = "conv-123"
         piece = MessagePiece(
@@ -1058,7 +1152,6 @@ class TestPhase3PydanticMigration:
             "converted_value_sha256",
             "response_error",
             "original_prompt_id",
-            "labels",
             "prompt_metadata",
             "converter_identifiers",
         ]
@@ -1068,7 +1161,6 @@ class TestPhase3PydanticMigration:
         assert d["conversation_id"] == conv_id
         assert d["sequence"] == 2
         assert d["timestamp"] == ts.isoformat().replace("+00:00", "Z")
-        assert d["labels"] == {}
         assert d["prompt_metadata"] == {}
         assert d["converter_identifiers"] == []
         assert d["original_value_data_type"] == "text"
@@ -1091,100 +1183,28 @@ class TestPhase3PydanticMigration:
         assert "typo_field" in str(exc_info.value) or "Extra" in str(exc_info.value)
 
 
-class TestMessagePieceDeprecationWarnings:
-    """Tests for deprecation warnings on parameters scheduled for removal."""
+class TestTruncationFlag:
+    def test_is_truncated_defaults_to_false(self) -> None:
+        piece = MessagePiece(role="assistant", original_value="hello")
+        assert piece.is_truncated is False
 
-    def _emit_deprecation_msgs(self, **kwargs) -> list[warnings.WarningMessage]:
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            MessagePiece(role="user", original_value="hello", **kwargs)
-        return [x for x in w if issubclass(x.category, DeprecationWarning)]
+    def test_mark_as_truncated_sets_flag(self) -> None:
+        piece = MessagePiece(role="assistant", original_value="partial answer")
+        piece.mark_as_truncated()
+        assert piece.is_truncated is True
+        assert piece.prompt_metadata[MessagePiece.TRUNCATED_METADATA_KEY] is True
 
-    def test_labels_emits_deprecation_warning(self):
-        msgs = self._emit_deprecation_msgs(labels={"k": "v"})
-        assert any("labels" in str(m.message) for m in msgs)
-
-    def test_labels_omitted_no_warning(self):
-        msgs = self._emit_deprecation_msgs()
-        assert not any("labels" in str(m.message) for m in msgs)
-
-    def test_labels_empty_dict_no_warning(self):
-        """An explicit empty ``labels={}`` (the field default) must not warn.
-
-        Internal call sites forward ``labels=<source>.labels`` which is ``{}`` on
-        the happy path; this regression-guards that such forwarding stays silent.
-        """
-        msgs = self._emit_deprecation_msgs(labels={})
-        assert not any("labels" in str(m.message) for m in msgs)
-
-    def test_construct_response_from_request_default_labels_no_warning(self):
-        """``construct_response_from_request`` on a request with default labels is silent.
-
-        Reproduces the reported false positive: every response construction warned
-        because the request's default ``labels={}`` was forwarded through the
-        ``MessagePiece`` constructor.
-        """
-        request = MessagePiece(role="user", original_value="hello", conversation_id="conv-1")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            construct_response_from_request(request=request, response_text_pieces=["hi"])
-        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert not any("labels" in str(m.message) for m in deprecation_msgs)
-
-    def test_memory_load_roundtrip_does_not_emit_deprecation_warnings(self) -> None:
-        """Reconstructing a MessagePiece from PromptMemoryEntry must not emit deprecations.
-
-        The memory-layer load path assigns deprecated ``labels`` post-construction so the
-        deprecation-kwarg validator is not triggered. This regression-guards that pattern.
-        """
-        from pyrit.memory.memory_models import PromptMemoryEntry
-
+    def test_mark_as_truncated_preserves_existing_metadata(self) -> None:
         piece = MessagePiece(
-            role="user",
-            original_value="hello",
-            conversation_id="conv-deprec",
+            role="assistant", original_value="partial", prompt_metadata={"token_usage_output_tokens": 5}
         )
-        piece.labels = {"k": "v"}
+        piece.mark_as_truncated()
+        assert piece.prompt_metadata["token_usage_output_tokens"] == 5
+        assert piece.is_truncated is True
 
-        entry = PromptMemoryEntry(entry=piece)
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            reconstructed = entry.get_message_piece()
-
-        deprecation_msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert deprecation_msgs == [], [str(m.message) for m in deprecation_msgs]
-        assert reconstructed.labels == {"k": "v"}
-
-
-class TestMessagePieceDeprecatedMethodShims:
-    """Tests for the deprecated method shims scheduled for removal in 0.16.0."""
-
-    def test_to_dict_emits_warning_and_matches_model_dump(self) -> None:
-        piece = MessagePiece(role="user", original_value="hello")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            result = piece.to_dict()
-        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("to_dict" in str(m.message) for m in msgs)
-        assert result == piece.model_dump(mode="json")
-
-    def test_from_dict_emits_warning_and_matches_model_validate(self) -> None:
-        piece = MessagePiece(role="user", original_value="hello")
-        serialized = piece.model_dump(mode="json")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            reconstructed = MessagePiece.from_dict(serialized)
-        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("from_dict" in str(m.message) for m in msgs)
-        assert reconstructed.model_dump(mode="json") == serialized
-
-    def test_set_piece_not_in_database_emits_warning_and_sets_flag(self) -> None:
-        piece = MessagePiece(role="user", original_value="hello")
-        assert piece.not_in_memory is False
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            piece.set_piece_not_in_database()
-        msgs = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert any("set_piece_not_in_database" in str(m.message) for m in msgs)
-        assert piece.not_in_memory is True
+    def test_truncated_piece_can_still_report_no_error(self) -> None:
+        """A truncated partial answer is not an error, so is_truncated is the only signal."""
+        piece = MessagePiece(role="assistant", original_value="partial answer")
+        piece.mark_as_truncated()
+        assert piece.has_error() is False
+        assert piece.is_truncated is True

@@ -54,7 +54,7 @@ class _MICDataset(_RemoteDatasetLoader):
         return "moral_integrity_corpus"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch the MIC dataset and return as SeedDataset.
 
@@ -92,15 +92,23 @@ class _MICDataset(_RemoteDatasetLoader):
                 moral = row.get("moral")
                 categories = [m.strip() for m in moral.split("|") if m.strip()] if isinstance(moral, str) else []
 
+                # MIC's moral-foundations labels (care/fairness/loyalty/authority/
+                # sanctity/liberty) are not a harm taxonomy, so harm categories are
+                # left empty while the native labels are kept in metadata.
+                harm_categories: list[str] = []
                 seed_prompts.append(
                     SeedPrompt(
                         value=question,
                         data_type="text",
                         dataset_name=self.dataset_name,
                         source=self.source,
-                        harm_categories=categories,
+                        harm_categories=harm_categories,
                         authors=self.AUTHORS,
                         groups=self.GROUPS,
+                        metadata={
+                            "moral": "|".join(categories),
+                            "harm_mapping_status": "UNCLEAR",
+                        },
                     )
                 )
 

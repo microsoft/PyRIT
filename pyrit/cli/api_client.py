@@ -4,21 +4,50 @@
 """
 Async REST client for the PyRIT backend API.
 
-Uses ``httpx`` internally but defers the import to method calls so that
-importing this module does not trigger the import-guard ban on ``httpx``
-at CLI parse time.
+Returns typed ``pyrit.models`` objects (canonical wire-data types defined in
+``pyrit.models.catalog`` plus ``ScenarioResult``). Heavy imports — ``httpx``
+and ``pyrit.models`` — are deferred to method bodies so that importing this
+module does not trigger the CLI parse-time import-guard ban on either.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from pyrit.cli._auth import AuthMode, TokenProvider
+    from pyrit.models import ScenarioResult
+    from pyrit.models.catalog import (
+        RegisteredInitializer,
+        RegisteredScenario,
+        RunScenarioRequest,
+        ScenarioRunListItem,
+        ScenarioRunSummary,
+        TargetInstance,
+    )
 
 _logger = logging.getLogger(__name__)
 
 
 class ServerNotAvailableError(Exception):
     """Raised when the CLI cannot reach the PyRIT backend server."""
+
+
+class CompatibilityError(Exception):
+    """Raised when client and backend cannot safely operate in strict lockstep."""
+
+    def __init__(self, message: str, *, expected: object = None, actual: object = None) -> None:
+        """Initialize an actionable compatibility failure with the reported identities."""
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"{message} Expected: {expected!r}; actual: {actual!r}. "
+            "Install client and backend from the same PyRIT build, then reconnect. "
+            "No request was automatically replayed; check scenario history before retrying a run."
+        )
 
 
 class PyRITApiClient:
@@ -33,7 +62,14 @@ class PyRITApiClient:
             scenarios = await client.list_scenarios_async()
     """
 
-    def __init__(self, *, base_url: str, request_timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        request_timeout: float | None = None,
+        auth_mode: AuthMode = "none",
+        interactive: bool | None = None,
+    ) -> None:
         """
         Initialize the API client.
 
@@ -44,10 +80,17 @@ class PyRITApiClient:
                 the live scenario-run endpoint always uses ``read=None`` regardless
                 of this value, because the server may legitimately take many seconds
                 to respond while a scenario is executing. Defaults to ``60.0``.
+            auth_mode: Authentication behavior for protected remote backends.
+            interactive: Optional terminal-interactivity override.
         """
         self._base_url = base_url.rstrip("/")
         self._request_timeout = request_timeout if request_timeout is not None else 60.0
+        self._auth_mode = auth_mode
+        self._interactive = interactive
         self._client: Any = None  # httpx.AsyncClient (typed Any to avoid top-level import)
+        self._token_provider: TokenProvider | None = None
+        self._compatibility_id: str | None = None
+        self._compatibility_error: CompatibilityError | None = None
 
     async def __aenter__(self) -> PyRITApiClient:
         """
@@ -55,10 +98,38 @@ class PyRITApiClient:
 
         Returns:
             PyRITApiClient: ``self``, with the HTTP client opened.
+
+        Raises:
+            CliAuthenticationError: If authentication discovery or login fails.
+            CompatibilityError: If the installed stamp or backend identity is invalid or mismatched.
+            httpx.HTTPError: If authentication discovery or the version request fails.
         """
         import httpx
 
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=self._request_timeout)
+        from pyrit._compatibility import get_compatibility_id
+
+        try:
+            if self._compatibility_error is not None:
+                raise self._compatibility_error
+            try:
+                self._compatibility_id = await asyncio.to_thread(get_compatibility_id)
+            except ValueError as exc:
+                self._compatibility_error = CompatibilityError(f"Invalid installed PyRIT compatibility stamp: {exc}")
+                raise self._compatibility_error from exc
+            self._client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=self._request_timeout,
+                event_hooks={
+                    "request": [self._prepare_request_async],
+                    "response": [self._check_compatibility_response_async],
+                },
+            )
+            if self._auth_mode != "none":
+                await self._configure_authentication_async()
+            await self._verify_compatibility_async()
+        except BaseException:
+            await self.close_async()
+            raise
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -75,13 +146,21 @@ class PyRITApiClient:
 
         Returns:
             bool: ``True`` if the server returned a healthy response.
+
+        Raises:
+            CompatibilityError: If the client is blocked by a compatibility failure.
         """
         import httpx
 
         try:
             client = self._get_client()
             resp = await client.get("/api/health")
-            return resp.status_code == 200
+            if resp.status_code != 200:
+                return False
+            payload = resp.json()
+            return bool(payload.get("status") == "healthy" and payload.get("service") == "pyrit-backend")
+        except CompatibilityError:
+            raise
         except httpx.ConnectError:
             return False
         except Exception:
@@ -92,48 +171,57 @@ class PyRITApiClient:
     # Scenarios
     # ------------------------------------------------------------------
 
-    async def list_scenarios_async(self, *, limit: int = 200) -> dict[str, Any]:
+    async def list_scenarios_async(self, *, limit: int = 200) -> list[RegisteredScenario]:
         """
         List all available scenarios.
 
         Returns:
-            dict: ``ListRegisteredScenariosResponse`` payload.
+            list[RegisteredScenario]: All scenarios in the catalog.
         """
-        return await self._get_json_async(path="/api/scenarios/catalog", params={"limit": limit})
+        from pyrit.models.catalog import RegisteredScenario
 
-    async def get_scenario_async(self, *, scenario_name: str) -> dict[str, Any] | None:
+        payload = await self._get_json_async(path="/api/scenarios/catalog", params={"limit": limit})
+        return [RegisteredScenario.model_validate(item) for item in payload.get("items", [])]
+
+    async def get_scenario_async(self, *, scenario_name: str) -> RegisteredScenario | None:
         """
         Get metadata for a single scenario.
 
         Returns:
-            dict | None: ``RegisteredScenario`` payload, or ``None`` if 404.
+            RegisteredScenario | None: The scenario, or ``None`` if 404.
 
         Raises:
             httpx.HTTPStatusError: For non-404 HTTP error responses.
         """
         import httpx
 
+        from pyrit.models.catalog import RegisteredScenario
+
         try:
-            return await self._get_json_async(path=f"/api/scenarios/catalog/{scenario_name}")
+            payload = await self._get_json_async(path=f"/api/scenarios/catalog/{scenario_name}")
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return None
             raise
+        return RegisteredScenario.model_validate(payload)
 
     # ------------------------------------------------------------------
     # Initializers
     # ------------------------------------------------------------------
 
-    async def list_initializers_async(self, *, limit: int = 200) -> dict[str, Any]:
+    async def list_initializers_async(self, *, limit: int = 200) -> list[RegisteredInitializer]:
         """
         List all available initializers.
 
         Returns:
-            dict: ``ListRegisteredInitializersResponse`` payload.
+            list[RegisteredInitializer]: All initializers in the catalog.
         """
-        return await self._get_json_async(path="/api/initializers", params={"limit": limit})
+        from pyrit.models.catalog import RegisteredInitializer
 
-    async def register_initializer_async(self, *, name: str, script_content: str) -> dict[str, Any]:
+        payload = await self._get_json_async(path="/api/initializers", params={"limit": limit})
+        return [RegisteredInitializer.model_validate(item) for item in payload.get("items", [])]
+
+    async def register_initializer_async(self, *, name: str, script_content: str) -> RegisteredInitializer:
         """
         Register a custom initializer by uploading Python source code.
 
@@ -142,11 +230,13 @@ class PyRITApiClient:
             script_content: Python source code containing a ``PyRITInitializer`` subclass.
 
         Returns:
-            dict: ``RegisteredInitializer`` payload.
+            RegisteredInitializer: The newly registered initializer.
 
         Raises:
             ServerNotAvailableError: If custom initializers are disabled (403).
         """
+        from pyrit.models.catalog import RegisteredInitializer
+
         client = self._get_client()
         resp = await client.post(
             "/api/initializers",
@@ -156,41 +246,75 @@ class PyRITApiClient:
             detail = self._response_detail(resp) or "Custom initializer operations are disabled on the server."
             raise ServerNotAvailableError(detail)
         self._raise_for_status(resp)
-        return resp.json()
+        return RegisteredInitializer.model_validate(resp.json())
 
     # ------------------------------------------------------------------
     # Targets
     # ------------------------------------------------------------------
 
-    async def list_targets_async(self, *, limit: int = 200) -> dict[str, Any]:
+    async def list_targets_async(self, *, limit: int = 200) -> list[TargetInstance]:
         """
         List all available targets.
 
         Returns:
-            dict: ``TargetListResponse`` payload.
+            list[TargetInstance]: All targets registered on the server.
         """
-        return await self._get_json_async(path="/api/targets", params={"limit": limit})
+        from pyrit.models.catalog import TargetInstance
+
+        payload = await self._get_json_async(path="/api/targets", params={"limit": limit})
+        return [TargetInstance.model_validate(item) for item in payload.get("items", [])]
+
+    # ------------------------------------------------------------------
+    # Datasets
+    # ------------------------------------------------------------------
+
+    async def list_datasets_async(self) -> dict[str, Any]:
+        """
+        List all available datasets.
+
+        Returns:
+            dict: ``DatasetListResponse`` payload.
+        """
+        return await self._get_json_async(path="/api/datasets")
+
+    # ------------------------------------------------------------------
+    # Converters
+    # ------------------------------------------------------------------
+
+    async def list_converters_async(self) -> dict[str, Any]:
+        """
+        List all registered converter instances.
+
+        Returns:
+            dict: ``ConverterInstanceListResponse`` payload.
+        """
+        return await self._get_json_async(path="/api/converters")
 
     # ------------------------------------------------------------------
     # Scenario runs
     # ------------------------------------------------------------------
 
-    async def start_scenario_run_async(self, *, request: dict[str, Any]) -> dict[str, Any]:
+    async def start_scenario_run_async(self, *, request: RunScenarioRequest) -> ScenarioRunSummary:
         """
         Start a new scenario run.
 
         Args:
-            request: ``RunScenarioRequest``-shaped dict.
+            request: Typed run request describing the scenario, initializers, and overrides.
 
         Returns:
-            dict: ``ScenarioRunSummary`` payload.
+            ScenarioRunSummary: The newly-created scenario run.
         """
-        client = self._get_client()
-        resp = await client.post("/api/scenarios/runs", json=request)
-        self._raise_for_status(resp)
-        return resp.json()
+        from pyrit.models.catalog import ScenarioRunSummary
 
-    async def get_scenario_run_async(self, *, scenario_result_id: str) -> dict[str, Any]:
+        client = self._get_client()
+        resp = await client.post(
+            "/api/scenarios/runs",
+            json=request.model_dump(mode="json", exclude_none=True),
+        )
+        self._raise_for_status(resp)
+        return ScenarioRunSummary.model_validate(resp.json())
+
+    async def get_scenario_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
         Get the current status of a scenario run.
 
@@ -200,12 +324,14 @@ class PyRITApiClient:
         default read timeout. The other endpoints keep the configured timeout.
 
         Returns:
-            dict: ``ScenarioRunSummary`` payload.
+            ScenarioRunSummary: The current state of the scenario run.
 
         Raises:
             ServerNotAvailableError: If the server cannot be reached.
         """
         import httpx
+
+        from pyrit.models.catalog import ScenarioRunSummary
 
         client = self._get_client()
         try:
@@ -221,37 +347,96 @@ class PyRITApiClient:
                 "or pass '--server-url <url>'."
             ) from exc
         self._raise_for_status(resp)
-        return resp.json()
+        return ScenarioRunSummary.model_validate(resp.json())
 
-    async def get_scenario_run_results_async(self, *, scenario_result_id: str) -> dict[str, Any]:
+    async def get_scenario_run_results_async(self, *, scenario_result_id: str) -> ScenarioResult:
         """
         Get detailed results for a completed scenario run.
 
         Returns:
-            dict: ``ScenarioResult.model_dump(mode="json", by_alias=True)`` payload.
+            ScenarioResult: The full scenario result deserialized from the server payload.
         """
-        return await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}/results")
+        from pyrit.models import ScenarioResult
 
-    async def cancel_scenario_run_async(self, *, scenario_result_id: str) -> dict[str, Any]:
+        payload = await self._get_json_async(path=f"/api/scenarios/runs/{scenario_result_id}/results")
+        return ScenarioResult.model_validate(payload)
+
+    async def cancel_scenario_run_async(self, *, scenario_result_id: str) -> ScenarioRunSummary:
         """
         Cancel a running scenario.
 
         Returns:
-            dict: Updated ``ScenarioRunSummary`` payload.
+            ScenarioRunSummary: Updated summary reflecting the cancellation request.
         """
+        from pyrit.models.catalog import ScenarioRunSummary
+
         client = self._get_client()
         resp = await client.post(f"/api/scenarios/runs/{scenario_result_id}/cancel")
         self._raise_for_status(resp)
-        return resp.json()
+        return ScenarioRunSummary.model_validate(resp.json())
 
-    async def list_scenario_runs_async(self, *, limit: int = 100) -> dict[str, Any]:
+    async def list_scenario_runs_async(self, *, limit: int = 100) -> list[ScenarioRunListItem]:
         """
         List tracked scenario runs.
 
         Returns:
-            dict: ``ScenarioRunListResponse`` payload.
+            list[ScenarioRunListItem]: All tracked scenario runs.
+
+        Raises:
+            ValueError: If the requested limit is invalid or a paginated response has no cursor.
         """
-        return await self._get_json_async(path="/api/scenarios/runs", params={"limit": limit})
+        from pyrit.models.catalog import ScenarioRunListItem
+
+        if limit < 1:
+            raise ValueError("Scenario history limit must be positive.")
+
+        runs: list[ScenarioRunListItem] = []
+        cursor: str | None = None
+        while len(runs) < limit:
+            params: dict[str, int | str] = {"limit": min(100, limit - len(runs))}
+            if cursor is not None:
+                params["cursor"] = cursor
+            payload = await self._get_json_async(path="/api/scenarios/runs", params=params)
+            runs.extend(ScenarioRunListItem.model_validate(item) for item in payload.get("items", []))
+            pagination = payload.get("pagination", {})
+            if not pagination.get("has_more"):
+                break
+            next_cursor = pagination.get("next_cursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                raise ValueError("Scenario history response is missing its next-page cursor.")
+            cursor = next_cursor
+        return runs[:limit]
+
+    # ------------------------------------------------------------------
+    # Attacks / conversations
+    # ------------------------------------------------------------------
+
+    async def get_conversation_messages_async(
+        self,
+        *,
+        attack_result_id: str,
+        conversation_id: str,
+    ) -> dict[str, Any]:
+        """
+        Get all messages for one conversation belonging to an attack result.
+
+        Returns the raw ``ConversationMessagesResponse`` payload (rather than a
+        typed backend view model) so the thin client stays decoupled from
+        ``pyrit.backend.models``; ``pyrit.cli._results`` maps it into its own
+        view payload.
+
+        Args:
+            attack_result_id (str): The attack result whose conversation to read.
+            conversation_id (str): The conversation whose messages to return.
+
+        Returns:
+            dict[str, Any]: The ``ConversationMessagesResponse`` payload
+                (``conversation_id`` plus an ordered ``messages`` list).
+        """
+        return await self._get_json_async(
+            path=f"/api/attacks/{attack_result_id}/messages",
+            params={"conversation_id": conversation_id},
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -259,13 +444,116 @@ class PyRITApiClient:
 
     async def close_async(self) -> None:
         """Close the underlying HTTP client."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        client = self._client
+        token_provider = self._token_provider
+        self._client = None
+        self._token_provider = None
+
+        try:
+            if client is not None:
+                await client.aclose()
+        finally:
+            if token_provider is not None:
+                await token_provider.close_async()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    async def _verify_compatibility_async(self) -> None:
+        """Require a valid backend identity matching the installed packaged stamp."""
+        from pyrit._compatibility import is_valid_compatibility_id
+
+        response = await self._get_client().get("/api/version")
+        self._raise_for_status(response)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            self._compatibility_error = CompatibilityError("Invalid JSON from /api/version.")
+            raise self._compatibility_error from exc
+        actual = payload.get("compatibility_id") if isinstance(payload, dict) else None
+        if not is_valid_compatibility_id(actual) or actual != self._compatibility_id:
+            self._compatibility_error = CompatibilityError(
+                "PyRIT client/backend compatibility check failed.", expected=self._compatibility_id, actual=actual
+            )
+            raise self._compatibility_error
+
+    async def _prepare_request_async(self, request: Any) -> None:
+        """Block a failed client and stamp every outgoing request before authentication."""
+        from pyrit._compatibility import COMPATIBILITY_HEADER
+
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
+        request.headers[COMPATIBILITY_HEADER] = self._compatibility_id
+        await self._add_authorization_header_async(request)
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
+
+    async def _check_compatibility_response_async(self, response: Any) -> None:
+        """Latch stable compatibility problem responses, including failures during polling."""
+        from pyrit._compatibility import INVALID_COMPATIBILITY_TYPE, MISMATCH_COMPATIBILITY_TYPE
+
+        problem_types = {400: INVALID_COMPATIBILITY_TYPE, 409: MISMATCH_COMPATIBILITY_TYPE}
+        if response.status_code not in problem_types:
+            return
+        await response.aread()
+        try:
+            payload = response.json()
+        except ValueError:
+            return
+        if not isinstance(payload, dict) or payload.get("type") != problem_types[response.status_code]:
+            return
+        self._compatibility_error = CompatibilityError(
+            "The backend rejected this client's PyRIT compatibility identity; further requests are blocked.",
+            expected=payload.get("expected"),
+            actual=payload.get("actual"),
+        )
+        raise self._compatibility_error
+
+    async def _configure_authentication_async(self) -> None:
+        """
+        Discover backend authentication requirements and select a credential.
+
+        Raises:
+            CliAuthenticationError: If the server contract or selected credential is invalid.
+            httpx.HTTPError: If the discovery request fails.
+        """
+        from pyrit.cli._auth import BackendAuthConfig, CliAuthenticationError, create_token_provider_async
+
+        client = self._get_client()
+        response = await client.get("/api/auth/config")
+        if response.status_code == 404:
+            return
+        self._raise_for_status(response)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CliAuthenticationError("The server returned invalid JSON from /api/auth/config.") from exc
+
+        auth_config = BackendAuthConfig.from_payload(payload)
+        if auth_config.enabled and not self._uses_secure_auth_transport():
+            raise CliAuthenticationError(
+                "Refusing to send an Entra access token over a non-HTTPS connection. Use HTTPS for remote backends."
+            )
+        self._token_provider = await create_token_provider_async(
+            auth_config=auth_config,
+            auth_mode=self._auth_mode,
+            interactive=self._interactive,
+        )
+
+    def _uses_secure_auth_transport(self) -> bool:
+        """Return whether the server URL protects bearer tokens in transit."""
+        parsed = urlparse(self._base_url)
+        if parsed.scheme == "https":
+            return True
+        return parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+
+    async def _add_authorization_header_async(self, request: Any) -> None:
+        """Attach a current bearer token to protected backend requests."""
+        if self._token_provider is None or request.url.path in {"/api/auth/config", "/api/health"}:
+            return
+        token = await self._token_provider.get_token_async()
+        request.headers["Authorization"] = f"Bearer {token}"
 
     def _get_client(self) -> Any:
         """
@@ -276,7 +564,10 @@ class PyRITApiClient:
 
         Raises:
             ServerNotAvailableError: If the client has not been opened via ``__aenter__``.
+            CompatibilityError: If a compatibility failure has blocked the client.
         """
+        if self._compatibility_error is not None:
+            raise self._compatibility_error
         if self._client is None:
             raise ServerNotAvailableError(
                 f"API client is not connected to {self._base_url}. "
@@ -336,9 +627,9 @@ class PyRITApiClient:
         if isinstance(text, bytes):
             text = text.decode(errors="replace")
         if isinstance(text, str):
-            text = text.strip()
-            if text:
-                return text
+            stripped_text: str = text.strip()
+            if stripped_text:
+                return stripped_text
         return None
 
     @staticmethod

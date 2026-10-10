@@ -1,26 +1,47 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
-from typing import TYPE_CHECKING, Optional
+import copy
+import logging
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    import uuid
+
     from pyrit.prompt_target import PromptTarget
 
-from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, Score
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+from pyrit.common.task_utils import gather_with_cleanup_async
+from pyrit.models import (
+    ComponentIdentifier,
+    Scorable,
+    ScorableUnion,
+    Score,
+    ScoreStatus,
+    ScoringExpectation,
+)
+from pyrit.score.observation.execution import _merge_observation_ids
+from pyrit.score.scorer import Scorer
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+
+logger = logging.getLogger(__name__)
 
 
 class TrueFalseCompositeScorer(TrueFalseScorer):
     """
     Composite true/false scorer that aggregates results from other true/false scorers.
 
-    This scorer invokes a collection of constituent ``TrueFalseScorer`` instances and
-    reduces their single-score outputs into one final true/false score using the supplied
-    aggregation function (e.g., ``TrueFalseScoreAggregator.AND``, ``TrueFalseScoreAggregator.OR``,
+    This scorer invokes a collection of constituent true/false scorers and reduces their
+    single-score outputs into one final true/false score using the supplied aggregation
+    function (e.g., ``TrueFalseScoreAggregator.AND``, ``TrueFalseScoreAggregator.OR``,
     ``TrueFalseScoreAggregator.MAJORITY``).
+
+    Children are true/false scorers of any evidence kind, so a scorer over a message can be
+    composed with one over evidence that is not a message at all.
+
+    Built-in AND, OR, and MAJORITY aggregators, including their raise-on-empty variants,
+    opt into order-independent evaluation identity. Duplicates remain significant;
+    custom aggregators and execution stay ordered.
     """
 
     def __init__(
@@ -36,15 +57,14 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             aggregator (TrueFalseAggregatorFunc): Aggregation function to combine child scores
                 (e.g., ``TrueFalseScoreAggregator.AND``, ``TrueFalseScoreAggregator.OR``,
                 ``TrueFalseScoreAggregator.MAJORITY``).
-            scorers (list[TrueFalseScorer]): The constituent true/false scorers to invoke.
+            scorers (list[TrueFalseScorerBase]): The constituent true/false scorers to invoke.
 
         Raises:
             ValueError: If no scorers are provided.
-            ValueError: If any provided scorer is not a TrueFalseScorer.
+            ValueError: If any provided scorer is not a true/false scorer.
         """
         # Initialize base with the selected aggregator used by TrueFalseScorer logic
-        # Validation is used by sub-scorers
-        super().__init__(score_aggregator=aggregator, validator=ScorerPromptValidator())
+        super().__init__(score_aggregator=aggregator)
 
         if not scorers:
             raise ValueError("At least one scorer must be provided.")
@@ -62,12 +82,24 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        order_independent = any(
+            self._score_aggregator is aggregator
+            for aggregator in (
+                TrueFalseScoreAggregator.AND,
+                TrueFalseScoreAggregator.OR,
+                TrueFalseScoreAggregator.MAJORITY,
+                TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY,
+                TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY,
+                TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY,
+            )
+        )
         return self._create_identifier(
+            params={"sub_scorers_order_independent": True} if order_independent else None,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             sub_scorers=[s.get_identifier() for s in self._scorers],
         )
 
-    def get_chat_target(self) -> Optional["PromptTarget"]:
+    def get_chat_target(self) -> "PromptTarget | None":
         """Return the chat target from the first sub-scorer that has one."""
         for scorer in self._scorers:
             target = scorer.get_chat_target()
@@ -75,76 +107,120 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 return target
         return None
 
-    async def _score_async(
-        self,
-        message: Message,
-        *,
-        objective: str | None = None,
-        role_filter: ChatMessageRole | None = None,
-    ) -> list[Score]:
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """
-        Score a request/response by combining results from all constituent scorers.
+        Apply the policy to every constituent scorer.
 
         Args:
-            message (Message): The request/response to score.
-            objective (str | None): Scoring objective or context.
-            role_filter (ChatMessageRole | None): Optional filter for message roles. Defaults to None.
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
 
         Returns:
-            list[Score]: A single-element list with the aggregated true/false score.
+            Scorer: ``self`` when no constituent changed, otherwise a copy wrapping the
+            updated constituents.
+        """
+        scoped_scorers = [
+            cast("TrueFalseScorer", s.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks))
+            for s in self._scorers
+        ]
+        if all(new is old for new, old in zip(scoped_scorers, self._scorers, strict=True)):
+            return self
+        scoped = copy.copy(self)
+        scoped._scorers = scoped_scorers
+        return scoped
+
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorers whose verdicts are combined."""
+        return tuple(self._scorers)
+
+    async def _score_scorable_async(
+        self,
+        *,
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Score a scorable with each child's supported conditions.
+
+        Each child acquires the named evidence itself, so a child that needs a wider or
+        different view of it is free to derive one.
+
+        Args:
+            scorable (Scorable): What to look at.
+            expectation (ScoringExpectation | None): What the child scorers should look for.
+
+        Returns:
+            list[Score]: ``[]`` when every child is non-applicable; otherwise, a list
+                containing one completed or undetermined aggregate score.
+        """
+        score_list_results = await gather_with_cleanup_async(
+            scorer._score_nested_async(
+                scorable=scorable, expectation=scorer._select_expectation(expectation=expectation)
+            )
+            for scorer in self._scorers
+        )
+        applicable_results = [scores for scores in score_list_results if scores]
+        skipped_count = len(score_list_results) - len(applicable_results)
+        if skipped_count:
+            logger.debug("Ignoring %d non-applicable child scorer result(s) in composite scoring.", skipped_count)
+        if not applicable_results:
+            return []
+        return [
+            self._build_aggregate_score(
+                score_list_results=applicable_results,
+                expectation=expectation,
+                # Score rejects a kind outside the union when it is constructed below.
+                scorable=cast("ScorableUnion | None", scorable),
+                message_piece_id=self._piece_id_from_scorable(scorable),
+            )
+        ]
+
+    def _build_aggregate_score(
+        self,
+        *,
+        score_list_results: list[list[Score]],
+        expectation: ScoringExpectation | None,
+        scorable: ScorableUnion | None,
+        message_piece_id: "uuid.UUID | str | None",
+    ) -> Score:
+        """
+        Reduce one score per child into the composite's single verdict.
+
+        Args:
+            score_list_results (list[list[Score]]): Each child's returned scores.
+            expectation (ScoringExpectation | None): What the child scorers looked for.
+            scorable (Scorable | None): What the composite was asked about.
+            message_piece_id (uuid.UUID | str | None): The message piece anchor, when there is one.
+
+        Returns:
+            Score: The aggregated true/false score.
 
         Raises:
             ValueError: If any constituent scorer does not return exactly one score.
             ValueError: If no scores are generated from the request response pieces.
         """
-        tasks = [
-            scorer.score_async(message=message, objective=objective, role_filter=role_filter)
-            for scorer in self._scorers
-        ]
-
-        # Run all response scorings concurrently
-        score_list_results = await asyncio.gather(*tasks)
-
         for score in score_list_results:
             if len(score) != 1:
                 raise ValueError("Each TrueFalseScorer must return exactly one score.")
 
-        # Use score aggregator to return a single score
         score_list = [score[0] for score in score_list_results]
 
         if len(score_list) == 0:
             raise ValueError("No scores were generated from the request response pieces.")
 
         result = self._score_aggregator(score_list)
+        undetermined = result.value is None
 
-        # Ensure the message piece has an ID
-        piece_id = message.message_pieces[0].id
-        if piece_id is None:
-            raise ValueError("Message piece must have an ID")
-
-        return_score = Score(
-            score_value=str(result.value),
+        return Score(
+            score_value=None if undetermined else str(result.value),
+            status=ScoreStatus.UNDETERMINED if undetermined else ScoreStatus.COMPLETE,
             score_value_description=result.description,
             score_type="true_false",
             score_category=result.category,
             score_metadata=result.metadata,
             score_rationale=result.rationale,
             scorer_class_identifier=self.get_identifier(),
-            message_piece_id=piece_id,
-            objective=objective,
+            message_piece_id=message_piece_id,
+            scorable=scorable,
+            observation_ids=_merge_observation_ids(scores=score_list),
+            objective=expectation.objective if expectation else None,
         )
-
-        return [return_score]
-
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        """
-        Composite scorers do not support piecewise scoring.
-
-        Args:
-            message_piece (MessagePiece): Unused.
-            objective (str | None): Unused.
-
-        Raises:
-            NotImplementedError: Always, since composite scoring operates at the response level.
-        """
-        raise NotImplementedError("TrueFalseCompositeScorer does not support piecewise scoring.")

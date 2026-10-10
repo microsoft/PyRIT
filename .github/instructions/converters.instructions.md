@@ -1,20 +1,23 @@
 ---
-applyTo: "pyrit/prompt_converter/**"
+applyTo: "pyrit/converter/**"
 ---
 
-# Prompt Converter Development Guidelines
+# Converter Development Guidelines
+
+**Responsibility**: A converter transforms a prompt into something else (rephrasing, encoding, translating to a Word document, overlaying text on an image, ...). Converters can be stacked and combined, and any converter may also be a NoOp.
+
+**Does not own** (see [framework.md](../../doc/code/framework.md)): conversation state or attack decisions. A converter transforms input into output (and may call a target to do so); it must not branch on results, score, persist to memory itself, or decide when it runs — the attack/technique configures the stack. Flag such bleed in review.
 
 ## Base Class Contract
 
-All converters MUST inherit from `PromptConverter` and implement:
+All converters MUST inherit from `Converter` and implement:
 
 ```python
-class MyConverter(PromptConverter):
-    SUPPORTED_INPUT_TYPES = ("text",)    # Required — non-empty tuple of PromptDataType values
-    SUPPORTED_OUTPUT_TYPES = ("text",)   # Required — non-empty tuple of PromptDataType values
+class MyConverter(Converter):
+    SUPPORTED_INPUT_TYPES = ("text",)  # Required — non-empty tuple of PromptDataType values
+    SUPPORTED_OUTPUT_TYPES = ("text",)  # Required — non-empty tuple of PromptDataType values
 
-    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
-        ...
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult: ...
 ```
 
 Missing or empty `SUPPORTED_INPUT_TYPES` / `SUPPORTED_OUTPUT_TYPES` raises `TypeError` at class definition time via `__init_subclass__`.
@@ -47,8 +50,8 @@ All converters inherit `Identifiable`. Override `_build_identifier()` to include
 ```python
 def _build_identifier(self) -> ComponentIdentifier:
     return self._create_identifier(
-        params={"encoding": self._encoding},           # Behavioral params only
-        children={"target": self._target.get_identifier()}  # If converter wraps a target
+        params={"encoding": self._encoding},  # Behavioral params only
+        children={"target": self._target.get_identifier()},  # If converter wraps a target
     )
 ```
 
@@ -59,7 +62,7 @@ Exclude: retry counts, logging config, timeouts.
 
 ```python
 from pyrit.models import ComponentIdentifier, PromptDataType
-from pyrit.prompt_converter import ConverterResult, PromptConverter
+from pyrit.converter import ConverterResult, Converter
 ```
 
 For LLM-based converters, also import:
@@ -74,17 +77,17 @@ Use keyword-only arguments. Use `@apply_defaults` if the converter accepts targe
 ```python
 from pyrit.common.apply_defaults import apply_defaults
 
-class MyConverter(PromptConverter):
+
+class MyConverter(Converter):
     @apply_defaults
-    def __init__(self, *, target: PromptTarget, template: str = "default") -> None:
-        ...
+    def __init__(self, *, target: PromptTarget, template: str = "default") -> None: ...
 ```
 
 ### Keyword-only ``__init__`` is enforced
 
-Every ``PromptConverter`` subclass MUST make all ``__init__`` parameters
+Every ``Converter`` subclass MUST make all ``__init__`` parameters
 keyword-only (i.e., place ``*`` as the first parameter after ``self``).
-``PromptConverter.__init_subclass__`` validates this at class-definition
+``Converter.__init_subclass__`` validates this at class-definition
 time via ``enforce_keyword_only_init`` and raises ``TypeError`` on
 violations.
 
@@ -93,30 +96,17 @@ The check is satisfied by either of:
 ```python
 def __init__(self, *, foo: str, bar: int = 0) -> None: ...
 
+
 def __init__(self, *args: str, foo: str = "") -> None: ...  # *args after self
 ```
 
 It rejects:
 
 ```python
-def __init__(self, foo: str, bar: int = 0) -> None: ...    # missing *
+def __init__(self, foo: str, bar: int = 0) -> None: ...  # missing *
 ```
-
-### Temporary opt-out: ``_brick_legacy_init``
-
-A handful of legacy converters whose positional ``__init__`` is part of the
-public API are grandfathered with ``_brick_legacy_init = True``. They
-emit a ``DeprecationWarning`` at import time and the opt-out is scheduled
-for removal in **0.16.0**. Do not set this flag on new converters; new
-converters MUST follow the keyword-only contract.
-
-Currently grandfathered (slated for cleanup in 0.16.0):
-``AddImageVideoConverter``, ``AnsiAttackConverter``, ``AsciiArtConverter``,
-``AskToDecodeConverter``, ``DiacriticConverter``, ``InsertPunctuationConverter``,
-``PDFConverter``, ``QRCodeConverter``, ``RandomCapitalLettersConverter``,
-``SearchReplaceConverter``, ``SmugglerConverter`` (and its three subclasses).
 
 ## Exports and External Updates
 
-- New converters MUST be added to `pyrit/prompt_converter/__init__.py` — both the import and the `__all__` list.
+- New converters MUST be added to `pyrit/converter/__init__.py` — both the import and the `__all__` list.
 - The modality table with new/updated converters `doc/code/converters/0_converters.ipynb` and the associated .py pct file must also be updated.

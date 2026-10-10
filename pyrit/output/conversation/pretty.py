@@ -1,31 +1,34 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import json
 import logging
 import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.models import Message, MessagePiece, Score
+from pyrit.common.text_helper import escape_control_characters
+from pyrit.models import ComponentIdentifier, Message, MessagePiece
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.conversation.base import ConversationPrinterBase
+from pyrit.output.conversation.source import ConversationSource, MemoryConversationSource
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.sink import Sink
 
 logger = logging.getLogger(__name__)
 
 
-class PrettyConversationPrinter(ConversationPrinterBase):
+class PrettyConversationPrinter(_PrettyPrinterMixin, ConversationPrinterBase):
     """
     Pretty printer for conversation message histories with ANSI-colored formatting.
 
-    Contains all formatting logic. Subclasses implement ``_get_scores_async``
-    and ``_display_image_async`` for data fetching.
+    Contains all formatting logic; scores are fetched through the injected
+    ``ConversationSource``.
     """
 
     def __init__(
         self,
         *,
+        source: ConversationSource,
         sink: Sink | None = None,
         width: int = 100,
         indent_size: int = 2,
@@ -38,6 +41,7 @@ class PrettyConversationPrinter(ConversationPrinterBase):
         Initialize the pretty conversation printer.
 
         Args:
+            source (ConversationSource): Data source used to fetch inline scores.
             sink (Sink | None): Output sink. Defaults to StdoutSink().
             width (int): Maximum width for text wrapping. Defaults to 100.
             indent_size (int): Number of spaces for indentation. Defaults to 2.
@@ -51,6 +55,7 @@ class PrettyConversationPrinter(ConversationPrinterBase):
                 Defaults to 20.
         """
         super().__init__(sink=sink)
+        self._source = source
         self._width = width
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
@@ -65,7 +70,8 @@ class PrettyConversationPrinter(ConversationPrinterBase):
         messages: list[Message],
         *,
         include_scores: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages and return as a string.
@@ -73,7 +79,9 @@ class PrettyConversationPrinter(ConversationPrinterBase):
         Args:
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation text.
@@ -81,10 +89,24 @@ class PrettyConversationPrinter(ConversationPrinterBase):
         if not messages:
             return self._format_colored(f"{self._indent} No messages to display.", Fore.YELLOW)
 
+        objective_scores = (
+            await self._select_objective_scores_async(
+                messages=messages, objective_scorer_identifier=objective_scorer_identifier
+            )
+            if include_scores
+            else None
+        )
         lines: list[str] = []
         image_pieces: list[MessagePiece] = []
         turn_number = 0
         for message in messages:
+            pieces = self._get_renderable_pieces(
+                message=message,
+                include_reasoning_summaries=include_reasoning_summaries,
+            )
+            if not pieces:
+                continue
+
             if message.api_role == "user":
                 turn_number += 1
                 lines.append("\n")
@@ -99,21 +121,25 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             else:
                 lines.append("\n")
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
-                role_label = "ASSISTANT (SIMULATED)" if message.is_simulated else message.api_role.upper()
+                role_label = message.api_role.upper()
+                if message.is_simulated:
+                    role_label += " (SIMULATED)"
                 lines.append(self._format_colored(f"🔸 {role_label}", Style.BRIGHT, Fore.YELLOW))
                 lines.append(self._format_colored("─" * self._width, Fore.YELLOW))
 
-            for piece in message.message_pieces:
-                if piece.original_value_data_type == "reasoning":
-                    if include_reasoning_trace:
-                        summary_text = self._extract_reasoning_summary(piece.original_value)
-                        if summary_text:
-                            lines.append(
-                                self._format_colored(f"{self._indent}💭 Reasoning Summary:", Style.DIM, Fore.CYAN)
-                            )
-                            lines.append(self._render_wrapped_text(summary_text, Fore.CYAN))
-                            lines.append("\n")
+            reasoning_rendered = False
+            response_heading_rendered = False
+            for piece in pieces:
+                if self._is_reasoning_piece(piece=piece):
+                    rendered = self._render_reasoning_summary(self._get_reasoning_value(piece=piece))
+                    if rendered:
+                        lines.append(rendered)
+                        reasoning_rendered = True
                     continue
+
+                if reasoning_rendered and not response_heading_rendered and message.api_role == "assistant":
+                    lines.append(self._render_response_heading())
+                    response_heading_rendered = True
 
                 if piece.is_blocked():
                     lines.append(self._format_colored(f"{self._indent}🚫 BLOCKED BY TARGET", Style.BRIGHT, Fore.RED))
@@ -152,7 +178,7 @@ class PrettyConversationPrinter(ConversationPrinterBase):
                 image_pieces.append(piece)
 
                 if include_scores:
-                    scores = await self._get_scores_async(prompt_ids=[str(piece.id)])
+                    scores = await self._get_piece_scores_async(piece=piece, objective_scores=objective_scores)
                     if scores:
                         lines.append("\n")
                         lines.append(self._format_colored(f"{self._indent}📊 Scores:", Style.DIM, Fore.MAGENTA))
@@ -165,22 +191,6 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             await self._display_image_async(piece)
 
         return "".join(lines)
-
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
 
     def _render_wrapped_text(self, text: str, color: str) -> str:
         """
@@ -204,7 +214,8 @@ class PrettyConversationPrinter(ConversationPrinterBase):
             replace_whitespace=False,
         )
 
-        text_lines = text.split("\n")
+        # Escape before wrapping so escaped sequences count toward the width and none are dropped.
+        text_lines = escape_control_characters(text.replace("\r\n", "\n")).split("\n")
         for line_num, line in enumerate(text_lines):
             if line.strip():
                 wrapped_lines = text_wrapper.wrap(line)
@@ -218,28 +229,52 @@ class PrettyConversationPrinter(ConversationPrinterBase):
 
         return "".join(lines)
 
-    @staticmethod
-    def _extract_reasoning_summary(reasoning_value: str) -> str:
+    def _render_reasoning_summary(self, reasoning_value: str) -> str:
         """
-        Extract human-readable summary text from a reasoning piece's JSON value.
+        Render a provider-generated reasoning summary in subdued gray.
 
         Args:
-            reasoning_value (str): The JSON string stored in the reasoning piece.
+            reasoning_value (str): Serialized OpenAI Responses reasoning item.
 
         Returns:
-            str: The concatenated summary text, or empty string if no summary is present.
+            str: The labeled reasoning block, or a warning when extraction fails.
         """
         try:
-            data = json.loads(reasoning_value)
-        except (json.JSONDecodeError, TypeError):
-            return ""
+            summary = self._extract_reasoning_summary(reasoning_value)
+        except ValueError:
+            return "".join(
+                [
+                    self._format_colored(
+                        f"{self._indent}{self._REASONING_RENDER_WARNING}",
+                        Style.BRIGHT,
+                        Fore.RED,
+                    ),
+                    self._format_colored("", Fore.RED),
+                ]
+            )
 
-        summary = data.get("summary") if isinstance(data, dict) else None
-        if not summary or not isinstance(summary, list):
-            return ""
+        if not summary:
+            summary = "[No reasoning summary was returned by the provider.]"
 
-        parts = [item.get("text", "") for item in summary if isinstance(item, dict) and item.get("text")]
-        return "\n".join(parts)
+        label = "Provider-generated reasoning summary (not raw chain-of-thought)"
+
+        return "".join(
+            [
+                self._format_colored(f"{self._indent}💭 Reasoning", Style.BRIGHT, Fore.LIGHTBLACK_EX),
+                self._format_colored(f"{self._indent}{label}", Style.DIM, Fore.LIGHTBLACK_EX),
+                self._render_wrapped_text(summary, Fore.LIGHTBLACK_EX),
+                self._format_colored("", Fore.LIGHTBLACK_EX),
+            ]
+        )
+
+    def _render_response_heading(self) -> str:
+        """
+        Render the boundary between reasoning and the model response.
+
+        Returns:
+            str: The formatted response heading.
+        """
+        return self._format_colored(f"{self._indent}💬 Response", Style.BRIGHT, Fore.YELLOW)
 
 
 class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
@@ -276,6 +311,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
                 Defaults to 20.
         """
         super().__init__(
+            source=MemoryConversationSource(),
             sink=sink,
             width=width,
             indent_size=indent_size,
@@ -284,16 +320,14 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
             blur_images=blur_images,
             blur_radius=blur_radius,
         )
-        from pyrit.memory import CentralMemory
-
-        self._memory = CentralMemory.get_memory_instance()
 
     async def render_async(
         self,
         messages: list[Message],
         *,
         include_scores: bool = False,
-        include_reasoning_trace: bool = False,
+        include_reasoning_summaries: bool = False,
+        objective_scorer_identifier: ComponentIdentifier | None = None,
     ) -> str:
         """
         Render a list of messages and return as a string.
@@ -301,23 +335,19 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         Args:
             messages (list[Message]): The messages to render.
             include_scores (bool): Whether to include scores. Defaults to False.
-            include_reasoning_trace (bool): Whether to include reasoning traces. Defaults to False.
+            include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
+            objective_scorer_identifier (ComponentIdentifier | None): With ``include_scores``, show only
+                this scorer's score on each piece. Defaults to None (every score).
 
         Returns:
             str: The rendered conversation text.
         """
         return await super().render_async(
-            messages, include_scores=include_scores, include_reasoning_trace=include_reasoning_trace
+            messages,
+            include_scores=include_scores,
+            include_reasoning_summaries=include_reasoning_summaries,
+            objective_scorer_identifier=objective_scorer_identifier,
         )
-
-    async def _get_scores_async(self, *, prompt_ids: list[str]) -> list[Score]:
-        """
-        Fetch scores from CentralMemory.
-
-        Returns:
-            list[Score]: The scores.
-        """
-        return list(self._memory.get_prompt_scores(prompt_ids=prompt_ids))
 
     async def _display_image_async(self, piece: MessagePiece) -> None:
         """

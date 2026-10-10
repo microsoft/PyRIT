@@ -3,21 +3,70 @@
 
 import enum
 from pathlib import Path
-from typing import Any
 
-import yaml
-
-from pyrit.common import verify_and_resolve_path
 from pyrit.common.path import SCORER_SCALES_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, SeedPrompt, UnvalidatedScore
+from pyrit.models import (
+    ComponentIdentifier,
+    JsonSchemaDefinition,
+    MessagePiece,
+    Observation,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+    UnvalidatedScore,
+)
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.float_scale.numeric_scale import NumericRubric
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
+from pyrit.score.response_handler import (
+    JsonSchemaResponseHandler,
+    NumericRangeResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.system_prompt import _render_system_prompt_template
+
+_DEFAULT_SCALE_PATH = Path(SCORER_SCALES_PATH, "tree_of_attacks_scale.yaml").resolve()
+_DEFAULT_SCALE_SYSTEM_PROMPT_PATH = Path(SCORER_SCALES_PATH, "general_system_prompt.yaml").resolve()
 
 
-class SelfAskScaleScorer(FloatScaleScorer):
+def render_scale_system_prompt(
+    *,
+    scale: NumericRubric,
+    system_prompt_template: SeedPrompt | str | None = None,
+) -> SeedPrompt:
     """
-    A class that represents a "self-ask" score for text scoring for a customizable numeric scale.
+    Render a numeric-scale scoring system prompt from a scale and a template.
+
+    The bundled general template is used when ``system_prompt_template`` is omitted. A supplied
+    ``SeedPrompt`` preserves metadata such as ``response_json_schema``; a string is treated as an
+    inline Jinja template.
+
+    Args:
+        scale (NumericRubric): The rubric supplying prompt parameters and normalization bounds.
+        system_prompt_template (SeedPrompt | str | None): A custom template or the bundled default.
+
+    Returns:
+        SeedPrompt: A rendered copy of the template with its ``value`` populated.
+    """
+    return _render_system_prompt_template(
+        system_prompt_template=system_prompt_template,
+        default_template_path=_DEFAULT_SCALE_SYSTEM_PROMPT_PATH,
+        render_params=scale.render_params,
+        required_parameters=["minimum_value", "maximum_value"],
+    )
+
+
+class SelfAskScaleScorer(MessageFloatScaleScorer):
+    """
+    A "self-ask" scorer for text scoring on a customizable numeric scale.
+
+    The scorer holds a ``chat_target``, a rendered or static ``system_prompt``, a ``NumericRubric``
+    defining normalization and category, and a ``response_handler``. Use ``from_scale`` to render a
+    template and configure the scorer from one rubric object.
     """
 
     class ScalePaths(enum.Enum):
@@ -43,49 +92,102 @@ class SelfAskScaleScorer(FloatScaleScorer):
     def __init__(
         self,
         *,
-        chat_target: PromptTarget,
-        scale_arguments_path: Path | str | None = None,
-        system_prompt_path: Path | str | None = None,
+        chat_target: PromptTarget | None = None,
+        system_prompt: SeedPrompt | str,
+        scale: NumericRubric,
+        response_handler: ResponseHandler | None = None,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
         Initialize the SelfAskScaleScorer.
 
         Args:
-            chat_target (PromptTarget): The chat target to use for scoring.
-            scale_arguments_path (Path | str | None): Path to the YAML file containing scale definitions.
-                Defaults to TREE_OF_ATTACKS_SCALE if not provided.
-            system_prompt_path (Path | str | None): Path to the YAML file containing the system prompt.
-                Defaults to GENERAL_SYSTEM_PROMPT if not provided.
-            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to None.
+            chat_target (PromptTarget | None): The chat target used for scoring. Must satisfy
+                CHAT_TARGET_REQUIREMENTS.
+            system_prompt (SeedPrompt | str): The rendered or static scoring system prompt.
+            scale (NumericRubric): The rubric defining score normalization and category.
+            response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
+                to ``JsonSchemaResponseHandler``.
+            validator (ScorerPromptValidator | None): Custom validator for the scorer. Defaults to
+                None.
+
+        Raises:
+            ValueError: If ``chat_target`` is not provided.
         """
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        if chat_target is None:
+            raise ValueError("A chat_target must be provided.")
 
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
 
-        if not system_prompt_path:
-            system_prompt_path = self.SystemPaths.GENERAL_SYSTEM_PROMPT.value
+        self._system_prompt, schema = self._resolve_system_prompt(system_prompt)
+        self._scale = scale
 
-        if not scale_arguments_path:
-            scale_arguments_path = self.ScalePaths.TREE_OF_ATTACKS_SCALE.value
+        # When the caller does not supply a response handler, the default JSON handler carries the
+        # schema (if any) declared by the system prompt and enforces the numeric score contract, so
+        # the round-trip forwards the schema to the scoring target. A caller-supplied handler owns
+        # its own wire format.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema, numeric_value=True)
+        # Keep score-domain validation in the parser callback so out-of-range values retry.
+        self._response_handler = NumericRangeResponseHandler(
+            response_handler=wire_format_handler,
+            minimum_value=scale.minimum_value,
+            maximum_value=scale.maximum_value,
+        )
 
-        system_prompt_path = verify_and_resolve_path(system_prompt_path)
-        scale_arguments_path = verify_and_resolve_path(scale_arguments_path)
+    @classmethod
+    def from_scale(
+        cls,
+        *,
+        chat_target: PromptTarget,
+        scale: NumericRubric | None = None,
+        system_prompt_template: SeedPrompt | str | None = None,
+        response_handler: ResponseHandler | None = None,
+        validator: ScorerPromptValidator | None = None,
+    ) -> "SelfAskScaleScorer":
+        """
+        Build a scorer whose prompt and normalization are driven by one ``NumericRubric``.
 
-        scale_args = yaml.safe_load(scale_arguments_path.read_text(encoding="utf-8"))
+        When ``scale`` is omitted, the bundled tree-of-attacks scale is used. The supplied scale is
+        rendered through the bundled template or ``system_prompt_template`` and is also stored on the
+        scorer for normalization, preventing prompt bounds from being configured separately.
 
-        self._validate_scale_arguments_set(scale_args)
+        Args:
+            chat_target (PromptTarget): The chat target used for scoring.
+            scale (NumericRubric | None): The rubric to use. Defaults to the bundled tree-of-attacks
+                rubric.
+            system_prompt_template (SeedPrompt | str | None): A custom Jinja template or the bundled
+                general template.
+            response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
+                to None (uses ``JsonSchemaResponseHandler``).
+            validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
 
-        self._minimum_value = scale_args["minimum_value"]
-        self._maximum_value = scale_args["maximum_value"]
-        self._category = scale_args["category"]
+        Returns:
+            SelfAskScaleScorer: The constructed scorer.
+        """
+        resolved_scale = scale or NumericRubric.from_yaml(_DEFAULT_SCALE_PATH)
+        system_prompt = render_scale_system_prompt(
+            scale=resolved_scale,
+            system_prompt_template=system_prompt_template,
+        )
+        return cls(
+            chat_target=chat_target,
+            system_prompt=system_prompt,
+            scale=resolved_scale,
+            response_handler=response_handler,
+            validator=validator,
+        )
 
-        scoring_instructions_template = SeedPrompt.from_yaml_file(system_prompt_path)
-
-        self._system_prompt = scoring_instructions_template.render_template_value(**scale_args)
-        # Optional JSON schema embedded in the system prompt YAML. Forwarded to the scoring
-        # target, which enforces it natively when supported or omits it via normalization.
-        self._response_json_schema = scoring_instructions_template.response_json_schema
+    @staticmethod
+    def _resolve_system_prompt(
+        system_prompt: SeedPrompt | str,
+    ) -> tuple[str, JsonSchemaDefinition | None]:
+        if isinstance(system_prompt, SeedPrompt):
+            return system_prompt.value, system_prompt.response_json_schema
+        if isinstance(system_prompt, str):
+            return system_prompt, None
+        raise TypeError("system_prompt must be a SeedPrompt or str.")
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -98,26 +200,22 @@ class SelfAskScaleScorer(FloatScaleScorer):
             params={
                 "system_prompt_template": self._system_prompt,
                 "user_prompt_template": "objective: {objective}\nresponse: {response}",
-                "response_json_schema": self._response_json_schema,
+                "scale": self._scale.model_dump(exclude_none=True),
+                "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the given message_piece using "self-ask" for the chat target.
-
-        Args:
-            message_piece (MessagePiece): The message piece containing the content to be scored.
-                Supports text and non-text types (e.g., image_path). For non-text content,
-                the objective context is sent as a prepended text piece alongside the raw content.
-            objective (str): The objective based on which the content should be scored (the original
-                attacker model's objective).
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: The message piece's score.
-                         The score_value is a value from [0,1] that is scaled based on the scorer's scale.
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         # For non-text content (images, audio, etc.), send the raw content with its original
         # data type and prepend the objective as a text piece. This allows multimodal LLMs
         # to evaluate the content directly (e.g., viewing an image to assess it).
@@ -131,42 +229,61 @@ class SelfAskScaleScorer(FloatScaleScorer):
             scoring_value = f"objective: {objective}\nresponse: {message_piece.converted_value}"
             scoring_data_type = "text"
 
-        unvalidated_score: UnvalidatedScore = await self._score_value_with_llm_async(
-            prompt_target=self._prompt_target,
-            system_prompt=self._system_prompt,
-            message_value=scoring_value,
-            message_data_type=scoring_data_type,
-            scored_prompt_id=message_piece.id,
-            prepended_text_message_piece=prepended_text,
-            category=self._category,
-            objective=objective,
-            response_json_schema=self._response_json_schema,
+        unvalidated_score = await self._judge.judge_async(
+            response_handler=self._response_handler,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=scoring_value,
+                    data_type=scoring_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    prepended_text=prepended_text,
+                    category=self._scale.category,
+                )
+            ),
         )
 
-        score = unvalidated_score.to_score(
+        return [self._convert_score(unvalidated_score)]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared scale conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained numeric-scale judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._scale.category,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        return unvalidated.to_score(
             score_value=str(
                 self.scale_value_float(
-                    float(unvalidated_score.raw_score_value), self._minimum_value, self._maximum_value
+                    float(unvalidated.raw_score_value),
+                    self._scale.minimum_value,
+                    self._scale.maximum_value,
                 )
             ),
             score_type="float_scale",
         )
-
-        return [score]
-
-    def _validate_scale_arguments_set(self, scale_args: dict[str, Any]) -> None:
-        try:
-            minimum_value = scale_args["minimum_value"]
-            maximum_value = scale_args["maximum_value"]
-            category = scale_args["category"]
-        except KeyError as e:
-            raise ValueError(f"Missing key in scale_args: {e.args[0]}") from None
-
-        if not isinstance(minimum_value, int):
-            raise ValueError(f"Minimum value must be an integer, got {type(minimum_value).__name__}.")
-        if not isinstance(maximum_value, int):
-            raise ValueError(f"Maximum value must be an integer, got {type(maximum_value).__name__}.")
-        if minimum_value > maximum_value:
-            raise ValueError("Minimum value must be less than or equal to the maximum value.")
-        if not category:
-            raise ValueError("Category must be set and cannot be empty.")

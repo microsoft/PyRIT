@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import logging
 import textwrap
 from dataclasses import dataclass, field
@@ -9,12 +10,14 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.exceptions import ComponentRole, execution_context
-from pyrit.executor.attack.component import ConversationManager
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_scoring import prepare_attack_scoring
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -24,13 +27,16 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    ContentScorable,
     Message,
     Score,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.score import Scorer
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -105,6 +111,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         attack_converter_config: AttackConverterConfig | None = None,
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the chunked request attack strategy.
@@ -116,9 +123,11 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             chunk_type (str): Type of chunk to request (e.g., "characters", "bytes", "words").
             request_template (str): Template for generating chunk requests
                 (default: "Give me {chunk_type} {start}-{end} of '{objective}'").
-            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
+            prepended_conversation_config: Configuration for prepended-conversation
+                conversion and target-facing formatting.
 
         Raises:
             ValueError: If chunk_size or total_length are invalid.
@@ -150,6 +159,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             logger=logger,
             context_type=ChunkedRequestAttackContext,
             params_type=ChunkedRequestAttackParameters,
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         # Store chunk configuration
@@ -246,6 +256,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             target=self._objective_target,
             conversation_id=context.session.conversation_id,
             request_converters=self._request_converters,
+            prepended_conversation_config=self._prepended_conversation_config,
             memory_labels=self._memory_labels,
         )
 
@@ -282,13 +293,17 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
                 objective_target_conversation_id=context.session.conversation_id,
                 objective=context.objective,
             ):
+                context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
                 response = await self._prompt_normalizer.send_prompt_async(
                     message=message,
                     target=self._objective_target,
                     conversation_id=context.session.conversation_id,
                     request_converter_configurations=self._request_converters,
                     response_converter_configurations=self._response_converters,
-                    labels=context.memory_labels,
+                    normalizer_overrides=self._get_prepended_normalizer_overrides(
+                        prepended_history_send_context=context.prepended_history_send_context,
+                    ),
+                    send_context=context.prepended_history_send_context,
                 )
 
             # Store the response
@@ -307,7 +322,9 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         logger.info(f"Combined {len(context.chunk_responses)} chunk responses")
 
         # Score the combined value if scorer is configured
-        score = await self._score_combined_value_async(combined_value=combined_value, objective=context.objective)
+        score = await self._score_combined_value_async(
+            combined_value=combined_value, objective=context.objective, expectation=context.expectation
+        )
 
         # Determine the outcome
         outcome, outcome_reason = self._determine_attack_outcome(score=score)
@@ -318,7 +335,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             objective=context.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
-            last_score=score,
+            automated_score=score,
             related_conversations=context.related_conversations,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -347,7 +364,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         if not score:
             return AttackOutcome.FAILURE, "No score returned from scorer"
 
-        outcome = AttackOutcome.SUCCESS if score.get_value() else AttackOutcome.FAILURE
+        outcome = attack_outcome_from_score(score)
         outcome_reason = score.score_rationale if score.score_rationale else None
         return outcome, outcome_reason
 
@@ -356,6 +373,7 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         *,
         combined_value: str,
         objective: str,
+        expectation: ScoringExpectation,
     ) -> Score | None:
         """
         Score the combined chunk responses against the objective.
@@ -363,22 +381,45 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         Args:
             combined_value (str): The combined text from all chunk responses.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
                 no objective scorer is set.
         """
-        if not self._objective_scorer:
+        if not self._objective_scorer and not self._auxiliary_scorers:
             return None
 
+        prepared = prepare_attack_scoring(
+            objective_scorer=self._objective_scorer,
+            auxiliary_scorers=self._auxiliary_scorers,
+            expectation=expectation,
+        )
+        calls: list[tuple[Scorer, ScoringExpectation | None, ComponentRole]] = []
+        if self._objective_scorer is not None:
+            calls.append((self._objective_scorer, prepared.objective_expectation, ComponentRole.OBJECTIVE_SCORER))
+        calls.extend(
+            (scorer, selected, ComponentRole.AUXILIARY_SCORER)
+            for scorer, selected in zip(prepared.auxiliary_scorers, prepared.auxiliary_expectations, strict=True)
+        )
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier(),
             objective=objective,
         ):
-            scores = await self._objective_scorer.score_text_async(text=combined_value, objective=objective)
-        return scores[0] if scores else None
+            results = await asyncio.gather(
+                *(
+                    Scorer._score_with_context_async(
+                        scorable=ContentScorable(value=combined_value),
+                        scorer=scorer,
+                        expectation=selected,
+                        component_role=role,
+                    )
+                    for scorer, selected, role in calls
+                )
+            )
+        objective_scores = results[0] if self._objective_scorer is not None else []
+        return objective_scores[0] if objective_scores else None
 
     async def _teardown_async(self, *, context: ChunkedRequestAttackContext) -> None:
         """

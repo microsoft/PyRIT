@@ -1,13 +1,15 @@
 import { render, screen } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import TargetBadge from './TargetBadge'
+import type { FlatTargetInput } from '@/test-utils/targetFixtures'
 import type { TargetInstance } from '../../types'
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
 
-const baseTarget: TargetInstance = {
+const flatBaseTarget: FlatTargetInput = {
   target_registry_name: 'azure_openai_gpt4o',
   target_type: 'OpenAIChatTarget',
   endpoint: 'https://example.openai.azure.com/openai/deployments/gpt-4o',
@@ -27,6 +29,8 @@ const baseTarget: TargetInstance = {
     api_version: '2024-09-01',
   },
 }
+
+const baseTarget: TargetInstance = makeTarget(flatBaseTarget)
 
 describe('TargetBadge', () => {
   it('renders the type and model name as the visible badge label', () => {
@@ -51,7 +55,7 @@ describe('TargetBadge', () => {
   it('renders only the type when no model name is set', () => {
     render(
       <TestWrapper>
-        <TargetBadge target={{ ...baseTarget, model_name: null }} />
+        <TargetBadge target={makeTarget({ ...flatBaseTarget, model_name: null })} />
       </TestWrapper>
     )
     const badge = screen.getByTestId('target-badge')
@@ -60,10 +64,10 @@ describe('TargetBadge', () => {
   })
 
   it('does not throw on a target with no capabilities or params', () => {
-    const minimal: TargetInstance = {
+    const minimal: TargetInstance = makeTarget({
       target_registry_name: 't',
       target_type: 'TextTarget',
-    }
+    })
     expect(() =>
       render(
         <TestWrapper>
@@ -75,7 +79,7 @@ describe('TargetBadge', () => {
   })
 
   it('shows count in display name for RoundRobinTarget with inner targets', () => {
-    const rrTarget: TargetInstance = {
+    const rrTarget: TargetInstance = makeTarget({
       target_registry_name: 'rr_test',
       target_type: 'RoundRobinTarget',
       model_name: 'gpt-4o',
@@ -84,7 +88,7 @@ describe('TargetBadge', () => {
         { target_registry_name: 'b', target_type: 'OpenAIChatTarget', model_name: 'gpt-4o' },
         { target_registry_name: 'c', target_type: 'OpenAIChatTarget', model_name: 'gpt-4o' },
       ],
-    }
+    })
     render(
       <TestWrapper>
         <TargetBadge target={rrTarget} />
@@ -95,7 +99,7 @@ describe('TargetBadge', () => {
   })
 
   it('prefers underlying_model_name over model_name for RoundRobinTarget badge', () => {
-    const rrTarget: TargetInstance = {
+    const rrTarget: TargetInstance = makeTarget({
       target_registry_name: 'rr_mixed',
       target_type: 'RoundRobinTarget',
       model_name: 'gpt-4o-japan-nilfilter',
@@ -104,7 +108,7 @@ describe('TargetBadge', () => {
         { target_registry_name: 'a', target_type: 'OpenAIChatTarget', model_name: 'deploy-1' },
         { target_registry_name: 'b', target_type: 'OpenAIChatTarget', model_name: 'deploy-2' },
       ],
-    }
+    })
     render(
       <TestWrapper>
         <TargetBadge target={rrTarget} />

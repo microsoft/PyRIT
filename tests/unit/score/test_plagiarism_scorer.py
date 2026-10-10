@@ -1,17 +1,22 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock, patch
+from enum import Enum
+from unittest.mock import patch
 
 import pytest
+from unit.mocks import mock_memory_resolving, store_message_async
 
 from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import MessagePiece
-from pyrit.score import (
-    PlagiarismMetric,
-    PlagiarismScorer,
-)
+from pyrit.score import MessageScorable, PlagiarismMetric, PlagiarismScorer
+
+
+class _OtherMetric(Enum):
+    LCS = "lcs"
+    LEVENSHTEIN = "levenshtein"
+    JACCARD = "jaccard"
+    INVALID = "invalid"
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -39,6 +44,68 @@ class TestPlagiarismScorer:
         assert scorer.metric == metric
         assert scorer.n == n
 
+    @pytest.mark.parametrize(
+        "invalid_reference",
+        ["", "   ", "\t\n  ", None, 123, [], {}],
+    )
+    def test_init_rejects_empty_or_non_string_reference_text(self, invalid_reference):
+        """Test initialization rejects empty, whitespace-only, or non-string reference text."""
+        with pytest.raises(ValueError, match="reference_text must be a non-empty string"):
+            PlagiarismScorer(reference_text=invalid_reference)
+
+    @pytest.mark.parametrize(
+        "no_token_reference",
+        ["!!!", "???", "---", "... ,,, ;;;", "   !@#$%^&*()   "],
+    )
+    def test_init_rejects_reference_text_without_tokens(self, no_token_reference):
+        """Test initialization rejects reference text containing no word tokens."""
+        with pytest.raises(ValueError, match="reference_text must contain at least one word token"):
+            PlagiarismScorer(reference_text=no_token_reference)
+
+    @pytest.mark.parametrize(
+        "invalid_n",
+        [0, -1, -5, 1.5, False, True, "3", None, [3]],
+    )
+    def test_init_rejects_invalid_n(self, invalid_n):
+        """Test initialization rejects n that is not an integer >= 1 or is a boolean."""
+        with pytest.raises(ValueError, match=r"n must be an integer >= 1"):
+            PlagiarismScorer(reference_text="Valid reference text", n=invalid_n)
+
+    @pytest.mark.parametrize("valid_n", [1, 2, 5, 10])
+    def test_init_accepts_valid_boundary_n(self, valid_n):
+        """Test initialization accepts positive integer n-gram sizes."""
+        scorer = PlagiarismScorer(reference_text="Valid reference text", n=valid_n)
+        assert scorer.n == valid_n
+
+    @pytest.mark.parametrize(
+        "invalid_metric",
+        ["lcs", "levenshtein", "jaccard", "invalid", None, 123, *_OtherMetric],
+    )
+    def test_init_rejects_invalid_metric(self, invalid_metric):
+        """Test initialization rejects metric that is not an instance of PlagiarismMetric."""
+        with pytest.raises(ValueError, match="metric must be an instance of PlagiarismMetric"):
+            PlagiarismScorer(reference_text="Valid reference text", metric=invalid_metric)
+
+    @pytest.mark.parametrize("invalid_n", [0, -1, 1.5, False, True, "3", None])
+    def test_plagiarism_score_rejects_invalid_n(self, invalid_n):
+        """Test _plagiarism_score rejects invalid n."""
+        scorer = PlagiarismScorer(reference_text="Valid reference text")
+        with pytest.raises(ValueError, match=r"n must be an integer >= 1"):
+            scorer._plagiarism_score(response="test", reference="test", n=invalid_n)
+
+    @pytest.mark.parametrize("invalid_metric", ["lcs", "levenshtein", "jaccard", "invalid", None, 123, *_OtherMetric])
+    @pytest.mark.parametrize(
+        ("response", "reference"),
+        [("test", "test"), ("", "test"), ("test", ""), ("different", "test"), ("prefix test suffix", "test")],
+    )
+    def test_plagiarism_score_rejects_invalid_metric(
+        self, *, invalid_metric: object, response: str, reference: str
+    ) -> None:
+        """Test _plagiarism_score rejects invalid metric."""
+        scorer = PlagiarismScorer(reference_text="Valid reference text")
+        with pytest.raises(ValueError, match="metric must be an instance of PlagiarismMetric"):
+            scorer._plagiarism_score(response=response, reference=reference, metric=invalid_metric)
+
     async def test_score_async_lcs_metric(self):
         """Test scoring with LCS metric."""
         reference_text = "The quick brown fox jumps over the lazy dog"
@@ -55,7 +122,7 @@ class TestPlagiarismScorer:
 
         request = message_piece.to_message()
 
-        scores = await scorer.score_async(message=request)
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
 
         assert len(scores) == 1
         score = scores[0]
@@ -173,7 +240,6 @@ class TestPlagiarismScorer:
 
     async def test_score_async_adds_to_memory(self):
         """Test that scoring adds results to memory."""
-        memory = MagicMock(MemoryInterface)
         reference_text = "Test reference text"
         scorer = PlagiarismScorer(reference_text=reference_text)
 
@@ -184,12 +250,12 @@ class TestPlagiarismScorer:
             converted_value_data_type="text",
         ).to_message()
 
+        memory = mock_memory_resolving(request)
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
-            await scorer.score_async(request)
-            memory.add_scores_to_memory.assert_called_once()
+            await scorer.score_async(scorable=MessageScorable.from_message(request))
+            memory.add_scores_to_memory_async.assert_called_once()
 
-    async def test_score_async_unsupported_data_type_returns_zero(self, patch_central_database):
-        """Unsupported data types now return a unified Score(0.0) via FloatScaleScorer's fallback."""
+    async def test_score_async_unsupported_data_type_returns_empty(self, patch_central_database):
         reference_text = "Test reference text"
         scorer = PlagiarismScorer(reference_text=reference_text)
 
@@ -200,12 +266,8 @@ class TestPlagiarismScorer:
             converted_value_data_type="image_path",
         ).to_message()
 
-        # Unified FloatScaleScorer fallback: returns a single Score(0.0) when all pieces are filtered
-        # out (mirrors TrueFalseScorer's no-pieces fallback).
-        scores = await scorer.score_async(request)
-        assert len(scores) == 1
-        assert scores[0].score_type == "float_scale"
-        assert scores[0].get_value() == 0.0
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
+        assert scores == []
 
     async def test_score_text_async_integration(self):
         """Test scoring using the convenience method score_text_async."""
@@ -227,7 +289,7 @@ class TestPlagiarismScorerUtilityFunctions:
     @pytest.fixture
     def scorer(self):
         """Create a scorer instance for testing utility methods."""
-        return PlagiarismScorer("test reference text")
+        return PlagiarismScorer(reference_text="test reference text")
 
     def test_tokenize_basic(self, scorer):
         """Test basic tokenization functionality."""
@@ -335,15 +397,9 @@ class TestPlagiarismScorerUtilityFunctions:
         assert score == 0.0
 
     def test_plagiarism_score_invalid_metric(self, scorer):
-        """Test plagiarism score with mock invalid metric raises ValueError."""
-        from unittest.mock import MagicMock
-
-        # Create a mock metric that has an invalid value
-        mock_metric = MagicMock()
-        mock_metric.value = "invalid"
-
-        with pytest.raises(ValueError, match="metric must be 'lcs', 'levenshtein', or 'jaccard'"):
-            scorer._plagiarism_score("hello", "world", metric=mock_metric)
+        """Test plagiarism score rejects an unsupported enum."""
+        with pytest.raises(ValueError, match="metric must be an instance of PlagiarismMetric"):
+            scorer._plagiarism_score("hello", "world", metric=_OtherMetric.INVALID)
 
     def test_plagiarism_score_case_insensitive(self, scorer):
         """Test that plagiarism score is case insensitive."""
@@ -374,6 +430,34 @@ class TestPlagiarismScorerUtilityFunctions:
         response = "The AI model responded with: Hello world this is a test message for validation."
         score = scorer._plagiarism_score(response, reference, metric=PlagiarismMetric.JACCARD, n=3)
         assert score == 1.0  # Should be perfect match when reference is contained
+
+    def test_plagiarism_score_reference_substring_of_word_not_plagiarism(self, scorer):
+        """A reference that is only a substring of a longer response word is not plagiarism.
+
+        The verbatim-match fast path must operate on word-level tokens, not raw
+        characters. Otherwise a short reference such as "cat" would falsely score
+        1.0 against a response containing "concatenate".
+        """
+        reference = "cat"
+        response = "concatenate the results"
+        for metric in PlagiarismMetric:
+            score = scorer._plagiarism_score(response, reference, metric=metric)
+            assert score == 0.0, f"{metric.value} should not treat a sub-word match as plagiarism"
+
+    def test_plagiarism_score_verbatim_match_ignores_case_and_punctuation(self, scorer):
+        """The verbatim fast path should still fire across case and punctuation differences."""
+        reference = "The Secret Plan"
+        response = "the secret plan!"
+        for metric in PlagiarismMetric:
+            score = scorer._plagiarism_score(response, reference, metric=metric)
+            assert score == 1.0, f"{metric.value} should treat a word-level verbatim copy as plagiarism"
+
+    def test_is_contiguous_sublist(self, scorer):
+        """Directly exercise the tokenized sublist helper."""
+        assert scorer._is_contiguous_sublist(sub=["b", "c"], full=["a", "b", "c", "d"]) is True
+        assert scorer._is_contiguous_sublist(sub=["a", "c"], full=["a", "b", "c"]) is False
+        assert scorer._is_contiguous_sublist(sub=[], full=["a"]) is False
+        assert scorer._is_contiguous_sublist(sub=["a", "b"], full=["a"]) is False
 
 
 class TestPlagiarismMetricEnum:

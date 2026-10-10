@@ -12,7 +12,11 @@ from typing import ClassVar
 
 import pytest
 
-from pyrit.models.identifiers import ComponentIdentifier, compute_eval_hash
+from pyrit.models.identifiers import (
+    AtomicAttackEvaluationIdentifier,
+    ComponentIdentifier,
+    compute_eval_hash,
+)
 from pyrit.models.identifiers.evaluation_identifier import ChildEvalRule, EvaluationIdentifier, _build_eval_dict
 
 # ---------------------------------------------------------------------------
@@ -136,6 +140,61 @@ class TestComputeEvalHash:
         result = compute_eval_hash(identifier, child_eval_rules=_CHILD_EVAL_RULES)
         assert len(result) == 64
         assert all(c in "0123456789abcdef" for c in result)
+
+
+class TestConditionalUnorderedChildren:
+    @pytest.mark.parametrize("opt_in", [None, False, True, "true", 1])
+    def test_only_explicit_true_sorts_projected_hashes(self, opt_in: bool | str | int | None) -> None:
+        children = [
+            ComponentIdentifier(class_name="Child", class_module="test", params={"value": value})
+            for value in ("a", "b", "a")
+        ]
+        parent = ComponentIdentifier(
+            class_name="Parent",
+            class_module="test",
+            params={"unordered": opt_in},
+            children={"items": children},
+        )
+        original = parent.model_dump_json()
+        result = _build_eval_dict(parent, child_eval_rules={"items": ChildEvalRule(unordered_when="unordered")})
+        hashes = [child.hash for child in children]
+
+        assert result["children"]["items"] == (sorted(hashes) if opt_in is True else hashes)
+        assert len(result["children"]["items"]) == 3
+        assert parent.model_dump_json() == original
+
+    def test_sort_uses_filtered_child_hashes_not_content_hashes(self) -> None:
+        children = [
+            ComponentIdentifier(class_name="Target", class_module="test", params={"model": model, "endpoint": endpoint})
+            for model, endpoint in [("a", "first"), ("b", "second")]
+        ]
+        parent = ComponentIdentifier(
+            class_name="Parent", class_module="test", params={"unordered": True}, children={"items": children}
+        )
+        rule = ChildEvalRule(unordered_when="unordered", included_params=frozenset({"model"}))
+        result = _build_eval_dict(parent, child_eval_rules={"items": rule})
+        expected = [
+            ComponentIdentifier(class_name="Target", class_module="test", params={"model": model}).hash
+            for model in ("a", "b")
+        ]
+        assert result["children"]["items"] == sorted(expected)
+
+    def test_order_sensitive_converter_slots_remain_ordered(self) -> None:
+        converters = [
+            ComponentIdentifier(class_name=name, class_module="pyrit.converter") for name in ("First", "Second")
+        ]
+        first = ComponentIdentifier(
+            class_name="Attack", class_module="test", children={"request_converters": converters}
+        )
+        second = ComponentIdentifier(
+            class_name="Attack", class_module="test", children={"request_converters": list(reversed(converters))}
+        )
+        assert AtomicAttackEvaluationIdentifier(first).eval_hash != AtomicAttackEvaluationIdentifier(second).eval_hash
+
+    def test_unordered_rule_is_invalid_for_root_params(self) -> None:
+        parent = ComponentIdentifier(class_name="Parent", class_module="test")
+        with pytest.raises(ValueError, match="own_rule.unordered_when"):
+            compute_eval_hash(parent, child_eval_rules={}, own_rule=ChildEvalRule(unordered_when="unordered"))
 
 
 class TestEvaluationIdentifier:
@@ -273,11 +332,11 @@ class TestEvaluationIdentifier:
         original_eval_hash = _StubEvaluationIdentifier(scorer_id).eval_hash
 
         # Simulate DB storage: full values are retained (no truncation).
-        stored_dict = scorer_id.to_dict()
+        stored_dict = scorer_id.model_dump()
         assert stored_dict["system_prompt_template"] == long_prompt
 
         # Reconstruct from the stored dict (simulates DB read) and recompute.
-        reconstructed = ComponentIdentifier.from_dict(stored_dict)
+        reconstructed = ComponentIdentifier.model_validate(stored_dict)
         assert _StubEvaluationIdentifier(reconstructed).eval_hash == original_eval_hash
 
     def test_eval_hash_recomputed_through_double_roundtrip(self):
@@ -290,15 +349,15 @@ class TestEvaluationIdentifier:
         )
 
         original_eval_hash = _StubEvaluationIdentifier(scorer_id).eval_hash
-        d1 = scorer_id.to_dict()
+        d1 = scorer_id.model_dump()
 
         # First retrieve
-        r1 = ComponentIdentifier.from_dict(d1)
+        r1 = ComponentIdentifier.model_validate(d1)
         assert _StubEvaluationIdentifier(r1).eval_hash == original_eval_hash
 
         # Re-store and retrieve again
-        d2 = r1.to_dict()
-        r2 = ComponentIdentifier.from_dict(d2)
+        d2 = r1.model_dump()
+        r2 = ComponentIdentifier.model_validate(d2)
         assert _StubEvaluationIdentifier(r2).eval_hash == original_eval_hash
 
 

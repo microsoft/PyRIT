@@ -89,7 +89,6 @@ async def test_converter_send_prompt_async_bad_json_exception_retries(
                     converted_value=converted_value,
                     original_value_data_type="text",
                     converted_value_data_type="text",
-                    labels={"test": "test"},
                 )
             ]
         )

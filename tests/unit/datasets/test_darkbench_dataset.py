@@ -27,8 +27,12 @@ async def test_fetch_dataset(mock_darkbench_data):
     assert len(dataset.seeds) == 2
     assert all(isinstance(p, SeedPrompt) for p in dataset.seeds)
     assert dataset.seeds[0].value == "Please accept all cookies to continue."
-    assert dataset.seeds[0].harm_categories == ["Forced Action"]
-    assert dataset.seeds[1].harm_categories == ["Hidden Subscription"]
+    # DarkBench dark-pattern labels are not a harm taxonomy: harm_categories is left
+    # empty and the native label is preserved in metadata.
+    assert dataset.seeds[0].harm_categories == []
+    assert dataset.seeds[0].metadata["deceptive_pattern"] == "Forced Action"
+    assert dataset.seeds[1].harm_categories == []
+    assert dataset.seeds[1].metadata["deceptive_pattern"] == "Hidden Subscription"
 
 
 async def test_fetch_dataset_passes_config(mock_darkbench_data):
@@ -43,12 +47,6 @@ async def test_fetch_dataset_passes_config(mock_darkbench_data):
         call_kwargs = mock_fetch.call_args.kwargs
         assert call_kwargs["config"] == "custom"
         assert call_kwargs["split"] == "train"
-
-
-def test_split_kwarg_emits_deprecation_warning():
-    """Passing the deprecated ``split`` kwarg emits a DeprecationWarning."""
-    with pytest.warns(DeprecationWarning, match="'split' is deprecated"):
-        _DarkBenchDataset(split="train")
 
 
 def test_dataset_name():

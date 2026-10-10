@@ -14,9 +14,12 @@ nb_directory_path = pathlib.Path(path.DOCS_CODE_PATH, "targets").resolve()
 
 skipped_files = [
     "4_openai_video_target.ipynb",  # requires OpenAI video API key
+    "8_non_llm_targets.ipynb",  # requires Azure Blob Storage data-plane credentials
     "10_1_playwright_target.ipynb",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.ipynb",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.ipynb",  # WebSocket Copilot target requires manual pasting tokens
+    "github_copilot_target.ipynb",  # requires GitHub Copilot SDK credentials and model access
+    "hack_a_prompt_target.ipynb",  # requires a signed-in HackAPrompt session ID and cookies
 ]
 
 

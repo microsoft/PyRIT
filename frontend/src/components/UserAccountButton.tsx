@@ -19,7 +19,6 @@ import { useUserAccountButtonStyles } from './UserAccountButton.styles'
 function MsalAccountButton() {
   const styles = useUserAccountButtonStyles()
   const { instance, accounts } = useMsal()
-  const config = useAuthConfig()
   const account = instance.getActiveAccount() ?? accounts[0]
 
   if (!account) {
@@ -28,7 +27,7 @@ function MsalAccountButton() {
         <Button
           appearance="subtle"
           icon={<PersonRegular />}
-          onClick={() => instance.loginRedirect(buildLoginRequest(config.clientId)).catch((error) => {
+          onClick={() => instance.loginRedirect(buildLoginRequest()).catch((error) => {
             console.error('Login redirect failed:', error)
           })}
         >

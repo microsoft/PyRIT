@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
-from pyrit.exceptions import clear_execution_context, get_execution_context
+from pyrit.exceptions import clear_execution_context, get_exception_execution_context, get_execution_context
 from pyrit.exceptions.retry_collector import (
     RetryCollector,
     clear_retry_collector,
@@ -25,7 +25,7 @@ from pyrit.exceptions.retry_collector import (
 from pyrit.models import StrategyResultT
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, MutableMapping
+    from collections.abc import AsyncGenerator, MutableMapping
 
 StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
 
@@ -110,15 +110,7 @@ class StrategyEventHandler(ABC, Generic[StrategyContextT, StrategyResultT]):
         """
 
 
-# ``logging.LoggerAdapter`` only became subscriptable at runtime on Python 3.11, but PyRIT
-# supports 3.10. Parameterize it for type checkers only and use the bare class at runtime.
-if TYPE_CHECKING:
-    _LoggerAdapter = logging.LoggerAdapter[logging.Logger]
-else:
-    _LoggerAdapter = logging.LoggerAdapter
-
-
-class StrategyLogAdapter(_LoggerAdapter):
+class StrategyLogAdapter(logging.LoggerAdapter[logging.Logger]):
     """
     Custom logger adapter that adds strategy information to log messages.
     """
@@ -287,7 +279,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     @asynccontextmanager
-    async def _execution_context_async(self, context: StrategyContextT) -> AsyncIterator[None]:
+    async def _execution_context_async(self, context: StrategyContextT) -> AsyncGenerator[None, None]:
         """
         Manage the complete lifecycle of a strategy execution as an async context manager.
 
@@ -344,6 +336,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
 
         # Execution with lifecycle management
         # This uses an async context manager to ensure setup and teardown are handled correctly
+        retry_collector_started = False
         try:
             async with self._execution_context_async(context):
                 await self._handle_event_async(event=StrategyEvent.ON_PRE_EXECUTE, context=context)
@@ -356,19 +349,18 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
                 # handlers can see it.
                 collector = RetryCollector()
                 set_retry_collector(collector)
+                retry_collector_started = True
 
                 result = await self._perform_async(context=context)
                 await self._handle_event_async(event=StrategyEvent.ON_POST_EXECUTE, context=context, result=result)
-                clear_retry_collector()
                 return result
         except Exception as e:
             # Notify error event
             await self._handle_event_async(event=StrategyEvent.ON_ERROR, context=context, error=e)
-            clear_retry_collector()
 
             # Build enhanced error message with execution context if available
-            # Note: The context is preserved on exception by ExecutionContextManager
-            exec_context = get_execution_context()
+            # Child tasks carry failure context on the exception, not the caller's ContextVar.
+            exec_context = get_exception_execution_context(e) or get_execution_context()
             if exec_context:
                 error_details = exec_context.get_exception_details()
 
@@ -394,6 +386,9 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
 
             runtime_error = _StrategyRuntimeError(error_message)
             raise runtime_error from e
+        finally:
+            if retry_collector_started:
+                clear_retry_collector()
 
     async def execute_async(self, **kwargs: Any) -> StrategyResultT:
         """

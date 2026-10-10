@@ -1,19 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.utils import get_kwarg_param
 from pyrit.exceptions import ComponentRole, execution_context
-from pyrit.executor.attack.component import ConversationManager
+from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
+from pyrit.executor.attack.core.attack_scoring import score_attack_response_async
+from pyrit.executor.attack.core.attack_strategy import attack_outcome_from_score
 from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     ConversationSession,
     MultiTurnAttackContext,
@@ -23,14 +27,14 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackSeedGroup,
     Message,
     Score,
-    SeedAttackGroup,
+    ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score import Scorer
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -44,20 +48,21 @@ class MultiPromptSendingAttackParameters(AttackParameters):
     Parameters for MultiPromptSendingAttack.
 
     Extends AttackParameters to include user_messages field for multi-turn attacks.
-    Only accepts objective and user_messages fields.
+    Seed preparation accepts objective, user_messages, memory_labels, and expectation, and carries the
+    seed group's harm categories into targeted_harm_categories.
     """
 
     user_messages: list[Message] | None = None
 
     @classmethod
     async def from_seed_group_async(
-        cls: type["MultiPromptSendingAttackParameters"],
-        seed_group: SeedAttackGroup,
+        cls: type[MultiPromptSendingAttackParameters],
+        seed_group: AttackSeedGroup,
         *,
-        adversarial_chat: Optional["PromptTarget"] = None,
-        objective_scorer: Optional["TrueFalseScorer"] = None,
+        adversarial_chat: PromptTarget | None = None,
+        objective_scorer: TrueFalseScorer | None = None,
         **overrides: Any,
-    ) -> "MultiPromptSendingAttackParameters":
+    ) -> MultiPromptSendingAttackParameters:
         """
         Create parameters from a SeedGroup, extracting user messages.
 
@@ -86,18 +91,20 @@ class MultiPromptSendingAttackParameters(AttackParameters):
             )
 
         # Validate overrides only contain valid fields
-        valid_fields = {"objective", "user_messages", "memory_labels"}
+        valid_fields = {"objective", "user_messages", "memory_labels", "expectation"}
         invalid_fields = set(overrides.keys()) - valid_fields
         if invalid_fields:
             raise ValueError(
                 f"MultiPromptSendingAttackParameters does not accept: {invalid_fields}. Only accepts: {valid_fields}"
             )
 
-        # Build parameters with only objective, user_messages, and memory_labels
+        # Retain execution criteria separately from the messages sent to the target.
         return cls(
             objective=seed_group.objective.value,
             memory_labels=overrides.get("memory_labels", {}),
             user_messages=user_messages,
+            expectation=AttackParameters._resolve_seed_expectation(seed_group=seed_group, overrides=overrides),
+            targeted_harm_categories=list(seed_group.harm_categories),
         )
 
 
@@ -140,15 +147,18 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         attack_converter_config: AttackConverterConfig | None = None,
         attack_scoring_config: AttackScoringConfig | None = None,
         prompt_normalizer: PromptNormalizer | None = None,
+        prepended_conversation_config: PrependedConversationConfig | None = None,
     ) -> None:
         """
         Initialize the multi-prompt sending attack strategy.
 
         Args:
             objective_target (PromptTarget): The target system to attack.
-            attack_converter_config (AttackConverterConfig | None): Configuration for prompt converters.
+            attack_converter_config (AttackConverterConfig | None): Configuration for converters.
             attack_scoring_config (AttackScoringConfig | None): Configuration for scoring components.
             prompt_normalizer (PromptNormalizer | None): Normalizer for handling prompts.
+            prepended_conversation_config: Configuration for prepended-conversation
+                conversion and target-facing formatting.
 
         Raises:
             ValueError: If the objective scorer is not a true/false scorer.
@@ -159,6 +169,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             logger=logger,
             context_type=MultiTurnAttackContext,
             params_type=MultiPromptSendingAttackParameters,
+            prepended_conversation_config=prepended_conversation_config,
         )
 
         # Initialize the converter configuration
@@ -222,6 +233,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             target=self._objective_target,
             conversation_id=context.session.conversation_id,
             request_converters=self._request_converters,
+            prepended_conversation_config=self._prepended_conversation_config,
             memory_labels=self._memory_labels,
         )
 
@@ -277,7 +289,9 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
 
         # Score the last response including auxiliary and objective scoring
         if response is not None:
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
+            score = await self._evaluate_response_async(
+                response=response, objective=context.objective, expectation=context.expectation
+            )
         else:
             score = None
 
@@ -289,7 +303,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective=context.objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=self.get_identifier()),
             last_response=response.get_piece() if response else None,
-            last_score=score,
+            automated_score=score,
             related_conversations=context.related_conversations,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -319,9 +333,12 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score:
+            outcome = attack_outcome_from_score(score)
+            if outcome is AttackOutcome.SUCCESS:
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            if outcome is AttackOutcome.UNDETERMINED:
+                return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
 
         if response:
             # We got response(s) but the final response did not achieve the objective
@@ -358,16 +375,24 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target_conversation_id=context.session.conversation_id,
             objective=context.objective,
         ):
+            context._record_objective_target_invocation(conversation_id=context.session.conversation_id)
             return await self._prompt_normalizer.send_prompt_async(
-                message=current_message,
+                # Duplicate so the caller's Message objects can be reused across executions
+                # (e.g. broadcast user_messages) without piece ID collisions in memory.
+                message=current_message.duplicate(),
                 target=self._objective_target,
                 conversation_id=context.session.conversation_id,
                 request_converter_configurations=self._request_converters,
                 response_converter_configurations=self._response_converters,
-                labels=context.memory_labels,  # combined with strategy labels at _setup()
+                normalizer_overrides=self._get_prepended_normalizer_overrides(
+                    prepended_history_send_context=context.prepended_history_send_context,
+                ),
+                send_context=context.prepended_history_send_context,
             )
 
-    async def _evaluate_response_async(self, *, response: Message, objective: str) -> Score | None:
+    async def _evaluate_response_async(
+        self, *, response: Message, objective: str, expectation: ScoringExpectation
+    ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
 
@@ -377,6 +402,7 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         Args:
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
+            expectation (ScoringExpectation): The effective scoring question.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -384,18 +410,15 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
                 but are still executed and stored.
         """
         with execution_context(
-            component_role=ComponentRole.OBJECTIVE_SCORER,
+            component_role=ComponentRole.UNKNOWN,
             attack_strategy_name=self.__class__.__name__,
-            component_identifier=self._objective_scorer.get_identifier() if self._objective_scorer else None,
             objective=objective,
         ):
-            scoring_results = await Scorer.score_response_async(
+            scoring_results = await score_attack_response_async(
                 response=response,
+                objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
-                objective_scorer=self._objective_scorer if self._objective_scorer else None,
-                role_filter="assistant",
-                objective=objective,
-                skip_on_error_result=True,
+                expectation=expectation,
             )
 
         objective_scores = scoring_results["objective_scores"]

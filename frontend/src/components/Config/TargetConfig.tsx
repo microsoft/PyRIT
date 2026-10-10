@@ -7,19 +7,30 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
-import { targetsApi } from '../../services/api'
-import { toApiError } from '../../services/errors'
-import type { TargetInstance } from '../../types'
+import { useRuntime } from '@/hooks/useRuntime'
+import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
+import type { TargetInstance } from '@/types'
 import CreateTargetDialog from './CreateTargetDialog'
 import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
-  activeTarget: TargetInstance | null
-  onSetActiveTarget: (target: TargetInstance) => void
+  defaultObjectiveTarget: TargetInstance | null
+  defaultAdversarialTarget: TargetInstance | null
+  onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
+  onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
-export default function TargetConfig({ activeTarget, onSetActiveTarget }: TargetConfigProps) {
+export default function TargetConfig({
+  defaultObjectiveTarget,
+  defaultAdversarialTarget,
+  onSetDefaultObjectiveTarget,
+  onSetDefaultAdversarialTarget,
+  onTargetsLoaded,
+}: TargetConfigProps) {
+  const { generation, ready } = useRuntime()
   const styles = useTargetConfigStyles()
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,16 +44,18 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   // returns 502 while the backend is still starting, so a single failed
   // request on initial page load would show a confusing error to the user.
   useEffect(() => {
+    if (!ready) return
     const maxRetries = 3
     let cancelled = false
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const response = await targetsApi.listTargets(200)
+        const items = await listRegisteredTargets()
         if (cancelled) return
-        setTargets(response.items)
+        setTargets(items)
         setError(null)
         setLoading(false)
+        onTargetsLoaded?.(items)
       } catch (err) {
         if (cancelled) return
         if (n < maxRetries) {
@@ -59,7 +72,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
     return () => {
       cancelled = true
     }
-  }, [refetchCount])
+  }, [refetchCount, generation, ready, onTargetsLoaded])
 
   const fetchTargets = useCallback(() => {
     setLoading(true)
@@ -73,16 +86,17 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
   }, [fetchTargets])
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text size={600} weight="semibold">Target Configuration</Text>
+          <Text as="h1" size={600} weight="semibold">Target Registry</Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
-            Manage targets for attack sessions. Select a target to use in the chat view.
+            Manage targets and choose defaults for new chats and scanner runs. Existing chats and runs are unchanged.
           </Text>
         </div>
         <div className={styles.headerActions}>
           <Button
+            className={styles.headerAction}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
             onClick={fetchTargets}
@@ -91,6 +105,7 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
             Refresh
           </Button>
           <Button
+            className={styles.headerAction}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -118,14 +133,20 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
             Add a target manually, or configure an initializer in your <code>~/.pyrit/.pyrit_conf</code> file
             to auto-populate targets from your <code>.env</code> and <code>.env.local</code> files.
-            For example, add <code>airt</code> to the <code>initializers</code> list to register
-            Azure OpenAI targets automatically. See the{' '}
-            <Link href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example" target="_blank" inline>
+            For example, add <code>target</code> to the <code>initializers</code> list to register
+            available prompt targets automatically. See the{' '}
+            <Link
+              href="https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
+              target="_blank"
+              rel="noopener noreferrer"
+              inline
+            >
               .pyrit_conf_example
             </Link>{' '}
             for details.
           </Text>
           <Button
+            className={styles.touchTarget}
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => setDialogOpen(true)}
@@ -138,8 +159,10 @@ export default function TargetConfig({ activeTarget, onSetActiveTarget }: Target
       {!loading && !error && targets.length > 0 && (
         <TargetTable
           targets={targets}
-          activeTarget={activeTarget}
-          onSetActiveTarget={onSetActiveTarget}
+          defaultObjectiveTarget={defaultObjectiveTarget}
+          defaultAdversarialTarget={defaultAdversarialTarget}
+          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
+          onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
         />
       )}
 

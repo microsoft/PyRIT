@@ -8,7 +8,7 @@ import asyncio
 import base64
 import hashlib
 import tempfile
-import time
+import uuid
 import wave
 from mimetypes import guess_type
 from pathlib import Path
@@ -17,7 +17,6 @@ from urllib.parse import urlparse
 
 import aiofiles
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import DB_DATA_PATH
 from pyrit.memory.storage.storage import DiskStorageIO, StorageIO
 
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed import Seed
 
 # Define allowed categories for validation
-AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries"]
+AllowedCategories = Literal["seed-prompt-entries", "prompt-memory-entries", "scorable-content-entries"]
 
 
 def _write_wav_sync(
@@ -47,6 +46,19 @@ def _write_wav_sync(
         wav_file.writeframes(data)
 
 
+def _validate_category(category: object) -> None:
+    """
+    Reject missing storage categories before selecting a serializer.
+
+    Raises:
+        ValueError: If the category is missing.
+    """
+    if not category:
+        raise ValueError(
+            f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
+        )
+
+
 def data_serializer_factory(
     *,
     data_type: PromptDataType,
@@ -60,7 +72,7 @@ def data_serializer_factory(
     Args:
         data_type (str): The type of the data (e.g., 'text', 'image_path', 'audio_path').
         value (str): The data value to be serialized.
-        extension (Optional[str]): The file extension, if applicable.
+        extension (str | None): The file extension, if applicable.
         category (AllowedCategories): The category or context for the data (e.g., 'seed-prompt-entries').
 
     Returns:
@@ -70,10 +82,7 @@ def data_serializer_factory(
         ValueError: If the category is not provided or invalid.
 
     """
-    if not category:
-        raise ValueError(
-            f"The 'category' argument is mandatory and must be one of the following: {get_args(AllowedCategories)}."
-        )
+    _validate_category(category)
     if value is not None:
         if data_type in ["text", "reasoning", "function_call", "tool_call", "function_call_output"]:
             return TextDataTypeSerializer(prompt_text=value, data_type=data_type)
@@ -210,6 +219,12 @@ class DataTypeSerializer(abc.ABC):
         Raises:
             RuntimeError: If storage IO is not initialized.
         """
+        original_file_extension = self.file_extension
+        self.file_extension = "wav"
+        if output_filename:
+            output_suffix = Path(output_filename).suffix
+            if output_suffix.casefold() == f".{original_file_extension}".casefold():
+                output_filename = output_filename[: -len(output_suffix)]
         file_path = await self.get_data_filename_async(file_name=output_filename)
 
         # save audio file locally first if in AzureStorageBlob so we can use wave.open to set audio parameters
@@ -320,10 +335,10 @@ class DataTypeSerializer(abc.ABC):
         Generate or retrieve a unique filename for the data file.
 
         Args:
-            file_name (Optional[str]): Optional file name override.
+            file_name (str | None): Optional file name override.
 
         Returns:
-            Union[Path, str]: Full storage path for the generated data file.
+            Path | str: Full storage path for the generated data file.
 
         Raises:
             TypeError: If the serializer is not configured for on-disk data.
@@ -339,14 +354,16 @@ class DataTypeSerializer(abc.ABC):
         if not self.data_sub_directory:
             raise RuntimeError("Data sub directory not set")
 
-        ticks = int(time.time() * 1_000_000)
         if self._memory.results_path:
             results_path = str(self._memory.results_path)
         else:
             from pyrit.common.path import DB_DATA_PATH
 
             results_path = str(DB_DATA_PATH)
-        file_name = file_name if file_name else str(ticks)
+        file_name = file_name if file_name else str(uuid.uuid4())
+        file_suffix = Path(file_name).suffix
+        if file_suffix.casefold() == f".{self.file_extension}".casefold():
+            file_name = file_name[: -len(file_suffix)]
 
         if self._is_azure_storage_url(results_path):
             full_data_directory_path = results_path + self.data_sub_directory
@@ -359,126 +376,6 @@ class DataTypeSerializer(abc.ABC):
             self._file_path = Path(full_data_directory_path, f"{file_name}.{self.file_extension}")
 
         return self._file_path
-
-    async def save_data(  # pyrit-async-suffix-exempt
-        self, data: bytes, output_filename: str | None = None
-    ) -> None:
-        """
-        Save data to storage (deprecated alias of ``save_data_async``).
-
-        Args:
-            data: The data to be saved.
-            output_filename: Optional filename to store data as.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_data",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_data_async",
-            removed_in="0.16.0",
-        )
-        await self.save_data_async(data, output_filename)
-
-    async def save_b64_image(  # pyrit-async-suffix-exempt
-        self, data: str | bytes, output_filename: str | None = None
-    ) -> None:
-        """
-        Save a base64-encoded image to storage (deprecated alias of ``save_b64_image_async``).
-
-        Args:
-            data: String or bytes with base64 data.
-            output_filename: Optional filename to store image as.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_b64_image",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_b64_image_async",
-            removed_in="0.16.0",
-        )
-        await self.save_b64_image_async(data, output_filename)
-
-    async def save_formatted_audio(  # pyrit-async-suffix-exempt
-        self,
-        data: bytes,
-        num_channels: int = 1,
-        sample_width: int = 2,
-        sample_rate: int = 16000,
-        output_filename: str | None = None,
-    ) -> None:
-        """
-        Save formatted audio data to storage (deprecated alias of ``save_formatted_audio_async``).
-
-        Args:
-            data: Audio data bytes.
-            num_channels: Number of channels in audio data.
-            sample_width: Sample width in bytes.
-            sample_rate: Sample rate in Hz.
-            output_filename: Optional filename to store audio as.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_formatted_audio",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.save_formatted_audio_async",
-            removed_in="0.16.0",
-        )
-        await self.save_formatted_audio_async(data, num_channels, sample_width, sample_rate, output_filename)
-
-    async def read_data(self) -> bytes:  # pyrit-async-suffix-exempt
-        """
-        Read data from storage (deprecated alias of ``read_data_async``).
-
-        Returns:
-            bytes: The data read from storage.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_async",
-            removed_in="0.16.0",
-        )
-        return await self.read_data_async()
-
-    async def read_data_base64(self) -> str:  # pyrit-async-suffix-exempt
-        """
-        Read data and return it as a base64 string (deprecated alias of ``read_data_base64_async``).
-
-        Returns:
-            str: Base64-encoded data.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_base64",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.read_data_base64_async",
-            removed_in="0.16.0",
-        )
-        return await self.read_data_base64_async()
-
-    async def get_sha256(self) -> str:  # pyrit-async-suffix-exempt
-        """
-        Compute SHA256 hash for this serializer's current value (deprecated alias of ``get_sha256_async``).
-
-        Returns:
-            str: Hex digest of the computed SHA256 hash.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_sha256",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_sha256_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_sha256_async()
-
-    async def get_data_filename(  # pyrit-async-suffix-exempt
-        self, file_name: str | None = None
-    ) -> Path | str:
-        """
-        Generate or retrieve a unique filename for the data file (deprecated alias of ``get_data_filename_async``).
-
-        Args:
-            file_name: Optional file name override.
-
-        Returns:
-            Union[Path, str]: Full storage path for the generated data file.
-        """
-        print_deprecation_message(
-            old_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename",
-            new_item="pyrit.memory.storage.serializers.DataTypeSerializer.get_data_filename_async",
-            removed_in="0.16.0",
-        )
-        return await self.get_data_filename_async(file_name)
 
     @staticmethod
     def get_extension(file_path: str) -> str | None:
@@ -586,7 +483,7 @@ class URLDataTypeSerializer(DataTypeSerializer):
         Args:
             category (str): Data category folder name.
             prompt_text (str): URL or path value.
-            extension (Optional[str]): Optional extension for persisted content.
+            extension (str | None): Optional extension for persisted content.
 
         """
         self.data_type = "url"
@@ -615,8 +512,8 @@ class ImagePathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): Data category folder name.
-            prompt_text (Optional[str]): Optional existing image path.
-            extension (Optional[str]): Optional image extension.
+            prompt_text (str | None): Optional existing image path.
+            extension (str | None): Optional image extension.
 
         """
         self.data_type = "image_path"
@@ -652,8 +549,8 @@ class AudioPathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): Data category folder name.
-            prompt_text (Optional[str]): Optional existing audio path.
-            extension (Optional[str]): Optional audio extension.
+            prompt_text (str | None): Optional existing audio path.
+            extension (str | None): Optional audio extension.
 
         """
         self.data_type = "audio_path"
@@ -689,8 +586,8 @@ class VideoPathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): The category or context for the data.
-            prompt_text (Optional[str]): The video path or identifier.
-            extension (Optional[str]): The file extension, defaults to 'mp4'.
+            prompt_text (str | None): The video path or identifier.
+            extension (str | None): The file extension, defaults to 'mp4'.
 
         """
         self.data_type = "video_path"
@@ -730,8 +627,8 @@ class BinaryPathDataTypeSerializer(DataTypeSerializer):
 
         Args:
             category (str): The category or context for the data.
-            prompt_text (Optional[str]): The binary file path or identifier.
-            extension (Optional[str]): The file extension, defaults to 'bin'.
+            prompt_text (str | None): The binary file path or identifier.
+            extension (str | None): The file extension, defaults to 'bin'.
 
         """
         self.data_type = "binary_path"

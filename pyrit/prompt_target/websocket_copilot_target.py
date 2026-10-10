@@ -13,12 +13,16 @@ import httpx
 import websockets
 from websockets.exceptions import InvalidStatus
 
-from pyrit.auth import CopilotAuthenticator, ManualCopilotAuthenticator
+from pyrit.auth import (
+    BrowserSessionCopilotAuthenticator,
+    CopilotAuthenticator,
+    ManualCopilotAuthenticator,
+)
+from pyrit.common import get_mime_type
 from pyrit.exceptions import (
     EmptyResponseException,
     pyrit_target_retry,
 )
-from pyrit.memory import DataTypeSerializer
 from pyrit.memory.storage import convert_local_image_to_data_url_async
 from pyrit.models import (
     ComponentIdentifier,
@@ -53,13 +57,18 @@ class WebSocketCopilotTarget(PromptTarget):
     A WebSocket-based prompt target for integrating with Microsoft Copilot.
 
     This class facilitates communication with Microsoft Copilot over a WebSocket connection.
-    Authentication can be handled in two ways:
+    Authentication can be handled in three ways:
 
-    1. **Automated (default)**: Via ``CopilotAuthenticator``, which uses Playwright to automate
-       browser login and obtain the required access tokens. Requires ``COPILOT_USERNAME`` and
-       ``COPILOT_PASSWORD`` environment variables as well as Playwright installed.
+    1. **Credential automation (default)**: ``CopilotAuthenticator`` reads
+        ``COPILOT_USERNAME`` and ``COPILOT_PASSWORD``, automates the login form with
+        Playwright, and caches the captured token.
 
-    2. **Manual**: Via ``ManualCopilotAuthenticator``, which accepts a pre-obtained access token.
+    2. **Interactive browser session**: ``BrowserSessionCopilotAuthenticator`` opens
+        a persistent Edge profile for user-driven sign-in, including MFA and
+        Conditional Access. It keeps captured tokens in memory and refreshes them
+        through the retained browser session.
+
+    3. **Manual**: Via ``ManualCopilotAuthenticator``, which accepts a pre-obtained access token.
        This is useful for situations where browser automation is not possible.
 
     Once authenticated, the target supports multi-turn conversations through server-side
@@ -95,11 +104,13 @@ class WebSocketCopilotTarget(PromptTarget):
     def __init__(
         self,
         *,
-        websocket_base_url: str = "wss://substrate.office.com/m365Copilot/Chathub",
+        websocket_base_url: str = "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub",
         max_requests_per_minute: int | None = None,
         model_name: str = "copilot",
         response_timeout_seconds: int = RESPONSE_TIMEOUT_SECONDS,
-        authenticator: CopilotAuthenticator | ManualCopilotAuthenticator | None = None,
+        authenticator: (
+            BrowserSessionCopilotAuthenticator | CopilotAuthenticator | ManualCopilotAuthenticator | None
+        ) = None,
         custom_configuration: TargetConfiguration | None = None,
     ) -> None:
         """
@@ -107,13 +118,14 @@ class WebSocketCopilotTarget(PromptTarget):
 
         Args:
             websocket_base_url (str): Base URL for the Copilot WebSocket endpoint.
-                Defaults to ``wss://substrate.office.com/m365Copilot/Chathub``.
+                Defaults to ``wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
             max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
             response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
-            authenticator (CopilotAuthenticator | ManualCopilotAuthenticator | None): Authenticator
-                instance. Supports both ``CopilotAuthenticator`` and ``ManualCopilotAuthenticator``.
-                If None, a new ``CopilotAuthenticator`` instance will be created with default settings.
+            authenticator (Authenticator | None): Copilot authentication strategy. Supported
+                implementations are ``BrowserSessionCopilotAuthenticator``,
+                ``CopilotAuthenticator``, and ``ManualCopilotAuthenticator``. If None, a new
+                ``CopilotAuthenticator`` is created.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
 
@@ -526,9 +538,8 @@ class WebSocketCopilotTarget(PromptTarget):
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
-                await websocket.send(payload)
-
                 is_user_input = input_msg.get("type") == CopilotMessageType.USER_PROMPT
+                await websocket.send(payload)
 
                 max_message_iterations = 1000
                 iteration_count = 0
@@ -548,7 +559,7 @@ class WebSocketCopilotTarget(PromptTarget):
                             websocket.recv(),
                             timeout=self._response_timeout_seconds,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         raise TimeoutError(
                             f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
                         ) from None
@@ -601,14 +612,14 @@ class WebSocketCopilotTarget(PromptTarget):
             piece_type = piece.converted_value_data_type
 
             if piece_type == "image_path":
-                mime_type = DataTypeSerializer.get_mime_type(piece.converted_value)
+                mime_type = get_mime_type(piece.converted_value)
                 if not mime_type or not mime_type.startswith("image/"):
                     raise ValueError(
                         f"Invalid image format for image_path: {piece.converted_value}. "
                         f"Detected MIME type: {mime_type}."
                     )
 
-    def _is_start_of_session(self, *, conversation_id: str) -> bool:
+    async def _is_start_of_session_async(self, *, conversation_id: str) -> bool:
         """
         Determine if this is the first message in a PyRIT conversation.
 
@@ -621,7 +632,7 @@ class WebSocketCopilotTarget(PromptTarget):
         Returns:
             bool: True if no prior messages exist in this conversation, False otherwise.
         """
-        conversation_history = self._memory.get_conversation_messages(conversation_id=conversation_id)
+        conversation_history = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
         return len(conversation_history) == 0
 
     def _generate_consistent_copilot_ids(self, *, pyrit_conversation_id: str) -> tuple[str, str]:
@@ -644,8 +655,8 @@ class WebSocketCopilotTarget(PromptTarget):
 
         return session_id, copilot_conversation_id
 
-    @limit_requests_per_minute
     @pyrit_target_retry
+    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Asynchronously send a message to Microsoft Copilot using WebSocket.
@@ -673,7 +684,7 @@ class WebSocketCopilotTarget(PromptTarget):
         pyrit_conversation_id = message.message_pieces[0].conversation_id
         if not pyrit_conversation_id:
             raise ValueError("WebSocketCopilotTarget requires a conversation_id on the message being sent.")
-        is_start_of_session = self._is_start_of_session(conversation_id=pyrit_conversation_id)
+        is_start_of_session = await self._is_start_of_session_async(conversation_id=pyrit_conversation_id)
 
         session_id, copilot_conversation_id = self._generate_consistent_copilot_ids(
             pyrit_conversation_id=pyrit_conversation_id

@@ -3,15 +3,26 @@ import { useState, useCallback, useRef, useMemo, useEffect, createElement } from
 import type { EventData } from 'react-joyride'
 import { ACTIONS, LIFECYCLE, STATUS } from 'react-joyride'
 
-import { TOUR_STEPS } from '../components/Tour/tourSteps'
+import { createTourSteps } from '../components/Tour/tourSteps'
+import type { TourStep } from '../components/Tour/tourSteps'
 import TourTooltip from '../components/Tour/TourTooltip'
 import type { ViewName } from '../components/Sidebar/Navigation'
 
 // Static Joyride config — hoisted to module scope so they're created once,
 // not on every render. Joyride compares these by reference internally.
-const JOYRIDE_STEPS = [...TOUR_STEPS]
-const JOYRIDE_FLOATING_OPTIONS = { hideArrow: true } as const
+const TOUR_VIEWPORT_PADDING_PX = 12
+const JOYRIDE_FLOATING_OPTIONS = {
+  hideArrow: true,
+  shiftOptions: {
+    // The tooltip portal must use the viewport, not a target's narrower scroll parent.
+    boundary: [] as Element[],
+    crossAxis: true,
+    padding: TOUR_VIEWPORT_PADDING_PX,
+    rootBoundary: 'viewport',
+  },
+} as const
 const JOYRIDE_OPTIONS = {
+  blockTargetInteraction: false,
   closeButtonAction: 'skip' as const,
   overlayClickAction: false as const,
 }
@@ -24,14 +35,50 @@ const JOYRIDE_LOCALE = {
 }
 
 /**
+ * Whether a step's anchor is currently in the DOM. A view can render several
+ * routes (`/scanner` vs `/scanner/:scenarioName`), so matching `viewRequired`
+ * alone does not guarantee the anchor exists.
+ */
+function isStepTargetPresent(step: TourStep): boolean {
+  if (typeof step.target !== 'string') return true
+  return document.querySelector(step.target) !== null
+}
+
+/**
  * Manages the onboarding tour lifecycle: step progression, cross-view
  * navigation, and Joyride configuration.
  *
  * Returns props to spread onto `<Joyride>` plus control functions.
  */
-export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolean, currentView: ViewName) {
+export function useTour(
+  onNavigate: (view: ViewName) => void,
+  isDarkMode: boolean,
+  currentView: ViewName,
+  hasActiveTarget = false,
+  canManageConfiguration = false,
+) {
   const [run, setRun] = useState(false)
   const [stepIndex, setStepIndex] = useState(0)
+  const steps = useMemo(
+    () => createTourSteps({ hasActiveTarget, canManageConfiguration }),
+    [hasActiveTarget, canManageConfiguration],
+  )
+  const visibleSteps = useMemo(() => {
+    const currentStep = steps[stepIndex]
+    if (!currentStep || currentStep.viewRequired === currentView) {
+      return steps
+    }
+
+    return steps.map((step, index) => index === stepIndex
+      ? {
+          ...step,
+          target: 'body',
+          placement: 'center' as const,
+          hideOverlay: true,
+          disableFocusTrap: true,
+        }
+      : step)
+  }, [currentView, stepIndex, steps])
 
   // Ref to track whether we're in the middle of a delayed view switch.
   // Prevents double-advancing if the user clicks rapidly.
@@ -120,7 +167,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
     const nextIndex = index + (action === ACTIONS.PREV ? -1 : 1)
 
     // Past end final index means the tour is complete
-    if (nextIndex >= TOUR_STEPS.length) {
+    if (nextIndex >= steps.length) {
       endTour()
       return
     }
@@ -130,7 +177,7 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
       return
     }
 
-    const nextStep = TOUR_STEPS[nextIndex]
+    const nextStep = steps[nextIndex]
 
     if (nextStep.viewRequired !== currentViewRef.current) {
       // The required view differs from the actual current view.
@@ -139,10 +186,24 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
       pendingStepRef.current = nextIndex
       switchingViewRef.current = true
       onNavigate(nextStep.viewRequired)
+    } else if (!isStepTargetPresent(nextStep)) {
+      // Right view, wrong route within it. Navigating to the view's canonical
+      // route leaves currentView unchanged, so the useEffect above never runs;
+      // advance here once the router has committed and painted.
+      switchingViewRef.current = true
+      pendingStepRef.current = nextIndex
+      onNavigate(nextStep.viewRequired)
+      requestAnimationFrame(() => {
+        // endTour clears the pending step, so a cancelled tour never advances.
+        if (pendingStepRef.current === null) return
+        pendingStepRef.current = null
+        setStepIndex(nextIndex)
+        switchingViewRef.current = false
+      })
     } else {
       setStepIndex(nextIndex)
     }
-  }, [onNavigate, endTour])
+  }, [onNavigate, endTour, steps])
 
   // Wrap TourTooltip so it receives isDarkMode via closure.
   // Uses createElement instead of JSX because this is a .ts file (not .tsx).
@@ -157,18 +218,17 @@ export function useTour(onNavigate: (view: ViewName) => void, isDarkMode: boolea
   // Memoize tourProps so Joyride only receives a new object reference when
   // something it cares about actually changed (run, stepIndex, callbacks, tooltip).
   const tourProps = useMemo(() => ({
-    steps: JOYRIDE_STEPS,
+    steps: visibleSteps,
     run,
     stepIndex,
     onEvent: handleJoyrideEvent,
     continuous: true as const,
     showSkipButton: true,
-    spotlightClicks: false,
     tooltipComponent: tooltip,
     floatingOptions: JOYRIDE_FLOATING_OPTIONS,
     options: JOYRIDE_OPTIONS,
     locale: JOYRIDE_LOCALE,
-  }), [run, stepIndex, handleJoyrideEvent, tooltip])
+  }), [visibleSteps, run, stepIndex, handleJoyrideEvent, tooltip])
 
   return {
     /** Call to start (or restart) the tour from step 1 on the Home view. */

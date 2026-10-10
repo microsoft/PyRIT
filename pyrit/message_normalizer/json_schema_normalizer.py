@@ -126,7 +126,7 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
         if not changed:
             return message
 
-        return Message(new_pieces)
+        return Message(message_pieces=new_pieces)
 
     def _adapt_piece(self, *, piece: MessagePiece) -> MessagePiece:
         """

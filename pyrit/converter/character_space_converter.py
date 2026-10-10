@@ -1,0 +1,37 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+import re
+
+from pyrit.converter.converter import Converter, ConverterResult
+from pyrit.models import PromptDataType
+
+
+class CharacterSpaceConverter(Converter):
+    """
+    Spaces out the input prompt and removes specified punctuations.
+
+    For more information on the bypass strategy, refer to [@robustintelligence2024bypass].
+    """
+
+    SUPPORTED_INPUT_TYPES = ("text",)
+    SUPPORTED_OUTPUT_TYPES = ("text",)
+
+    async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        """
+        Convert the given prompt by removing punctuation and spacing out characters.
+
+        Args:
+            prompt (str): The input text prompt to be converted.
+            input_type (PromptDataType): The type of input data.
+
+        Returns:
+            ConverterResult: The result containing the converted text.
+
+        Raises:
+            ValueError: If the input type is not supported.
+        """
+        if not self.input_supported(input_type):
+            raise ValueError("Input type not supported")
+        converted_text = re.sub("[!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~]", "", " ".join(prompt))
+        return ConverterResult(output_text=converted_text, output_type="text")

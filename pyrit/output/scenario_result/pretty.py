@@ -5,14 +5,27 @@ import textwrap
 
 from colorama import Fore, Style
 
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import AttackOutcome, ScenarioResult
-from pyrit.output.scenario_result.base import ScenarioResultPrinterBase
+from pyrit.output._derivation import (
+    attack_score_display,
+    resolve_target_info,
+    scenario_overview,
+    select_attacks,
+)
+from pyrit.output._formatting import _PrettyPrinterMixin
+from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.scorer.base import ScorerPrinterBase
 from pyrit.output.sink import Sink
 
+# A successful attack is a failure for the defender, so success is shown in red.
+_ATTACK_OUTCOME_COLORS = {
+    AttackOutcome.SUCCESS: Fore.RED,
+    AttackOutcome.FAILURE: Fore.GREEN,
+    AttackOutcome.UNDETERMINED: Fore.YELLOW,
+}
 
-class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
+
+class PrettyScenarioResultPrinter(_PrettyPrinterMixin, ScenarioResultPrinterBase):
     """
     Pretty printer for scenario results with ANSI-colored formatting.
 
@@ -52,22 +65,6 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         self._scorer_printer = scorer_printer
         self._sort_groups_by_success_rate = sort_groups_by_success_rate
 
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
-
     def _render_section_header(self, title: str) -> str:
         """
         Render a section header with visual separation.
@@ -97,7 +94,7 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines: list[str] = []
         lines.append("\n")
         lines.append(self._format_colored("=" * self._width, Fore.CYAN))
-        header_text = f"📊 SCENARIO RESULTS: {result.scenario_identifier.name}"
+        header_text = f"📊 SCENARIO RESULTS: {result.scenario_name}"
         lines.append(self._format_colored(header_text.center(self._width), Style.BRIGHT, Fore.CYAN))
         lines.append(self._format_colored("=" * self._width, Fore.CYAN))
         return "".join(lines)
@@ -133,12 +130,25 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             return str(Fore.CYAN)
         return str(Fore.GREEN)
 
-    async def render_async(self, result: ScenarioResult) -> str:
+    async def render_async(
+        self,
+        result: ScenarioResult,
+        *,
+        view: ScenarioView = "overview",
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
         """
-        Render the scenario result summary and return it as a string.
+        Render a scenario result and return it as a string.
 
         Args:
-            result (ScenarioResult): The scenario result to summarize.
+            result (ScenarioResult): The scenario result to render.
+            view (ScenarioView): Which projection to render — the aggregate ``"overview"``
+                or the per-attack ``"attacks"`` table. Defaults to ``"overview"``.
+            attack_result_ids (list[str] | None): For the ``"attacks"`` view, restrict to
+                these attack ids. Ignored by the overview. Defaults to None.
+            limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
+                to show. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
@@ -147,6 +157,9 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
             ValueError: If the result has an ``objective_scorer_identifier`` but no scorer printer
                 is configured.
         """
+        if view == "attacks":
+            return self._render_attacks(result, attack_result_ids=attack_result_ids, limit=limit)
+
         parts: list[str] = []
 
         lines: list[str] = []
@@ -154,33 +167,26 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         lines.append(self._render_section_header("Scenario Information"))
         lines.append(self._format_colored(f"{self._indent}📋 Scenario Details", Style.BRIGHT))
-        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_identifier.name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Name: {result.scenario_name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Result ID: {result.id}", Fore.CYAN))
         lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• Scenario Version: {result.scenario_identifier.version}", Fore.CYAN
-            )
+            self._format_colored(f"{self._indent * 2}• Scenario Version: {result.scenario_version}", Fore.CYAN)
         )
-        lines.append(
-            self._format_colored(
-                f"{self._indent * 2}• PyRIT Version: {result.scenario_identifier.pyrit_version}", Fore.CYAN
-            )
-        )
+        lines.append(self._format_colored(f"{self._indent * 2}• PyRIT Version: {result.pyrit_version}", Fore.CYAN))
 
-        if result.scenario_identifier.description:
+        if result.scenario_description:
             lines.append(self._format_colored(f"{self._indent * 2}• Description:", Fore.CYAN))
             desc_indent = self._indent * 4
             available_width = 120 - len(desc_indent)
-            wrapped_lines = textwrap.wrap(
-                result.scenario_identifier.description, width=available_width, break_long_words=False
-            )
+            wrapped_lines = textwrap.wrap(result.scenario_description, width=available_width, break_long_words=False)
             lines.extend(self._format_colored(f"{desc_indent}{line}", Fore.CYAN) for line in wrapped_lines)
 
         lines.append("\n")
         lines.append(self._format_colored(f"{self._indent}🎯 Target Information", Style.BRIGHT))
-        target_id = result.objective_target_identifier
-        target_type = target_id.class_name if target_id else "Unknown"
-        target_model = target_id.params.get("model_name", "Unknown") if target_id else "Unknown"
-        target_endpoint = target_id.params.get("endpoint", "Unknown") if target_id else "Unknown"
+        target = resolve_target_info(result.objective_target_identifier)
+        target_type = target.type or "Unknown"
+        target_model = target.model or "Unknown"
+        target_endpoint = target.endpoint or "Unknown"
 
         lines.append(self._format_colored(f"{self._indent * 2}• Target Type: {target_type}", Fore.CYAN))
         lines.append(self._format_colored(f"{self._indent * 2}• Target Model: {target_model}", Fore.CYAN))
@@ -195,13 +201,18 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         lines = []
         lines.append(self._render_section_header("Overall Statistics"))
-        total_results = sum(len(results) for results in result.attack_results.values())
-        total_strategies = len(result.get_strategies_used())
-        overall_rate = result.objective_achieved_rate()
+        total_techniques = len(result.get_techniques_used())
+        overview = scenario_overview(result)
+        overall_rate = overview.success_rate
 
         lines.append(self._format_colored(f"{self._indent}📈 Summary", Style.BRIGHT))
-        lines.append(self._format_colored(f"{self._indent * 2}• Total Strategies: {total_strategies}", Fore.GREEN))
-        lines.append(self._format_colored(f"{self._indent * 2}• Total Attack Results: {total_results}", Fore.GREEN))
+        lines.append(self._format_colored(f"{self._indent * 2}• Total Techniques: {total_techniques}", Fore.GREEN))
+        lines.append(
+            self._format_colored(
+                f"{self._indent * 2}• Total Objective Executions: {overview.objective_executions}", Fore.GREEN
+            )
+        )
+        lines.append(self._format_colored(f"{self._indent * 2}• Total Attempts: {overview.attempts}", Fore.GREEN))
         lines.append(
             self._format_colored(
                 f"{self._indent * 2}• Overall Success Rate: {overall_rate}%", self._get_rate_color(overall_rate)
@@ -212,29 +223,24 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
         lines.append(self._format_colored(f"{self._indent * 2}• Unique Objectives: {len(objectives)}", Fore.GREEN))
 
         lines.append(self._render_section_header("Per-Group Breakdown"))
-        display_groups = result.get_display_groups()
-
-        group_summaries: list[tuple[str, int, int]] = []
-        for group_name, group_results in display_groups.items():
-            total_group = len(group_results)
-            if total_group == 0:
-                group_rate = 0
-            else:
-                successful = sum(1 for r in group_results if r.outcome == AttackOutcome.SUCCESS)
-                group_rate = int((successful / total_group) * 100)
-            group_summaries.append((group_name, total_group, group_rate))
+        group_summaries = list(overview.groups)
 
         if self._sort_groups_by_success_rate:
             # Stable sort so groups with equal rates retain their original relative order.
-            group_summaries.sort(key=lambda item: item[2], reverse=True)
+            group_summaries.sort(key=lambda group: group.success_rate, reverse=True)
 
-        for group_name, total_group, group_rate in group_summaries:
+        for group in group_summaries:
             lines.append("\n")
-            lines.append(self._format_colored(f"{self._indent}🔸 Group: {group_name}", Style.BRIGHT))
-            lines.append(self._format_colored(f"{self._indent * 2}• Number of Results: {total_group}", Fore.YELLOW))
+            lines.append(self._format_colored(f"{self._indent}🔸 Group: {group.name}", Style.BRIGHT))
             lines.append(
                 self._format_colored(
-                    f"{self._indent * 2}• Success Rate: {group_rate}%", self._get_rate_color(group_rate)
+                    f"{self._indent * 2}• Objective Executions: {group.objective_executions}", Fore.YELLOW
+                )
+            )
+            lines.append(self._format_colored(f"{self._indent * 2}• Attempts: {group.attempts}", Fore.YELLOW))
+            lines.append(
+                self._format_colored(
+                    f"{self._indent * 2}• Success Rate: {group.success_rate}%", self._get_rate_color(group.success_rate)
                 )
             )
 
@@ -243,15 +249,58 @@ class PrettyScenarioResultPrinter(ScenarioResultPrinterBase):
 
         return "".join(parts)
 
-    async def print_summary_async(self, result: ScenarioResult) -> None:
+    def _render_attacks(
+        self,
+        result: ScenarioResult,
+        *,
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
         """
-        Use ``write_async`` instead. This method is deprecated.
+        Render a compact per-attack table for the scenario's results.
+
+        Reads the ``AttackResult`` objects embedded in *result* (no fetching), so
+        the framework and the thin CLI client render attacks identically.
 
         Args:
-            result (ScenarioResult): The scenario result to summarize.
+            result (ScenarioResult): The scenario result whose attacks to list.
+            attack_result_ids (list[str] | None): When provided, keep only attacks
+                whose id is in this set. Defaults to None (all attacks).
+            limit (int | None): Maximum number of attacks to show. Defaults to None.
+
+        Returns:
+            str: The rendered attacks table.
         """
-        print_deprecation_message(old_item="print_summary_async", new_item="write_async", removed_in="0.16.0")
-        await self.write_async(result)
+        selected = select_attacks(result, attack_result_ids=attack_result_ids)
+        total = len(selected)
+        if limit is not None:
+            selected = selected[:limit]
+
+        lines: list[str] = [self._render_section_header("Attack Results")]
+        if not selected:
+            lines.append(self._format_colored(f"{self._indent}No attack results.", Fore.YELLOW))
+            return "".join(lines)
+
+        for index, (name, attack) in enumerate(selected, start=1):
+            color = _ATTACK_OUTCOME_COLORS.get(attack.outcome, Fore.CYAN)
+            lines.append("\n")
+            lines.append(
+                self._format_colored(
+                    f"{self._indent}{index}. [{attack.outcome.value.upper()}] "
+                    f"turns={attack.executed_turns}  score={attack_score_display(attack, none_value='—')}",
+                    Style.BRIGHT,
+                    color,
+                )
+            )
+            lines.append(self._format_colored(f"{self._indent * 2}id:        {attack.attack_result_id}", Fore.CYAN))
+            lines.append(self._format_colored(f"{self._indent * 2}technique: {name}", Fore.CYAN))
+            lines.append(self._format_colored(f"{self._indent * 2}objective: {attack.objective}", Fore.CYAN))
+
+        shown = len(selected)
+        footer = f"Showing {shown} of {total} attacks." if shown < total else f"Total attacks: {total}"
+        lines.append("\n")
+        lines.append(self._format_colored(f"{self._indent}{footer}", Fore.GREEN))
+        return "".join(lines)
 
 
 class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
@@ -296,14 +345,27 @@ class PrettyScenarioResultMemoryPrinter(PrettyScenarioResultPrinter):
         )
         self._scorer_printer = scorer_printer
 
-    async def render_async(self, result: ScenarioResult) -> str:
+    async def render_async(
+        self,
+        result: ScenarioResult,
+        *,
+        view: ScenarioView = "overview",
+        attack_result_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
         """
-        Render the scenario result summary and return it as a string.
+        Render the scenario result and return it as a string.
 
         Args:
-            result (ScenarioResult): The scenario result to summarize.
+            result (ScenarioResult): The scenario result to render.
+            view (ScenarioView): Which projection to render — the aggregate ``"overview"``
+                or the per-attack ``"attacks"`` table. Defaults to ``"overview"``.
+            attack_result_ids (list[str] | None): For the ``"attacks"`` view, restrict to
+                these attack ids. Ignored by the overview. Defaults to None.
+            limit (int | None): For the ``"attacks"`` view, the maximum number of attacks
+                to show. Ignored by the overview. Defaults to None.
 
         Returns:
             str: The rendered scenario result text.
         """
-        return await super().render_async(result)
+        return await super().render_async(result, view=view, attack_result_ids=attack_result_ids, limit=limit)

@@ -6,7 +6,7 @@ PyRIT (Python Risk Identification Tool for generative AI) is an open-source fram
 
 A PyRIT scan has three key ingredients:
 
-1. **A Scenario** — defines *what* to test (e.g., content harms, jailbreaks, encoding probes). Scenarios bundle attack strategies, datasets, and scoring into a reusable package.
+1. **A Scenario** — defines *what* to test (e.g., content harms, jailbreaks, encoding probes). Scenarios bundle attack techniques, datasets, and scoring into a reusable package.
 2. **A Target** — the AI system you're testing (e.g., an OpenAI endpoint, an Azure OpenAI deployment, a custom HTTP endpoint).
 3. **Configuration** — connects the scanner to your target and registers the components it needs (targets, scorers, datasets). See [Configuration](../getting_started/configuration.md).
 
@@ -23,8 +23,33 @@ PyRIT provides two command-line interfaces:
 
 ```bash
 # Run the Foundry RedTeamAgent scenario against your configured target
-pyrit_scan foundry.red_team_agent --target openai_chat --initializers target load_default_datasets --strategies base64
+pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 ```
+
+### Connecting to CoPyRIT
+
+Point a local configuration file at the remote backend:
+
+```yaml
+server:
+  url: https://copyrit.example.com/
+  auth_mode: auto
+```
+
+Then use the file without changing the default configuration in `~/.pyrit`:
+
+```bash
+pyrit_scan --config-file ./.pyrit_conf list-scenarios
+```
+
+The CLI reads the server's public authentication configuration. Automatic mode uses an
+interactive Entra device code with the exact Microsoft Graph `User.Read` scope and an encrypted
+persistent token cache. Use `--auth-mode device_code` to require this flow or `--auth-mode none`
+to disable authentication discovery.
+
+`--auth-mode azure_cli` is an explicit compatibility mode. The Azure CLI application can issue
+a Graph token with permissions beyond `User.Read`, and the CLI sends that token to the backend.
+Prefer automatic device-code authentication.
 
 ## Built-in Scenarios
 
@@ -32,13 +57,14 @@ PyRIT ships with scenarios organized into the following families:
 
 | Family | Scenarios | Documentation |
 |--------|-----------|---------------|
-| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
+| **Adaptive** | TextAdaptive | [Adaptive Scenarios](adaptive.ipynb) |
+| **AIRT** | RapidResponse, Psychosocial, Cyber, Jailbreak, Multilingual, Leakage, Scam | [AIRT Scenarios](airt.ipynb) |
 | **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
-| **Garak** | Encoding | [Garak Scenarios](garak.ipynb) |
+| **Garak** | Encoding, FigStep, WebInjection, Doctor, SystemPromptExtraction, PackageHallucination, AudioAchillesHeel | [Garak Scenarios](garak.ipynb) |
 
 Each scenario page shows how to run it with minimal configuration.
 
 ## For Developers
 
-If you want to **build custom scenarios** or understand the programming model behind scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb). For details on attack strategies, dataset configuration, and advanced programmatic usage, see [Common Scenario Parameters](../code/scenarios/1_common_scenario_parameters.ipynb).
+If you want to **build custom scenarios** or understand the programming model behind scenarios, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb). For details on attack techniques, dataset configuration, and advanced programmatic usage, see [Common Scenario Parameters](../code/scenarios/1_common_scenario_parameters.ipynb).

@@ -4,7 +4,7 @@
 from unittest.mock import MagicMock
 
 from pyrit.executor.core.config import StrategyConverterConfig
-from pyrit.prompt_normalizer import PromptConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 
 
 def test_default_empty_lists():
@@ -15,7 +15,7 @@ def test_default_empty_lists():
 
 def test_with_request_converters():
     mock_converter = MagicMock()
-    pcc = PromptConverterConfiguration(converters=[mock_converter])
+    pcc = ConverterConfiguration(converters=[mock_converter])
     config = StrategyConverterConfig(request_converters=[pcc])
     assert len(config.request_converters) == 1
     assert config.request_converters[0] is pcc
@@ -24,7 +24,7 @@ def test_with_request_converters():
 
 def test_with_response_converters():
     mock_converter = MagicMock()
-    pcc = PromptConverterConfiguration(converters=[mock_converter])
+    pcc = ConverterConfiguration(converters=[mock_converter])
     config = StrategyConverterConfig(response_converters=[pcc])
     assert len(config.response_converters) == 1
     assert config.response_converters[0] is pcc
@@ -34,8 +34,8 @@ def test_with_response_converters():
 def test_with_both_converters():
     mock_req = MagicMock()
     mock_resp = MagicMock()
-    req_pcc = PromptConverterConfiguration(converters=[mock_req])
-    resp_pcc = PromptConverterConfiguration(converters=[mock_resp])
+    req_pcc = ConverterConfiguration(converters=[mock_req])
+    resp_pcc = ConverterConfiguration(converters=[mock_resp])
     config = StrategyConverterConfig(request_converters=[req_pcc], response_converters=[resp_pcc])
     assert len(config.request_converters) == 1
     assert len(config.response_converters) == 1
@@ -43,8 +43,8 @@ def test_with_both_converters():
 
 def test_multiple_converter_configs():
     mock1, mock2 = MagicMock(), MagicMock()
-    pcc1 = PromptConverterConfiguration(converters=[mock1])
-    pcc2 = PromptConverterConfiguration(converters=[mock2])
+    pcc1 = ConverterConfiguration(converters=[mock1])
+    pcc2 = ConverterConfiguration(converters=[mock2])
     config = StrategyConverterConfig(request_converters=[pcc1, pcc2])
     assert len(config.request_converters) == 2
 
@@ -52,6 +52,6 @@ def test_multiple_converter_configs():
 def test_is_dataclass_mutable():
     config = StrategyConverterConfig()
     mock_converter = MagicMock()
-    pcc = PromptConverterConfiguration(converters=[mock_converter])
+    pcc = ConverterConfiguration(converters=[mock_converter])
     config.request_converters.append(pcc)
     assert len(config.request_converters) == 1

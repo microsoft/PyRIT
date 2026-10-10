@@ -3,20 +3,24 @@
 
 import textwrap
 
-from colorama import Fore, Style
+from colorama import Fore
 
+from pyrit.common.text_helper import escape_control_characters
 from pyrit.models import Score
+from pyrit.output._derivation import resolve_scorer_name
+from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.base import PrinterBase
 from pyrit.output.sink import Sink
 
 
-class PrettyScorePrinter(PrinterBase):
+class PrettyScorePrinter(_PrettyPrinterMixin, PrinterBase):
     """
     Pretty printer for individual Score objects with ANSI-colored formatting.
 
     Provides ``_render_score`` for inline use by other printers (e.g.,
     conversation and attack-result printers) and ``render_async`` /
     ``write_async`` for standalone rendering of a list of scores.
+    Categories are comma-separated, with embedded newlines shown as escaped text.
     """
 
     def __init__(
@@ -36,22 +40,6 @@ class PrettyScorePrinter(PrinterBase):
         self._indent = " " * indent_size
         self._enable_colors = enable_colors
 
-    def _format_colored(self, text: str, *colors: str) -> str:
-        """
-        Format text with color codes if colors are enabled.
-
-        Args:
-            text (str): The text to format.
-            *colors: Variable number of colorama color constants to apply.
-
-        Returns:
-            str: The formatted line with trailing newline.
-        """
-        if self._enable_colors and colors:
-            color_prefix = "".join(colors)
-            return f"{color_prefix}{text}{Style.RESET_ALL}\n"
-        return f"{text}\n"
-
     def _render_score(self, score: Score, indent_level: int = 3) -> str:
         """
         Render a single score with proper formatting.
@@ -65,20 +53,24 @@ class PrettyScorePrinter(PrinterBase):
         """
         lines: list[str] = []
         indent = self._indent * indent_level
-        scorer_name = (score.scorer_class_identifier.class_name if score.scorer_class_identifier else None) or "Unknown"
-        lines.append(f"{indent}Scorer: {scorer_name}\n")
-        lines.append(self._format_colored(f"{indent}• Category: {score.score_category or 'N/A'}", Fore.LIGHTMAGENTA_EX))
+        scorer_name = resolve_scorer_name(score, none_value="Unknown")
+        lines.append(self._format_colored(f"{indent}Scorer: {scorer_name}"))
+        category_str = ", ".join(score.score_category).replace("\n", r"\n") if score.score_category else "N/A"
+        lines.append(self._format_colored(f"{indent}• Category: {category_str}", Fore.LIGHTMAGENTA_EX))
         lines.append(self._format_colored(f"{indent}• Type: {score.score_type}", Fore.CYAN))
 
-        if score.score_type == "true_false":
+        if score.is_undetermined:
+            score_color = Fore.LIGHTBLACK_EX
+        elif score.score_type == "true_false":
             score_color = Fore.GREEN if score.get_value() else Fore.RED
         else:
             score_color = Fore.YELLOW
 
-        lines.append(self._format_colored(f"{indent}• Value: {score.score_value}", score_color))
+        value_str = score.score_value if score.score_value is not None else "undetermined"
+        lines.append(self._format_colored(f"{indent}• Value: {value_str}", score_color))
 
         if score.score_rationale:
-            lines.append(f"{indent}• Rationale:\n")
+            lines.append(self._format_colored(f"{indent}• Rationale:"))
             rationale_wrapper = textwrap.TextWrapper(
                 width=self._width - len(indent) - 2,
                 initial_indent=indent + "  ",
@@ -86,7 +78,8 @@ class PrettyScorePrinter(PrinterBase):
                 break_long_words=False,
                 break_on_hyphens=False,
             )
-            rationale_lines = score.score_rationale.split("\n")
+            # Escape before wrapping so escaped sequences count toward the width and none are dropped.
+            rationale_lines = escape_control_characters(score.score_rationale.replace("\r\n", "\n")).split("\n")
             for line in rationale_lines:
                 if line.strip():
                     wrapped_lines = rationale_wrapper.wrap(line)

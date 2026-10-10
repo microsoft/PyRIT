@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -359,23 +358,6 @@ class _ODINDataset(_RemoteDatasetLoader):
 
         return True
 
-    def _parse_datetime(self, date_str: str | None) -> datetime | None:
-        """
-        Parse an ISO 8601 datetime string from the API.
-
-        Args:
-            date_str: ISO format datetime string, or None.
-
-        Returns:
-            datetime or None if parsing fails.
-        """
-        if not date_str:
-            return None
-        try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
-            return None
-
     def _build_metadata(
         self, report: dict[str, Any], *, extra: dict[str, str | int] | None = None
     ) -> dict[str, str | int]:
@@ -499,7 +481,7 @@ class _ODINDataset(_RemoteDatasetLoader):
         return seeds
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch reports from the 0DIN API and return them as a SeedDataset.
 

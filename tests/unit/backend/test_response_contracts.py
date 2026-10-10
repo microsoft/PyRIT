@@ -8,18 +8,20 @@ These guard the serialized wire shape of the canonical-model-backed response
 DTOs (``ScoreView``/``MessagePieceView``/``MessageView``/``AttackSummary``):
 canonical fields plus presentation computed fields must appear in
 ``model_dump(mode="json")``, ``related_conversations`` must serialize in a
-stable (sorted) order, and the deprecated wire aliases (``score_id``,
-``scored_at``, ``piece_id``, ``pieces``) must stay populated for back-compat.
+stable (sorted) order, and the removed wire aliases (``score_id``,
+``scored_at``, ``piece_id``, ``pieces``) must no longer appear.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pyrit.backend.models.attacks import (
     AttackSummary,
+    ConversationMessagesResponse,
     MessagePieceView,
     MessageView,
     ScoreView,
+    TargetResponseStatus,
 )
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -76,17 +78,20 @@ class TestScoreViewContract:
 
     def test_dump_has_canonical_and_computed_fields(self) -> None:
         """Test that the serialized score exposes canonical fields plus scorer_type."""
-        view = ScoreView.from_domain(_make_score())
+        view = ScoreView.from_domain(_make_score(), is_objective_score=True)
         dumped = view.model_dump(mode="json")
 
         assert dumped["score_value"] == "0.5"
         assert dumped["score_type"] == "float_scale"
         assert dumped["scorer_type"] == "FloatScaleScorer"
+        assert dumped["is_objective_score"] is True
         assert "scorer_class_identifier" in dumped
 
     def test_schema_builds(self) -> None:
         """Test that ScoreView's serialization schema includes the computed field."""
-        assert "scorer_type" in ScoreView.model_json_schema(mode="serialization")["properties"]
+        properties = ScoreView.model_json_schema(mode="serialization")["properties"]
+        assert "scorer_type" in properties
+        assert "is_objective_score" in properties
 
 
 class TestMessagePieceViewContract:
@@ -112,10 +117,27 @@ class TestMessagePieceViewContract:
     def test_scores_are_score_views(self) -> None:
         """Test that nested scores serialize with the ScoreView computed field."""
         piece = _make_piece()
-        view = MessagePieceView.from_domain(piece, scores=[_make_score()])
+        score = _make_score()
+        view = MessagePieceView.from_domain(piece, scores=[score], objective_score_id=score.id)
         dumped = view.model_dump(mode="json")
 
         assert dumped["scores"][0]["scorer_type"] == "FloatScaleScorer"
+        assert dumped["scores"][0]["is_objective_score"] is True
+
+    def test_string_score_id_matches_uuid_objective_score_id(self) -> None:
+        """Test that equivalent string and UUID score IDs identify the objective score."""
+        piece = _make_piece()
+        score = _make_score()
+        objective_score_id = uuid.UUID(str(score.id))
+        score.id = str(score.id)
+
+        view = MessagePieceView.from_domain(
+            piece,
+            scores=[score],
+            objective_score_id=objective_score_id,
+        )
+
+        assert view.scores[0].is_objective_score is True
 
 
 class TestMessageViewContract:
@@ -134,15 +156,44 @@ class TestMessageViewContract:
         assert dumped["message_pieces"][0]["role"] == "assistant"
 
 
+class TestConversationMessagesResponseContract:
+    """JSON contract for target response status metadata."""
+
+    def test_dump_has_target_response_status(self) -> None:
+        """Test that target response status and turn linkage are serialized for clients."""
+        response = ConversationMessagesResponse(
+            conversation_id="conv-1",
+            target_response_status=TargetResponseStatus(
+                response_error="processing",
+                request_turn_number=2,
+                response_turn_number=3,
+            ),
+        )
+
+        dumped = response.model_dump(mode="json")
+
+        assert dumped["target_response_status"] == {
+            "response_error": "processing",
+            "request_turn_number": 2,
+            "response_turn_number": 3,
+        }
+
+    def test_dump_has_null_status_without_target_response(self) -> None:
+        """Test that conversations without a target response explicitly serialize null."""
+        response = ConversationMessagesResponse(conversation_id="conv-1")
+
+        assert response.model_dump(mode="json")["target_response_status"] is None
+
+
 class TestAttackSummaryContract:
     """JSON contract for AttackSummary, including set-ordering (R1)."""
 
     def _summary(self, ar: AttackResult) -> AttackSummary:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {name: getattr(ar, name) for name in AttackResult.model_fields}
         data.update(
             last_response=None,
-            last_score=None,
+            automated_score=None,
             labels={"env": "prod"},
             message_count=2,
             last_message_preview="hi",
@@ -191,39 +242,39 @@ class TestAttackSummaryContract:
         assert dumped["retry_events"][0]["exception_type"] == "RateLimitError"
 
 
-class TestDeprecatedWireAliases:
-    """Old wire field names stay populated (as deprecated aliases) for backward compat."""
+class TestRemovedWireAliases:
+    """Old wire field names were removed for 1.0.0 and must no longer be emitted."""
 
-    def test_score_view_emits_deprecated_aliases(self) -> None:
-        """Test that ScoreView still emits score_id/scored_at mirroring id/timestamp."""
+    def test_score_view_omits_removed_aliases(self) -> None:
+        """Test that ScoreView no longer emits score_id/scored_at."""
         view = ScoreView.from_domain(_make_score())
         dumped = view.model_dump(mode="json")
 
-        assert dumped["score_id"] == str(view.id)
-        assert dumped["scored_at"] == dumped["timestamp"]
+        assert "score_id" not in dumped
+        assert "scored_at" not in dumped
 
-    def test_message_piece_view_emits_deprecated_alias(self) -> None:
-        """Test that MessagePieceView still emits piece_id mirroring id."""
+    def test_message_piece_view_omits_removed_alias(self) -> None:
+        """Test that MessagePieceView no longer emits piece_id."""
         view = MessagePieceView.from_domain(_make_piece())
         dumped = view.model_dump(mode="json")
 
-        assert dumped["piece_id"] == str(view.id)
+        assert "piece_id" not in dumped
 
     def test_message_view_does_not_emit_pieces_alias(self) -> None:
-        """The deprecated ``pieces`` alias was dropped; only ``message_pieces`` is emitted."""
+        """The ``pieces`` alias was dropped; only ``message_pieces`` is emitted."""
         piece = MessagePieceView.from_domain(_make_piece())
         dumped = MessageView.model_construct(message_pieces=[piece]).model_dump(mode="json")
 
         assert "pieces" not in dumped
         assert "message_pieces" in dumped
 
-    def test_aliases_marked_deprecated_in_schema(self) -> None:
-        """Test that the deprecated aliases are flagged deprecated in the OpenAPI schema."""
+    def test_removed_aliases_absent_from_schema(self) -> None:
+        """Test that the removed aliases no longer appear in the OpenAPI schema."""
         score_props = ScoreView.model_json_schema(mode="serialization")["properties"]
         piece_props = MessagePieceView.model_json_schema(mode="serialization")["properties"]
         message_props = MessageView.model_json_schema(mode="serialization")["properties"]
 
-        assert score_props["score_id"]["deprecated"] is True
-        assert score_props["scored_at"]["deprecated"] is True
-        assert piece_props["piece_id"]["deprecated"] is True
+        assert "score_id" not in score_props
+        assert "scored_at" not in score_props
+        assert "piece_id" not in piece_props
         assert "pieces" not in message_props

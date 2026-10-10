@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from __future__ import annotations
+
 import base64
 import logging
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from azure.ai.contentsafety.aio import ContentSafetyClient
 from azure.ai.contentsafety.models import (
@@ -21,13 +22,17 @@ from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider
 from pyrit.common import default_values
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models.harm_category import HarmCategory
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
 )
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score.text_chunking import iter_chunk_spans
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from pyrit.score.scorer_evaluation.metrics_type import RegistryUpdateBehavior
     from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
     from pyrit.score.scorer_evaluation.scorer_metrics import ScorerMetrics
@@ -35,7 +40,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AzureContentFilterScorer(FloatScaleScorer):
+class AzureContentFilterScorer(MessageFloatScaleScorer):
     """
     A scorer that uses Azure Content Safety API to evaluate text and images for harmful content.
 
@@ -57,12 +62,16 @@ class AzureContentFilterScorer(FloatScaleScorer):
     _CATEGORY_EVAL_FILES: dict[TextCategory, tuple[list[str], str, str]] = {
         TextCategory.HATE: (["harm/hate_speech.csv"], "harm/hate_speech_metrics.jsonl", "hate_speech"),
         TextCategory.SELF_HARM: (["harm/self_harm.csv"], "harm/self_harm_metrics.jsonl", "self_harm"),
-        TextCategory.SEXUAL: (["harm/sexual.csv"], "harm/sexual_metrics.jsonl", "sexual"),
+        TextCategory.SEXUAL: (
+            ["harm/sexual.csv"],
+            "harm/sexual_metrics.jsonl",
+            HarmCategory.SEXUAL_CONTENT.name,
+        ),
         TextCategory.VIOLENCE: (["harm/violence.csv"], "harm/violence_metrics.jsonl", "violence"),
     }
 
     @classmethod
-    def _get_eval_files_for_category(cls, category: TextCategory) -> Optional["ScorerEvalDatasetFiles"]:
+    def _get_eval_files_for_category(cls, category: TextCategory) -> ScorerEvalDatasetFiles | None:
         """
         Get the ScorerEvalDatasetFiles for a given harm category.
 
@@ -175,12 +184,12 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     async def evaluate_async(
         self,
-        file_mapping: Optional["ScorerEvalDatasetFiles"] = None,
+        file_mapping: ScorerEvalDatasetFiles | None = None,
         *,
         num_scorer_trials: int = 3,
-        update_registry_behavior: "RegistryUpdateBehavior | None" = None,
+        update_registry_behavior: RegistryUpdateBehavior | None = None,
         max_concurrency: int = 10,
-    ) -> Optional["ScorerMetrics"]:
+    ) -> ScorerMetrics | None:
         """
         Evaluate this scorer against human-labeled datasets.
 
@@ -226,21 +235,6 @@ class AzureContentFilterScorer(FloatScaleScorer):
             max_concurrency=max_concurrency,
         )
 
-    def _get_chunks(self, text: str) -> list[str]:
-        """
-        Split text into chunks that fit within MAX_TEXT_LENGTH.
-
-        Args:
-            text (str): The text to be chunked.
-
-        Returns:
-            list[str]: A list of text chunks, each with length <= MAX_TEXT_LENGTH.
-        """
-        if len(text) <= self.MAX_TEXT_LENGTH:
-            return [text]
-
-        return [text[i : i + self.MAX_TEXT_LENGTH] for i in range(0, len(text), self.MAX_TEXT_LENGTH)]
-
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """
         Evaluate the input text or image using the Azure Content Filter API.
@@ -265,21 +259,19 @@ class AzureContentFilterScorer(FloatScaleScorer):
         Raises:
             ValueError: If converted_value_data_type is not "text" or "image_path" or image isn't in supported format.
         """
-        filter_results: list[AnalyzeTextResult | AnalyzeImageResult] = []
+        filter_results: list[tuple[AnalyzeTextResult | AnalyzeImageResult, float]] = []
 
         if message_piece.converted_value_data_type == "text":
             text = message_piece.converted_value
-            chunks = self._get_chunks(text)
-
             # Analyze each chunk, because Azure Content Safety has a max text length limit
-            for chunk in chunks:
+            for start, end in iter_chunk_spans(length=len(text), chunk_length=self.MAX_TEXT_LENGTH):
                 text_request_options = AnalyzeTextOptions(
-                    text=chunk,
+                    text=text[start:end],
                     categories=self._category_values,
                     output_type="EightSeverityLevels",
                 )
                 text_result = await self._azure_cf_client.analyze_text(text_request_options)
-                filter_results.append(text_result)
+                filter_results.append((text_result, 7.0))
 
         elif message_piece.converted_value_data_type == "image_path":
             base64_encoded_data = await self._get_base64_image_data_async(message_piece)
@@ -289,15 +281,15 @@ class AzureContentFilterScorer(FloatScaleScorer):
                 image=image_data, categories=self._category_values, output_type="FourSeverityLevels"
             )
             image_result = await self._azure_cf_client.analyze_image(image_request_options)
-            filter_results.append(image_result)
+            filter_results.append((image_result, 6.0))
 
         # Collect all scores from all chunks/images
         all_scores = []
-        for filter_result in filter_results:
+        for filter_result, severity_max in filter_results:
             for score in filter_result["categoriesAnalysis"]:
                 value = score["severity"]
                 category = score["category"]
-                normalized_value = self.scale_value_float(float(value), 0, 7)
+                normalized_value = self.scale_value_float(float(value), 0, severity_max)
 
                 # Severity as defined here
                 # https://learn.microsoft.com/en-us/azure/ai-services/content-safety/concepts/harm-categories?tabs=definitions#severity-levels
@@ -339,59 +331,40 @@ class AzureContentFilterScorer(FloatScaleScorer):
 
     def _build_fallback_score(self, *, message: Message, objective: str | None) -> list[Score]:
         """
-        Build one neutral ``0.0`` fallback score per configured harm category.
+        Build one fallback score per configured harm category.
 
         AzureContentFilterScorer's normal output is one score per category in
-        ``self._harm_categories``. To preserve that shape on blocked / error / filtered
-        input, this override emits one neutral ``0.0`` score per configured category
-        (each tagged with the category name and matching the normal-path metadata),
-        instead of the single category-less score produced by the base
-        ``FloatScaleScorer._build_fallback_score``.
-
-        Inspects the first message piece to tailor the rationale/description for
-        blocked, error, and filtered cases.
+        ``self._harm_categories``. To preserve that shape for blocked and unreadable
+        responses, this override emits one result per configured category. Unsupported
+        evidence returns ``[]``.
 
         Args:
-            message (Message): The message whose first piece is inspected for status.
+            message (Message): The message whose fallback result is expanded.
             objective (str | None): The objective associated with this scoring call.
 
         Returns:
-            list[Score]: One ``0.0`` ``float_scale`` score per configured harm category,
-                each attributed to the first piece.
+            list[Score]: ``[]`` for non-applicable evidence; otherwise, one completed or
+                undetermined result per configured harm category.
 
         Raises:
             ValueError: If the first message piece has no ``id`` or ``original_prompt_id``.
         """
-        first_piece = message.message_pieces[0]
-        piece_id = first_piece.id or first_piece.original_prompt_id
-        if piece_id is None:
-            raise ValueError("Cannot create score: message piece has no id or original_prompt_id")
-
-        if first_piece.is_blocked():
-            status = (
-                "The request was blocked by the target (score_blocked_content is False or no partial content available)"
-            )
-            description = "Blocked response; returning 0.0 per configured category."
-        elif first_piece.has_error():
-            status = f"Response had an error: {first_piece.response_error}"
-            description = "Error response; returning 0.0 per configured category."
-        else:
-            status = "No supported pieces to score after filtering"
-            description = "No pieces to score after filtering; returning 0.0 per configured category."
-
-        rationale = f"{status}; returning 0.0 for each configured harm category."
-        metadata: dict[str, str | int | float] = {"azure_severity": 0}
+        fallback_scores = super()._build_fallback_score(message=message, objective=objective)
+        if not fallback_scores:
+            return []
+        fallback = fallback_scores[0]
 
         return [
             Score(
-                score_value="0.0",
-                score_value_description=description,
+                score_value=fallback.score_value,
+                status=fallback.status,
+                score_value_description=fallback.score_value_description,
                 score_type="float_scale",
                 score_category=[category.value],
-                score_metadata=metadata,
-                score_rationale=rationale,
+                score_metadata={"azure_severity": 0},
+                score_rationale=fallback.score_rationale,
                 scorer_class_identifier=self.get_identifier(),
-                message_piece_id=piece_id,
+                message_piece_id=fallback.message_piece_id,
                 objective=objective,
             )
             for category in self._harm_categories

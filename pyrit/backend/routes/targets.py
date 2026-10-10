@@ -10,13 +10,14 @@ Target types are set at app startup via initializers - you cannot add new types 
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetInstance,
     TargetListResponse,
+    TargetTypeResponse,
 )
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.models.catalog.target import TargetInstance
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -30,7 +31,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
 )
 async def list_targets(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: str | None = Query(None, description="Pagination cursor (target_registry_name)"),
+    cursor: CursorStr | None = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
     """
     List target instances with pagination.
@@ -44,15 +45,38 @@ async def list_targets(  # pyrit-async-suffix-exempt
     return await service.list_targets_async(limit=limit, cursor=cursor)
 
 
+@router.get(
+    "/types",
+    response_model=TargetTypeResponse,
+    responses={
+        500: {"model": ProblemDetail, "description": "Internal server error"},
+    },
+)
+async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exempt
+    """
+    List target types projected from ``TargetRegistry`` metadata.
+
+    Returns:
+        TargetTypeResponse: Available target types and build parameters.
+    """
+    service = get_target_service()
+    return await service.list_target_types_async()
+
+
 @router.post(
     "",
     response_model=TargetInstance,
     status_code=status.HTTP_201_CREATED,
     responses={
-        400: {"model": ProblemDetail, "description": "Invalid target type or parameters"},
+        400: {
+            "model": ProblemDetail,
+            "description": "Invalid target type or parameters",
+        },
     },
 )
-async def create_target(request: CreateTargetRequest) -> TargetInstance:  # pyrit-async-suffix-exempt
+async def create_target(
+    request: CreateTargetRequest,
+) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
 
@@ -87,7 +111,9 @@ async def create_target(request: CreateTargetRequest) -> TargetInstance:  # pyri
         404: {"model": ProblemDetail, "description": "Target not found"},
     },
 )
-async def get_target(target_registry_name: str) -> TargetInstance:  # pyrit-async-suffix-exempt
+async def get_target(
+    target_registry_name: IdentifierStr,
+) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.
 

@@ -34,16 +34,17 @@ export default function TourTooltip({
   return (
     <div {...tooltipProps}>
       <FluentProvider theme={isDarkMode ? webDarkTheme : webLightTheme}>
-        <div className={styles.wrapper}>
+        <div className={styles.wrapper} data-testid="tour-tooltip-card">
           <div className={styles.container}>
             {/* Close (X) button — top-right, hidden on last step */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-8px', marginTop: '-4px' }}>
+            <div className={styles.closeRow}>
               {!isLastStep && (
                 <Button
                   {...closeProps}
                   appearance="subtle"
                   icon={<DismissRegular />}
                   size="small"
+                  className={styles.closeButton}
                 />
               )}
             </div>
@@ -54,26 +55,26 @@ export default function TourTooltip({
             </Text>
 
             {/* Footer: step counter + buttons, offset right to leave room for mascot */}
-            <div className={styles.footer} style={{ paddingLeft: '72px' }}>
+            <div className={styles.footer}>
               <Text className={styles.stepCounter} size={200}>
                 {index + 1} of {size}
               </Text>
 
               <div className={styles.actions}>
                 {!isLastStep && (
-                  <Button {...skipProps} appearance="subtle" size="small">
+                  <Button {...skipProps} appearance="subtle" size="small" className={styles.actionButton}>
                     Skip tour
                   </Button>
                 )}
 
                 {index > 0 && (
-                  <Button {...backProps} appearance="outline" size="small">
+                  <Button {...backProps} appearance="outline" size="small" className={styles.actionButton}>
                     Back
                   </Button>
                 )}
 
                 {continuous && (
-                  <Button {...primaryProps} appearance="primary" size="small">
+                  <Button {...primaryProps} appearance="primary" size="small" className={styles.actionButton}>
                     {isLastStep ? "Anchors Away!" : 'Next'}
                   </Button>
                 )}
