@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { configurationApi } from '@/services/api'
@@ -120,5 +120,92 @@ describe('Reinitialize', () => {
     )
     expect(await screen.findByText(/Restart the backend/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeDisabled()
+  })
+
+  describe('status polling errors', () => {
+    const statusDetail = 'Runtime status temporarily unavailable.'
+    const applyDetail = 'Reinitialization request was rejected.'
+
+    beforeEach(() => { jest.useFakeTimers() })
+    afterEach(() => { jest.useRealTimers() })
+
+    async function advancePolls(count: number): Promise<void> {
+      for (let poll = 0; poll < count; poll += 1) {
+        await act(async () => { jest.advanceTimersByTime(1_000) })
+      }
+    }
+
+    it('clears a status polling error once polling recovers', async () => {
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+      api.getRuntimeStatus.mockRejectedValueOnce(new Error(statusDetail))
+      await advancePolls(1)
+      expect(screen.getByText(statusDetail)).toBeInTheDocument()
+      await advancePolls(1)
+      expect(screen.queryByText(statusDetail)).not.toBeInTheDocument()
+    })
+
+    it('keeps an apply failure visible while status polling succeeds', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      api.reinitialize.mockRejectedValue(new Error(applyDetail))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+      expect(await screen.findByText(applyDetail)).toBeInTheDocument()
+      await advancePolls(3)
+      expect(screen.getByText(applyDetail)).toBeInTheDocument()
+    })
+
+    it('clears only the status polling error when both error sources are present', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      api.reinitialize.mockRejectedValue(new Error(applyDetail))
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+      expect(await screen.findByText(applyDetail)).toBeInTheDocument()
+      api.getRuntimeStatus.mockRejectedValueOnce(new Error(statusDetail))
+      await advancePolls(1)
+      expect(screen.getByText(statusDetail)).toBeInTheDocument()
+      expect(screen.getByText(applyDetail)).toBeInTheDocument()
+      await advancePolls(1)
+      expect(screen.queryByText(statusDetail)).not.toBeInTheDocument()
+      expect(screen.getByText(applyDetail)).toBeInTheDocument()
+    })
+
+    it('shows a restart-required state reported by the poll that recovers', async () => {
+      render(
+        <TestWrapper>
+          <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+        </TestWrapper>,
+      )
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+      api.getRuntimeStatus.mockRejectedValueOnce(new Error(statusDetail))
+      await advancePolls(1)
+      expect(screen.getByText(statusDetail)).toBeInTheDocument()
+      api.getRuntimeStatus.mockResolvedValue({
+        ...ready,
+        state: 'restart-required',
+        outcome: 'restart-required',
+        message: 'Restart the backend.',
+      })
+      await advancePolls(1)
+      expect(screen.queryByText(statusDetail)).not.toBeInTheDocument()
+      expect(screen.getByText(/Restart the backend/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeDisabled()
+    })
   })
 })
