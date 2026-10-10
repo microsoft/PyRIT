@@ -9,6 +9,7 @@ This module is the foundation for all seed types in PyRIT.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import uuid
@@ -23,7 +24,7 @@ from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-requir
 from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -81,25 +82,66 @@ class PartialUndefined(Undefined):
         """
         return f"{{{{ {self._undefined_name} }}}}" if self._undefined_name else ""
 
+    # A placeholder cannot decide a branch or a loop: answering now would drop the
+    # {% if %} or {% for %} tags, and the later render could not decide again.
     def __iter__(self) -> Iterator[object]:
         """
-        Return an empty iterator to prevent iteration over undefined variables.
+        Defer rendering instead of iterating over an unresolved variable.
 
-        Returns:
-            Iterator[object]: Empty iterator.
+        Raises:
+            _DeferRenderError: Always.
 
         """
-        return iter([])
+        raise _DeferRenderError(self._undefined_name)
 
     def __bool__(self) -> bool:
         """
-        Evaluate as truthy to avoid falsey-branch side effects.
+        Defer rendering instead of testing an unresolved variable.
 
-        Returns:
-            bool: Always True.
+        Raises:
+            _DeferRenderError: Always.
 
         """
-        return True  # Ensures it doesn't evaluate to False
+        raise _DeferRenderError(self._undefined_name)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Defer rendering instead of comparing an unresolved variable.
+
+        Raises:
+            _DeferRenderError: Always.
+
+        """
+        raise _DeferRenderError(self._undefined_name)
+
+    def __ne__(self, other: object) -> bool:
+        """
+        Defer rendering instead of comparing an unresolved variable.
+
+        Raises:
+            _DeferRenderError: Always.
+
+        """
+        raise _DeferRenderError(self._undefined_name)
+
+    __hash__ = Undefined.__hash__
+
+
+class _DeferRenderError(Exception):
+    """Raised when an unresolved variable would decide a branch or a loop."""
+
+
+def _deferring(function: Callable[..., Any]) -> Callable[..., Any]:
+    # Jinja tests such as `is defined` and the `default` filter check the value's type, not its truth.
+    # functools.wraps keeps Jinja's pass_environment marker, so the value may not be the first argument.
+    @functools.wraps(function)
+    def deferring(*args: Any, **kwargs: Any) -> Any:
+        for arg in args:
+            if isinstance(arg, PartialUndefined):
+                raise _DeferRenderError(arg._undefined_name)
+        return function(*args, **kwargs)
+
+    return deferring
 
 
 class Seed(BaseModel):
@@ -223,11 +265,16 @@ class Seed(BaseModel):
 
         # Create a Jinja template with PartialUndefined placeholders
         env = SandboxedEnvironment(undefined=PartialUndefined)
+        env.tests = {name: _deferring(test) for name, test in env.tests.items()}
+        env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
         is_jinja_template = env.from_string(self.value)
 
         try:
             # Render the template with the provided kwargs
             return is_jinja_template.render(**kwargs)
+        except _DeferRenderError:
+            # A missing parameter decides a branch or a loop - preserve the template as-is
+            return self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
