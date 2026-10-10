@@ -20,7 +20,9 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.converter import AddImageTextConverter, FirstLetterConverter
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_target import TargetRequirements
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:
@@ -52,6 +54,9 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=PromptSendingAttack,
             description="Carries the objective text inside a blank image so it bypasses text-only input handling.",
             technique_tags=["single_turn", "airt", "leakage"],
+            requirements=TechniqueRequirements(
+                objective_target=TargetRequirements(required_input_modalities=frozenset({frozenset({"image_path"})})),
+            ),
             attack_kwargs={
                 "attack_converter_config": AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(

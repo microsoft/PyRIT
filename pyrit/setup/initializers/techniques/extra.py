@@ -25,9 +25,10 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
     SkeletonKeyAttack,
 )
-from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt
+from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:
@@ -49,6 +50,7 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
             attack_class=SkeletonKeyAttack,
             description="Builds a multi-step context that asks the target to operate without its usual safety rules.",
             technique_tags=["single_turn"],
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
         ),
         AttackTechniqueFactory(
             name="best_of_n",

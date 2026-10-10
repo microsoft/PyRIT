@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
+    from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -102,6 +103,9 @@ class SequentialChildAttack:
             executor for inner attacks that need an objective scorer.
         memory_labels (Mapping[str, str]): Per-entry labels merged on top
             of the compound's ``context.memory_labels`` for this call.
+        atomic_attack_identifier (AtomicAttackIdentifier | None): Caller-prepared source
+            identity, passed unchanged to the existing result-recording path.
+        result_metadata (Mapping[str, Any]): Caller-prepared result metadata.
     """
 
     strategy: AttackStrategy[Any, AttackResult]
@@ -109,6 +113,8 @@ class SequentialChildAttack:
     adversarial_chat: PromptTarget | None = None
     objective_scorer: TrueFalseScorer | None = None
     memory_labels: Mapping[str, str] = field(default_factory=dict)
+    atomic_attack_identifier: AtomicAttackIdentifier | None = None
+    result_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 class SequentialAttackResult(AttackResult):
@@ -238,6 +244,21 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         self._completion_policy = completion_policy
         self._executor = AttackExecutor(max_concurrency=1)
 
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Include caller-supplied child behavior only when a child has a prepared identity.
+
+        Returns:
+            ComponentIdentifier: The compound's behavioral identifier.
+        """
+        child_hashes = [
+            child.atomic_attack_identifier.eval_hash if child.atomic_attack_identifier is not None else None
+            for child in self._child_attacks
+        ]
+        return self._create_identifier(
+            params={"child_technique_eval_hashes": child_hashes} if any(child_hashes) else None
+        )
+
     def _validate_context(self, *, context: AttackContext[AttackParameters]) -> None:
         if not context.objective or context.objective.isspace():
             raise ValueError("Attack objective must be provided and non-empty")
@@ -341,6 +362,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 result nor an incomplete objective (defensive guard).
         """
         expectation_override = {"expectation": expectation} if expectation is not None else {}
+        result_fields: dict[str, Any] = {}
+        if child_attack.atomic_attack_identifier is not None:
+            result_fields["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
+        if child_attack.result_metadata:
+            result_fields["result_metadata"] = [child_attack.result_metadata]
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
             attack=child_attack.strategy,
             seed_groups=[child_attack.seed_group],
@@ -350,6 +376,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             return_partial_on_failure=True,
             attribution=attribution,
             **expectation_override,
+            **result_fields,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]

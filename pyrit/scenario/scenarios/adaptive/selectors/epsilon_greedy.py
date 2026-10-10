@@ -47,17 +47,13 @@ class EpsilonGreedyTechniqueSelector:
     ``(s + 1) / (n + 1)`` (unseen techniques start at 1.0).
 
     The selector is **stateless** — it does not maintain internal counts.
-    All outcome data comes from the memory database via
-    ``_compute_success_rates``. Calling ``select_async`` with the same
-    arguments produces the same result (deterministic given memory
-    contents, ``random_seed``, and ``scenario_result_id``).
+    All outcome data comes from the memory database. When ``random_seed`` is set,
+    the same arguments and memory contents produce the same choice. The per-decision
+    RNG includes ``scenario_result_id`` so distinct runs can explore differently.
+    Without a seed, choices can differ across calls.
 
-    When ``random_seed`` is set, the per-decision RNG is also keyed on the
-    ``scenario_result_id`` argument so that two distinct scenario runs over
-    the same objective explore differently while a resume (which reuses the
-    same ``scenario_result_id``) reproduces the original picks. When
-    ``random_seed`` is ``None``, the RNG is unseeded and naturally diverges
-    across calls regardless of arguments.
+    Adaptive scenarios save their choices in the run plan. Resume restores those
+    choices without calling the selector, even when historical results change.
     """
 
     _TIE_TOL: float = 1e-12
@@ -104,9 +100,8 @@ class EpsilonGreedyTechniqueSelector:
             objective (str): The objective text for scoping the per-decision RNG.
             num_top_techniques (int): Max techniques to return. Defaults to 1.
             scenario_result_id (str | None): The current scenario run ID, supplied
-                by the dispatcher. Folded into the per-decision RNG key so distinct
-                runs diverge while resumes (same ``scenario_result_id``) reproduce
-                the original picks; also forwarded to memory only when the
+                by the dispatcher. Included in the per-decision RNG key so distinct
+                runs can explore differently; also forwarded to memory only when the
                 configured ``scope.current_run_only`` is ``True``. Defaults to
                 ``None``.
 

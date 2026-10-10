@@ -11,11 +11,19 @@ import pytest
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.prompt_target import (
+    CapabilityName,
+    OpenAIChatTarget,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    TargetRequirements,
+)
+from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
 from pyrit.score import TrueFalseCompositeScorer
+from tests.unit.mocks import MockPromptTarget
 
 SEED_DATASETS_PATH = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt"
 SEED_PROMPT_LIST = list(SeedDataset.from_yaml_file(SEED_DATASETS_PATH / "scams.prompt").get_values())
@@ -133,6 +141,89 @@ class TestScamTechniqueEnum:
     def test_default_is_aggregate(self):
         assert "default" in ScamTechnique.get_aggregate_tags()
         assert ScamTechnique.DEFAULT in ScamTechnique.get_aggregate_techniques()
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestScamCompatibilityPolicy:
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    @pytest.mark.parametrize("incompatible", ["persuasive_rta", "context_compliance"])
+    async def test_direct_and_factory_target_contracts_follow_policy_async(
+        self,
+        *,
+        policy: str,
+        incompatible: str,
+        mock_objective_scorer: TrueFalseCompositeScorer,
+        mock_adversarial_target: PromptTarget,
+    ) -> None:
+        attack_class = RedTeamingAttack if incompatible == "persuasive_rta" else PromptSendingAttack
+        compatible = "context_compliance" if incompatible == "persuasive_rta" else "persuasive_rta"
+        requirements = TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN}))
+        scenario = Scam(objective_scorer=mock_objective_scorer, adversarial_chat=mock_adversarial_target)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(
+                    custom_configuration=TargetConfiguration(
+                        capabilities=TargetCapabilities(supports_multi_turn=False, supports_editable_history=True)
+                    )
+                ),
+                "scenario_techniques": [ScamTechnique(incompatible), ScamTechnique(compatible)],
+                "dataset_config": DatasetAttackConfiguration(
+                    seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+                ),
+                "include_baseline": False,
+                "incompatible_technique_policy": policy,
+            }
+        )
+        with (
+            patch.object(attack_class, "TARGET_REQUIREMENTS", requirements),
+            patch.object(
+                attack_class,
+                "__init__",
+                autospec=True,
+                side_effect=AssertionError("An incompatible attack must not be constructed"),
+            ) as construct,
+        ):
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="supports_multi_turn"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert [atomic.atomic_attack_name for atomic in scenario._atomic_attacks] == [f"scam_{compatible}"]
+            construct.assert_not_called()
+
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    @pytest.mark.parametrize("simulated", ["context_compliance", "role_play_persuasion_written"])
+    async def test_simulated_dataset_mismatch_preserves_other_populations_async(
+        self,
+        *,
+        policy: str,
+        simulated: str,
+        mock_objective_scorer: TrueFalseCompositeScorer,
+        mock_adversarial_target: PromptTarget,
+    ) -> None:
+        source = AttackSeedGroup(seeds=[SeedObjective(value="objective"), SeedPrompt(value="context", sequence=99)])
+        original = source.model_dump()
+        scenario = Scam(objective_scorer=mock_objective_scorer, adversarial_chat=mock_adversarial_target)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [ScamTechnique(simulated), ScamTechnique("persuasive_rta")],
+                "dataset_config": DatasetAttackConfiguration(seed_groups=[source]),
+                "incompatible_technique_policy": policy,
+            }
+        )
+        if policy == "raise":
+            with pytest.raises(IncompatibleTechniqueError, match="only an objective"):
+                await scenario.initialize_async()
+        else:
+            await scenario.initialize_async()
+            assert len(scenario._atomic_attacks) == 2
+            assert all(len(atomic.seed_groups[0].seeds) == 2 for atomic in scenario._atomic_attacks)
+            assert {atomic.atomic_attack_name for atomic in scenario._atomic_attacks} == {
+                "baseline",
+                "scam_persuasive_rta",
+            }
+        assert source.model_dump() == original
 
 
 @pytest.mark.usefixtures(*FIXTURES)

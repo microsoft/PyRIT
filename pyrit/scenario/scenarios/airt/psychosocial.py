@@ -54,6 +54,11 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atom
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import (
+    TechniqueRequirements,
+    check_target_compatibility,
+    filter_seed_groups,
+)
 from pyrit.score import (
     FloatScaleThresholdScorer,
     NumericRange,
@@ -640,6 +645,26 @@ class Psychosocial(Scenario):
             base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
             for technique in techniques:
+                live = technique is PsychosocialTechnique.Crescendo
+                requirements = TechniqueRequirements() if live else base_factory.requirements
+                if not check_target_compatibility(
+                    target=context.objective_target,
+                    attack_class=CrescendoAttack if live else base_factory.attack_class,
+                    requirements=requirements,
+                    technique_name=technique.value,
+                    policy=context.incompatible_technique_policy,
+                ):
+                    continue
+                compatible_groups = filter_seed_groups(
+                    seed_groups=seed_groups,
+                    requirements=requirements.seed_group,
+                    seed_technique=None if live else base_factory.seed_technique,
+                    technique_name=technique.value,
+                    dataset_name=harm.dataset_name,
+                    policy=context.incompatible_technique_policy,
+                )
+                if not compatible_groups:
+                    continue
                 if technique is PsychosocialTechnique.Crescendo:
                     attack_technique = self._build_crescendo_technique(
                         harm=harm,
@@ -664,7 +689,7 @@ class Psychosocial(Scenario):
                     AtomicAttack(
                         atomic_attack_name=f"{harm.name}_{technique.value}",
                         attack_technique=attack_technique,
-                        seed_groups=list(seed_groups),
+                        seed_groups=compatible_groups,
                         adversarial_chat=adversarial_chat,
                         objective_scorer=scorer,
                         memory_labels=context.memory_labels,

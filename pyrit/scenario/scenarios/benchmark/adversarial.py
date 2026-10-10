@@ -517,6 +517,7 @@ class AdversarialBenchmark(Scenario):
             objective_target=context.objective_target,
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
+            incompatible_technique_policy=context.incompatible_technique_policy,
         )
         # ``display_group`` is the TargetRegistry name the caller passed via
         # ``--adversarial-targets`` so per-model ASR rolls up naturally — not any internal

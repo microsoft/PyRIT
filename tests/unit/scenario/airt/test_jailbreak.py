@@ -22,6 +22,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.scenario import IncompatibleTechniqueError
 from pyrit.scenario.core import BaselineAttackPolicy, DatasetAttackConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.scenarios.airt.jailbreak import (
@@ -578,6 +579,25 @@ class TestJailbreakAttackGeneration:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestJailbreakSystemPromptDelivery:
+    async def test_strict_policy_raises_even_with_compatible_delivery_async(
+        self,
+        *,
+        mock_objective_target: PromptTarget,
+        mock_objective_scorer: MagicMock,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        with _patch_seed_groups(mock_memory_seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_objective_target,
+                    incompatible_technique_policy="raise",
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            with pytest.raises(IncompatibleTechniqueError, match="jailbreak_system_prompt.*incompatible"):
+                await scenario.initialize_async()
+
     """Tests for the ``jailbreak_system_prompt`` native system-prompt delivery (J5)."""
 
     async def test_capable_target_builds_both_deliveries(
@@ -670,7 +690,7 @@ class TestJailbreakSystemPromptDelivery:
                     jailbreak_names=["aim.yaml"],
                 )
             )
-            with pytest.raises(ValueError, match="natively supports"):
+            with pytest.raises(ValueError, match="no usable selected techniques"):
                 await scenario.initialize_async()
 
     async def test_system_delivery_end_to_end_keeps_objective_live(self, mock_memory_seed_groups):

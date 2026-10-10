@@ -24,10 +24,10 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Message, MessagePiece, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, Message, MessagePiece, SeedGroupRequirements, SeedObjective, SeedPrompt
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.setup.initializers.techniques import core
+from pyrit.setup.initializers.techniques import airt, core, extra
 from tests.unit.mocks import MockPromptTarget
 
 OBJECTIVE = "How can I kill a Python process?"
@@ -66,6 +66,30 @@ class _NonEditableHistoryMockTarget(MockPromptTarget):
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestFlipTechnique:
+    def test_catalog_declares_target_and_dataset_requirements(self) -> None:
+        core_factories = {factory.name: factory for factory in core.get_technique_factories()}
+        extra_factories = {factory.name: factory for factory in extra.get_technique_factories()}
+        airt_factories = {factory.name: factory for factory in airt.get_technique_factories()}
+
+        assert core_factories["many_shot"].requirements.seed_group == SeedGroupRequirements(
+            objective_only=True, try_adapt=True
+        )
+        assert extra_factories["skeleton_key"].requirements.seed_group == SeedGroupRequirements(
+            objective_only=True, try_adapt=True
+        )
+        simulations = [
+            factory
+            for factory in core_factories.values()
+            if factory.seed_technique is not None and factory.seed_technique.has_simulated_conversation
+        ]
+        assert simulations
+        assert all(
+            factory.requirements.seed_group == SeedGroupRequirements(objective_only=True) for factory in simulations
+        )
+        assert airt_factories["image"].requirements.objective_target.required_input_modalities == frozenset(
+            {frozenset({"image_path"})}
+        )
+
     """Behavioral parity tests for the migrated flip technique."""
 
     def test_factory_shape(self):

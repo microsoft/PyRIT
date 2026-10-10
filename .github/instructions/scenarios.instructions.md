@@ -92,7 +92,12 @@ scenario.set_params_from_args(args={"objective_target": target, "max_concurrency
 await scenario.initialize_async()
 ```
 
-The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_techniques` / `technique_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline`.
+The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_techniques` / `technique_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline` / `incompatible_technique_policy`.
+
+`incompatible_technique_policy` accepts `skip` (default) or `raise`; `None` uses
+`INCOMPATIBLE_TECHNIQUE_POLICY`. Forward `context.incompatible_technique_policy` to matrix
+builders and apply shared requirement helpers in manual builders. Skip only known incompatibility,
+with one summary per technique/dataset. Raise if no selected technique can run, even with a baseline.
 
 ### Declaring custom parameters — add via `additional_parameters`
 
@@ -217,6 +222,9 @@ config, memory labels, baseline flag, and seed groups), snapshots them into an i
 `_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
 half-initialized `self._*` state to build attacks — read everything from `context`.
 
+On resume, `context.stored_run_plan` carries the original plan. Restore committed
+per-input technique choices from it instead of selecting again.
+
 ### Zero-boilerplate matrix scenarios
 
 Scenarios whose construction is the plain technique × dataset cross-product delegate to the
@@ -283,6 +291,9 @@ Key points:
   `True` to force opt-in.
 - `kwargs` are validated against the attack class constructor signature at
   factory-construction time, so typos fail loudly and early.
+- Check factory and attack-class requirements through `TargetRequirements.check` to retain custom validation.
+- Use shared seed preparation before adding technique seeds. Keep source groups unchanged and record adaptation.
+- Reject saved plans whose technique identity or accepted inputs cannot be restored.
 
 The canonical catalog factories live in `pyrit/setup/initializers/techniques/`; see
 [setup-techniques.instructions.md](setup-techniques.instructions.md) for how to add one

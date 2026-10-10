@@ -70,6 +70,7 @@ class ScenarioRunPlanAtomicGroup(BaseModel):
     tags: list[str] = Field(default_factory=list)
     #: None for plans persisted before kinds were recorded, so those plans round-trip unchanged.
     kind: ScenarioRunPlanGroupKind | None = None
+    selected_technique_eval_hashes: list[str] | None = Field(default=None, min_length=1)
 
 
 class ScenarioRunPlan(BaseModel):

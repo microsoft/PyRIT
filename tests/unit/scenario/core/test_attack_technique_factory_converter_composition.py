@@ -13,13 +13,15 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.score import TrueFalseScorer
 
 
 class _ConverterAttack:
+    TARGET_REQUIREMENTS = TargetRequirements()
+
     def __init__(
         self,
         *,
@@ -186,6 +188,8 @@ def test_create_delegates_converter_composition_to_private_helper(monkeypatch):
 
 
 class _NoConverterAttack:
+    TARGET_REQUIREMENTS = TargetRequirements()
+
     def __init__(self, *, objective_target: PromptTarget, attack_scoring_config: AttackScoringConfig | None = None):
         self.objective_target = objective_target
         self.attack_scoring_config = attack_scoring_config

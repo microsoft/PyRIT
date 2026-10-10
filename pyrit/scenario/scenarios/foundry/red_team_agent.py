@@ -66,6 +66,7 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements, check_target_compatibility
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -490,10 +491,19 @@ class RedTeamAgent(Scenario):
                     memory_labels=context.memory_labels,
                 )
             )
-        atomic_attacks.extend(
-            self._get_attack_from_technique(composite=composition, seed_groups=seed_groups)
-            for composition in self._scenario_composites
-        )
+        for composition in self._scenario_composites:
+            attack_specification = self._ATTACK_SPECIFICATIONS.get(
+                composition.attack, self._DEFAULT_ATTACK_SPECIFICATION
+            )
+            if not check_target_compatibility(
+                target=context.objective_target,
+                attack_class=attack_specification.attack_type,
+                requirements=TechniqueRequirements(),
+                technique_name=composition.name,
+                policy=context.incompatible_technique_policy,
+            ):
+                continue
+            atomic_attacks.append(self._get_attack_from_technique(composite=composition, seed_groups=seed_groups))
         return atomic_attacks
 
     def _get_attack_from_technique(

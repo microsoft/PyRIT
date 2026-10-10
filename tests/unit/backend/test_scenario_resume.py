@@ -32,7 +32,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniquePolicy
 from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import SubStringScorer
@@ -191,6 +191,7 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     )
     with (
         patch.object(_OfflineResumeScenario, "DEFAULT_MARKER", "changed-default"),
+        patch.object(_OfflineResumeScenario, "INCOMPATIBLE_TECHNIQUE_POLICY", IncompatibleTechniquePolicy.RAISE),
         patch.object(service, "_start_run_locked_async", wraps=service._start_run_locked_async) as start,
     ):
         response = await service.resume_run_async(scenario_result_id=run_id)
@@ -199,7 +200,7 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     assert request.max_concurrency == 1
     assert request.max_retries == 0
     assert request.include_baseline is False
-    assert request.scenario_params == {"marker": "original"}
+    assert request.scenario_params == {"marker": "original", "incompatible_technique_policy": "skip"}
     assert request.labels == _LABELS
     assert response.scenario_result_id == run_id
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
@@ -386,7 +387,7 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
                 labels=_LABELS,
                 initializers=["test-initializer"],
                 initializer_args={"test-initializer": {"api_key": "never-persist-this"}},
-                scenario_params={"marker": "saved"},
+                scenario_params={"marker": "saved", "incompatible_technique_policy": "raise"},
                 max_concurrency=1,
             )
         )
@@ -400,8 +401,21 @@ async def test_fresh_launch_saves_only_nonsecret_resume_inputs_async(
     assert saved["adversarial_target_name"] == _TARGET_NAME
     assert saved["max_concurrency"] == 1
     assert saved["include_baseline"] is False
+    assert saved["incompatible_technique_policy"] == "raise"
+    assert stored.metadata["incompatible_technique_policy"] == "raise"
     assert not {"initializer_args", "initializers", "scenario_params", "labels"} & saved.keys()
     assert "never-persist-this" not in str(stored.metadata)
+
+
+async def test_invalid_saved_compatibility_policy_is_rejected_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["incompatible_technique_policy"] = "unknown"
+
+    with pytest.raises(ScenarioRunConflictError, match="saved incompatible-technique policy is invalid"):
+        service._restore_launch_request(stored=stored)
 
 
 async def test_resumed_run_uses_existing_fifo_scheduler_async(
@@ -573,7 +587,7 @@ async def test_restore_launch_request_keeps_saved_settings_and_canonical_params_
         name: saved[name] for name in _LAUNCH_REQUEST_FIELDS
     }
     assert request.scenario_result_id == str(stored.id)
-    assert request.scenario_params == {"marker": "original"}
+    assert request.scenario_params == {"marker": "original", "incompatible_technique_policy": "skip"}
     assert request.labels == _LABELS
     assert request.initializers is None
     assert request.initializer_args is None
