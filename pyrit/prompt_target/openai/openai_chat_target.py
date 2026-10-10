@@ -199,6 +199,7 @@ class OpenAIChatTarget(OpenAITarget):
                 "presence_penalty": self._presence_penalty,
                 "seed": self._seed,
                 "n": self._n,
+                "extra_body_parameters": self._extra_body_parameters,
             },
         )
 

@@ -8,6 +8,7 @@ import os
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -1277,6 +1278,21 @@ async def test_construct_message_from_response(target: OpenAIChatTarget, dummy_t
 
 
 # Tests for underlying_model parameter and get_identifier
+
+
+def test_get_identifier_distinguishes_extra_body_parameters(patch_central_database):
+    def build(**kwargs: Any) -> OpenAIChatTarget:
+        return OpenAIChatTarget(model_name="o4-mini", endpoint="https://mock.azure.com/", api_key="k", **kwargs)
+
+    low = build(extra_body_parameters={"reasoning_effort": "low"})
+    high = build(extra_body_parameters={"reasoning_effort": "high"})
+    alloy = build(audio_response_config=OpenAIChatAudioConfig(voice="alloy"))
+    echo = build(audio_response_config=OpenAIChatAudioConfig(voice="echo"))
+
+    assert low.get_identifier().params["extra_body_parameters"] == {"reasoning_effort": "low"}
+    assert low.get_identifier().hash != high.get_identifier().hash
+    assert alloy.get_identifier().hash != echo.get_identifier().hash
+    assert build().get_identifier().params.get("extra_body_parameters") is None
 
 
 def test_get_identifier_uses_model_name_when_no_underlying_model(patch_central_database):
