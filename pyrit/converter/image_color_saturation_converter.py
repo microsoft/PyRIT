@@ -77,4 +77,7 @@ class ImageColorSaturationConverter(BaseImageToImageConverter):
         Returns:
             PIL.Image.Image: The adjusted image.
         """
+        # ImageEnhance.Color rejects palette, bilevel and 16-bit images.
+        if image.mode not in ("L", "LA"):
+            image = self._convert_to_rgb_or_rgba(image)
         return ImageEnhance.Color(image).enhance(self._level)

@@ -270,3 +270,15 @@ def test_invalid_angle_non_finite(angle: float) -> None:
     """Non-finite rotation angles should fail during converter construction."""
     with pytest.raises(ValueError, match="Angle must be finite"):
         ImageRotationConverter(angle=angle)
+
+
+@pytest.mark.parametrize("mode", ["L", "LA", "1", "I;16", "P"])
+def test_image_rotation_converter_handles_non_rgb_png_modes(mode: str) -> None:
+    converter = ImageRotationConverter(angle=45.0, fill_color=(255, 0, 0))
+
+    rotated_io, output_format = converter._transform_image(Image.new(mode, (40, 30)), "PNG")
+    rotated = Image.open(rotated_io)
+
+    assert output_format == "PNG"
+    assert rotated.mode in ("RGB", "RGBA")
+    assert rotated.getpixel((0, 0))[:3] == (255, 0, 0)

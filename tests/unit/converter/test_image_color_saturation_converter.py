@@ -220,3 +220,13 @@ def test_invalid_level_non_finite(level: float) -> None:
     """Non-finite saturation levels should fail during converter construction."""
     with pytest.raises(ValueError, match="Level must be finite"):
         ImageColorSaturationConverter(level=level)
+
+
+@pytest.mark.parametrize("mode", ["P", "1", "I;16", "L", "LA"])
+def test_image_color_saturation_converter_handles_non_rgb_png_modes(mode: str) -> None:
+    converter = ImageColorSaturationConverter(level=0.5)
+
+    adjusted_io, output_format = converter._transform_image(Image.new(mode, (40, 30)), "PNG")
+
+    assert output_format == "PNG"
+    assert Image.open(adjusted_io).size == (40, 30)
