@@ -167,6 +167,11 @@ Options:
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
 - `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
 
+`max_dataset_size` is an exact alias for `max_total`; it does not disable source caps.
+To keep the old total-only selection of up to 10 groups, use
+`max_per_dataset="all", max_total=10`. To remove both caps, set both to `"all"`;
+`None` now uses the default, not unlimited selection.
+
 ## Technique Enum
 
 Technique members should represent **attack techniques** — the *how* of an attack (e.g., prompt sending, role play, TAP).  Datasets control *what* is tested (e.g., harm categories, compliance topics).  Avoid mixing dataset/category selection into the technique enum; use `DatasetConfiguration` and `--dataset-names` for that axis.

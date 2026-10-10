@@ -260,7 +260,10 @@ async def test_backend_total_one_rejects_both_sub_harms_before_reads_async(
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
         patch.object(CentralMemory.get_memory_instance(), "get_seeds_async", side_effect=AssertionError("No reads")),
-        pytest.raises(DatasetConstraintError, match="max_total.*cover every selected sub-harm"),
+        pytest.raises(
+            DatasetConstraintError,
+            match=r"max_total \(1\).*Increase the total limit to at least 2, or select one sub-harm\.",
+        ),
     ):
         if preview:
             await scenario.get_run_size_estimate_async()

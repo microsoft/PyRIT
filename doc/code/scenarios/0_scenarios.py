@@ -70,6 +70,7 @@
 #    - Returns a `DatasetAttackConfiguration` with named sources (e.g., `sources=[DatasetSource(name="my_dataset")]`)
 #    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
 #    - Named sources select at most 5 attack groups per dataset by default; `max_total` caps the union. For any limit, omitted/`None`/empty/`"default"` uses the default; `"all"` removes that limit.
+#    - The deprecated `max_dataset_size` is an exact alias for `max_total`, not a way to disable source caps. To keep the old total-only selection, use `max_per_dataset="all", max_total=10`; to remove both caps, set both to `"all"`. `None` now uses the default, not unlimited selection.
 #    - New runs prepare missing registered datasets once; reads, estimates, and resume never fetch
 #
 # 4. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:

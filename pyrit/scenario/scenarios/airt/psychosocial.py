@@ -494,7 +494,8 @@ class Psychosocial(Scenario):
         if cap != "all" and cap < len(self._selected_sub_harms()):
             raise DatasetConstraintError(
                 f"Psychosocial max_total ({cap}) must cover every selected sub-harm "
-                f"({len(self._selected_sub_harms())}); use max_per_dataset=1 for one objective per sub-harm."
+                f"({len(self._selected_sub_harms())}). Increase the total limit to at least "
+                f"{len(self._selected_sub_harms())}, or select one sub-harm."
             )
 
     async def _resolve_seed_groups_by_dataset_async(

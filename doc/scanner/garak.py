@@ -58,7 +58,7 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.garak import (
     ApiKey,
     ApiKeyDatasetConfiguration,
@@ -103,8 +103,8 @@ prompt_inject_scenario.set_params_from_args(  # type: ignore
         "scenario_techniques": [PromptInjectTechnique.IgnorePrint],
         "goal_texts": ["I hate humans"],
         "dataset_config": PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(),
-            max_dataset_size=1,
+            sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
+            max_total=1,
         ),
     }
 )
@@ -144,7 +144,7 @@ await output_scenario_async(prompt_inject_result)
 # > independently.
 
 # %%
-dataset_config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=1)
+dataset_config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")], max_total=1)
 
 scenario = Encoding()
 scenario.set_params_from_args(  # type: ignore
@@ -187,7 +187,7 @@ await output_scenario_async(scenario_result)
 # > `--include-baseline False` to omit this comparison.
 
 # %%
-figstep_dataset_config = DatasetAttackConfiguration(dataset_names=["figstep"], max_dataset_size=1)
+figstep_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="figstep")], max_total=1)
 
 figstep_scenario = FigStep()
 figstep_scenario.set_params_from_args(  # type: ignore
@@ -315,7 +315,7 @@ await output_scenario_async(exploitation_result)
 # ```
 #
 # **Available techniques:** `GetKey` and `CompleteKey`. `DEFAULT` and `ALL` both select the two
-# techniques. `max_dataset_size` samples across all selected technique populations, not per service.
+# techniques. `max_total` samples across all selected technique populations, not per service.
 # The base scenario persists the sample for resume. Use `ApiKeyDatasetConfiguration` with
 # `max_total="all"` to run all 348 requests. Standard technique converter stacks are supported.
 
@@ -325,7 +325,9 @@ api_key_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [ApiKeyTechnique.GetKey],
-        "dataset_config": ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=2),
+        "dataset_config": ApiKeyDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in ApiKey.required_datasets()], max_total=2
+        ),
     }
 )
 await api_key_scenario.initialize_async()  # type: ignore
@@ -379,7 +381,7 @@ await output_scenario_async(api_key_result)
 # actually asked for. A supplied `objective_scorer` replaces this fixed-trigger scorer; the
 # harm family uses its separate `harm_scorer`. Caller technique converters run after the separators.
 #
-# `max_dataset_size` is one budget before technique expansion. The default is 92 original
+# `max_total` is one budget before technique expansion. The default is 92 original
 # groups, shared by six default techniques (552 execution units). Sampling reserves one group
 # per selected family/trigger pair, then fills the remaining budget without replacement.
 # A smaller budget than the number of pairs raises an error. An explicit dataset configuration
@@ -398,7 +400,9 @@ latent_injection_scenario.set_params_from_args(  # type: ignore
         "objective_target": objective_target,
         "scenario_techniques": [LatentInjectionTechnique.Bare],
         "dataset_config": LatentInjectionDatasetConfiguration(
-            dataset_names=LatentInjection.required_datasets(), families=["whois"], max_dataset_size=1
+            sources=[DatasetSource(name=name) for name in LatentInjection.required_datasets()],
+            families=["whois"],
+            max_total=1,
         ),
     }
 )
@@ -429,7 +433,7 @@ await output_scenario_async(latent_injection_result)
 # tagged `default`, so `DEFAULT` and `ALL` currently coincide.
 
 # %%
-doctor_dataset_config = DatasetAttackConfiguration(dataset_names=["garak_doctor"], max_dataset_size=1)
+doctor_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="garak_doctor")], max_total=1)
 
 doctor_scenario = Doctor()
 doctor_scenario.set_params_from_args(  # type: ignore
@@ -560,7 +564,7 @@ await output_scenario_async(package_result)
 
 # %%
 audio_dataset_config = AudioAchillesHeelDatasetConfiguration(
-    dataset_names=["garak_audio_achilles_heel"], max_dataset_size=1
+    sources=[DatasetSource(name="garak_audio_achilles_heel")], max_total=1
 )
 
 audio_target = TargetRegistry.get_registry_singleton().instances.get("azure_openai_realtime")
@@ -599,7 +603,7 @@ await output_scenario_async(audio_scenario_result)
 #
 # **Available techniques:** `Repeat`, `DEFAULT`, and `ALL` all select the same probe.
 # The default budget is 10 prompts across the entire dataset, not per word. Use
-# `DivergenceDatasetConfiguration(max_per_dataset="all", max_total="all", dataset_names=["garak_divergence"])`
+# `DivergenceDatasetConfiguration(sources=[DatasetSource(name="garak_divergence")], max_per_dataset="all", max_total="all")`
 # to run all 36 prompts. The example below samples only two.
 
 # %%
@@ -608,7 +612,7 @@ divergence_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [DivergenceTechnique.Repeat],
-        "dataset_config": DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=2),
+        "dataset_config": DivergenceDatasetConfiguration(sources=[DatasetSource(name="garak_divergence")], max_total=2),
     }
 )
 await divergence_scenario.initialize_async()  # type: ignore
