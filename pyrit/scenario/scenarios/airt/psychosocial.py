@@ -459,24 +459,36 @@ class Psychosocial(Scenario):
         """
         Resolve the ``sub_harm`` run parameter into the ordered list of sub-harm configs.
 
-        Accepts ``None`` / ``"all"`` (both sub-harms) or a single sub-harm name. Order follows
-        ``_SUB_HARMS`` for deterministic results.
+        Accepts ``None`` / ``"all"`` (both sub-harms) or a single sub-harm name. Only sub-harms whose
+        dataset is in the dataset configuration are kept, so selecting a subset of the datasets also
+        narrows the run. Order follows ``_SUB_HARMS`` for deterministic results.
 
         Returns:
             list[_SubHarm]: The selected sub-harms.
 
         Raises:
             ValueError: If an unknown sub-harm name is requested.
+            DatasetConstraintError: If none of the requested sub-harms has its dataset configured.
         """
         requested = self.params.get("sub_harm")
         if not requested or requested == "all":
-            return list(_SUB_HARMS)
-        name = str(requested)
-        if name not in _SUB_HARMS_BY_NAME:
-            raise ValueError(
-                f"Unknown psychosocial sub_harm '{name}'. Valid values: {sorted(_SUB_HARMS_BY_NAME)} (or 'all')."
+            requested_harms = list(_SUB_HARMS)
+        else:
+            name = str(requested)
+            if name not in _SUB_HARMS_BY_NAME:
+                raise ValueError(
+                    f"Unknown psychosocial sub_harm '{name}'. Valid values: {sorted(_SUB_HARMS_BY_NAME)} (or 'all')."
+                )
+            requested_harms = [_SUB_HARMS_BY_NAME[name]]
+        configured = set(self._dataset_config.dataset_names)
+        selected = [harm for harm in requested_harms if harm.dataset_name in configured]
+        if not selected:
+            raise DatasetConstraintError(
+                f"Psychosocial sub_harm '{requested or 'all'}' needs "
+                f"{', '.join(repr(harm.dataset_name) for harm in requested_harms)}, but the selected datasets are "
+                f"{sorted(configured)}."
             )
-        return [_SUB_HARMS_BY_NAME[name]]
+        return selected
 
     def _validate_runtime_configuration(self) -> None:
         config = self._dataset_config
