@@ -489,6 +489,18 @@ class TestLabels:
 
         assert calls[0]["memory_labels"]["foo"] == "bar"
 
+    async def test_completed_result_carries_context_labels(self, target, seed_group):
+        a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
+        compound = SequentialAttack(
+            objective_target=target, child_attacks=[SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        )
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a})
+
+        with patcher:
+            result = await compound._perform_async(context=_make_context(labels={"op": "seq"}))
+
+        assert result.labels == {"op": "seq"}
+
     async def test_child_attack_labels_override_context_labels(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         child_attacks = [

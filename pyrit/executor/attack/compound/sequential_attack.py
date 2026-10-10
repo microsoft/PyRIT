@@ -290,6 +290,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             automated_score=None,
             executed_turns=sum(r.executed_turns for r in results),
             outcome=outcome,
+            labels=context.memory_labels,
             child_attack_results=results,
             completion_policy=self._completion_policy,
             metadata={
