@@ -768,6 +768,28 @@ export interface ChangeMainConversationResponse {
   conversation_id: string
 }
 
+/**
+ * Wire shape of `DatasetInfo` from `GET /api/datasets`.
+ * Null counts mean the total is unknown, not zero.
+ */
+export interface DatasetInfo {
+  name: string
+  selection_key: string
+  loaded: boolean
+  provider_available: boolean
+  logical_examples: number | null
+  seed_pieces: number | null
+  objectives: number | null
+  modalities: string[]
+  harm_categories: string[]
+  has_unlabeled_harm_categories: boolean
+}
+
+/** Wire shape of `DatasetListResponse` from `GET /api/datasets`. */
+export interface DatasetListResponse {
+  items: DatasetInfo[]
+}
+
 // --- Scenarios ---
 
 export interface RegisteredScenario {

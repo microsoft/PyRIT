@@ -25,6 +25,7 @@ import {
   attacksApi,
   labelsApi,
   scenariosApi,
+  datasetsApi,
 } from "./api";
 
 describe("api service", () => {
@@ -956,6 +957,37 @@ describe("api service", () => {
       expect(apiClient.post).toHaveBeenCalledTimes(1);
       expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/resume");
       expect(apiClient.get).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("datasetsApi", () => {
+    it("lists dataset summaries with loaded_only and does not send a selection key", async () => {
+      const mockResponse = {
+        data: {
+          items: [],
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await expect(datasetsApi.listDatasets({ loaded_only: true })).resolves.toEqual({ items: [] });
+
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: undefined,
+      });
+    });
+
+    it("forwards an abort signal and still does not send a selection key", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [] } });
+
+      await datasetsApi.listDatasets({ loaded_only: true }, controller.signal);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: controller.signal,
+      });
     });
   });
 });

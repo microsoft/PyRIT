@@ -64,3 +64,31 @@ function appendScenarioRunProvenance(path: string, scenarioResultId?: string | n
   })
   return `${path}?${searchParams.toString()}`
 }
+
+/** Catalog route. Dataset identity is never a path segment. */
+export const DATASETS_PATH = '/datasets'
+
+/** Selection contract for the prompt table (#2745). The key stays in the query. */
+export const DATASET_DETAIL_PATH = '/datasets/detail'
+
+const SELECTION_KEY_PARAM = 'selection_key'
+
+/**
+ * Reads the opaque selection key. A missing or repeated key is not a selection.
+ * The returned string is for catalog lookup only and is not sent back to the server.
+ */
+export function selectionKeyFromSearchParams(params: URLSearchParams): string | null {
+  const values = params.getAll(SELECTION_KEY_PARAM)
+  if (values.length !== 1) return null
+  return values[0]
+}
+
+/**
+ * Builds `/datasets/detail?selection_key=` with URLSearchParams.
+ * The key is never interpolated into the path.
+ */
+export function datasetDetailPath(selectionKey: string): string {
+  const params = new URLSearchParams()
+  params.set(SELECTION_KEY_PARAM, selectionKey)
+  return `${DATASET_DETAIL_PATH}?${params.toString()}`
+}
