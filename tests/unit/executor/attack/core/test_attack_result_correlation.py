@@ -378,3 +378,19 @@ async def test_child_attack_conversations_link_to_the_child_async(sqlite_instanc
     for child in children:
         assert await _owned_ids_async(sqlite_instance, child.attack_result_id) == {child.conversation_id}
     assert await _owned_ids_async(sqlite_instance, result.attack_result_id) == set()
+
+
+async def test_error_result_records_the_attack_identity_async(sqlite_instance: SQLiteMemory) -> None:
+    attack = PromptSendingAttack(objective_target=_RecordingTarget(fail=True))
+    context = SingleTurnAttackContext(params=AttackParameters(objective="objective"))
+
+    with pytest.raises(RuntimeError):
+        await attack.execute_with_context_async(context=context)
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_classes=["PromptSendingAttack"])
+    assert stored.outcome == AttackOutcome.ERROR
+    assert stored.atomic_attack_identifier is not None
+    technique = stored.atomic_attack_identifier.get_child("attack_technique")
+    assert technique is not None
+    assert technique.get_child("attack") == attack.get_identifier()
+    assert stored.atomic_attack_identifier.eval_hash is not None
