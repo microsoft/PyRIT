@@ -3,7 +3,7 @@
 
 """Adversarial target resolution validates without changing execution scopes."""
 
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +23,11 @@ from pyrit.scenario.core import (
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
+from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
 from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectDatasetConfiguration
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
+from pyrit.scenario.scenarios.garak.web_injection import WebInjection
 from pyrit.score import TrueFalseScorer
 from unit.mocks import MockPromptTarget
 
@@ -183,3 +187,45 @@ def test_resolve_adversarial_target_rejects_invalid_selection_without_changing_s
         with pytest.raises(ValueError, match=message):
             ScenarioConfigurationResolver.resolve_adversarial_target(target_name=selection)
         assert get_default_adversarial_target() is outer
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, WebInjection, PackageHallucination])
+@pytest.mark.parametrize("limit", [3, "all"])
+def test_total_limit_is_rejected_when_the_scenario_ignores_it(
+    *, scenario_class: type[Scenario], limit: DatasetLimit
+) -> None:
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=MagicMock(spec=TrueFalseScorer)),
+        pytest.raises(ValueError, match="doesn't use a dataset size limit"),
+    ):
+        ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="test", scenario_class=scenario_class, max_dataset_size=limit
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, WebInjection, PackageHallucination])
+def test_dataset_names_still_reach_a_scenario_that_ignores_the_total_limit(scenario_class: type[Scenario]) -> None:
+    with patch.object(Scenario, "_get_default_objective_scorer", return_value=MagicMock(spec=TrueFalseScorer)):
+        names = scenario_class()._default_dataset_config.dataset_names
+        resolved = ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="test", scenario_class=scenario_class, dataset_names=names, max_dataset_size="default"
+        )
+    assert resolved["dataset_config"].dataset_names == names
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"max_dataset_size": 3},
+        {"dataset_names": ["garak_exploitation_sql_injection"]},
+        {"dataset_filters": {"data_types": ["text"]}},
+    ],
+)
+def test_dataset_overrides_are_rejected_for_a_fixed_dataset_scenario(overrides: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="uses a fixed dataset"):
+        ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="garak.exploitation", scenario_class=Exploitation, **overrides
+        )

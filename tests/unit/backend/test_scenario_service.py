@@ -364,6 +364,7 @@ class TestAdversarialEstimateScope:
             introspected.append(get_default_adversarial_target())
             scenario = MagicMock(spec=Scenario)
             scenario._default_dataset_config = DatasetAttackConfiguration(dataset_names=["test_dataset"])
+            scenario.supported_parameters.return_value = Scenario.supported_parameters()
             return scenario
 
         async def estimate_async(**kwargs: object) -> ScenarioRunSizeEstimate:
@@ -1531,6 +1532,7 @@ class TestScenarioServiceGetScenario:
         original = DatasetAttackConfiguration(dataset_names=["harmbench"], max_total=20)
         scenario_class = MagicMock()
         scenario_class.return_value._default_dataset_config = original
+        scenario_class.return_value.supported_parameters.return_value = Scenario.supported_parameters()
         with patch.object(ScenarioService, "__init__", lambda self: None):
             service = ScenarioService()
             service._registry = MagicMock()
@@ -1572,6 +1574,7 @@ class TestScenarioServiceGetScenario:
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
         introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
         scenario_class.supported_parameters.return_value = [
             Parameter(name=name, description="", param_type=int)
@@ -1631,6 +1634,7 @@ class TestScenarioServiceGetScenario:
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
         introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
 
         with patch.object(ScenarioService, "__init__", lambda self: None):
@@ -1657,6 +1661,7 @@ class TestScenarioServiceGetScenario:
         introspection_instance = MagicMock()
         introspection_instance._technique_class = _EstimateTechnique
         introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
+        introspection_instance.supported_parameters.return_value = Scenario.supported_parameters()
         scenario_class = MagicMock(return_value=introspection_instance)
 
         with (

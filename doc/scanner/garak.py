@@ -217,7 +217,7 @@ await output_scenario_async(figstep_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan run garak.web_injection --target openai_chat --techniques xss --max-dataset-size 1
+# pyrit_scan run garak.web_injection --target openai_chat --techniques xss
 # ```
 #
 # **Available techniques** (8 probes): MarkdownImageExfil, ColabAIDataLeakage,

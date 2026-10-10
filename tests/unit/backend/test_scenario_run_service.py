@@ -286,6 +286,7 @@ def mock_all_registries(mock_memory):
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
     mock_scenario_instance._technique_class = MagicMock()
     mock_scenario_instance._default_dataset_config = MagicMock()
+    mock_scenario_instance.supported_parameters.return_value = Scenario.supported_parameters()
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
