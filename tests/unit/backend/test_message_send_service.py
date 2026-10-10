@@ -59,6 +59,8 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from unit.async_utils import wait_for_completion_async
 from unit.backend.mocks import (
     _make_matching_target_mock,
@@ -2983,6 +2985,49 @@ class TestAsyncMessageSend:
         assert (
             await service.get_status_async(attack_result_id=ar.attack_result_id, send_id=status.send_id)
         ).state == MessageSendState.COMPLETED
+
+    async def test_repeat_send_rejects_copying_history_into_a_stateful_target_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        """Copies would be answered by a target that never saw the earlier turns, so refuse up front."""
+        service, ar, target, _ = real_send_context
+        first = await service.submit_async(
+            attack_result_id=ar.attack_result_id, request=_submission(conversation_id=ar.conversation_id)
+        )
+        assert (await _settle_send_async(service=service, status=first)).state == MessageSendState.COMPLETED
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=True, supports_multi_message_pieces=True)
+        )
+
+        with pytest.raises(ValueError, match="keeps its own conversation history"):
+            await service.submit_async(
+                attack_result_id=ar.attack_result_id,
+                request=_submission(conversation_id=ar.conversation_id, submission_id="repeat", count=3),
+            )
+
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=ar.conversation_id)
+        assert [piece.role for piece in pieces] == ["user", "assistant"]
+        assert not service._scheduler._conversations
+
+    async def test_repeat_send_into_a_stateful_target_is_fine_on_a_new_conversation_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+    ) -> None:
+        service, ar, target, _ = real_send_context
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=True, supports_multi_message_pieces=True)
+        )
+
+        status = await service.submit_async(
+            attack_result_id=ar.attack_result_id,
+            request=_submission(conversation_id=ar.conversation_id, count=3),
+        )
+
+        assert (await _settle_send_async(service=service, status=status)).state == MessageSendState.COMPLETED
 
     @pytest.mark.parametrize("invalid", ["attack", "conversation", "target", "converter"])
     async def test_validation_does_not_accept_or_write_async(
