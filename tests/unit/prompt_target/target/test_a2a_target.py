@@ -12,6 +12,7 @@ import pytest
 
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import A2ATarget
 from pyrit.prompt_target.a2a_target import _A2AConversationState
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -188,6 +189,56 @@ async def test_a2a_send_prompt_message_result(mock_send):
     payload = json.loads(sent_req.content)
     assert payload["method"] == "message/send"
     assert payload["params"]["message"]["parts"][0]["text"] == "Hello A2A Agent"
+
+
+def _message_payload_without_context(text: str, *, message_id: str) -> dict[str, Any]:
+    payload = _message_payload(text, message_id=message_id)
+    del payload["result"]["contextId"]
+    return payload
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.send")
+async def test_a2a_continues_its_own_context_when_the_agent_sends_none(mock_send):
+    """A plain Message reply may omit contextId; turn 2 must still continue the same context."""
+    mock_send.side_effect = [
+        _rpc_response(_message_payload_without_context("First reply", message_id="m-1")),
+        _rpc_response(_message_payload_without_context("Second reply", message_id="m-2")),
+    ]
+    target = A2ATarget(endpoint=ENDPOINT)
+    normalizer = PromptNormalizer()
+
+    first = await normalizer.send_prompt_async(
+        message=_user_message("turn one"), conversation_id="conv-1", target=target
+    )
+    second = await normalizer.send_prompt_async(
+        message=_user_message("turn two"), conversation_id="conv-1", target=target
+    )
+
+    assert first.get_piece().converted_value == "First reply"
+    assert second.get_piece().converted_value == "Second reply"
+    sent_contexts = [
+        json.loads(call.args[0].content)["params"]["message"]["contextId"] for call in mock_send.call_args_list
+    ]
+    assert sent_contexts[0]
+    assert sent_contexts == [sent_contexts[0], sent_contexts[0]]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@patch("httpx.AsyncClient.send")
+async def test_a2a_adopts_the_context_the_agent_returns(mock_send):
+    mock_send.side_effect = [
+        _rpc_response(_message_payload("First reply", context_id="ctx-from-agent")),
+        _rpc_response(_message_payload("Second reply", context_id="ctx-from-agent")),
+    ]
+    target = A2ATarget(endpoint=ENDPOINT)
+    normalizer = PromptNormalizer()
+
+    await normalizer.send_prompt_async(message=_user_message("turn one"), conversation_id="conv-1", target=target)
+    await normalizer.send_prompt_async(message=_user_message("turn two"), conversation_id="conv-1", target=target)
+
+    second_request = json.loads(mock_send.call_args_list[1].args[0].content)
+    assert second_request["params"]["message"]["contextId"] == "ctx-from-agent"
 
 
 @pytest.mark.usefixtures("patch_central_database")

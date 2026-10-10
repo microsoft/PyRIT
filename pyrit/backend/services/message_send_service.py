@@ -50,7 +50,7 @@ from pyrit.models import (
     MessagePiece,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 logger = logging.getLogger(__name__)
@@ -186,6 +186,8 @@ class MessageSendService:
                     conversations[conversation_id] = owner
                 owned_request = request.model_copy(deep=True)
                 validated = await self._validate_message_async(attack_result_id=attack_result_id, request=owned_request)
+                if owned_request.count > 1:
+                    await self._validate_repeat_history_async(request=owned_request, target=validated.target)
                 if self._closing:
                     raise ManualSendQueueFullError("Manual message operations are shutting down")
                 operation = _Send(
@@ -310,6 +312,27 @@ class MessageSendService:
             response_configurations=response_converter_configs,
             applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
         )
+
+    async def _validate_repeat_history_async(self, *, request: MessageSendRequest, target: PromptTarget | None) -> None:
+        """
+        Reject repeating a send into copies of a conversation the target can't be handed.
+
+        Repeat-send copies the existing turns into new conversations. A target without editable history
+        keeps its own copy of the conversation (for example a Copilot session or an A2A context), so it
+        would answer each copy without the earlier turns while memory shows them.
+
+        Raises:
+            ValueError: If the target lacks editable history and the conversation has turns besides a
+                system prompt.
+        """
+        if target is None or target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY):
+            return
+        history = await self._memory.get_conversation_messages_async(conversation_id=request.target_conversation_id)
+        if any(message.api_role != "system" for message in history):
+            raise ValueError(
+                f"{type(target).__name__} keeps its own conversation history, so a send can't be repeated into "
+                "copies of a conversation that already has turns. Repeat the send from a new conversation instead."
+            )
 
     async def _execute_validated_message_async(
         self,
