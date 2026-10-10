@@ -1781,6 +1781,29 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores == {}
         assert node.error_message is None
 
+    async def test_score_feedback_uses_the_objective_score_not_an_auxiliary_one(self, node_components):
+        node = _TreeOfAttacksNode(**node_components)
+
+        def score(value: str, identifier: ComponentIdentifier) -> Score:
+            return Score(
+                score_value=value,
+                score_type="float_scale",
+                score_category=["test"],
+                score_rationale="r",
+                score_value_description="d",
+                score_metadata=None,
+                message_piece_id=str(uuid.uuid4()),
+                scorer_class_identifier=identifier,
+            )
+
+        auxiliary = score("0.95", ComponentIdentifier(class_name="AuxScorer", class_module="test"))
+        objective = score("0.2", node._objective_scorer.get_identifier())
+
+        with patch.object(node._memory, "get_prompt_scores_async", new=AsyncMock(return_value=[auxiliary, objective])):
+            assert await node._get_response_score_async("response-id") == "0.2"
+        with patch.object(node._memory, "get_prompt_scores_async", new=AsyncMock(return_value=[auxiliary])):
+            assert await node._get_response_score_async("response-id") == "unavailable"
+
     async def test_subsequent_prompt_omits_score_when_feedback_disabled(self, node_components):
         """A disabled score-feedback setting preserves response context without exposing the score."""
         node = _TreeOfAttacksNode(**node_components, use_score_as_feedback=False)
