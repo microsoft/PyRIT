@@ -1248,3 +1248,37 @@ async def test_get_message_pieces_filters_on_integer_prompt_metadata_async(sqlit
 
     assert len(retrieved) == 1
     assert retrieved[0].original_value == "sent"
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({"property_path": "$.label", "value": "éthique"}, 1),
+        ({"property_path": "$.label", "value": "ÉTHIQUE"}, 1),
+        ({"property_path": "$.label", "value": "éth", "partial_match": True}, 1),
+        ({"property_path": "$.label", "value": "éthique", "case_sensitive": True}, 0),
+        ({"property_path": "$.label", "value": "ethique"}, 0),
+        ({"property_path": "$.items", "array_element_path": "$.name", "array_to_match": ["ÜBERWACHUNG", "fraud"]}, 1),
+        ({"property_path": "$.items", "array_element_path": "$.name", "array_to_match": ["überwachung", "missing"]}, 0),
+    ],
+)
+async def test_json_match_conditions_fold_non_ascii_case_async(
+    sqlite_instance: SQLiteMemory, kwargs: dict[str, object], expected: int
+) -> None:
+    piece = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="stored",
+        prompt_metadata={"label": "ÉTHIQUE", "items": [{"name": "Überwachung"}, {"name": "Fraud"}]},
+    )
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece])
+
+    match = (
+        sqlite_instance._get_condition_json_array_match
+        if "array_to_match" in kwargs
+        else sqlite_instance._get_condition_json_property_match
+    )
+    condition = match(json_column=PromptMemoryEntry.prompt_metadata, **kwargs)
+    async with await sqlite_instance.get_session_async() as session:
+        rows = (await session.execute(select(PromptMemoryEntry.id).where(condition))).all()
+    assert len(rows) == expected

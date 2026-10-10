@@ -4000,7 +4000,8 @@ class MemoryInterface(abc.ABC):
                 )
             )
         else:
-            conditions.extend(field.contains(value) for value in values)
+            # The column holds JSON text with non-ASCII characters escaped, so search for the value as JSON spells it.
+            conditions.extend(field.contains(json.dumps(value)[1:-1]) for value in values)
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:
         """

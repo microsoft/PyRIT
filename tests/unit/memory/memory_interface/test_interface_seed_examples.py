@@ -148,6 +148,19 @@ async def test_get_seed_examples_filters_match_across_members(sqlite_instance: M
     assert await _ids(sqlite_instance, seed_types=["objective"], data_types=["image_path"]) == []
 
 
+async def test_get_seed_examples_harm_filter_folds_non_ascii_case(sqlite_instance: MemoryInterface):
+    ethics, surveillance = uuid4(), uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="a", dataset_name=DATASET, prompt_group_id=ethics, harm_categories=["ÉTHIQUE"]),
+        SeedPrompt(value="b", dataset_name=DATASET, prompt_group_id=surveillance, harm_categories=["überwachung"]),
+    )
+
+    assert await _ids(sqlite_instance, harm_categories=["ÉTHIQUE"]) == [ethics]
+    assert await _ids(sqlite_instance, harm_categories=["éthique"]) == [ethics]
+    assert await _ids(sqlite_instance, harm_categories=["Überwachung"]) == [surveillance]
+
+
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):
     group = uuid4()
     named = SeedPrompt(value="named", dataset_name=DATASET, prompt_group_id=group)

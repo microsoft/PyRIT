@@ -275,6 +275,21 @@ async def test_remove_seeds_by_list_filters_is_case_insensitive(sqlite_instance:
     assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["violence"]) == 1
 
 
+async def test_remove_seeds_by_list_filters_matches_non_ascii_values(sqlite_instance: MemoryInterface):
+    seed_prompts = [
+        SeedPrompt(value="p1", harm_categories=["ÉTHIQUE"], data_type="text"),
+        SeedPrompt(value="p2", harm_categories=["Überwachung"], data_type="text"),
+        SeedPrompt(value="p3", harm_categories=["fraud"], data_type="text"),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
+
+    assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["ÉTHIQUE"]) == 1
+    assert await sqlite_instance.remove_seeds_from_memory_async(harm_categories=["überwachung"]) == 1
+
+    remaining = await sqlite_instance.get_seeds_async()
+    assert [seed.value for seed in remaining] == ["p3"]
+
+
 async def test_remove_seeds_by_groups_authors_parameters_match_whole_elements(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="p1", groups=["team"], authors=["Ann"], parameters=["goal"], data_type="text"),

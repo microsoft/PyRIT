@@ -522,6 +522,31 @@ async def test_get_seeds_with_substring_filters_harm_categories(sqlite_instance:
     assert result[1].authors == ["author2"]
 
 
+@pytest.mark.parametrize(
+    "filters, expected",
+    [
+        ({"authors": ["Frédéric Dubut"]}, ["p1"]),
+        ({"authors": ["Frédéric"]}, ["p1"]),
+        ({"harm_categories": ["ÉTHIQUE"]}, ["p1"]),
+        ({"harm_categories": ["Überwachung"]}, ["p2"]),
+        ({"authors": ['"AJ"']}, ["p3"]),
+        ({"authors": ["C:\\red"]}, ["p3"]),
+    ],
+)
+async def test_get_seeds_with_list_filters_matches_non_ascii_values(
+    sqlite_instance: MemoryInterface, filters: dict[str, list[str]], expected: list[str]
+):
+    seed_prompts = [
+        SeedPrompt(value="p1", harm_categories=["ÉTHIQUE"], authors=["Frédéric Dubut"], data_type="text"),
+        SeedPrompt(value="p2", harm_categories=["Überwachung"], authors=["Frederic Smith"], data_type="text"),
+        SeedPrompt(value="p3", authors=['Ann "AJ" Jones', "C:\\red-team"], data_type="text"),
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts, added_by="test")
+
+    result = await sqlite_instance.get_seeds_async(**filters)
+    assert [seed.value for seed in result] == expected
+
+
 async def test_get_seeds_with_substring_filters_groups(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="prompt1", groups=["group1"], data_type="text"),

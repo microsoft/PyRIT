@@ -273,7 +273,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
     @staticmethod
     def _register_analytics_lower(*, engine: Engine) -> None:
-        """Install the analytics-only Unicode function on every pooled SQLite connection."""
+        """Install the Unicode lowercase function for analytics and JSON filters on every pooled SQLite connection."""
 
         @event.listens_for(engine, "connect")
         def register(dbapi_connection: Any, connection_record: Any) -> None:
@@ -447,7 +447,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         if case_sensitive:
             extracted_value, target = raw, value
         else:
-            extracted_value, target = func.lower(raw), value.lower()
+            extracted_value, target = UnicodeLower(raw), value.lower()
 
         if partial_match:
             escaped = target.replace("%", "\\%").replace("_", "\\_")
@@ -494,7 +494,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         column_name = json_column.key
         pp_param = f"property_path_{uid}"
         sp_param = f"array_element_path_{uid}"
-        value_expression = f"LOWER(json_extract(value, :{sp_param}))" if array_element_path else "LOWER(value)"
+        element = f"json_extract(value, :{sp_param})" if array_element_path else "value"
+        # SQLite's LOWER folds ASCII only; match the Unicode folding applied to the values below.
+        value_expression = f"{UnicodeLower.SQLITE_FUNCTION_NAME}({element})"
 
         conditions = []
         bindparams_dict: dict[str, str] = {pp_param: property_path}
