@@ -55,7 +55,7 @@ class _BearerTokenAuth(httpx.Auth):
 
 @dataclass
 class _A2AConversationState:
-    """Server-issued identifiers that continue one PyRIT conversation on the agent."""
+    """Identifiers that continue one PyRIT conversation on the agent (our context ID until the agent sends its own)."""
 
     context_id: str | None = None
     open_task_id: str | None = None
@@ -426,7 +426,9 @@ class A2ATarget(PromptTarget):
                 "The target requires server-side context continuity for multi-turn conversations, "
                 "and earlier turns cannot be restored."
             )
-        state = self._conversations.setdefault(conversation_id, _A2AConversationState())
+        # Name the context ourselves so turn 2 can continue it even when the agent's reply carries no
+        # contextId (a plain Message may omit it) or the first turn came back as an error.
+        state = self._conversations.setdefault(conversation_id, _A2AConversationState(context_id=str(uuid.uuid4())))
         prompt_text = message_piece.converted_value
 
         req = a2a_pb2.SendMessageRequest(
