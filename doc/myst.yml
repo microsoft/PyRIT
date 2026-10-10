@@ -194,6 +194,7 @@ project:
         - file: api/pyrit_analytics.md
         - file: api/pyrit_auth.md
         - file: api/pyrit_cli_api_client.md
+        - file: api/pyrit_cli_pyrit_migrate.md
         - file: api/pyrit_cli_pyrit_scan.md
         - file: api/pyrit_cli_pyrit_shell.md
         - file: api/pyrit_common.md

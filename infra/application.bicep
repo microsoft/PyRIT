@@ -13,6 +13,9 @@ param location string = resourceGroup().location
 @minLength(1)
 param containerImage string
 
+@description('Check the schema at startup without migrating it. The internal pipeline migrates before each deployment.')
+param requireCurrentSchema bool = false
+
 @description('Entra ID tenant ID')
 param entraTenantId string
 
@@ -199,6 +202,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'PYRIT_MODE'
               value: 'gui'
+            }
+            {
+              name: 'PYRIT_REQUIRE_CURRENT_SCHEMA'
+              value: requireCurrentSchema ? 'true' : 'false'
             }
             {
               name: 'AZURE_SQL_SERVER'

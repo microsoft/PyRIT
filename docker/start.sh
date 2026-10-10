@@ -15,7 +15,7 @@ echo "================================"
 # Check if PYRIT_MODE is set
 if [ -z "$PYRIT_MODE" ]; then
     echo "ERROR: PYRIT_MODE environment variable is not set!"
-    echo "Please set PYRIT_MODE to either 'jupyter' or 'gui'"
+    echo "Please set PYRIT_MODE to 'jupyter', 'gui', or 'migrate'"
     exit 1
 fi
 
@@ -76,14 +76,7 @@ write_deployment_config() {
     } >"$target_file"
 }
 
-# Start the appropriate service based on PYRIT_MODE
-if [ "$PYRIT_MODE" = "jupyter" ]; then
-    echo "Starting JupyterLab on port 8888..."
-    echo "Note: Notebooks are from the local source at build time"
-    echo "JupyterLab will generate an access token. Check the logs for the URL with token."
-    exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
-elif [ "$PYRIT_MODE" = "gui" ]; then
-    echo "Starting PyRIT GUI on port 8000..."
+prepare_deployment_config() {
     if [ -n "${PYRIT_CONFIG_FILE:-}" ]; then
         CONFIG_FILE="$PYRIT_CONFIG_FILE"
         DEPLOYMENT_BASE_CONFIG="$HOME/.pyrit/.pyrit_conf"
@@ -103,6 +96,17 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
         write_deployment_config "$RUNTIME_CONFIG"
         CONFIG_FILE="$RUNTIME_CONFIG"
     fi
+}
+
+# Start the appropriate service based on PYRIT_MODE
+if [ "$PYRIT_MODE" = "jupyter" ]; then
+    echo "Starting JupyterLab on port 8888..."
+    echo "Note: Notebooks are from the local source at build time"
+    echo "JupyterLab will generate an access token. Check the logs for the URL with token."
+    exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --notebook-dir=/app/notebooks
+elif [ "$PYRIT_MODE" = "gui" ]; then
+    echo "Starting PyRIT GUI on port 8000..."
+    prepare_deployment_config
 
     # Pick the launcher module. PR #1753 moved the launcher from
     # ``pyrit.cli.pyrit_backend`` to ``pyrit.backend.pyrit_backend``. The PyPI
@@ -124,7 +128,12 @@ elif [ "$PYRIT_MODE" = "gui" ]; then
         --host 0.0.0.0 \
         --port 8000 \
         --config-file "$CONFIG_FILE"
+elif [ "$PYRIT_MODE" = "migrate" ]; then
+    echo "Running PyRIT database migration..."
+    prepare_deployment_config
+    exec python -m pyrit.cli.pyrit_migrate --config-file "$CONFIG_FILE" \
+        --expected-server "$AZURE_SQL_SERVER" --expected-database "$AZURE_SQL_DATABASE"
 else
-    echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter' or 'gui'"
+    echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter', 'gui', or 'migrate'"
     exit 1
 fi

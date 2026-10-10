@@ -16,6 +16,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INFRASTRUCTURE_BICEP = REPO_ROOT / "infra" / "infrastructure.bicep"
 APPLICATION_BICEP = REPO_ROOT / "infra" / "application.bicep"
+MIGRATION_BICEP = REPO_ROOT / "infra" / "migration.bicep"
 NETWORK_BICEP = REPO_ROOT / "infra" / "modules" / "aca_nat_network.bicep"
 FRONT_DOOR_BICEP = REPO_ROOT / "infra" / "modules" / "aca_front_door.bicep"
 PRIVATE_ENDPOINT_APPROVAL_BICEP = REPO_ROOT / "infra" / "modules" / "aca_private_endpoint_approval.bicep"
@@ -78,6 +79,20 @@ class TestBicepTopology(unittest.TestCase):
         self._temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary_directory.cleanup)
         self.output_directory = Path(self._temporary_directory.name)
+
+    def test_migration_job_uses_deployment_target_and_optional_config_source(self) -> None:
+        template = _compile_bicep(MIGRATION_BICEP, self.output_directory / "migration.json")
+        jobs = _resources(template, "Microsoft.App/jobs")
+        assert len(jobs) == 1
+        properties = jobs[0]["properties"]
+        assert properties["configuration"]["triggerType"] == "Manual"
+        assert template["parameters"]["pyritConfigFileUri"]["type"] == "securestring"
+        env = properties["template"]["containers"][0]["env"]
+        values = {item["name"]: item["value"] for item in env if isinstance(item, dict) and "value" in item}
+        assert values["AZURE_SQL_SERVER"] == "[parameters('sqlServerFqdn')]"
+        assert values["AZURE_SQL_DATABASE"] == "[parameters('sqlDatabaseName')]"
+        assert values["PYRIT_MODE"] == "migrate"
+        assert any("PYRIT_CONFIG_FILE" in item and "config-file-uri" in item for item in env if isinstance(item, str))
 
     def test_standalone_phases_have_disjoint_write_sets(self) -> None:
         infrastructure = _compile_bicep(INFRASTRUCTURE_BICEP, self.output_directory / "infrastructure.json")
@@ -231,8 +246,12 @@ class TestBicepTopology(unittest.TestCase):
         assert not _resources(template, "Microsoft.Network/virtualNetworks/subnets")
         vnet = _resources(template, "Microsoft.Network/virtualNetworks")[0]
         assert vnet["properties"]["privateEndpointVNetPolicies"] == "Disabled"
-        assert len(vnet["properties"]["subnets"]) == 1
-        subnet = vnet["properties"]["subnets"][0]
+        subnets = vnet["properties"]["subnets"]
+        assert "createArray(variables('infrastructureSubnet'))" in subnets
+        assert "if(empty(parameters('sqlSubnetAddressPrefix')), createArray()" in subnets
+        assert "'privateEndpointNetworkPolicies', 'Disabled'" in subnets
+        assert "delegations" not in subnets.split("sql-subnet", 1)[1]
+        subnet = template["variables"]["infrastructureSubnet"]
         assert subnet["properties"]["addressPrefix"] == "[parameters('infrastructureSubnetAddressPrefix')]"
         assert subnet["properties"]["defaultOutboundAccess"] is False
         assert subnet["properties"]["delegations"][0]["properties"]["serviceName"] == "Microsoft.App/environments"

@@ -92,6 +92,7 @@ initialize_deployment_scope() {
     deployment_error "Deployment resource group is in another subscription"
   fi
   expected_app_id="$deployment_resource_group_id/providers/Microsoft.App/containerApps/$PYRIT_APP_NAME"
+  expected_job_id="$deployment_resource_group_id/providers/Microsoft.App/jobs/$PYRIT_APP_NAME-migrate"
   expected_environment_id="$deployment_resource_group_id/providers/Microsoft.App/managedEnvironments/$PYRIT_APP_NAME-env"
   expected_vnet_id="$deployment_resource_group_id/providers/Microsoft.Network/virtualNetworks/$PYRIT_APP_NAME-vnet"
   expected_subnet_id="$expected_vnet_id/subnets/$PYRIT_APP_NAME-aca-subnet"
@@ -177,6 +178,7 @@ preview_deployment() {
     --deployment-mode "$deployment_mode" \
     --deployment-resource-group-id "$deployment_resource_group_id" \
     --expected-app-id "$expected_app_id" \
+    --expected-job-id "$expected_job_id" \
     --expected-pip-id "$expected_pip_id" \
     --expected-nat-id "$expected_nat_id" \
     --expected-vnet-id "$expected_vnet_id" \

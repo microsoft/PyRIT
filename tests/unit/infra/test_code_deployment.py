@@ -271,6 +271,7 @@ printf '%s\\n' "$template_file" "$deployment_name" "${parameters[@]}" --rollback
             "disableContainerAppsPublicAccess",
             "vnetAddressPrefix",
             "infrastructureSubnetAddressPrefix",
+            "sqlSubnetAddressPrefix",
             "egressPublicIpTags",
             "protectEgressPublicIp",
             "tags",
@@ -320,12 +321,230 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
                     "envSecretName",
                     "pyritConfigFileUri",
                     "enableFrontDoor",
+                    "requireCurrentSchema",
                     "tags",
                 }
                 assert parameters["containerImage"] == IMAGE
                 assert parameters["sqlDatabaseName"] == "copyrit"
                 assert parameters["enableFrontDoor"] == front_door
+                assert parameters["requireCurrentSchema"] == "true"
                 assert parameters["allowedCidr"] == parameters["pyritConfigFileUri"] == ""
+
+    def _run_migration(self, *, statuses: list[str], attempts: int = 3) -> subprocess.CompletedProcess[str]:
+        return self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
+            command=f"""
+immutable_image={shlex.quote(IMAGE)}
+deployment_name=pyrit-test-42-app
+deployment_tags='{{"owner":"copyrit"}}'
+statuses=({" ".join(statuses)})
+poll_file=$(mktemp)
+trap 'rm -f "$poll_file"' EXIT
+preview_deployment() {{ echo "preview $1 $deployment_name ${{2##*/}}"; }}
+sleep() {{ :; }}
+az() {{
+  case "$1 $2 $3" in
+    "deployment group create") echo "create $3 $5" ;;
+    "containerapp job start") echo execution-1 ;;
+    "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
+    *) echo "Unexpected az $*" >&2; exit 97 ;;
+  esac
+}}
+prepare_database_migration
+run_database_migration
+echo done
+""",
+        )
+
+    def test_database_migration_waits_for_success(self) -> None:
+        result = self._run_migration(statuses=["Running", "Succeeded"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        lines = result.stdout.splitlines()
+        assert lines[0] == "preview job pyrit-test-42-app-migrate migration.bicep"
+        assert lines[1] == "create create pyrit-test-42-app-migrate"
+        assert "Database migration execution-1: Succeeded" in lines
+        assert lines[-1] == "done"
+
+    def test_database_migration_failure_stops_deployment(self) -> None:
+        result = self._run_migration(statuses=["Running", "Failed"])
+        assert result.returncode == 1
+        assert "ended with status Failed; the app is stopped and was not deployed" in result.stdout
+        assert "done" not in result.stdout
+
+    def test_database_migration_timeout_stops_deployment(self) -> None:
+        result = self._run_migration(statuses=["Running", "Running"], attempts=2)
+        assert result.returncode == 1
+        assert "did not finish in time" in result.stdout
+        assert "done" not in result.stdout
+
+    def test_app_deployment_stops_and_migrates_before_deploy(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""
+for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
+  build_app_parameters prepare_database_migration stop_app run_database_migration start_unchanged_revision \
+  verify_readiness warn_if_sql_public; do
+  eval "$step() { echo $step; }"
+done
+preview_deployment() { echo "preview $1"; }
+az() { echo "az $1 $2 $3"; }
+revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
+template_file=t deployment_name=d parameters=(appName=test)
+main
+""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.splitlines()[4:12] == [
+            "build_app_parameters",
+            "preview app",
+            "prepare_database_migration",
+            "stop_app",
+            "run_database_migration",
+            "az deployment group create",
+            "start_unchanged_revision",
+            "verify_readiness",
+        ]
+
+    def test_stop_app_deactivates_active_revision_not_latest_and_waits_for_replicas(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""current_revision=app--failed
+poll_file=$(mktemp)
+trap 'rm -f "$poll_file"' EXIT
+sleep() { echo poll >> "$poll_file"; }
+az() {
+  case "$2 $3" in
+    "revision list")
+      [[ "$*" == *"--all"* ]] || exit 96
+      if [[ "$*" == *"--query"* ]]; then echo 0
+      else echo '[{"name":"app--old","properties":{"active":true}},
+        {"name":"app--failed","properties":{"active":false}}]'
+      fi ;;
+    "revision deactivate") echo "az $*" ;;
+    "replica list") if [[ -s "$poll_file" ]]; then echo 0; else echo 1; fi ;;
+    *) exit 97 ;;
+  esac
+}
+stop_app
+echo stopped""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "az containerapp revision deactivate" in result.stdout
+        assert "--revision app--old" in result.stdout
+        assert "--revision app--failed" not in result.stdout
+        assert "Waiting for app shutdown" in result.stdout
+        assert result.stdout.splitlines()[-1] == "stopped"
+
+    def test_stop_app_rejects_missing_revisions(self) -> None:
+        result = self._run(script="deploy_app.sh", inputs=APP_INPUTS, command="az() { echo '[]'; }\nstop_app")
+        assert result.returncode == 1
+        assert "No revisions found" in result.stderr
+
+    def test_stop_app_timeout_does_not_start_migration(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_STOP_POLL_ATTEMPTS": "2"},
+            command="""
+sleep() { :; }
+az() {
+  case "$2 $3" in
+    "revision list") if [[ "$*" == *"--query"* ]]; then echo 0
+      else echo '[{"name":"app--old","properties":{"active":false}}]'; fi ;;
+    "replica list") echo 1 ;;
+    *) exit 97 ;;
+  esac
+}
+stop_app
+echo migration-started
+""",
+        )
+        assert result.returncode == 1
+        assert "shutdown was not confirmed" in result.stdout
+        assert "migration-started" not in result.stdout
+
+    def test_stop_app_accepts_already_stopped_revision(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS,
+            command="""
+az() {
+  case "$2 $3" in
+    "revision list") [[ "$*" == *"--all"* ]] || exit 96
+      if [[ "$*" == *"--query"* ]]; then echo 0
+      else echo '[{"name":"app--old","properties":{"active":false}}]'; fi ;;
+    "replica list") echo 0 ;;
+    *) exit 97 ;;
+  esac
+}
+stop_app
+echo stopped
+""",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.strip() == "stopped"
+
+    def test_migration_job_name_is_checked_before_azure_calls(self) -> None:
+        result = self._run(
+            script="deploy_app.sh",
+            inputs=APP_INPUTS | {"PYRIT_APP_NAME": "a" * 25},
+            command="validate_app_inputs",
+        )
+        assert result.returncode == 1
+        assert "24 characters or fewer" in result.stdout
+
+    def test_job_preparation_failure_does_not_stop_app(self) -> None:
+        for failure in ("preview", "create"):
+            with self.subTest(failure=failure):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS | {"PYRIT_TEST_PREPARATION_FAILURE": failure},
+                    command="""
+for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode; do
+  eval "$step() { :; }"
+done
+build_app_parameters() {
+  template_file=t deployment_name=d parameters=(appName=test); immutable_image=i; deployment_tags='{}'
+}
+preview_deployment() {
+  if [[ "$1" == job && "$PYRIT_TEST_PREPARATION_FAILURE" == preview ]]; then
+    deployment_error "Job preparation failed"
+  fi
+}
+az() { deployment_error "Job preparation failed"; }
+stop_app() { echo app-stopped; }
+main
+""",
+                )
+                assert result.returncode == 1
+                assert "Job preparation failed" in result.stdout
+                assert "app-stopped" not in result.stdout
+
+    def test_unchanged_revision_is_started_again(self) -> None:
+        for latest, activates in (("app--old", True), ("app--new", False)):
+            with self.subTest(latest=latest):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""current_revision=app--old
+az() {{ if [[ "$2" == show ]]; then echo {latest}; else echo "az $*"; fi; }}
+start_unchanged_revision""",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert ("az containerapp revision activate" in result.stdout) == activates
+
+    def test_public_sql_server_only_warns(self) -> None:
+        for access, warns in (("Enabled", True), ("", True), ("Disabled", False)):
+            with self.subTest(access=access):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"az() {{ printf '%s\\n' {shlex.quote(access)}; }}\nwarn_if_sql_public",
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert ("##vso[task.logissue type=warning]" in result.stdout) == warns
 
     def test_common_inputs_reject_missing_unresolved_and_noncanonical_values(self) -> None:
         cases = [
