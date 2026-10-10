@@ -269,7 +269,9 @@ class SeedDatasetFilter:
         # over criteria in _match_filter_to_metadata vacuously False, so the filter
         # would silently match no dataset at all.
         if not self.criteria:
-            raise ValueError("'criteria' must contain at least one metadata criterion.")
+            raise ValueError(
+                "'criteria' must contain at least one criterion. Omit 'criteria' for an unconstrained filter."
+            )
 
         # An empty set is not a filter. Without strict_match nothing can overlap with it,
         # and with strict_match nothing can be outside it, so the same filter would match
