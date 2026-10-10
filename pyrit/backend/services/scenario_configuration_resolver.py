@@ -148,6 +148,11 @@ class ScenarioConfigurationResolver:
                 resolved["technique_converters"] = technique_converters
 
         if dataset_names or has_total_override or filters:
+            cls._validate_dataset_overrides(
+                scenario_name=scenario_name,
+                scenario=introspection_instance,
+                has_total_override=has_total_override,
+            )
             default_config = introspection_instance._default_dataset_config
             config = default_config.with_overrides(filters=filters)
             if dataset_names:
@@ -162,6 +167,30 @@ class ScenarioConfigurationResolver:
             resolved["dataset_config"] = config
 
         return resolved
+
+    @staticmethod
+    def _validate_dataset_overrides(*, scenario_name: str, scenario: Scenario, has_total_override: bool) -> None:
+        """
+        Reject dataset overrides the scenario would not apply.
+
+        Args:
+            scenario_name: Scenario name used in error messages.
+            scenario: Introspection instance of the scenario.
+            has_total_override: Whether a non-default total limit was requested.
+
+        Raises:
+            ValueError: If the scenario has a fixed dataset, or ignores the total limit.
+        """
+        if not any(parameter.name == "dataset_config" for parameter in scenario.supported_parameters()):
+            raise ValueError(
+                f"Scenario '{scenario_name}' uses a fixed dataset, so it doesn't take dataset names, "
+                "dataset filters or a dataset size limit."
+            )
+        if has_total_override and not scenario.USES_DATASET_SIZE_LIMIT:
+            raise ValueError(
+                f"Scenario '{scenario_name}' doesn't use a dataset size limit; its own settings decide "
+                "how many prompts it runs. Leave the dataset size at its default."
+            )
 
     @classmethod
     def resolve_techniques_and_converters(
