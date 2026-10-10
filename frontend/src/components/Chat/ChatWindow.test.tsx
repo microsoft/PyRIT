@@ -1588,6 +1588,35 @@ describe("ChatWindow Integration", () => {
       attackResultId="existing" conversationId="conversation" /></TestWrapper>);
     expect(screen.getByLabelText("Temperature")).toHaveAttribute("readonly");
     expect(screen.getByLabelText("Temperature")).toHaveValue(0.8);
+    expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { interaction: "hover", supportsOverride: true },
+    { interaction: "click", supportsOverride: true },
+    { interaction: "hover", supportsOverride: false },
+    { interaction: "click", supportsOverride: false },
+  ])("explains read-only temperature on $interaction with override support $supportsOverride", async ({
+    interaction, supportsOverride,
+  }: { interaction: string; supportsOverride: boolean }) => {
+    const user = userEvent.setup();
+    const target = {
+      ...mockTarget, supports_temperature_override: supportsOverride,
+      identifier: { ...mockTarget.identifier, temperature: 0.8 },
+    };
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" /></TestWrapper>);
+    const input = screen.getByLabelText("Temperature");
+    expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
+    if (interaction === "hover") await user.hover(input);
+    else await user.click(input);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Temperature can only be modified in a new attack"
+    );
+    expect(input).toHaveAttribute("readonly");
+    expect(input).toHaveValue(0.8);
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 
   it("should create attack and send text message on first message", async () => {

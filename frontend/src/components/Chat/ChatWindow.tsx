@@ -321,6 +321,7 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<Message[]>([])
   const [pendingObjective, setPendingObjective] = useState('')
   const [temperature, setTemperature] = useState('')
+  const [temperatureExplanationAttackId, setTemperatureExplanationAttackId] = useState<string | null>(null)
   const [temperatureAttackId, setTemperatureAttackId] = useState(attackResultId)
   if (temperatureAttackId !== attackResultId) {
     setTemperatureAttackId(attackResultId)
@@ -1505,22 +1506,34 @@ export default function ChatWindow({
         </div>
         {temperatureTarget && (
           <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
-            hint={temperatureReadOnly ? 'Read-only for this attack.'
+            hint={temperatureReadOnly ? undefined
               : temperatureTarget.supports_temperature_override
                 ? editDraft !== null ? 'Changes apply only to a new attack.' : undefined
                 : temperatureTarget.reconstruction_error ?? 'This target does not support a separate temperature setting.'}>
-            <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
-              aria-label="Temperature"
-              value={temperatureReadOnly
-                ? String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? '')
-                : editDraft !== null ? editDraft.temperature : temperature}
-              placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
-              readOnly={temperatureReadOnly}
-              disabled={isSending || isSavingEditor || !temperatureTarget.supports_temperature_override}
-              onChange={(_, data) => {
-                if (editDraft !== null) editor.changeTemperature(data.value)
-                else setTemperature(data.value)
-              }} />
+            <Tooltip content="Temperature can only be modified in a new attack" relationship="description"
+              visible={temperatureReadOnly && temperatureExplanationAttackId === attackResultId}
+              onVisibleChange={(_, data) => {
+                setTemperatureExplanationAttackId(temperatureReadOnly && data.visible ? attackResultId : null)
+              }}>
+              <span
+                tabIndex={temperatureReadOnly && (isSending || isSavingEditor || !temperatureTarget.supports_temperature_override) ? 0 : undefined}
+                onPointerDownCapture={() => {
+                  if (temperatureReadOnly) setTemperatureExplanationAttackId(attackResultId)
+                }}>
+                <Input type="number" min={0} max={2} step={0.1} size="small" className={styles.temperatureInput}
+                  aria-label="Temperature"
+                  value={temperatureReadOnly
+                    ? String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? '')
+                    : editDraft !== null ? editDraft.temperature : temperature}
+                  placeholder={String(temperatureTarget.binding?.temperature ?? temperatureTarget.identifier.temperature ?? 'Default')}
+                  readOnly={temperatureReadOnly}
+                  disabled={isSending || isSavingEditor || !temperatureTarget.supports_temperature_override}
+                  onChange={(_, data) => {
+                    if (editDraft !== null) editor.changeTemperature(data.value)
+                    else setTemperature(data.value)
+                  }} />
+              </span>
+            </Tooltip>
           </Field>
         )}
         <div className={styles.editActions}>
