@@ -9,11 +9,13 @@ from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 
 class _ConverterAttack:
+    TARGET_REQUIREMENTS = TargetRequirements()
+
     def __init__(
         self,
         *,

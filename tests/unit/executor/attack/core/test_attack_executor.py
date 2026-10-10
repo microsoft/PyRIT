@@ -23,9 +23,11 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
+    ComponentIdentifier,
     Message,
     SeedObjective,
     SeedPrompt,
@@ -436,6 +438,58 @@ class TestExecuteAttackAsync:
 @pytest.mark.usefixtures("patch_central_database")
 class TestExecuteAttackFromSeedGroupsAsync:
     """Tests for execute_attack_from_seed_groups_async method."""
+
+    @pytest.mark.parametrize("field", ["atomic_attack_identifiers", "result_metadata"])
+    async def test_validates_per_input_recording_data_length_async(self, *, field: str) -> None:
+        attack = create_mock_attack()
+
+        with pytest.raises(ValueError, match=rf"{field} length .* must match seed_groups"):
+            await AttackExecutor().execute_attack_from_seed_groups_async(
+                attack=attack, seed_groups=[create_seed_group("objective")], **{field: []}
+            )
+
+        attack.execute_with_context_async.assert_not_awaited()
+
+    async def test_recording_data_stays_aligned_and_isolated_after_parameter_build_failures_async(self) -> None:
+        attack = create_mock_attack()
+        schedule = _ParameterBuildSchedule()
+        groups = [create_seed_group(objective) for objective in ["C", "A", "D", "B"]]
+        identifiers = [
+            AtomicAttackIdentifier.build(
+                attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="tests"),
+                seed_group=group,
+            )
+            for group in groups
+        ]
+        shared_nested: dict[str, list[str]] = {"executed": []}
+        metadata = [{"source": group.objective.value, "nested": shared_nested} for group in groups]
+        executed_contexts: list[SingleTurnAttackContext] = []
+
+        async def execute_async(*, context: SingleTurnAttackContext) -> AttackResult:
+            assert context._result_metadata["source"] == context.params.objective
+            assert context._result_metadata["nested"]["executed"] == []
+            context._result_metadata["nested"]["executed"].append(context.params.objective)
+            executed_contexts.append(context)
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = execute_async
+        with patch.object(AttackParameters, "from_seed_group_async", new=AsyncMock(side_effect=schedule.build_async)):
+            result = await AttackExecutor(max_concurrency=4).execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=groups,
+                atomic_attack_identifiers=identifiers,
+                result_metadata=metadata,
+                return_partial_on_failure=True,
+            )
+
+        assert result.input_indices == [1, 2]
+        assert [context.params.objective for context in executed_contexts] == ["A", "D"]
+        assert [context._atomic_attack_identifier for context in executed_contexts] == [identifiers[1], identifiers[2]]
+        assert all(
+            context._atomic_attack_identifier is not identifier
+            for context, identifier in zip(executed_contexts, [identifiers[1], identifiers[2]], strict=True)
+        )
+        assert shared_nested == {"executed": []}
 
     async def test_extracts_objectives_from_seed_groups(self):
         """Test that objectives are extracted from seed groups."""

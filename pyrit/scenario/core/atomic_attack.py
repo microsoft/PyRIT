@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
-from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -30,6 +29,7 @@ from pyrit.models import (
     ScenarioRunPlanGroupKind,
     config_hash,
 )
+from pyrit.scenario.core.technique_requirements import PreparedSeedGroup, prepare_seed_group
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -122,6 +122,18 @@ class AtomicAttack:
 
         self._seed_groups = seed_groups
         self._validate_unique_objective_hashes()
+        attack_technique.requirements.validate_target(
+            target=attack_technique.attack.get_objective_target(),
+            attack_class=attack_technique.attack.__class__,
+        )
+        self._prepared_seed_groups: dict[str, PreparedSeedGroup] = {
+            group.logical_id: prepare_seed_group(
+                seed_group=group,
+                requirements=attack_technique.requirements.seed_group,
+                seed_technique=attack_technique.seed_technique,
+            )
+            for group in seed_groups
+        }
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
@@ -248,6 +260,15 @@ class AtomicAttack:
         """
         return list(self._seed_groups)
 
+    @property
+    def seed_group_adaptations(self) -> dict[str, str]:
+        """Applied adaptations keyed by the retained original group's logical ID."""
+        return {
+            group.logical_id: prepared.adaptation
+            for group in self._seed_groups
+            if (prepared := self._prepared_seed_groups[group.logical_id]).adaptation is not None
+        }
+
     def drop_seed_groups_with_hashes(self, *, hashes: set[str]) -> None:
         """
         Drop seed groups whose ``objective_sha256`` is in ``hashes``.
@@ -312,6 +333,8 @@ class AtomicAttack:
         all seed groups. Concurrency is owned by the executor: pass a shared
         ``AttackExecutor`` instance to share a single budget across multiple
         atomic attacks (this is how ``Scenario`` parallelizes them).
+        Source identity and adaptation metadata are passed to the executor before
+        completed or failed results are persisted.
 
         When return_partial_on_failure=True (default), this method will return
         an AttackExecutorResult containing both completed results and incomplete
@@ -353,6 +376,9 @@ class AtomicAttack:
             "return_partial_on_failure",
             "attribution",
             "attributions",
+            "atomic_attack_identifier",
+            "atomic_attack_identifiers",
+            "result_metadata",
         }
         if reserved:
             raise ValueError(f"AtomicAttack owns these executor arguments: {sorted(reserved)}")
@@ -363,27 +389,43 @@ class AtomicAttack:
         )
 
         try:
-            # If the technique has seeds, merge them into each seed group for execution.
-            # The original seed_groups are not mutated.
             technique = self._attack_technique
-            if technique.seed_technique is not None:
-                execution_seed_groups = [
-                    sg.with_technique(technique=technique.seed_technique) for sg in self._seed_groups
-                ]
-            else:
-                execution_seed_groups = self._seed_groups
+            technique_identifier = technique.get_identifier()
+            technique_eval_hash = self.technique_eval_hash
+            execution_seed_groups = [
+                self._prepared_seed_groups[group.logical_id].seed_group.model_copy(deep=True)
+                for group in self._seed_groups
+            ]
+            result_identifiers: list[AtomicAttackIdentifier] = []
+            result_metadata: list[dict[str, Any]] = []
+            for source_group in self._seed_groups:
+                identifier = AtomicAttackIdentifier.build(
+                    technique_identifier=technique_identifier,
+                    seed_group=source_group,
+                )
+                result_identifiers.append(
+                    AtomicAttackIdentifier.from_component_identifier(identifier.with_eval_hash(technique_eval_hash))
+                )
+                adaptation = self._prepared_seed_groups[source_group.logical_id].adaptation
+                result_metadata.append(
+                    {
+                        "seed_group_adaptation": {
+                            "source_seed_group_id": source_group.logical_id,
+                            "technique_eval_hash": technique_eval_hash,
+                            "adaptation": adaptation,
+                        }
+                    }
+                    if adaptation is not None
+                    else {}
+                )
 
-            # Build attribution when this atomic attack is being executed inside
-            # a Scenario. The same attribution object is stamped on every
-            # per-task AttackContext; per-task identity is reconstructed from
-            # the row's own objective_sha256 (no positional state required).
             attributions: list[AttackResultAttribution] | None = None
             if self._scenario_result_id is not None:
                 attributions = [
                     AttackResultAttribution(
                         parent_id=self._scenario_result_id,
                         parent_collection=self.atomic_attack_name,
-                        parent_eval_hash=self.technique_eval_hash,
+                        parent_eval_hash=technique_eval_hash,
                         seed_group_id=seed_group.logical_id,
                     )
                     for seed_group in self._seed_groups
@@ -397,6 +439,8 @@ class AtomicAttack:
                 memory_labels=memory_labels,
                 return_partial_on_failure=return_partial_on_failure,
                 attributions=attributions,
+                atomic_attack_identifiers=result_identifiers,
+                result_metadata=result_metadata,
                 **execution_params,
             )
             completed_results: list[AttackResult] = []
@@ -410,9 +454,6 @@ class AtomicAttack:
                 input_indices=untyped_results.input_indices,
                 incomplete_result_ids=untyped_results.incomplete_result_ids,
             )
-
-            # Enrich atomic_attack_identifier with seed identifiers
-            (await self._enrich_atomic_attack_identifiers_async(results=results))
 
             # Log completion status
             if results.has_incomplete:
@@ -430,39 +471,3 @@ class AtomicAttack:
         except Exception as e:
             logger.error(f"Atomic attack '{self.atomic_attack_name}' execution failed: {str(e)}")
             raise ValueError(f"Failed to execute atomic attack '{self.atomic_attack_name}': {str(e)}") from e
-
-    async def _enrich_atomic_attack_identifiers_async(self, *, results: AttackExecutorResult[AttackResult]) -> None:
-        """
-        Enrich each AttackResult's atomic_attack_identifier with seed group and
-        technique information, then persist the update to the database.
-
-        Uses ``results.input_indices`` to map each completed result back to its
-        originating seed group by index, then rebuilds the atomic_attack_identifier
-        to include the seed identifiers and any technique seeds. The enriched
-        identifier is then flushed back to the corresponding ``AttackResultEntry`` row.
-
-        Args:
-            results: The execution results to enrich.
-        """
-        memory = CentralMemory.get_memory_instance()
-
-        for result, idx in zip(results.completed_results, results.input_indices, strict=True):
-            if idx < len(self._seed_groups):
-                identifier = AtomicAttackIdentifier.build(
-                    technique_identifier=self._attack_technique.get_identifier(),
-                    seed_group=self._seed_groups[idx],
-                )
-
-                # Persist the enriched identifier back to the database.
-                # Stamp eval_hash so it lands in the stored JSON for DB-level filtering.
-                identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
-
-                result.atomic_attack_identifier = identifier
-
-                if result.attack_result_id:
-                    (
-                        await memory.update_attack_result_by_id_async(
-                            attack_result_id=result.attack_result_id,
-                            update_fields={"atomic_attack_identifier": identifier.model_dump()},
-                        )
-                    )

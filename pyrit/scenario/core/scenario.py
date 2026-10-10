@@ -43,6 +43,7 @@ from pyrit.models import (
     ScenarioResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
+    ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunPlanSeedPrompt,
     ScenarioRunSizeComponent,
@@ -64,6 +65,7 @@ from pyrit.scenario.core.dataset_configuration import (
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import (
     Scorer,
     SelfAskRefusalScorer,
@@ -135,6 +137,8 @@ class Scenario(ABC):
     #: ``Enabled`` and ``Disabled`` states; ``Forbidden`` is a hard constraint and a
     #: caller-supplied ``include_baseline=True`` raises ``ValueError``.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
+
+    INCOMPATIBLE_TECHNIQUE_POLICY: ClassVar[IncompatibleTechniquePolicy] = IncompatibleTechniquePolicy.SKIP
 
     #: Whether LLM-backed scorers constructed by ``_get_default_objective_scorer`` raise
     #: when their own target blocks a scoring request. Subclasses may disable this when
@@ -265,6 +269,7 @@ class Scenario(ABC):
         # Resolved effective baseline inclusion for the current run. Set in initialize_async
         # before _build_atomic_attacks_async is awaited so overrides can read it.
         self._include_baseline: bool = False
+        self._incompatible_technique_policy = self.INCOMPATIBLE_TECHNIQUE_POLICY
 
     @property
     def name(self) -> str:
@@ -375,6 +380,11 @@ class Scenario(ABC):
                 name="include_baseline",
                 description="Whether to prepend a baseline atomic attack; None defers to BASELINE_ATTACK_POLICY.",
                 param_type=bool,
+            ),
+            Parameter(
+                name="incompatible_technique_policy",
+                description="Skip or raise for incompatible techniques; None uses the scenario class default.",
+                param_type=IncompatibleTechniquePolicy,
             ),
         ]
 
@@ -829,6 +839,9 @@ class Scenario(ABC):
         elif include_baseline is None:
             include_baseline = self.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
         self._include_baseline = include_baseline
+        self._incompatible_technique_policy = IncompatibleTechniquePolicy(
+            params.get("incompatible_technique_policy") or self.INCOMPATIBLE_TECHNIQUE_POLICY
+        )
 
         self._scenario_techniques = self._resolve_scenario_techniques(
             scenario_techniques=params.get("scenario_techniques")
@@ -865,17 +878,33 @@ class Scenario(ABC):
         The common run inputs read from the bag are ``objective_target`` (a ``PromptTarget``
         instance or a registered target name resolved against ``TargetRegistry``),
         ``scenario_techniques``, ``technique_converters``, ``dataset_config``,
-        ``max_concurrency``, ``max_retries``, ``memory_labels``, and ``include_baseline``
+        ``max_concurrency``, ``max_retries``, ``memory_labels``, ``include_baseline``,
+        and ``incompatible_technique_policy``
         (see ``_common_scenario_parameters``). A subclass that removes a common input via
         ``supported_parameters`` falls back to that input's default here.
 
         Raises:
+            IncompatibleTechniqueError: If techniques were selected but none can run.
             ValueError: If ``objective_target`` is declared but not resolvable (neither supplied
                 nor registered as a default), if a supplied target name is not registered in
                 ``TargetRegistry``, or if ``include_baseline=True`` is set for a scenario whose
                 ``BASELINE_ATTACK_POLICY`` is ``Forbidden``.
         """
         self._resolve_runtime_configuration(require_objective_target=True)
+        stored_result: ScenarioResult | None = None
+        stored_plan: ScenarioRunPlan | None = None
+        if self._scenario_result_id:
+            existing_results = await self._memory.get_scenario_results_async(
+                scenario_result_ids=[self._scenario_result_id]
+            )
+            if not existing_results:
+                raise ValueError(
+                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
+                    f"Drop scenario_result_id to start a new scenario."
+                )
+            stored_result = existing_results[0]
+            stored_plan = self._get_stored_run_plan(stored_result=stored_result)
+
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline emission
         # is the scenario's own responsibility — matrix scenarios get it for free (the matrix
@@ -890,8 +919,18 @@ class Scenario(ABC):
         # diverge from the persisted hashes and abort resume whenever max_dataset_size is set.
         is_resume = self._scenario_result_id is not None
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
-        context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
+        context = self._build_scenario_context(
+            seed_groups_by_dataset=seed_groups_by_dataset,
+            stored_run_plan=stored_plan,
+        )
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
+        if context.scenario_techniques and not any(
+            atomic.group_kind is not ScenarioRunPlanGroupKind.BASELINE for atomic in self._atomic_attacks
+        ):
+            raise IncompatibleTechniqueError(
+                f"{type(self).__name__}: no usable selected techniques for the objective target and dataset. "
+                f"Selected techniques: {[technique.value for technique in context.scenario_techniques]}."
+            )
 
         # Build the canonical scenario identifier once params/techniques/datasets
         # are resolved, so both the resume check and the new-result branch share the
@@ -901,23 +940,11 @@ class Scenario(ABC):
         # Check if we're resuming an existing scenario. Any divergence is a hard error
         # rather than a silent restart, so the original progress isn't orphaned without
         # the user knowing.
-        if self._scenario_result_id:
-            existing_results = await self._memory.get_scenario_results_async(
-                scenario_result_ids=[self._scenario_result_id]
-            )
-
-            if not existing_results:
-                raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
-                    f"Drop scenario_result_id to start a new scenario."
-                )
-
+        if self._scenario_result_id and stored_result is not None:
             self._validate_stored_scenario(
-                stored_result=existing_results[0],
+                stored_result=stored_result,
                 current_identifier=scenario_identifier,
             )
-            stored_result = existing_results[0]
-            stored_plan = self._get_stored_run_plan(stored_result=stored_result)
             if stored_plan is not None:
                 self._apply_persisted_run_plan(stored_plan=stored_plan)
             else:
@@ -986,6 +1013,14 @@ class Scenario(ABC):
                         hashes.append(sha)
             metadata["objective_hashes"] = hashes
         metadata[SCENARIO_RUN_PLAN_METADATA_KEY] = self._build_run_plan().model_dump(mode="json", exclude_none=True)
+        metadata["incompatible_technique_policy"] = self._incompatible_technique_policy.value
+        adaptations = {
+            atomic.logical_group_id: atomic.seed_group_adaptations
+            for atomic in self._atomic_attacks
+            if atomic.seed_group_adaptations
+        }
+        if adaptations:
+            metadata["seed_group_adaptations"] = adaptations
         return metadata
 
     def _build_run_plan(self) -> ScenarioRunPlan:
@@ -1369,7 +1404,12 @@ class Scenario(ABC):
         """
         return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> ScenarioContext:
+    def _build_scenario_context(
+        self,
+        *,
+        seed_groups_by_dataset: dict[str, list[AttackSeedGroup]],
+        stored_run_plan: ScenarioRunPlan | None = None,
+    ) -> ScenarioContext:
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
@@ -1382,6 +1422,7 @@ class Scenario(ABC):
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): Seed groups already
                 resolved once (see ``_resolve_seed_groups_by_dataset_async``). The flat
                 ``context.seed_groups`` is derived from these so both views share one sample.
+            stored_run_plan (ScenarioRunPlan | None): The original plan when resuming.
 
         Returns:
             ScenarioContext: The immutable inputs for atomic-attack construction.
@@ -1402,8 +1443,10 @@ class Scenario(ABC):
             dataset_config=self._dataset_config,
             memory_labels=dict(self._memory_labels),
             include_baseline=self._include_baseline,
+            incompatible_technique_policy=self._incompatible_technique_policy,
             seed_groups=seed_groups,
             seed_groups_by_dataset=seed_groups_by_dataset,
+            stored_run_plan=stored_run_plan,
         )
 
     @abstractmethod

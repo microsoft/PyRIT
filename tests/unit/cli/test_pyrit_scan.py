@@ -1133,6 +1133,24 @@ class TestResolveConfiguredServerUrl:
 class TestScenarioParamCoercion:
     """Regression tests for client-side coercion of typed scenario-declared params."""
 
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    def test_compatibility_policy_flag_uses_api_enum_choices(self, policy: str) -> None:
+        from argparse import ArgumentParser
+
+        from pyrit.scenario import Scenario
+
+        parameter = next(p for p in Scenario.supported_parameters() if p.name == "incompatible_technique_policy")
+        api_parameter = Parameter.model_validate(parameter.model_dump(mode="json"))
+        assert api_parameter.choices == ["skip", "raise"]
+        parser = ArgumentParser()
+        pyrit_scan._add_scenario_params_from_api(parser=parser, params=[api_parameter])
+
+        parsed = parser.parse_args(["--incompatible-technique-policy", policy])
+
+        assert parsed.scenario__incompatible_technique_policy == policy
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--incompatible-technique-policy", "adapt"])
+
     def test_list_param_uses_nargs_plus(self):
         from argparse import ArgumentParser
 

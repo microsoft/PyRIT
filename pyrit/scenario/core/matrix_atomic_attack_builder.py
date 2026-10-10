@@ -33,6 +33,13 @@ from pyrit.scenario.core._technique_resolution import (
 )
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.technique_requirements import (
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+    check_target_compatibility,
+    filter_seed_groups,
+    prepare_seed_group,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -159,12 +166,18 @@ def filter_compatible_seed_groups(
     Returns:
         list[AttackSeedGroup]: Compatible groups in source order.
     """
-    if factory.seed_technique is None:
-        return list(seed_groups)
-    return AttackSeedGroup.filter_compatible(
-        seed_groups=list(seed_groups),
-        technique=factory.seed_technique,
-    )
+    retained: list[AttackSeedGroup] = []
+    for group in seed_groups:
+        try:
+            prepare_seed_group(
+                seed_group=group,
+                requirements=factory.requirements.seed_group,
+                seed_technique=factory.seed_technique,
+            )
+        except IncompatibleTechniqueError:
+            continue
+        retained.append(group)
+    return retained
 
 
 def build_matrix_atomic_attacks(
@@ -212,6 +225,7 @@ def build_matrix_atomic_attacks(
         objective_target=context.objective_target,
         objective_scorer=objective_scorer,
         memory_labels=context.memory_labels,
+        incompatible_technique_policy=context.incompatible_technique_policy,
     )
     return builder.build(
         technique_factories=resolve_technique_factories(context=context, extra_factories=extra_factories),
@@ -229,7 +243,7 @@ class MatrixAtomicAttackBuilder:
     Construct once with the shared run inputs (target, scorer, labels), then call
     ``build`` with the per-run grid. The builder owns:
 
-    - seed-technique compatibility filtering (``AttackSeedGroup.filter_compatible``),
+    - shared target and full seed-composition compatibility checks,
     - the ``factory.create(...)`` call, forwarding an adversarial target when the
       adversarial-target axis is active,
     - ``AtomicAttack`` construction with naming and display-group stamping, and
@@ -254,6 +268,7 @@ class MatrixAtomicAttackBuilder:
         objective_target: PromptTarget,
         objective_scorer: Scorer,
         memory_labels: dict[str, str] | None = None,
+        incompatible_technique_policy: IncompatibleTechniquePolicy = IncompatibleTechniquePolicy.SKIP,
     ) -> None:
         """
         Initialize the builder with inputs shared across every atomic attack it produces.
@@ -264,10 +279,13 @@ class MatrixAtomicAttackBuilder:
                 and to the baseline.
             memory_labels (dict[str, str] | None): Labels applied to every produced
                 atomic attack.
+            incompatible_technique_policy (IncompatibleTechniquePolicy): Skip or raise
+                for known technique incompatibility. Other construction errors propagate.
         """
         self._objective_target = objective_target
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
+        self._incompatible_technique_policy = incompatible_technique_policy
 
     def build(
         self,
@@ -330,19 +348,32 @@ class MatrixAtomicAttackBuilder:
         atomic_attacks: list[AtomicAttack] = []
         technique_converters = technique_converters or {}
         for technique_name, factory in technique_factories.items():
+            if not check_target_compatibility(
+                target=self._objective_target,
+                attack_class=factory.attack_class,
+                requirements=factory.requirements,
+                technique_name=technique_name,
+                policy=self._incompatible_technique_policy,
+            ):
+                continue
+            compatible_datasets = {
+                name: filter_seed_groups(
+                    seed_groups=groups,
+                    requirements=factory.requirements.seed_group,
+                    seed_technique=factory.seed_technique,
+                    technique_name=technique_name,
+                    dataset_name=name,
+                    policy=self._incompatible_technique_policy,
+                )
+                for name, groups in dataset_groups.items()
+            }
             extra_converters = technique_converters.get(technique_name)
             extra_request_converters = (
                 ConverterConfiguration.from_converters(converters=extra_converters) if extra_converters else None
             )
             for target_name, target_instance in target_axis:
-                for dataset_name, seed_groups in dataset_groups.items():
-                    compatible_groups = self._filter_compatible_groups(
-                        factory=factory,
-                        seed_groups=seed_groups,
-                        technique_name=technique_name,
-                        dataset_name=dataset_name,
-                    )
-                    if compatible_groups is None:
+                for dataset_name, compatible_groups in compatible_datasets.items():
+                    if not compatible_groups:
                         continue
 
                     attack_technique = factory.create(
@@ -385,40 +416,3 @@ class MatrixAtomicAttackBuilder:
             )
 
         return atomic_attacks
-
-    def _filter_compatible_groups(
-        self,
-        *,
-        factory: AttackTechniqueFactory,
-        seed_groups: list[AttackSeedGroup],
-        technique_name: str,
-        dataset_name: str,
-    ) -> list[AttackSeedGroup] | None:
-        """
-        Filter seed groups to those compatible with the factory's seed technique.
-
-        Args:
-            factory (AttackTechniqueFactory): The factory whose ``seed_technique`` gates
-                compatibility.
-            seed_groups (list[AttackSeedGroup]): Candidate seed groups for one dataset.
-            technique_name (str): Technique name, used only for log messages.
-            dataset_name (str): Dataset name, used only for log messages.
-
-        Returns:
-            list[AttackSeedGroup] | None: The compatible groups, or ``None`` when the
-            ``(technique, dataset)`` pair has no compatible groups and should be skipped.
-        """
-        compatible_groups = filter_compatible_seed_groups(factory=factory, seed_groups=seed_groups)
-        skipped = len(seed_groups) - len(compatible_groups)
-        if skipped:
-            logger.info(
-                f"Skipped {skipped} seed group(s) from '{dataset_name}' for technique "
-                f"'{technique_name}' (prompt sequences overlap with simulated conversation)."
-            )
-        if not compatible_groups:
-            logger.warning(
-                f"No compatible seed groups in '{dataset_name}' for technique "
-                f"'{technique_name}', skipping this (technique, dataset) pair."
-            )
-            return None
-        return compatible_groups

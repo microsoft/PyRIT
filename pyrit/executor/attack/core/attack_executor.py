@@ -8,7 +8,8 @@ This is the new, cleaner design that leverages the params_type architecture.
 """
 
 import asyncio
-from collections.abc import Iterator, Sequence
+import copy
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
@@ -24,7 +25,7 @@ from pyrit.executor.attack.core.attack_strategy import (
     AttackStrategyContextT,
     AttackStrategyResultT,
 )
-from pyrit.models import AttackSeedGroup
+from pyrit.models import AtomicAttackIdentifier, AttackSeedGroup
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -194,6 +195,8 @@ class AttackExecutor:
         return_partial_on_failure: bool = False,
         attribution: AttackResultAttribution | None = None,
         attributions: Sequence[AttackResultAttribution] | None = None,
+        atomic_attack_identifiers: Sequence[AtomicAttackIdentifier] | None = None,
+        result_metadata: Sequence[Mapping[str, Any]] | None = None,
         **broadcast_fields: Any,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
@@ -225,6 +228,9 @@ class AttackExecutor:
                 reconstructed from the row's own ``objective_sha256``.
             attributions: Optional per-seed-group attribution. Must match
                 ``seed_groups`` and cannot be combined with ``attribution``.
+            atomic_attack_identifiers: Per-input caller-prepared behavioral and source identities,
+                recorded before persistence without changing the attack's strategy identity.
+            result_metadata: Per-input caller-prepared metadata copied onto success and error results.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -249,6 +255,12 @@ class AttackExecutor:
             )
         if attribution is not None and attributions is not None:
             raise ValueError("Provide attribution or attributions, not both")
+        for name, values in (
+            ("atomic_attack_identifiers", atomic_attack_identifiers),
+            ("result_metadata", result_metadata),
+        ):
+            if values is not None and len(values) != len(seed_groups):
+                raise ValueError(f"{name} length ({len(values)}) must match seed_groups length ({len(seed_groups)})")
         effective_attributions = (
             list(attributions)
             if attributions is not None
@@ -308,6 +320,14 @@ class AttackExecutor:
             return_partial_on_failure=return_partial_on_failure,
             attributions=successful_attributions,
             input_indices=successful_input_indices,
+            atomic_attack_identifiers=(
+                [atomic_attack_identifiers[index] for index in successful_input_indices]
+                if atomic_attack_identifiers is not None
+                else None
+            ),
+            result_metadata=(
+                [result_metadata[index] for index in successful_input_indices] if result_metadata is not None else None
+            ),
         )
         return self._merge_parameter_build_failures(
             build_failures=build_failures,
@@ -391,6 +411,8 @@ class AttackExecutor:
         return_partial_on_failure: bool = False,
         attributions: Sequence[AttackResultAttribution] | None = None,
         input_indices: Sequence[int] | None = None,
+        atomic_attack_identifiers: Sequence[AtomicAttackIdentifier] | None = None,
+        result_metadata: Sequence[Mapping[str, Any]] | None = None,
     ) -> AttackExecutorResult[AttackStrategyResultT]:
         """
         Execute attacks in parallel with a list of pre-built parameters.
@@ -405,6 +427,8 @@ class AttackExecutor:
             attributions: Optional per-task attribution matching ``params_list``.
             input_indices: Original input positions for ``params_list``. Defaults
                 to sequential positions when parameters were constructed directly.
+            atomic_attack_identifiers: Optional per-task caller-prepared result identities.
+            result_metadata: Optional per-task caller-prepared result metadata.
 
         Returns:
             AttackExecutorResult with completed results and any incomplete objectives.
@@ -417,11 +441,22 @@ class AttackExecutor:
             raise ValueError(
                 f"attributions length ({len(attributions)}) must match params_list length ({len(params_list)})"
             )
+        for name, values in (
+            ("atomic_attack_identifiers", atomic_attack_identifiers),
+            ("result_metadata", result_metadata),
+        ):
+            if values is not None and len(values) != len(params_list):
+                raise ValueError(f"{name} length ({len(values)}) must match params_list length ({len(params_list)})")
         persisted_result_ids: list[str | None] = [None] * len(params_list)
 
         async def run_one_async(index: int, params: AttackParameters) -> AttackStrategyResultT:
             async with semaphore:
                 context = attack._context_type(params=params)
+                if atomic_attack_identifiers is not None:
+                    context._atomic_attack_identifier = atomic_attack_identifiers[index].model_copy(deep=True)
+                context._result_metadata = (
+                    copy.deepcopy(dict(result_metadata[index])) if result_metadata is not None else {}
+                )
                 task_attribution = attributions[index] if attributions is not None else None
                 if task_attribution is not None:
                     context._attribution = task_attribution

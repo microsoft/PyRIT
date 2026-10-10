@@ -58,7 +58,7 @@ from pyrit.models import (
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.scenario import Scenario
+from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
@@ -215,6 +215,41 @@ def _make_history_record(
     )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+class TestCompatibilityPolicyLaunch:
+    @pytest.mark.parametrize(
+        ("class_default", "supplied", "expected"),
+        [
+            (IncompatibleTechniquePolicy.SKIP, None, "skip"),
+            (IncompatibleTechniquePolicy.RAISE, None, "raise"),
+            (IncompatibleTechniquePolicy.SKIP, "raise", "raise"),
+            (IncompatibleTechniquePolicy.RAISE, "skip", "skip"),
+        ],
+    )
+    async def test_launch_saves_effective_policy_async(
+        self,
+        *,
+        class_default: IncompatibleTechniquePolicy,
+        supplied: str | None,
+        expected: str,
+        mock_all_registries: dict[str, Any],
+    ) -> None:
+        mock_all_registries["scenario_class"].INCOMPATIBLE_TECHNIQUE_POLICY = class_default
+        request = _make_request(
+            include_baseline=False,
+            scenario_params={"incompatible_technique_policy": supplied} if supplied is not None else None,
+        )
+        service = ScenarioRunService()
+
+        await service._initialize_scenario_async(request=request, init_kwargs={})
+
+        call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        launch = call.kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        assert launch["incompatible_technique_policy"] == expected
+        assert call.kwargs["scenario_params"] == (request.scenario_params or {})
+        await service.close_async()
+
+
 @pytest.fixture
 def mock_memory():
     """Patch CentralMemory.get_memory_instance to return a mock."""
@@ -238,6 +273,8 @@ def mock_all_registries(mock_memory):
     mock_scenario_instance._scenario_result_id = "sr-uuid-1"
 
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
+    mock_scenario_class.supported_parameters.return_value = Scenario.supported_parameters()
+    mock_scenario_class.INCOMPATIBLE_TECHNIQUE_POLICY = IncompatibleTechniquePolicy.SKIP
     mock_scenario_instance._technique_class = MagicMock()
     mock_scenario_instance._default_dataset_config = MagicMock()
 

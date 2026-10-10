@@ -25,9 +25,12 @@ if TYPE_CHECKING:
         DatasetAttackConfiguration,
         DatasetConfiguration,
         DatasetSourceKind,
+        IncompatibleTechniqueError,
+        IncompatibleTechniquePolicy,
         ResolvedDataset,
         Scenario,
         ScenarioTechnique,
+        TechniqueRequirements,
     )
     from pyrit.scenario.scenarios import adaptive, airt, benchmark, foundry, garak
 
@@ -94,6 +97,9 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ResolvedDataset": "pyrit.scenario.core.dataset_configuration",
     "Scenario": "pyrit.scenario.core.scenario",
     "ScenarioTechnique": "pyrit.scenario.core.scenario_technique",
+    "TechniqueRequirements": "pyrit.scenario.core.technique_requirements",
+    "IncompatibleTechniqueError": "pyrit.scenario.core.technique_requirements",
+    "IncompatibleTechniquePolicy": "pyrit.scenario.core.technique_requirements",
     "ScenarioIdentifier": "pyrit.models.identifiers.scenario_identifier",
     "ScenarioResult": "pyrit.models.results.scenario_result",
     "adaptive": ("pyrit.scenario.scenarios.adaptive", None),

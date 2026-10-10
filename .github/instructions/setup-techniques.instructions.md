@@ -42,3 +42,13 @@ stop — put the value back inline.
 - Keep entries free of long explanatory comments and paper citations. The factory should read as
   plain configuration; if a technique's mechanics are subtle, document them on the reusable
   converter/model it uses, or here in this file, not as an inline comment block.
+
+## Requirements
+
+Declare `TechniqueRequirements` inline; attack-class target requirements also apply.
+Use `TargetRequirements.required` only when configured adaptation preserves the technique;
+use `native_required` otherwise. Declare modality combinations explicitly.
+
+`objective_only=True` rejects extra dataset seeds and is the simulated-conversation default.
+Set `try_adapt=True` only when removal of extra dataset seeds preserves the technique's behavior.
+Scenarios, not factories, choose skip or raise.

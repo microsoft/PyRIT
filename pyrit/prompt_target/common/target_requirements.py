@@ -26,8 +26,8 @@ class TargetRequirements:
     Two tiers of requirement are supported:
 
     * ``required`` \u2014 satisfied either by native support on the target or
-      by an ``ADAPT`` entry in the target's
-      ``CapabilityHandlingPolicy``. Use this when the consumer only
+      by an available configured adapter and an ``ADAPT`` entry in the
+      target's ``CapabilityHandlingPolicy``. Use this when the consumer only
       needs the behavior to appear on the wire.
     * ``native_required`` \u2014 must be natively supported. Adaptation is
       rejected. Use this when adaptation would silently change the
@@ -49,6 +49,25 @@ class TargetRequirements:
     required_input_modalities: frozenset[frozenset[PromptDataType]] = field(default_factory=frozenset)
     required_output_modalities: frozenset[frozenset[PromptDataType]] = field(default_factory=frozenset)
 
+    def check(self, *, target: PromptTarget) -> list[str]:
+        """
+        Return requirement failures without raising for a target mismatch.
+
+        Calls the consumer's validation method so subclass rules remain in effect.
+        Other exception types propagate.
+
+        Args:
+            target (PromptTarget): The target to check.
+
+        Returns:
+            list[str]: Validation messages, or an empty list when compatible.
+        """
+        try:
+            self.validate(target=target)
+        except ValueError as exc:
+            return [str(exc)]
+        return []
+
     def validate(self, *, target: PromptTarget) -> None:
         """
         Validate that ``target`` can satisfy every declared requirement.
@@ -63,7 +82,7 @@ class TargetRequirements:
         Raises:
             ValueError: If any ``native_required`` capability is not natively
                 supported, or if any ``required`` capability is not supported
-                natively and has no ``ADAPT`` entry in the target's policy,
+                natively and cannot be handled by its configured adapters and policy,
                 or if the target's modalities do not satisfy
                 ``required_input_modalities`` / ``required_output_modalities``.
         """

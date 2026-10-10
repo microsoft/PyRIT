@@ -41,14 +41,15 @@ from pyrit.executor.attack import (
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
-from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
+from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
     FoundryComposite,
     FoundryTechnique,
     RedTeamAgent,
 )
 from pyrit.score import FloatScaleThresholdScorer, TrueFalseScorer
+from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_scorer_id(name: str = "MockObjectiveScorer") -> ComponentIdentifier:
@@ -200,6 +201,118 @@ def mock_runtime_env():
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+class TestFoundryCompatibilityPolicy:
+    @pytest.mark.parametrize("policy", [None, "skip", "raise"])
+    @pytest.mark.parametrize("composed", [False, True])
+    async def test_incompatible_attack_follows_policy_async(
+        self,
+        *,
+        policy: str | None,
+        composed: bool,
+        mock_adversarial_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(
+                    supports_multi_turn=False,
+                    supports_editable_history=True,
+                    supports_system_prompt=True,
+                )
+            )
+        )
+        scenario = RedTeamAgent(
+            adversarial_chat=mock_adversarial_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        incompatible = (
+            FoundryComposite(attack=FoundryTechnique.Crescendo, converters=[FoundryTechnique.Base64])
+            if composed
+            else FoundryTechnique.Crescendo
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": target,
+                "scenario_techniques": [incompatible, FoundryTechnique.ROT13],
+                "incompatible_technique_policy": policy,
+            }
+        )
+        with patch.object(
+            scenario,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"dataset": mock_memory_seed_groups},
+        ):
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="incompatible with the objective target"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert [atomic.atomic_attack_name for atomic in scenario._atomic_attacks] == ["baseline", "rot13"]
+                assert len([record for record in caplog.records if "Skipping Technique" in record.message]) == 1
+
+    async def test_baseline_cannot_hide_all_incompatible_techniques_async(
+        self,
+        *,
+        mock_adversarial_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=False))
+        )
+        scenario = RedTeamAgent(
+            adversarial_chat=mock_adversarial_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        scenario.set_params_from_args(
+            args={"objective_target": target, "scenario_techniques": [FoundryTechnique.Crescendo]}
+        )
+        with patch.object(
+            scenario,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"dataset": mock_memory_seed_groups},
+        ):
+            with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
+                await scenario.initialize_async()
+
+    @pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+    async def test_unrelated_construction_errors_are_not_skipped_async(
+        self,
+        *,
+        error_type: type[Exception],
+        mock_adversarial_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        scenario = RedTeamAgent(
+            adversarial_chat=mock_adversarial_target,
+            attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [FoundryTechnique.Base64],
+                "incompatible_technique_policy": "skip",
+            }
+        )
+        with (
+            patch.object(
+                scenario,
+                "_resolve_seed_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value={"dataset": mock_memory_seed_groups},
+            ),
+            patch.object(scenario, "_get_attack", side_effect=error_type("unrelated construction failure")),
+        ):
+            with pytest.raises(error_type, match="unrelated construction failure"):
+                await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures(*FIXTURES)
