@@ -12,7 +12,12 @@ import pytest
 import yaml
 from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
 
-from pyrit.common.path import DOCS_PATH, EXECUTOR_RED_TEAM_PATH, EXECUTOR_SEED_PROMPT_PATH
+from pyrit.common.path import (
+    DOCS_PATH,
+    EXECUTOR_RED_TEAM_PATH,
+    EXECUTOR_SEED_PROMPT_PATH,
+    EXECUTOR_SIMULATED_TARGET_PATH,
+)
 from pyrit.converter import CharNoiseConverter, CharSwapConverter, RandomCapitalLettersConverter
 from pyrit.executor.attack import (
     AttackScoringConfig,
@@ -77,6 +82,21 @@ ROLE_PLAY_TECHNIQUE_NAMES: list[str] = [
     "role_play_persuasion",
     "role_play_persuasion_written",
 ]
+
+# A markdown ordered-list item, e.g. "7. Do not summarize the objective..."
+_NUMBERED_ITEM = re.compile(r"\d+\.\s")
+
+# Every prompt the role-play technique sends, keyed by a label the tests can
+# parametrize over. The technique's own personas and the simulated target's
+# next-message prompt are edited together and drifted apart once, so they are
+# guarded as one set.
+ROLE_PLAY_PROMPT_PATHS: dict[str, Path] = {
+    **{
+        name: Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{name}.yaml"
+        for name in ROLE_PLAY_TECHNIQUE_NAMES
+    },
+    "role_play_next_message": Path(EXECUTOR_SIMULATED_TARGET_PATH) / "role_play_next_message.yaml",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +331,8 @@ class TestPersonaCrescendoYamls:
         path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / f"{technique_name}.yaml"
         text = path.read_text(encoding="utf-8")
         # Literal em-dash and en-dash characters used as needles for absence assertions on the YAMLs
-        assert "–" not in text, f"{technique_name}.yaml contains an en-dash"
-        assert "—" not in text, f"{technique_name}.yaml contains an em-dash"
+        assert "â€“" not in text, f"{technique_name}.yaml contains an en-dash"
+        assert "â€”" not in text, f"{technique_name}.yaml contains an em-dash"
 
 
 class TestContextComplianceTechnique:
@@ -477,8 +497,62 @@ class TestRolePlayYamls:
         path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
         text = path.read_text(encoding="utf-8")
         # Literal em-dash and en-dash characters used as needles for absence assertions on the YAMLs
-        assert "–" not in text, f"{technique_name}.yaml contains an en-dash"
-        assert "—" not in text, f"{technique_name}.yaml contains an em-dash"
+        assert "â€“" not in text, f"{technique_name}.yaml contains an en-dash"
+        assert "â€”" not in text, f"{technique_name}.yaml contains an em-dash"
+
+    @pytest.mark.parametrize("technique_name", ROLE_PLAY_TECHNIQUE_NAMES)
+    def test_yaml_has_no_preamble_instruction(self, technique_name):
+        """Role-play persona YAMLs must instruct the model to avoid preamble/filler."""
+        path = Path(EXECUTOR_SEED_PROMPT_PATH) / "red_teaming" / "role_play" / f"{technique_name}.yaml"
+        text = path.read_text(encoding="utf-8")
+        assert "must begin directly with the in-character attack prompt" in text, (
+            f"{technique_name}.yaml missing anti-preamble instruction"
+        )
+        assert "Do not include any preamble" in text, f"{technique_name}.yaml missing preamble prohibition"
+
+    def test_role_play_next_message_has_no_preamble_instruction(self):
+        """The role-play next-message prompt must also instruct the model to avoid preamble/filler."""
+        path = Path(EXECUTOR_SIMULATED_TARGET_PATH) / "role_play_next_message.yaml"
+        text = path.read_text(encoding="utf-8")
+        assert "must begin directly with the in-character attack prompt" in text, (
+            "role_play_next_message.yaml missing anti-preamble instruction"
+        )
+        assert "include any preamble" in text, "role_play_next_message.yaml missing preamble prohibition"
+
+    @pytest.mark.parametrize("prompt_name", list(ROLE_PLAY_PROMPT_PATHS))
+    def test_prompt_blocks_keep_a_single_base_indent(self, prompt_name):
+        """Section headings and top-level bullets must all sit at the block's base indent.
+
+        Inserting the anti-preamble bullet re-indented the neighbouring lines one
+        column to the right: `## Response Format` went from two spaces to three in
+        all five personas, and a run of bullets in the next-message prompt went from
+        two to three. YAML strips a block scalar's base indent, so the stray column
+        is not cosmetic -- it reaches the model, breaking one flat bullet list into
+        a nested one and pushing a section heading out of column zero.
+
+        Only the first content line sets the base indent, so the file still parses
+        and still renders, which is why this needs a test rather than a build error.
+        """
+        path = ROLE_PLAY_PROMPT_PATHS[prompt_name]
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+        # The prompt is the `value: |` block scalar, and the block's base indent
+        # is set by its own first content line, not by the start of the file.
+        value_at = next(i for i, line in enumerate(lines) if line.startswith("value:"))
+        first = next(line for line in lines[value_at + 1 :] if line.strip())
+        base = len(first) - len(first.lstrip())
+        assert base, f"{prompt_name}.yaml has an unindented value block"
+
+        for line in lines[value_at + 1 :]:
+            stripped = line.lstrip()
+            is_block_item = stripped.startswith(("- ", "## ")) or _NUMBERED_ITEM.match(stripped)
+            if not is_block_item:
+                continue
+            indent = len(line) - len(stripped)
+            assert indent == base, (
+                f"{prompt_name}.yaml has {stripped.splitlines()[0]!r} at indent {indent}, "
+                f"but the value block's base indent is {base}"
+            )
 
 
 # ---------------------------------------------------------------------------
