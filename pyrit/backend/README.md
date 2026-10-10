@@ -59,6 +59,10 @@ Invalid settings or selector collisions return 400 without registering a factory
 invalid request shapes return 422. `all` and `default` are reserved selectors;
 `types` is also a reserved name. Names cannot replace inherited `ScenarioTechnique`
 attributes such as `resolve` or `get_all_techniques`.
+Admission also checks the effective dynamic scenario pools, including local factory
+tags and scenario filters, before changing the registry. Attack-owned constructor
+validators check bounds and other configuration constraints without constructing
+or executing attacks. Target and scorer compatibility stays an initialization check.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
@@ -70,6 +74,9 @@ disclosing target credentials.
 Scenario-local factories take precedence over registered factories of the same name.
 `AttackTechniqueRegistry.cache_scenario_technique_class` refreshes scenario selection
 enums when registered factories change; it does not create attacks.
+Selections from an earlier enum remain valid in the same scenario and registry
+generation if their factories are unchanged. Earlier aggregate selections retain
+their original members; they do not gain newly registered techniques.
 Responses include `creation_statement`, a Python-style display of the factory's
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable

@@ -21,9 +21,11 @@ with the scenario's objective target and scorer.
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache, wraps
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+from weakref import WeakSet
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
@@ -132,6 +134,10 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Raises:
             ValueError: If the name or a tag conflicts with an existing selector.
         """
+        from pyrit.registry.components.scenario_registry import ScenarioRegistry
+
+        # Discover builders before taking the instance lock; discovery has its own catalog lock.
+        ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
             entries = self.get_all_instances()
             names = {entry.name.casefold(): entry.name for entry in entries}
@@ -151,6 +157,9 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
                 class_name="ScenarioTechnique",
                 factories=[factory],
                 aggregate_tags=set(factory.technique_tags) - {"all", "default"},
+            )
+            AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
+                {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
             )
             self.register(factory, name=factory.name, tags=factory.technique_tags)
 
@@ -172,6 +181,11 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
     ``cache_scenario_technique_class`` refreshes scenario selection enums when
     registered factories change. It does not create or cache attack instances.
     """
+
+    _SCENARIO_BUILDERS: ClassVar[WeakSet[Callable[[], type[ScenarioTechnique]]]] = WeakSet()
+    _FACTORY_PREVIEW: ClassVar[ContextVar[tuple[object, dict[str, AttackTechniqueFactory]] | None]] = ContextVar(
+        "technique_factory_preview", default=None
+    )
 
     def __init__(self, *, lazy_discovery: bool = True) -> None:
         """
@@ -280,6 +294,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 owner="Technique",
                 name="adversarial_chat",
             )
+        registry.validate_constructor_parameters(attack_class=attack_class, params=attack_args)
         return AttackTechniqueFactory(
             name=name,
             attack_class=attack_class,
@@ -329,7 +344,27 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Returns:
             dict[str, AttackTechniqueFactory]: Mapping of technique name to factory.
         """
+        preview = self._FACTORY_PREVIEW.get()
+        if preview is not None and preview[0] is self.instances:
+            return dict(preview[1])
         return {entry.name: entry.instance for entry in self.instances.get_all_instances()}
+
+    def validate_scenario_pools(self, factories: dict[str, AttackTechniqueFactory]) -> None:
+        """
+        Build affected selection catalogs against a candidate pool without changing caches or storage.
+
+        Scenario builders retain their own filtering and local-factory precedence.
+        Fixed catalogs do not use the revision-aware decorator and are not rebuilt.
+
+        Raises:
+            ValueError: If a candidate conflicts with an effective scenario catalog.
+        """
+        token = self._FACTORY_PREVIEW.set((self.instances, factories))
+        try:
+            for builder in tuple(self._SCENARIO_BUILDERS):
+                builder()
+        finally:
+            self._FACTORY_PREVIEW.reset(token)
 
     def get_factories_or_raise(self) -> dict[str, AttackTechniqueFactory]:
         """
@@ -384,14 +419,19 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
 
         @lru_cache(maxsize=1)
         def cached(revision: tuple[object, int]) -> type[ScenarioTechnique]:
-            return builder()
+            technique_class = builder()
+            technique_class._selection_catalog = (builder, revision[0])
+            return technique_class
 
         @wraps(builder)
         def current() -> type[ScenarioTechnique]:
+            if AttackTechniqueRegistry._FACTORY_PREVIEW.get() is not None:
+                return builder()
             return cached(AttackTechniqueRegistry.get_registry_singleton().catalog_revision)
 
         result = cast("_CachedScenarioTechniqueClass", current)
         result.cache_clear = cached.cache_clear
+        AttackTechniqueRegistry._SCENARIO_BUILDERS.add(builder)
         return result
 
     @staticmethod
@@ -496,7 +536,8 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             members[factory.name] = (factory.name, factory_tags, factory.description)
 
         # Build the enum class dynamically
-        technique_cls = ScenarioTechnique(class_name, members)
+        technique_cls = cast("type[ScenarioTechnique]", ScenarioTechnique(class_name, members))
+        technique_cls._factory_sources = {factory.name: factory for factory in pool}
 
         # Override get_aggregate_tags on the generated class
         @classmethod
@@ -511,7 +552,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         if default_member_names:
             technique_cls._default_technique_value = "default"  # type: ignore[ty:unresolved-attribute]
 
-        return technique_cls  # type: ignore[ty:invalid-return-type]
+        return technique_cls
 
     def register_from_factories(
         self,

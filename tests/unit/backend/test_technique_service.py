@@ -5,6 +5,7 @@
 
 import ast
 import asyncio
+import threading
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -28,12 +29,15 @@ from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )
+from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry
+from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios import airt
+from pyrit.scenario.scenarios.airt.leakage import Leakage
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -289,6 +293,236 @@ def test_rest_accepts_scenario_local_names(
     assert created.json()["description"] == "Runtime configuration"
     assert registry.instances.get(name) is not None
     assert name in {technique.value for technique in airt.RapidResponseTechnique.get_all_techniques()}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"name": "LEAKAGE", "type": "PromptSendingAttack"},
+        {"name": "local_collision", "type": "PromptSendingAttack", "tags": ["LEAKAGE"]},
+    ],
+)
+def test_rest_rejects_local_selector_collisions_and_preserves_whole_catalog(
+    *,
+    registry: AttackTechniqueRegistry,
+    compatibility_headers: dict[str, str],
+    payload: dict[str, Any],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    scenarios = ScenarioRegistry.get_registry_singleton()
+    scorer = SubStringScorer(substring="yes")
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+        patch.object(scenarios, "_discover"),
+    ):
+        scenarios.register_class(RapidResponse, name="airt.rapid_response")
+        scenarios.register_class(Leakage, name="airt.leakage")
+        before = {name: client.get(f"/api/scenarios/catalog/{name}").json() for name in scenarios.get_class_names()}
+        revision = registry.catalog_revision
+        enum = airt.RapidResponseTechnique
+        response = client.post("/api/techniques", json=payload)
+        assert response.status_code == 400, response.text
+        assert "LeakageTechnique" in response.json()["detail"]
+        assert registry.catalog_revision == revision
+        assert registry.instances.get(payload["name"]) is None
+        assert airt.RapidResponseTechnique is enum
+        for name, metadata in before.items():
+            response = client.get(f"/api/scenarios/catalog/{name}")
+            assert response.status_code == 200, response.text
+            assert response.json() == metadata
+
+
+async def test_candidate_pool_is_not_visible_to_concurrent_catalog_reads_async(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    started = threading.Event()
+    finish = threading.Event()
+    preview = registry.create_factory(name="preview_only", attack_type="PromptSendingAttack")
+    before = airt.RapidResponseTechnique
+    revision = registry.catalog_revision
+
+    @AttackTechniqueRegistry.cache_scenario_technique_class
+    def build_technique() -> type[ScenarioTechnique]:
+        factories = registry.get_factories()
+        if "preview_only" in factories:
+            started.set()
+            if not finish.wait(timeout=10):
+                raise TimeoutError("Candidate validation did not finish")
+        return registry.build_technique_class_from_factories(
+            class_name="ConcurrentTechnique", factories=list(factories.values())
+        )
+
+    validation = asyncio.create_task(
+        asyncio.to_thread(registry.validate_scenario_pools, {**registry.get_factories(), preview.name: preview})
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        assert registry.instances.get("preview_only") is None
+        assert "preview_only" not in registry.get_factories()
+        assert registry.catalog_revision == revision
+        assert airt.RapidResponseTechnique is before
+        assert "preview_only" not in {item.value for item in build_technique().get_all_techniques()}
+    finally:
+        finish.set()
+        await validation
+    assert "preview_only" not in {item.value for item in build_technique().get_all_techniques()}
+
+
+def test_imported_selection_rebinds_only_unchanged_same_catalog_factories(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    registry.register_from_factories([AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack)])
+    imported = airt.RapidResponseTechnique
+    old_values = {item.value for item in imported.get_all_techniques()}
+    selected = next(item for item in imported.get_all_techniques() if item.value == "base")
+    registry.instances.register_runtime(registry.create_factory(name="unrelated", attack_type="PromptSendingAttack"))
+    current = airt.RapidResponseTechnique
+    assert current.resolve([selected], default=current.default()) == [current("base")]
+    assert {item.value for item in current.resolve([imported.ALL], default=current.default())} == old_values
+    assert "unrelated" not in old_values
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.LeakageTechnique.resolve([selected], default=airt.LeakageTechnique.default())
+    registry.instances.unregister("base")
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.RapidResponseTechnique.resolve([selected], default=airt.RapidResponseTechnique.default())
+    registry.instances.register(AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack), name="base")
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.RapidResponseTechnique.resolve([selected], default=airt.RapidResponseTechnique.default())
+    AttackTechniqueRegistry.reset_registry_singleton()
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.RapidResponseTechnique.resolve([selected], default=airt.RapidResponseTechnique.default())
+
+
+async def test_launch_survives_registration_between_resolution_and_construction_async(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    registry.register_from_factories([AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack)])
+    scorer = SubStringScorer(substring="yes")
+    target = MockPromptTarget()
+    scenarios = ScenarioRegistry.get_registry_singleton()
+    TargetRegistry.get_registry_singleton().instances.register(target, name="local")
+    service = ScenarioRunService()
+    initialize = service._initialize_scenario_async
+
+    async def register_then_initialize_async(*, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
+        await TechniqueService().create_async(CreateTechniqueRequest(name="during_launch", type="PromptSendingAttack"))
+        return await initialize(request=request, init_kwargs=init_kwargs)
+
+    try:
+        with (
+            patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+            patch.object(scenarios, "_discover"),
+            patch.object(service, "_initialize_scenario_async", side_effect=register_then_initialize_async),
+            patch.object(
+                CompoundDatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
+            ),
+        ):
+            scenarios.register_class(RapidResponse, name="airt.rapid_response")
+            prepared = await service._prepare_run_async(
+                request=RunScenarioRequest(
+                    scenario_name="airt.rapid_response",
+                    target_name="local",
+                    techniques=["base"],
+                    include_baseline=False,
+                )
+            )
+        assert len(prepared.scenario._atomic_attacks) == 1
+        assert isinstance(prepared.scenario._atomic_attacks[0].attack_technique.attack, PromptSendingAttack)
+        assert "during_launch" in registry.instances.get_names()
+        assert target.prompt_sent == []
+    finally:
+        await service.close_async()
+
+
+@pytest.mark.parametrize(
+    ("attack_type", "params"),
+    [
+        ("PromptSendingAttack", {"max_attempts_on_failure": -1}),
+        ("ManyShotJailbreakAttack", {"max_attempts_on_failure": -1}),
+        ("ManyShotJailbreakAttack", {"example_count": 0}),
+        ("ManyShotJailbreakAttack", {"many_shot_examples": []}),
+        ("CrescendoAttack", {"max_backtracks": -1}),
+        ("CrescendoAttack", {"max_turns": 0}),
+        ("RedTeamingAttack", {"max_turns": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"tree_depth": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"tree_width": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"branching_factor": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"batch_size": 0}),
+        ("ChunkedRequestAttack", {"chunk_size": 0}),
+        ("ChunkedRequestAttack", {"total_length": 49}),
+        ("ChunkedRequestAttack", {"chunk_size": 201}),
+        ("ChunkedRequestAttack", {"request_template": "{objective}"}),
+    ],
+)
+async def test_rest_attack_constraints_reject_without_constructing_or_mutating_async(
+    *, registry: AttackTechniqueRegistry, attack_type: str, params: dict[str, Any]
+) -> None:
+    revision = registry.catalog_revision
+    attack_class = AttackRegistry.get_registry_singleton().get_class(attack_type)
+    with patch.object(attack_class, "__init__", autospec=True, side_effect=AssertionError("Must stay deferred")):
+        with pytest.raises(ValueError):
+            await TechniqueService().create_async(
+                CreateTechniqueRequest(name="bad_bounds", type=attack_type, params=params)
+            )
+    assert registry.catalog_revision == revision
+    assert registry.instances.get("bad_bounds") is None
+
+
+async def test_rest_create_and_initialize_numeric_boundary_async(registry: AttackTechniqueRegistry) -> None:
+    service = TechniqueService()
+    revision = registry.catalog_revision
+    with pytest.raises(ValueError, match="non-negative"):
+        await service.create_async(
+            CreateTechniqueRequest(
+                name="bad_attempts", type="PromptSendingAttack", params={"max_attempts_on_failure": -1}
+            )
+        )
+    assert registry.catalog_revision == revision
+    await service.create_async(
+        CreateTechniqueRequest(name="zero_attempts", type="PromptSendingAttack", params={"max_attempts_on_failure": 0})
+    )
+    scorer = SubStringScorer(substring="yes")
+    target = MockPromptTarget()
+    scenario = RapidResponse(objective_scorer=scorer)
+    scenario.set_params_from_args(
+        args={
+            "objective_target": target,
+            "scenario_techniques": [scenario._technique_class("zero_attempts")],
+            "include_baseline": False,
+        }
+    )
+    with patch.object(
+        CompoundDatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
+    ):
+        await scenario.initialize_async()
+    assert len(scenario._atomic_attacks) == 1
+    attack = scenario._atomic_attacks[0].attack_technique.attack
+    assert isinstance(attack, PromptSendingAttack)
+    assert attack._max_attempts_on_failure == 0
+    assert target.prompt_sent == []
+
+
+def test_rest_numeric_constraint_error_preserves_catalog(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    before = client.get("/api/techniques").json()
+    revision = registry.catalog_revision
+    response = client.post(
+        "/api/techniques",
+        json={"name": "bad_attempts", "type": "PromptSendingAttack", "params": {"max_attempts_on_failure": -1}},
+    )
+    assert response.status_code == 400, response.text
+    assert "non-negative integer" in response.json()["detail"]
+    assert registry.catalog_revision == revision
+    assert client.get("/api/techniques").json() == before
 
 
 async def test_warm_catalog_estimates_and_summaries_refresh_without_changing_snapshot_async(

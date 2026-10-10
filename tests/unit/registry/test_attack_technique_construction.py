@@ -90,6 +90,32 @@ def test_custom_variant_uses_existing_resolver_and_creates_fresh_attacks(registr
     assert target.prompt_sent == []
 
 
+def test_custom_attack_validation_is_reused_for_deferred_construction(registry: AttackTechniqueRegistry) -> None:
+    class BoundedAttack(PromptSendingAttack):
+        def __init__(self, *, objective_target: MockPromptTarget, limit: int = 2) -> None:
+            self.validate_constructor_parameters({"limit": limit})
+            super().__init__(objective_target=objective_target)
+            self.limit = limit
+
+        @classmethod
+        def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+            super().validate_constructor_parameters(params)
+            if "limit" in params and params["limit"] < 1:
+                raise ValueError("limit must be positive")
+
+    AttackRegistry.get_registry_singleton().register_class(BoundedAttack)
+    revision = registry.catalog_revision
+    with pytest.raises(ValueError, match="limit must be positive"):
+        registry.create_factory(name="invalid_custom", attack_type="BoundedAttack", params={"limit": 0})
+    assert registry.catalog_revision == revision
+    factory = registry.create_factory(name="valid_custom", attack_type="BoundedAttack")
+    target = MockPromptTarget()
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    assert isinstance(technique.attack, BoundedAttack)
+    assert technique.attack.limit == 2
+    assert target.prompt_sent == []
+
+
 def test_omission_null_and_empty_converter_list_remain_distinct(registry: AttackTechniqueRegistry) -> None:
     omitted = registry.create_factory(name="omitted", attack_type="PromptSendingAttack")
     explicit = registry.create_factory(
