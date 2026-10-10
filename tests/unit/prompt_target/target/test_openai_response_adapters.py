@@ -48,12 +48,20 @@ def test_tool_preflight_and_serialization_reject_invalid_provider_fields(payload
 @pytest.mark.usefixtures("patch_central_database")
 def test_tool_preflight_accepts_empty_history_and_preserves_provider_extensions() -> None:
     target = object.__new__(OpenAIResponseTarget)
-    payload = '{"type":"web_search_call","call_id":"web-1","query":"query","extension":{"key":"value"}}'
+    payload = (
+        '{"type":"web_search_call","id":"ws-1","status":"completed",'
+        '"action":{"type":"search","query":"query"},"extension":{"key":"value"}}'
+    )
     piece = MessagePiece(role="simulated_assistant", original_value_data_type="tool_call", original_value=payload)
     target.validate_tool_history([])
     target.validate_tool_history([Message(message_pieces=[piece])])
     assert piece.converted_value == payload
-    assert target._serialize_tool_call(piece) == {"type": "web_search_call", "call_id": "web-1", "query": "query"}
+    assert target._serialize_tool_call(piece) == {
+        "id": "ws-1",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {"type": "search", "query": "query"},
+    }
 
 
 @pytest.mark.usefixtures("patch_central_database")
