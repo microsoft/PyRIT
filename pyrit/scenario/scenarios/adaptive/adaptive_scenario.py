@@ -25,6 +25,7 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
     BoundedDatasetSize,
+    ScenarioRunPlanGroupKind,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
@@ -59,6 +60,7 @@ class AdaptiveScenario(Scenario):
     """
 
     VERSION: ClassVar[int]
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     @abstractmethod
@@ -454,6 +456,7 @@ class AdaptiveScenario(Scenario):
                     objective_scorer=self._objective_scorer,
                     memory_labels=dict(self._memory_labels),
                     display_group=dataset_name,
+                    group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
                 )
             )
 

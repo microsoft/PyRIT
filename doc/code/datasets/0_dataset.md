@@ -93,3 +93,44 @@ an explicit origin other than `local`. Remote dataset providers assign
 use `GENERATED`. Origin does not describe upstream authorship. Use `origin=SeedOrigin.USER`
 for explicit user entries. Unspecified and legacy origins remain `UNKNOWN`, while edits
 preserve the recorded origin.
+
+## Browse stored seeds
+
+The seed browser reads stored seeds from memory only. It does not load providers, open
+media or template files, render templates, or generate conversations. Members are
+`SeedRecord` projections, not reconstructed execution-ready seeds. Simulated-conversation
+configurations remain unchanged in `value`, including legacy file references and
+configurations that cannot be executed. Missing files do not remove members or examples.
+Stored IDs, hashes, nullable roles and sequences, parameters, objective conditions, and
+provenance are retained. Existing `get_seeds_async()` reconstruction is unchanged.
+
+- `GET /api/datasets/seeds?selection_key=<key>` lists one page of logical examples.
+- `GET /api/datasets/seeds/{example_id}?selection_key=<key>` returns all members of one example
+  as stored records, identified by `seed_type`. Configuration fields such as `num_turns`
+  remain in the stored JSON `value`; browsing does not resolve them into live seed objects.
+
+Get the `selection_key` from `GET /api/datasets`. The unnamed key `dataset:unnamed` includes
+NULL and empty dataset names. The example ID is the `prompt_group_id`, or the seed ID when
+the seed has no group. Only members in the selected dataset are returned.
+
+The list accepts `limit` (1 to 100), `cursor`, `search`, and repeated `modality`,
+`seed_type`, and `harm_category` parameters. Values of one parameter use OR. Different
+parameters use AND, and different members of an example can match different parameters.
+Harm categories match complete values without case sensitivity. `search` finds literal
+text in the values of text prompts and objectives; `%`, `_`, and `[` are not patterns.
+SQLite ignores case for ASCII characters only. `search` does not look in
+simulated-conversation configurations, because their stored value is JSON. Use
+`seed_type=simulated_conversation` to find them.
+
+Examples sort by the earliest member `date_added`, newest first, then by canonical textual
+example ID, descending. SQLite and Azure SQL use the same UUID order. A
+cursor is valid only for the same `selection_key` and filters. Other cursors return 400.
+
+Each list item has a preview of the first text member: at most 100 characters, with `...`
+and `preview_truncated` when it is shortened. Media members show only the file name.
+HTTP(S) media URLs are recognized regardless of scheme case or leading whitespace;
+their authority, query, and fragment are excluded from the preview.
+Standalone absolute paths and URLs stored as text show `[Text reference]` rather than
+paths or credentials; detail retains the full stored value. Other types show a type label.
+The browser does not render templates or run
+simulated conversations.

@@ -114,10 +114,58 @@ If the prompt box is disabled, hover over it or click it to see a list of reason
 Keyboard users can focus the box and press Enter to open the same list.
 Target processing errors show the complete stored error details. To continue after
 an error, use **Copy conversation** on the failed prompt and select **New conversation**
-or **New attack**. The new conversation restores the failed draft and leaves out
-error history so it is not sent back to the target.
+or **New attack**. Both destinations copy the safe history before the failed prompt
+and restore that prompt as an unsent draft with its original attachments.
+Targets that cannot replay history start with an empty new attack.
+After a reload or runtime change, converter choices cannot be restored.
+A warning beside the recovered draft tells you to select and apply converters again before sending.
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
+
+#### Repeating a Message
+
+Use **n=1** beside Send to choose **1 to 10** repetitions. Enter and Send use the
+same settings, and the count resets to 1 after submission. Count 1 keeps the
+ordinary chat behavior.
+
+For count `n`, CoPyRIT keeps the selected conversation and creates exactly `n-1`
+copies of its history before sending the next message once in each. All copies
+belong to the same attack. Repeating again branches only the selected conversation:
+five conversations followed by three repetitions from one of them produces seven,
+not fifteen. Historical messages keep their original-piece lineage and are not
+converted again.
+
+**Convert once, reuse for all** is the default request-converter mode.
+For single sends and shared repeats in the GUI, use **Add converted value** to apply
+conversions before sending. Selected but unapplied pipelines are not run.
+**Convert independently for each** runs selected but unapplied request pipelines
+separately on each conversation's original inputs when the count is greater than 1.
+An explicitly applied preview, including manual edits, is reused exactly
+in either mode. Converter order, repeated stages, and original/converted values
+are preserved. API response converters always run independently per conversation.
+
+Compact progress links open each conversation in the ordinary chat and sidebar.
+A completed conversation can continue while its siblings are still sending.
+One failure does not undo successful siblings. A known preparation failure offers
+**Restore prompt**; a stored processing error offers the existing clean-conversation
+recovery. Review the restored draft and converter choices before submitting again.
+
+Progress is transient, not a durable delivery receipt. If progress or saved-message
+reads fail, use **Refresh progress** or **Refresh saved messages**. These retry reads
+only, never the send. Interrupted sends and missing/expired handles can leave
+provider delivery unknown. Inspect saved conversations before deciding to send again.
+
+API clients use the existing `POST /api/attacks/{id}/message-sends` endpoint with
+`count` (a strict integer, default `1`) and `request_converter_mode` (`shared`,
+the default, or `per_branch`). API clients can supply `request_converter_configurations`
+in either mode: `shared` converts once and reuses the result, while `per_branch`
+converts independently. Custom `start_token` and `end_token` conversion markers
+are honored in both modes. Status retains the selected `conversation_id` and
+`request_turn_number`; repeated sends also return `conversations` with individual
+states and explicit failure stages after history copies commit atomically.
+All conversations consume the shared admission budget, so a request is rejected
+without creating copies if there is insufficient capacity. The synchronous
+messages endpoint and `send=false` context storage are unchanged.
 
 #### Editing Converter Pipelines
 
@@ -470,7 +518,7 @@ Click "New Target" to open the creation dialog. Fill in:
 
 - **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
 - **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
-- **Model / Deployment Name** (optional): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
+- **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
 - **API Key** (optional): Stored in memory only (not persisted to disk)
 
 For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
@@ -550,9 +598,11 @@ at `GET /api/runtime`.
 ## Registry API Migration Notes
 
 Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
-These endpoints return all constructor parameters from the registry, including
-lists, unions, and component references. The temporary `/catalog` routes retain
-their scalar-only filtering for the current UI.
+These endpoints return the constructor parameters external callers can set, each
+described in the form callers send it: a flat collection as a list, a union as its
+first alternative callers can send (`font_size: int | tuple[int, int]` as `int`),
+and a component reference as a name. They leave out types external callers can't
+create. Registry metadata keeps every parameter with its full annotation.
 Create requests should supply an explicit registry `name`. Converter creation
 returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat
@@ -569,10 +619,8 @@ allowlisted image, audio, and video extensions inline. Other files, including PD
 SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
 
 **Temporary compatibility, scheduled for removal with the chat migration:**
-the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
-registry metadata for the current UI. Create requests without a name receive a
-generated `compat_...` name. New clients should not depend on these routes or
-unnamed creation.
+target create requests without a name receive a generated `compat_...` name.
+New clients should supply an explicit name.
 
 ## Connection Health
 

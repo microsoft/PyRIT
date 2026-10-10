@@ -1,6 +1,6 @@
 import type { PieceConversion } from '@/components/Chat/converterTypes'
 import {
-  applyConvertedValues, buildConverterInputs, buildDraftPieceIds, withDraftIdentity,
+  applyConvertedValues, buildConverterInputs, buildDraftPieceIds, buildRequestConverterConfigurations, withDraftIdentity,
 } from '@/components/Chat/converterTypes'
 import type { MessageAttachment } from '@/types'
 import { buildMessagePieces } from '@/utils/messageMapper'
@@ -40,6 +40,22 @@ function makeConversion(
 }
 
 describe('converter draft mapping', () => {
+  it('builds repeat pipelines in piece and stage order without rerunning applied previews', () => {
+    const inputs = buildConverterInputs('text', [
+      { draftId: 'first', type: 'image', name: 'first.png', url: 'first.png', mimeType: 'image/png' },
+      { draftId: 'second', type: 'image', name: 'second.png', url: 'second.png', mimeType: 'image/png' },
+    ])
+    const configurations = buildRequestConverterConfigurations(inputs, ['text', 'second', 'first'], {
+      text: ['one', 'two', 'one'].map((converterId: string, index: number) => ({ id: String(index), converterId })),
+      image: [{ id: 'resize-stage', converterId: 'resize' }],
+    }, { first: makeConversion('first', ['exact-preview']) })
+    expect(configurations).toEqual([
+      { converter_ids: ['one', 'two', 'one'], indexes_to_apply: [0] },
+      { converter_ids: ['resize'], indexes_to_apply: [1] },
+    ])
+    expect(() => buildRequestConverterConfigurations(inputs, ['missing'], {}, {})).toThrow('no matching converter input')
+  })
+
   it('targets only applied pieces and retains converter order across type changes', () => {
     const pieces = applyConvertedValues(
       ['text', 'image_path', 'audio_path', 'image_path'].map((data_type: string) => ({

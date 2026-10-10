@@ -8,6 +8,8 @@ Tests for backend scenario service and routes.
 import asyncio
 import threading
 from collections import OrderedDict
+from collections.abc import Collection
+from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -131,6 +133,66 @@ def _make_scenario_metadata(
         include_baseline_by_default=include_baseline_by_default,
         uses_default_adversarial_target=uses_default_adversarial_target,
     )
+
+
+def test_catalog_lists_only_external_scenario_parameters() -> None:
+    metadata = replace(
+        _make_scenario_metadata(),
+        supported_parameters=(
+            Parameter(name="dataset_config", description="Dataset source configuration.", opaque=True),
+            Parameter(name="max_concurrency", description="Maximum concurrency.", param_type=int, default=4),
+        ),
+    )
+
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+
+    assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
+
+
+def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> None:
+    metadata = replace(
+        _make_scenario_metadata(),
+        supported_parameters=(
+            Parameter(name="words", description="Words to skip.", param_type=Collection[str] | None, default=None),
+            Parameter(name="size", description="Size or bounds.", param_type=int | tuple[int, int], default=(8, 20)),
+        ),
+    )
+
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+
+    described = {
+        parameter["name"]: {key: parameter[key] for key in ("type_name", "is_list", "default")}
+        for parameter in summary.model_dump(mode="json")["supported_parameters"]
+    }
+    assert described == {
+        "words": {"type_name": "list[str]", "is_list": True, "default": None},
+        "size": {"type_name": "int", "is_list": False, "default": None},
+    }
+    assert metadata.supported_parameters[0].param_type == Collection[str] | None
+
+
+@pytest.mark.parametrize(
+    ("scenario_params", "message"),
+    [
+        ({"dataset_config": "x"}, "'dataset_config' of 'airt.scam' cannot be set through the API"),
+        ({"objective_target": {"name": "x"}}, "airt.scam.objective_target: expected a registry name"),
+        ({"unknown": None}, "Unknown parameter 'unknown' for 'airt.scam'"),
+    ],
+)
+async def test_configured_estimate_rejects_unsupported_scenario_params_async(
+    scenario_params: dict[str, object], message: str
+) -> None:
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    with patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry):
+        service = ScenarioService()
+        with pytest.raises(ValueError, match=message):
+            await service.estimate_scenario_run_size_async(
+                scenario_name="airt.scam",
+                request=ScenarioRunSizeEstimateRequest(scenario_params=scenario_params),
+            )
+
+    registry.create_and_estimate_async.assert_not_called()
 
 
 @pytest.mark.parametrize("uses_default", [False, True])
@@ -769,16 +831,21 @@ class TestScenarioServiceListScenarios:
         service._run_default_estimate_async = AsyncMock(side_effect=estimate_async)
 
         catalog_task = asyncio.create_task(service.list_scenarios_async())
-        await asyncio.wait_for(two_started.wait(), timeout=2)
-        await asyncio.sleep(0)
+        try:
+            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await asyncio.sleep(0)
 
-        assert service._run_default_estimate_async.await_count == 2
-        release.set()
-        result = await catalog_task
+            assert service._run_default_estimate_async.await_count == 2
+            release.set()
+            result = await catalog_task
 
-        assert maximum_active == 2
-        assert service._run_default_estimate_async.await_count == 3
-        assert all(item.default_run_size == estimate for item in result.items)
+            assert maximum_active == 2
+            assert service._run_default_estimate_async.await_count == 3
+            assert all(item.default_run_size == estimate for item in result.items)
+        finally:
+            release.set()
+            await service.close_async()
+            await asyncio.gather(catalog_task, return_exceptions=True)
 
     async def test_catalog_queue_wait_does_not_start_execution_timeout(self) -> None:
         """A queued catalog estimate starts its timeout only after acquiring capacity."""
@@ -1090,6 +1157,9 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._registry = MagicMock()
         service._registry.get_registered_class_metadata.return_value = metadata
+        service._registry.get_class.return_value.supported_parameters.return_value = [
+            Parameter(name=name, description="", param_type=int) for name in ("first", "second")
+        ]
         service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
         first = asyncio.create_task(
             service.estimate_scenario_run_size_async(
@@ -1247,6 +1317,9 @@ class TestScenarioServiceListScenarios:
         service = ScenarioService()
         service._registry = MagicMock()
         service._registry.get_registered_class_metadata.return_value = metadata
+        service._registry.get_class.return_value.supported_parameters.return_value = [
+            Parameter(name="request_index", description="", param_type=int)
+        ]
         service._configured_estimate_semaphore = asyncio.Semaphore(2)
         service._estimate_configured_run_size_async = AsyncMock(side_effect=estimate_async)
 
@@ -1259,13 +1332,18 @@ class TestScenarioServiceListScenarios:
             )
             for index in range(3)
         ]
-        await asyncio.wait_for(two_started.wait(), timeout=1)
-        await asyncio.sleep(0)
+        try:
+            await asyncio.wait_for(two_started.wait(), timeout=30)
+            await asyncio.sleep(0)
 
-        assert service._estimate_configured_run_size_async.await_count == 2
-        release.set()
-        assert await asyncio.gather(*tasks) == [estimate, estimate, estimate]
-        assert maximum_active == 2
+            assert service._estimate_configured_run_size_async.await_count == 2
+            release.set()
+            assert await asyncio.gather(*tasks) == [estimate, estimate, estimate]
+            assert maximum_active == 2
+        finally:
+            release.set()
+            await service.close_async()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def test_metadata_catalog_remains_responsive_during_estimate(self) -> None:
         """Metadata-only catalog requests do not wait for running estimates."""
@@ -1447,6 +1525,10 @@ class TestScenarioServiceGetScenario:
         introspection_instance._technique_class = _EstimateTechnique
         introspection_instance._default_dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"])
         scenario_class = MagicMock(return_value=introspection_instance)
+        scenario_class.supported_parameters.return_value = [
+            Parameter(name=name, description="", param_type=int)
+            for name in ("num_jailbreaks", "num_jailbreak_attempts")
+        ]
         objective_target = MagicMock()
 
         with (

@@ -4,7 +4,7 @@
 """Bounded admission and execution shared by manual messages in one backend process."""
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -53,7 +53,7 @@ class ManualSendScheduler:
         return bool(self._conversations)
 
     @contextmanager
-    def reserve(self, *, conversation_id: str) -> Iterator[None]:
+    def reserve(self, *, conversation_id: str) -> Generator[None, None, None]:
         """
         Own a conversation from admission through completion, including failures.
 
@@ -77,7 +77,7 @@ class ManualSendScheduler:
             self._conversations.remove(conversation_id)
 
     @asynccontextmanager
-    async def operation_async(self) -> AsyncIterator[None]:
+    async def operation_async(self) -> AsyncGenerator[None, None]:
         """
         Hold an execution slot until exit, without guaranteeing FIFO ordering.
 
@@ -88,7 +88,7 @@ class ManualSendScheduler:
             yield
 
     @asynccontextmanager
-    async def conversion_async(self, converter: "Converter") -> AsyncIterator[None]:
+    async def conversion_async(self, converter: "Converter") -> AsyncGenerator[None, None]:
         """
         Protect one shared converter instance only while it is converting.
 
@@ -107,7 +107,7 @@ class ManualSendScheduler:
                 self._condition.notify_all()
 
     @asynccontextmanager
-    async def metadata_update_async(self, *, attack_result_id: str) -> AsyncIterator[None]:
+    async def metadata_update_async(self, *, attack_result_id: str) -> AsyncGenerator[None, None]:
         """
         Serialize the complete metadata read/merge/write for one attack.
 

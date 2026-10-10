@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
+    from pyrit.score.true_false.regex.known_bad_signature_scorer import KnownBadSignatureScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
     from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
     from pyrit.score.true_false.regex.meth_keyword_scorer import MethKeywordScorer
@@ -45,6 +46,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
     "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",
     "FentanylKeywordScorer": "pyrit.score.true_false.regex.fentanyl_keyword_scorer",
+    "KnownBadSignatureScorer": "pyrit.score.true_false.regex.known_bad_signature_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "MarkdownInjectionScorer": "pyrit.score.true_false.regex.markdown_injection",
     "MethKeywordScorer": "pyrit.score.true_false.regex.meth_keyword_scorer",
