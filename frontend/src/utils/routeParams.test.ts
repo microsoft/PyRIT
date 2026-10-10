@@ -1,10 +1,13 @@
 import {
   attackConversationRoutePath,
   attackRoutePath,
+  DATASET_DETAIL_PATH,
+  datasetDetailPath,
   routerPathParamValue,
   scenarioRunAttackRoutePath,
   scenarioRunProvenance,
   scenarioRunRoutePath,
+  selectionKeyFromSearchParams,
 } from './routeParams'
 
 const SCENARIO_RESULT_ID = '123e4567-e89b-12d3-a456-426614174000'
@@ -62,5 +65,37 @@ describe('scenario run provenance routes', () => {
     expect(scenarioRunAttackRoutePath('run/1', 'attack/1')).toBe(
       '/scanner-history/run%2F1/attack%2F1',
     )
+  })
+})
+
+const SPECIAL_KEYS = [
+  'dataset:unnamed',
+  'dataset:named:__unnamed__',
+  'dataset:named:my dataset',
+  'dataset:named:a/b',
+  'dataset:named:a?b',
+  'dataset:named:a#b',
+  'dataset:named:a&b',
+  'dataset:named:100%',
+  'dataset:named:データ',
+]
+
+describe('dataset detail paths', () => {
+  it.each(SPECIAL_KEYS)('round-trips %s through the detail query without putting it in the path', (selectionKey: string) => {
+    const url = new URL(datasetDetailPath(selectionKey), 'http://localhost')
+
+    expect(url.pathname).toBe(DATASET_DETAIL_PATH)
+    expect(url.pathname.split('/')).not.toContain(selectionKey)
+    expect(url.hash).toBe('')
+    expect(Array.from(url.searchParams.keys())).toEqual(['selection_key'])
+    expect(url.searchParams.get('selection_key')).toBe(selectionKey)
+    expect(selectionKeyFromSearchParams(url.searchParams)).toBe(selectionKey)
+    expect(datasetDetailPath(selectionKey).startsWith(`${DATASET_DETAIL_PATH}?`)).toBe(true)
+  })
+
+  it('treats a missing or repeated selection key as no selection', () => {
+    expect(selectionKeyFromSearchParams(new URLSearchParams())).toBeNull()
+    expect(selectionKeyFromSearchParams(new URLSearchParams('selection_key=one&selection_key=two'))).toBeNull()
+    expect(selectionKeyFromSearchParams(new URLSearchParams('selection_key='))).toBe('')
   })
 })

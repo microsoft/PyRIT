@@ -160,6 +160,9 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("scenarios")} data-testid="nav-scenarios">
           Scenarios
         </button>
+        <button onClick={() => onNavigate("datasets")} data-testid="nav-datasets">
+          Datasets
+        </button>
         {children}
       </div>
     );
@@ -383,6 +386,33 @@ jest.mock("./components/Home/Home", () => {
   return {
     __esModule: true,
     default: MockHome,
+  };
+});
+
+jest.mock("./components/Datasets/DatasetCatalog", () => {
+  const MockDatasetCatalog = () => <div data-testid="dataset-catalog" />;
+  MockDatasetCatalog.displayName = "MockDatasetCatalog";
+  return {
+    __esModule: true,
+    default: MockDatasetCatalog,
+  };
+});
+
+jest.mock("./components/Datasets/DatasetSelection", () => {
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockDatasetSelection = () => {
+    const location = useLocation();
+    return (
+      <div
+        data-testid="dataset-selection"
+        data-location={`${location.pathname}${location.search}`}
+      />
+    );
+  };
+  MockDatasetSelection.displayName = "MockDatasetSelection";
+  return {
+    __esModule: true,
+    default: MockDatasetSelection,
   };
 });
 
@@ -635,6 +665,41 @@ describe("App", () => {
     expect(screen.getByRole("heading", { level: 1, name: "History" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Attacks" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+  });
+
+  it("renders the dataset catalog when deep-linked to /datasets", () => {
+    renderApp("/datasets");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "datasets"
+    );
+    expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument();
+  });
+
+  it("keeps the dataset selection query on the datasets view", () => {
+    renderApp("/datasets/detail?selection_key=dataset%3Aunnamed");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "datasets"
+    );
+    expect(screen.getByTestId("dataset-selection")).toHaveAttribute(
+      "data-location",
+      "/datasets/detail?selection_key=dataset%3Aunnamed"
+    );
+  });
+
+  it("switches to the datasets view via the sidebar", () => {
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-datasets"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "datasets"
+    );
+    expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument();
   });
 
   it("renders the scenario catalog when deep-linked to /scanner", () => {
