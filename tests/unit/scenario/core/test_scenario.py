@@ -1423,12 +1423,18 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         return DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
     @pytest.mark.parametrize("resume_state", ["valid", "missing-id", "missing-dataset", "incompatible"])
-    async def test_named_source_preparation_and_resume(self, mock_objective_target, resume_state: str) -> None:
-        config = DatasetAttackConfiguration(sources=[DatasetSource(name="fixture", max_size=3)])
+    @pytest.mark.parametrize("configured_provider", [False, True], ids=["registered", "configured"])
+    async def test_named_source_preparation_and_resume(
+        self, *, mock_objective_target: PromptTarget, resume_state: str, configured_provider: bool
+    ) -> None:
         provider = MagicMock(spec=SeedDatasetProvider)
+        provider.dataset_name = "fixture"
         provider.fetch_dataset_async.return_value = SeedDataset(
             dataset_name="fixture",
             seeds=[SeedObjective(value=f"fixture-{index}", dataset_name="fixture") for index in range(10)],
+        )
+        config = DatasetAttackConfiguration(
+            sources=[DatasetSource(name="fixture", max_size=3, provider=provider if configured_provider else None)]
         )
         scenario = self._StrategyScenario(name="Named sources", version=1)
         scenario.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
@@ -1443,6 +1449,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         assert baseline.seed_groups == strategy.seed_groups
         assert len(strategy.seed_groups) == 3
         original_plan = scenario._build_run_plan()
+        provider.fetch_dataset_async.reset_mock()
 
         if resume_state == "missing-dataset":
             await scenario._memory.remove_seeds_from_memory_async(dataset_name="fixture")
@@ -1471,6 +1478,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
                 with pytest.raises(ValueError):
                     await resumed.initialize_async()
         prepare.assert_not_awaited()
+        provider.fetch_dataset_async.assert_not_awaited()
         lookup.assert_not_awaited()
         sample.assert_not_called()
 
