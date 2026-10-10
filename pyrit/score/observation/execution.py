@@ -19,6 +19,7 @@ from pyrit.models import (
     ScorableUnion,
     Score,
     ScoringExpectation,
+    SurfaceObservationPayload,
     ToolEventsObservationPayload,
 )
 from pyrit.models.score.observation import _resolved_scored_evidence_digest
@@ -36,7 +37,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
 
 
-_ObservationEvidence: TypeAlias = Message | ToolEventsObservationPayload | tuple[MessagePiece, ...]
+_ObservationEvidence: TypeAlias = (
+    Message | ToolEventsObservationPayload | SurfaceObservationPayload | tuple[MessagePiece, ...]
+)
 
 
 async def _scored_evidence_digest_async(
@@ -312,7 +315,7 @@ class _ObservationEvidenceResolver:
             NonReplayableObservationError: If referenced evidence is missing, modified, or unsupported.
         """
         payload = observation.payload
-        if isinstance(payload, ToolEventsObservationPayload):
+        if isinstance(payload, (ToolEventsObservationPayload, SurfaceObservationPayload)):
             return payload
         pieces = await self._memory.get_message_pieces_async(prompt_ids=list(observation.evidence_message_piece_ids))
         pieces_by_id = {piece.id: piece for piece in pieces}

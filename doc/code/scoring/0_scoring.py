@@ -160,7 +160,8 @@ print(df.to_string(index=False))
 # response-handler contract. `ScorerTargetResponsePayload` references the scorer's target response;
 # the target need not be a language model. Its kind is `scorer_target_response`.
 # Media observation capture remains deferred until its evidence can be snapshotted.
-# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb).
+# Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb), and file-system
+# observations in [File-write scoring](6_file_write_scorer.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation

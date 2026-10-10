@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -156,11 +157,25 @@ class TraceScorable(Scorable):
         return self
 
 
+class SurfaceScorable(Scorable):
+    """
+    A file location to inspect when evidence is acquired.
+
+    ``uri`` names one location, or with ``SurfaceMatch.GLOB`` every location the pattern
+    covers. A location names a place, not a write: it does not identify the run that put
+    the content there.
+    """
+
+    scorable_type: Literal["surface"] = "surface"
+    uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")
+    match: SurfaceMatch = SurfaceMatch.EXACT
+
+
 # Polymorphic union of scorables that can be stored on a Score. Every member declares a
 # ``scorable_type`` tag and Pydantic dispatches on it, so a new member is never mistaken for
 # an existing one and storage never depends on field shape.
 ScorableUnion = Annotated[
-    MessageScorable | ContentScorable | ContentEntryScorable | ConversationScorable | TraceScorable,
+    MessageScorable | ContentScorable | ContentEntryScorable | ConversationScorable | TraceScorable | SurfaceScorable,
     Field(discriminator="scorable_type"),
 ]
 
