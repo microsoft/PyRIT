@@ -53,7 +53,7 @@ describe('CustomInitializers', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
 
     expect(defaultProps.onDelete).toHaveBeenCalledWith('custom_target')
-    expect(screen.getByRole('button', { name: 'second_target' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByRole('button', { name: 'second_target' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('should display stored source as read-only', () => {

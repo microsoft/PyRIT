@@ -33,6 +33,8 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
+    AttackResultRole,
     ComponentIdentifier,
     ConversationReference,
     ConverterIdentifier,
@@ -205,6 +207,12 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
 
     # ID of the AttackResult this execution produces. Allocated when execution starts.
     _attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    # Role of the AttackResult this execution produces. Copied from the strategy's
+    # ``RESULT_ROLE`` when execution starts, so success and error results both carry it.
+    _result_role: AttackResultRole = field(
+        default=AttackResultRole.TARGET_FACING, init=False, repr=False, compare=False
+    )
 
     _expectation: ScoringExpectation = field(init=False, repr=False)
 
@@ -411,7 +419,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         # Stamp attribution onto the result before persistence so the
         # AttackResultEntry row records its lineage. Outside an orchestrator
-        # _attribution is None and both attribution fields stay None.
+        # _attribution is None, so only the result role is recorded.
         event_data.result.related_conversations.update(event_data.context.related_conversations)
         self._apply_attribution(context=event_data.context, result=event_data.result)
         self._apply_targeted_harm_categories(context=event_data.context, result=event_data.result)
@@ -438,23 +446,29 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Copy attribution from the AttackContext onto the AttackResult.
 
-        Reads ``context._attribution`` (an ``AttackResultAttribution`` set by
-        the AttackExecutor when an upstream orchestrator supplied a factory).
-        When present, writes ``attribution_parent_id`` and a fixed-schema
-        ``attribution_data`` dict onto the result so they round-trip into
-        ``AttackResultEntry``.
+        Always writes a fixed-schema ``attribution_data`` dict recording
+        ``result_role``, the producing strategy's ``RESULT_ROLE``, so standalone
+        results are classified too. When ``context._attribution`` (an
+        ``AttackResultAttribution`` set by the AttackExecutor when an upstream
+        orchestrator supplied a factory) is present, also writes
+        ``attribution_parent_id`` and the parent linkage fields so they
+        round-trip into ``AttackResultEntry``. Without it,
+        ``attribution_parent_id`` stays None.
 
         Args:
             context: The per-task AttackContext.
             result: The AttackResult that is about to be persisted.
         """
         attribution = context._attribution
+        attribution_data = AttackResultMetadata(
+            result_role=context._result_role,
+            attempt_index=attribution.attempt_index if attribution is not None else None,
+        ).to_metadata()
         if attribution is None:
+            result.attribution_data = attribution_data
             return
         result.attribution_parent_id = attribution.parent_id
-        attribution_data: dict[str, Any] = {
-            "parent_collection": attribution.parent_collection,
-        }
+        attribution_data["parent_collection"] = attribution.parent_collection
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
         if attribution.seed_group_id is not None:
@@ -587,6 +601,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
+
+    #: What this strategy's persisted results represent. Compound attacks that only coordinate
+    #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
+    RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -865,6 +883,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         self._validate_scoring_expectation(context=context)
         context._error_result_persistence_error = None
         context._attack_result_id = str(uuid.uuid4())
+        context._result_role = self.RESULT_ROLE
         lifecycle = _ObjectiveTargetConversationLifecycle(
             objective_target=self._objective_target,
             logger=self._logger,
