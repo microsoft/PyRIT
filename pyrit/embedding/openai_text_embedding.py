@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 
 from pyrit.auth import resolve_openai_auth
 from pyrit.common import default_values
+from pyrit.common.auth_mode import AuthMode
 from pyrit.models import (
     EmbeddingData,
     EmbeddingResponse,
@@ -34,15 +35,14 @@ class OpenAITextEmbedding(EmbeddingSupport):
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         endpoint: str | None = None,
         model_name: str | None = None,
+        auth_mode: AuthMode = "api_key",
     ) -> None:
         """
         Initialize text embedding client for Azure OpenAI or platform OpenAI.
 
         Args:
             api_key: The API key (string) or token provider (callable) for authentication.
-                For recognized Azure OpenAI / AI Foundry endpoints, if no API key is provided
-                (via parameter or environment variable), Entra ID authentication is used automatically.
-                You can also explicitly pass a token provider from pyrit.auth
+                You can pass a token provider from pyrit.auth
                 (e.g., get_azure_openai_auth(endpoint) for async).
                 Defaults to OPENAI_EMBEDDING_KEY environment variable.
             endpoint: The API endpoint URL.
@@ -51,10 +51,16 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 Defaults to OPENAI_EMBEDDING_ENDPOINT environment variable.
             model_name: The model/deployment name (e.g., "text-embedding-3-small").
                 Defaults to OPENAI_EMBEDDING_MODEL environment variable.
+            auth_mode: ``"identity"`` authenticates with a Microsoft Entra ID token minted for the
+                endpoint; it ignores the API key environment variable and rejects an explicit
+                ``api_key``. ``"api_key"`` (the default) resolves a token-provider callable, then an
+                explicit key, then the environment variable.
 
         Raises:
-            ValueError: If no API key is provided (via parameter or environment variable) and the
-                endpoint is not a recognized Azure OpenAI / AI Foundry endpoint.
+            ValueError: If identity auth is requested alongside an explicit ``api_key``, if identity
+                auth is requested for an endpoint that is not a recognized Azure OpenAI / AI Foundry
+                endpoint, or if ``"api_key"`` auth is requested and no key is available via parameter
+                or environment variable.
         """
         endpoint = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
@@ -67,6 +73,7 @@ class OpenAITextEmbedding(EmbeddingSupport):
             endpoint=endpoint,
             api_key=api_key,
             api_key_environment_variable=self.API_KEY_ENVIRONMENT_VARIABLE,
+            auth_mode=auth_mode,
         )
         self._async_client = AsyncOpenAI(
             api_key=async_api_key,

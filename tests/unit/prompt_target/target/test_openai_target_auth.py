@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.auth import ensure_async_token_provider
+from pyrit.common.auth_mode import AuthMode
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 
@@ -42,6 +43,7 @@ def _build_target(
     endpoint: str = "https://test.openai.azure.com/openai/v1",
     api_key: str | Callable | None = "test-key",
     env_vars: dict[str, str] | None = None,
+    auth_mode: AuthMode = "api_key",
 ) -> _ConcreteOpenAITarget:
     """Helper to build a _ConcreteOpenAITarget with controlled env."""
     env = {"TEST_MODEL": "gpt-4", "TEST_ENDPOINT": endpoint}
@@ -52,6 +54,7 @@ def _build_target(
             model_name="gpt-4",
             endpoint=endpoint,
             api_key=api_key,
+            auth_mode=auth_mode,
         )
 
 
@@ -71,22 +74,23 @@ class TestOpenAITargetAuthResolution:
 
     def test_non_azure_endpoint_without_key_raises(self):
         """Non-Azure endpoints must have an API key; otherwise ValueError is raised."""
-        with pytest.raises(ValueError, match="TEST_API_KEY is required for non-Azure endpoints"):
+        with pytest.raises(ValueError, match="No API key available"):
             _build_target(
                 endpoint="https://api.openai.com/v1",
                 api_key=None,
             )
 
-    def test_azure_endpoint_falls_back_to_entra(self):
-        """Azure endpoints without a key fall back to get_azure_openai_auth."""
-        mock_auth = AsyncMock(return_value="entra-token")
-        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth):
-            target = _build_target(
-                endpoint="https://myresource.openai.azure.com/openai/v1",
-                api_key=None,
-            )
-        # The api_key should be the async callable returned by get_azure_openai_auth
-        assert target._api_key is mock_auth
+    def test_azure_endpoint_without_key_falls_back_with_deprecation_warning(self):
+        """The implicit Azure fallback survives to 1.4.0 so keyless configurations keep working."""
+        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value="minted-token") as mock_auth:
+            with pytest.warns(DeprecationWarning, match="1.4.0"):
+                target = _build_target(
+                    endpoint="https://myresource.openai.azure.com/openai/v1",
+                    api_key=None,
+                )
+
+        mock_auth.assert_called_once()
+        assert target._api_key == "minted-token"
 
     def test_callable_token_provider_bypasses_env_lookup(self):
         """A callable api_key is used directly without checking env vars."""
@@ -120,6 +124,39 @@ class TestOpenAITargetAuthResolution:
         """When both param and env var are set, the param wins."""
         target = _build_target(api_key="param-key", env_vars={"TEST_API_KEY": "env-key"})
         assert target._api_key == "param-key"
+
+    def test_identity_auth_mode_ignores_env_var_key(self):
+        """An explicit identity choice must not be downgraded to the key in the environment."""
+        mock_auth = AsyncMock(return_value="entra-token")
+        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth):
+            target = _build_target(
+                api_key=None,
+                env_vars={"TEST_API_KEY": "env-key"},
+                auth_mode="identity",
+            )
+        assert target._api_key is mock_auth
+
+    @pytest.mark.parametrize(
+        "explicit_key",
+        ["param-key", lambda: "caller-supplied-token"],
+        ids=["key_string", "token_provider"],
+    )
+    def test_identity_auth_mode_with_explicit_key_raises(self, explicit_key):
+        """A caller's own credential must not be silently replaced by a default Entra token."""
+        mock_auth = AsyncMock(return_value="entra-token")
+        with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth) as mock_get_auth:
+            with pytest.raises(ValueError, match="cannot be combined with an explicit api_key"):
+                _build_target(api_key=explicit_key, auth_mode="identity")
+
+        mock_get_auth.assert_not_called()
+
+    def test_identity_auth_mode_non_azure_endpoint_raises(self):
+        with pytest.raises(ValueError, match="Identity-based authentication requires a recognized Azure"):
+            _build_target(
+                endpoint="https://api.openai.com/v1",
+                api_key=None,
+                auth_mode="identity",
+            )
 
 
 class TestEnsureAsyncTokenProvider:

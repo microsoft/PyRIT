@@ -163,25 +163,66 @@ def test_init_raises_when_no_api_key_and_non_azure_endpoint(sqlite_instance):
     """No key + a non-Azure endpoint raises (identity auth only works for Azure endpoints)."""
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("AZURE_CONTENT_SAFETY_API_KEY", None)
-        with pytest.raises(ValueError, match="API key is required for non-Azure"):
+        with pytest.raises(ValueError, match="No API key available"):
             PromptShieldTarget(endpoint="https://test.endpoint.com", api_key=None)
 
 
-def test_init_uses_identity_token_provider_for_azure_endpoint(sqlite_instance):
-    """No key + a recognized Azure Content Safety endpoint falls back to an Entra ID token provider."""
-    token_provider = MagicMock(return_value="minted-token")
+def test_init_falls_back_to_entra_on_azure_endpoint_with_deprecation_warning(sqlite_instance):
+    """Keyless Content Safety configurations keep working until 1.4.0, but now announce it."""
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("AZURE_CONTENT_SAFETY_API_KEY", None)
         with patch(
             "pyrit.prompt_target.prompt_shield_target.get_azure_token_provider",
-            return_value=token_provider,
+            return_value="minted-token",
         ) as mock_provider:
-            target = PromptShieldTarget(endpoint="https://myresource.cognitiveservices.azure.com", api_key=None)
+            with pytest.warns(DeprecationWarning, match="1.4.0"):
+                target = PromptShieldTarget(endpoint="https://myresource.cognitiveservices.azure.com", api_key=None)
 
-    mock_provider.assert_called_once_with("https://cognitiveservices.azure.com/.default")
-    assert target._api_key is token_provider
+    mock_provider.assert_called_once()
+    assert target._api_key == "minted-token"
 
 
 def test_supported_auth_modes_includes_identity():
     """Prompt Shield advertises identity-based auth alongside api_key."""
     assert PromptShieldTarget.supported_auth_modes == ("api_key", "identity")
+
+
+def test_identity_auth_mode_ignores_env_key(sqlite_instance):
+    """An explicit identity choice must not be downgraded to the content safety key env var."""
+    token_provider = MagicMock(return_value="minted-token")
+    with patch.dict(os.environ, {"AZURE_CONTENT_SAFETY_API_KEY": "key-from-dotenv"}):
+        with patch(
+            "pyrit.prompt_target.prompt_shield_target.get_azure_token_provider",
+            return_value=token_provider,
+        ):
+            target = PromptShieldTarget(
+                endpoint="https://myresource.cognitiveservices.azure.com",
+                auth_mode="identity",
+            )
+
+    assert target._api_key is token_provider
+
+
+@pytest.mark.parametrize(
+    "explicit_key",
+    ["key-passed-anyway", lambda: "caller-supplied-token"],
+    ids=["key_string", "token_provider"],
+)
+def test_identity_auth_mode_with_explicit_key_raises(sqlite_instance, explicit_key):
+    """A caller's own credential must not be silently replaced by a default Entra token."""
+    with patch(
+        "pyrit.prompt_target.prompt_shield_target.get_azure_token_provider",
+    ) as mock_provider:
+        with pytest.raises(ValueError, match="cannot be combined with an explicit api_key"):
+            PromptShieldTarget(
+                endpoint="https://myresource.cognitiveservices.azure.com",
+                api_key=explicit_key,
+                auth_mode="identity",
+            )
+
+    mock_provider.assert_not_called()
+
+
+def test_identity_auth_mode_non_azure_endpoint_raises(sqlite_instance):
+    with pytest.raises(ValueError, match="Identity-based authentication requires a recognized Azure Content Safety"):
+        PromptShieldTarget(endpoint="https://test.endpoint.com", auth_mode="identity")

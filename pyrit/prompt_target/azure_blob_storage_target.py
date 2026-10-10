@@ -13,6 +13,7 @@ from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 from pyrit.common import default_values
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -41,7 +42,8 @@ class AzureBlobStorageTarget(PromptTarget):
         container_url (str): URL to the Azure Blob Storage Container.
         sas_token (optional[str]): Optional Blob SAS token needed to authenticate blob operations. If not provided,
             ``DefaultAzureCredential`` is used directly, which requires the caller to hold a data-plane role such
-            as Storage Blob Data Contributor on the storage account.
+            as Storage Blob Data Contributor on the storage account. That implicit fallback is deprecated and
+            is removed in 1.4.0; pass ``auth_mode="identity"`` to select credential-based auth explicitly.
         blob_content_type (SupportedContentType): Expected Content Type of the blob, chosen from the
             SupportedContentType enum. Set to PLAIN_TEXT by default.
         max_requests_per_minute (int, Optional): Number of requests the target can handle per
@@ -52,8 +54,10 @@ class AzureBlobStorageTarget(PromptTarget):
     AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_CONTAINER_URL"
     SAS_TOKEN_ENVIRONMENT_VARIABLE: str = "AZURE_STORAGE_ACCOUNT_SAS_TOKEN"
 
-    # A SAS token is the "api_key"; with no token the target falls back to
-    # ``DefaultAzureCredential`` (identity-based auth).
+    # A SAS token is the "api_key"; ``identity`` authenticates with ``DefaultAzureCredential``.
+    # With no token and no explicit mode the target still falls back to that credential, but the
+    # fallback is deprecated (removed in 1.4.0) so both modes end up disjoint, as they already are
+    # for the OpenAI, Azure ML and Prompt Shield targets.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
@@ -90,9 +94,11 @@ class AzureBlobStorageTarget(PromptTarget):
                 Defaults to the AZURE_STORAGE_ACCOUNT_CONTAINER_URL environment variable.
             sas_token (str, Optional): The SAS token for authentication.
                 Defaults to the AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable.
-            auth_mode (AuthMode | None): Explicit authentication mode selected by
-                the create-target API. Identity mode bypasses all SAS token sources.
-                None preserves automatic credential selection. Defaults to None.
+            auth_mode (AuthMode | None): Explicit authentication mode. ``"identity"`` bypasses all
+                SAS token sources and authenticates with ``DefaultAzureCredential``. ``"api_key"``
+                and None both resolve the SAS token, falling back to ``DefaultAzureCredential``
+                when none is configured; that fallback is deprecated and is removed in 1.4.0, after
+                which a SAS token is required unless ``"identity"`` is passed. Defaults to None.
             blob_content_type (SupportedContentType): The content type for blobs.
                 Defaults to PLAIN_TEXT.
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
@@ -145,10 +151,14 @@ class AzureBlobStorageTarget(PromptTarget):
 
     async def _create_container_client_async(self) -> None:
         """
-        Create an asynchronous ContainerClient for Azure Storage. If a SAS token is provided via the
-        AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
-        for authentication. Otherwise, ``DefaultAzureCredential`` is used directly, which requires the caller
-        to hold a data-plane role such as Storage Blob Data Contributor on the storage account.
+        Create an asynchronous ContainerClient for Azure Storage.
+
+        ``auth_mode="identity"`` authenticates with ``DefaultAzureCredential`` and ignores every SAS
+        token source. Otherwise the SAS token is read from the ``sas_token`` parameter or the
+        AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable. When neither is set the target still
+        falls back to ``DefaultAzureCredential``, which requires the caller to hold a data-plane role
+        such as Storage Blob Data Contributor. That fallback is deprecated and is removed in 1.4.0,
+        after which a SAS token is required unless ``auth_mode="identity"`` is passed.
         """
         container_url, _ = self._parse_url()
         if self._auth_mode == "identity":
@@ -160,6 +170,13 @@ class AzureBlobStorageTarget(PromptTarget):
                 env_var_name=self.SAS_TOKEN_ENVIRONMENT_VARIABLE, passed_value=self._sas_token
             )
         except ValueError:
+            print_deprecation_message(
+                old_item=(
+                    "Falling back to DefaultAzureCredential in AzureBlobStorageTarget when no SAS token is configured"
+                ),
+                new_item='AzureBlobStorageTarget(auth_mode="identity")',
+                removed_in="1.4.0",
+            )
             logger.info("SAS token not provided. Using DefaultAzureCredential for direct Entra ID authentication.")
             self._create_identity_container_client(container_url=container_url)
             return

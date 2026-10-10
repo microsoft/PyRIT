@@ -12,6 +12,7 @@ from pyrit.auth import (
     is_azure_openai_endpoint,
 )
 from pyrit.common import default_values, net_utility
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -54,8 +55,8 @@ class PromptShieldTarget(PromptTarget):
     ENDPOINT_URI_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_ENDPOINT"
     API_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_CONTENT_SAFETY_API_KEY"
 
-    # A subscription key is the "api_key"; with no key a recognized Azure Content
-    # Safety endpoint falls back to an Entra ID token provider (identity-based auth).
+    # A subscription key is the "api_key"; auth_mode="identity" mints an Entra ID token
+    # provider for a recognized Azure Content Safety endpoint instead.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
 
     _endpoint: str
@@ -68,6 +69,7 @@ class PromptShieldTarget(PromptTarget):
         *,
         endpoint: str | None = None,
         api_key: str | Callable[[], str] | None = None,
+        auth_mode: AuthMode = "api_key",
         api_version: str | None = "2024-09-01",
         field: PromptShieldEntryField | None = None,
         max_requests_per_minute: int | None = None,
@@ -81,12 +83,16 @@ class PromptShieldTarget(PromptTarget):
                 Defaults to the `ENDPOINT_URI_ENVIRONMENT_VARIABLE` environment variable.
             api_key (str | Callable[[], str | Awaitable[str]], Optional):
                 The API key for accessing the Azure Content Safety service,
-                or a callable that returns an access token. For recognized Azure endpoints
-                (``*.cognitiveservices.azure.com``) with no key provided, an Entra ID token
-                provider is minted automatically (identity-based auth). To supply your own
+                or a callable that returns an access token. To supply your own
                 token provider, pass one from pyrit.auth
                 (e.g., get_azure_token_provider('https://cognitiveservices.azure.com/.default')).
-                Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable.
+                Defaults to the `API_KEY_ENVIRONMENT_VARIABLE` environment variable. To
+                authenticate with an ambient Azure identity instead, pass ``auth_mode="identity"``.
+            auth_mode (AuthMode, Optional): Explicitly selects how to authenticate. ``"identity"``
+                mints a Microsoft Entra ID token for the endpoint; it ignores the
+                `API_KEY_ENVIRONMENT_VARIABLE` environment variable, rejects an explicit ``api_key``,
+                and requires a recognized Azure Content Safety endpoint. Defaults to ``"api_key"``,
+                which resolves the key as described above.
             api_version (str, Optional): The version of the Azure Content Safety API. Defaults to "2024-09-01".
             field (PromptShieldEntryField, Optional): If "userPrompt", all input is sent to the userPrompt field.
                 If "documents", all input is sent to the documents field. If None, the input is parsed to separate
@@ -98,8 +104,10 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
 
         Raises:
-            ValueError: If the endpoint value is not provided, or if no API key is
-                provided for a non-Azure Content Safety endpoint.
+            ValueError: If the endpoint value is not provided, if identity auth is requested
+                alongside an explicit ``api_key``, if identity auth is requested for an endpoint
+                that is not a recognized Azure Content Safety endpoint, or if no API key is
+                available for an endpoint that is not a recognized Azure Content Safety endpoint.
         """
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
@@ -114,10 +122,25 @@ class PromptShieldTarget(PromptTarget):
 
         self._api_version = api_version or "2024-09-01"
 
-        # Resolve authentication: an explicit key or token-provider callable, the
-        # env var, or — for a recognized Azure Content Safety endpoint with no key —
-        # an Entra ID token provider minted for the endpoint (identity-based auth).
-        if api_key is not None and callable(api_key):
+        # Resolve authentication: an explicit key or token-provider callable, the env var, or the
+        # deprecated Entra fallback for a recognized endpoint. Identity is an explicit caller choice,
+        # so it must never be silently downgraded to a key that merely happens to be in the environment.
+        if auth_mode == "identity":
+            if api_key is not None:
+                raise ValueError(
+                    'auth_mode="identity" cannot be combined with an explicit api_key, because identity auth '
+                    "mints its own Microsoft Entra ID token and would silently ignore the key or token provider "
+                    "you supplied. Omit api_key to authenticate with an ambient Azure identity, or pass "
+                    'auth_mode="api_key" to authenticate with the key or token provider you supplied.'
+                )
+            if not is_azure_openai_endpoint(endpoint_value):
+                raise ValueError(
+                    "Identity-based authentication requires a recognized Azure Content Safety endpoint "
+                    f"(*.cognitiveservices.azure.com), but got '{endpoint_value}'. Pass auth_mode=\"api_key\" "
+                    "for this endpoint, supplying either a key or your own token provider callable as api_key."
+                )
+            self._api_key = get_azure_token_provider(get_default_azure_scope(endpoint_value))
+        elif api_key is not None and callable(api_key):
             self._api_key = api_key
         else:
             api_key_value = default_values.get_non_required_value(
@@ -126,15 +149,40 @@ class PromptShieldTarget(PromptTarget):
             if api_key_value:
                 self._api_key = api_key_value
             elif is_azure_openai_endpoint(endpoint_value):
+                # Keyless configurations against a recognized Content Safety endpoint predate explicit
+                # auth modes, so the implicit Entra fallback stays until 1.4.0 rather than breaking them
+                # at the next minor release.
+                print_deprecation_message(
+                    old_item=(
+                        "Falling back to Microsoft Entra ID authentication in PromptShieldTarget when no API "
+                        "key is configured"
+                    ),
+                    new_item='PromptShieldTarget(auth_mode="identity")',
+                    removed_in="1.4.0",
+                )
                 self._api_key = get_azure_token_provider(get_default_azure_scope(endpoint_value))
             else:
                 raise ValueError(
-                    "API key is required for non-Azure Content Safety endpoints. For recognized Azure "
-                    "endpoints (*.cognitiveservices.azure.com), identity-based authentication is used "
-                    "automatically."
+                    f"No API key available for endpoint '{endpoint_value}'. Set the "
+                    f"{self.API_KEY_ENVIRONMENT_VARIABLE} environment variable, pass api_key (a key or a "
+                    'token provider callable), or pass auth_mode="identity" to authenticate with Microsoft '
+                    "Entra ID on a recognized Azure Content Safety endpoint (*.cognitiveservices.azure.com)."
                 )
 
         self._force_entry_field: PromptShieldEntryField = field
+
+    @classmethod
+    def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
+        """
+        Preserve explicit authentication intent through target construction.
+
+        Args:
+            auth_mode (AuthMode): Authentication mode selected by the caller.
+
+        Returns:
+            dict[str, object]: Constructor parameters that enforce the mode.
+        """
+        return {"auth_mode": auth_mode}
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

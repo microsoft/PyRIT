@@ -847,33 +847,25 @@ def test_set_auth_with_api_key(patch_central_database):
     assert target._api_key == "test_api_key_456"
 
 
-def test_no_key_recognized_azure_endpoint_auto_mints_entra(patch_central_database):
-    """With no key and a recognized Azure OpenAI endpoint, the target auto-mints
-    an Entra token provider for that endpoint."""
-
-    async def _provider() -> str:
-        return "aoai-entra-token"
-
+def test_no_key_recognized_azure_endpoint_falls_back_with_deprecation_warning(patch_central_database):
+    """Keyless Azure OpenAI configurations keep working until 1.4.0, but now announce it."""
     with (
         patch.dict(os.environ, {}, clear=True),
-        patch(
-            "pyrit.auth.openai_auth.get_azure_openai_auth",
-            return_value=_provider,
-        ) as mock_get_auth,
+        patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value="minted-token") as mock_get_auth,
     ):
-        target = OpenAIChatTarget(
-            model_name="gpt-4",
-            endpoint="https://test.openai.azure.com/",
-        )
+        with pytest.warns(DeprecationWarning, match="1.4.0"):
+            OpenAIChatTarget(
+                model_name="gpt-4",
+                endpoint="https://test.openai.azure.com/",
+            )
 
-    mock_get_auth.assert_called_once_with("https://test.openai.azure.com/")
-    assert target._api_key is _provider
+    mock_get_auth.assert_called_once()
 
 
 def test_no_key_non_azure_endpoint_raises(patch_central_database):
     """With no key and a non-Azure endpoint, the target refuses to mint a token."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="non-Azure endpoints"):
+        with pytest.raises(ValueError, match="No API key available"):
             OpenAIChatTarget(model_name="gpt-4", endpoint="https://api.openai.com/")
 
 
@@ -881,7 +873,7 @@ def test_no_key_substring_lookalike_endpoint_raises(patch_central_database):
     """A hostname merely containing 'azure' (but not a recognized suffix) must not
     trigger auto-Entra minting (loose->strict hardening)."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="non-Azure endpoints"):
+        with pytest.raises(ValueError, match="No API key available"):
             OpenAIChatTarget(model_name="gpt-4", endpoint="https://evil-azure.example.com/")
 
 

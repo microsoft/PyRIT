@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+import warnings
 from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -176,8 +177,10 @@ def test_parse_url_raises_for_url_without_container(patch_central_database):
 
 
 @patch.dict("os.environ", {AzureBlobStorageTarget.SAS_TOKEN_ENVIRONMENT_VARIABLE: ""})
-async def test_create_container_client_uses_default_credential_when_no_sas_token(patch_central_database):
-    target = AzureBlobStorageTarget(container_url="https://test.blob.core.windows.net/test")
+@pytest.mark.parametrize("auth_mode", [None, "api_key"], ids=["mode_unset", "api_key_mode"])
+async def test_create_container_client_uses_default_credential_when_no_sas_token(patch_central_database, auth_mode):
+    """The implicit fallback still works but is deprecated, for both ways of selecting api-key auth."""
+    target = AzureBlobStorageTarget(container_url="https://test.blob.core.windows.net/test", auth_mode=auth_mode)
 
     mock_container_client = AsyncMock()
     mock_credential = AsyncMock()
@@ -189,6 +192,7 @@ async def test_create_container_client_uses_default_credential_when_no_sas_token
         patch(
             "pyrit.prompt_target.azure_blob_storage_target.AsyncContainerClient", return_value=mock_container_client
         ) as mock_container_cls,
+        pytest.warns(DeprecationWarning, match=r'AzureBlobStorageTarget\(auth_mode="identity"\)'),
     ):
         await target._create_container_client_async()
 
@@ -200,6 +204,31 @@ async def test_create_container_client_uses_default_credential_when_no_sas_token
     )
     assert target._client_async is mock_container_client
     assert target._credential is mock_credential
+
+
+@pytest.mark.parametrize(
+    ("sas_env", "auth_mode"),
+    [("", "identity"), ("environment-sas-token", None)],
+    ids=["identity_mode", "sas_token_configured"],
+)
+async def test_create_container_client_does_not_warn_for_explicit_credential_sources(
+    patch_central_database, sas_env, auth_mode
+):
+    """Both documented migration paths off the deprecated fallback must themselves be warning-free."""
+    with patch.dict("os.environ", {AzureBlobStorageTarget.SAS_TOKEN_ENVIRONMENT_VARIABLE: sas_env}):
+        target = AzureBlobStorageTarget(
+            container_url="https://test.blob.core.windows.net/test",
+            auth_mode=auth_mode,
+        )
+
+        with (
+            patch("pyrit.prompt_target.azure_blob_storage_target.DefaultAzureCredential", return_value=AsyncMock()),
+            patch("pyrit.prompt_target.azure_blob_storage_target.AsyncContainerClient", return_value=AsyncMock()),
+            patch.object(AsyncContainerClient, "from_container_url", return_value=AsyncMock()),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("error", DeprecationWarning)
+            await target._create_container_client_async()
 
 
 @patch.dict(

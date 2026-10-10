@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         reset_default_values,
         set_default_value,
     )
+    from pyrit.common.auth_mode import AUTH_MODES, AuthMode
     from pyrit.common.brick_contract import enforce_keyword_only_init, forward_init_parameters
     from pyrit.common.default_values import get_non_required_value, get_required_value
     from pyrit.common.deprecation import print_deprecation_message
@@ -48,6 +49,8 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "apply_defaults": "pyrit.common.apply_defaults",
     "apply_defaults_to_method": "pyrit.common.apply_defaults",
+    "AUTH_MODES": "pyrit.common.auth_mode",
+    "AuthMode": "pyrit.common.auth_mode",
     "combine_dict": "pyrit.common.utils",
     "combine_list": "pyrit.common.utils",
     "DefaultValueScope": "pyrit.common.apply_defaults",

@@ -29,7 +29,7 @@ def test_valid_init_env():
 def test_invalid_key_raises():
     """An empty API key on a non-Azure endpoint raises ValueError (no Entra fallback)."""
     os.environ[OpenAITextEmbedding.API_KEY_ENVIRONMENT_VARIABLE] = ""
-    with pytest.raises(ValueError, match="required for non-Azure endpoints"):
+    with pytest.raises(ValueError, match="No API key available"):
         OpenAITextEmbedding(
             api_key="",
             endpoint="https://api.openai.com/v1",
@@ -111,10 +111,16 @@ def _build_embedding(
     endpoint: str = _AZURE_ENDPOINT,
     api_key: str | Callable[[], str | Awaitable[str]] | None = "test-key",
     model_name: str = "text-embedding-3-small",
+    auth_mode: str = "api_key",
 ) -> OpenAITextEmbedding:
     """Build an OpenAITextEmbedding with a cleared environment so env vars don't leak in."""
     with patch.dict(os.environ, {}, clear=True):
-        return OpenAITextEmbedding(api_key=api_key, endpoint=endpoint, model_name=model_name)
+        return OpenAITextEmbedding(
+            api_key=api_key,
+            endpoint=endpoint,
+            model_name=model_name,
+            auth_mode=auth_mode,  # type: ignore[arg-type]
+        )
 
 
 @patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
@@ -141,19 +147,52 @@ def test_callable_token_provider_used_as_is(mock_async_openai):
 
 
 @patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
-def test_no_key_azure_endpoint_falls_back_to_entra(mock_async_openai):
-    """A recognized Azure endpoint with no key mints an Entra token provider."""
+def test_no_key_azure_endpoint_falls_back_with_deprecation_warning(mock_async_openai):
+    """Keyless Azure embedding configurations keep working until 1.4.0, but now announce it."""
+    mock_async_openai.return_value = MagicMock()
+
+    with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value="minted-token") as mock_get_auth:
+        with pytest.warns(DeprecationWarning, match="1.4.0"):
+            _build_embedding(api_key=None, endpoint=_AZURE_ENDPOINT)
+
+    mock_get_auth.assert_called_once_with(_AZURE_ENDPOINT)
+
+
+@patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
+def test_identity_auth_mode_ignores_env_key(mock_async_openai):
+    """An explicit identity choice must not be downgraded to the embedding key env var."""
     mock_async_openai.return_value = MagicMock()
     mock_auth = AsyncMock(return_value="entra-token")
 
-    with patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth) as mock_get_auth:
-        _build_embedding(api_key=None, endpoint=_AZURE_ENDPOINT)
+    with (
+        patch.dict(
+            os.environ,
+            {OpenAITextEmbedding.API_KEY_ENVIRONMENT_VARIABLE: "sk-SECRET-FROM-DOTENV"},
+            clear=True,
+        ),
+        patch("pyrit.auth.openai_auth.get_azure_openai_auth", return_value=mock_auth) as mock_get_auth,
+    ):
+        OpenAITextEmbedding(
+            api_key=None,
+            endpoint=_AZURE_ENDPOINT,
+            model_name="text-embedding-3-small",
+            auth_mode="identity",
+        )
 
     mock_get_auth.assert_called_once_with(_AZURE_ENDPOINT)
     assert mock_async_openai.call_args.kwargs["api_key"] is mock_auth
 
 
+@patch("pyrit.embedding.openai_text_embedding.AsyncOpenAI")
+def test_identity_auth_mode_non_azure_endpoint_raises(mock_async_openai):
+    """Identity must never mint a token for an unrecognized host."""
+    mock_async_openai.return_value = MagicMock()
+
+    with pytest.raises(ValueError, match="Identity-based authentication requires"):
+        _build_embedding(api_key=None, endpoint=_NON_AZURE_ENDPOINT, auth_mode="identity")
+
+
 def test_no_key_non_azure_endpoint_raises():
     """A non-Azure endpoint with no key raises ValueError (no Entra fallback)."""
-    with pytest.raises(ValueError, match="required for non-Azure endpoints"):
+    with pytest.raises(ValueError, match="No API key available"):
         _build_embedding(api_key=None, endpoint=_NON_AZURE_ENDPOINT)
