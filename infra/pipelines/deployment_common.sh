@@ -211,6 +211,71 @@ wait_for_http_health() {
   fi
 }
 
+runtime_readiness_error() {
+  local expected_revision=$1 reason=$2
+  printf 'Inspect startup logs: az containerapp logs show --name %q --resource-group %q --revision %q --type console --tail 100\n' \
+    "$PYRIT_APP_NAME" "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" "$expected_revision"
+  echo "Or use Azure Portal -> Container App $PYRIT_APP_NAME -> Monitoring -> Log stream; select revision $expected_revision and console logs."
+  echo "For older startup errors, use Monitoring -> Logs in the connected Log Analytics workspace."
+  echo "Look for 'PyRIT startup failed' and its traceback. Initialization errors remain in access-controlled container logs."
+  deployment_error "PyRIT runtime readiness failed for revision $expected_revision: $reason"
+}
+
+wait_for_runtime_readiness() {
+  local readiness_url=$1 expected_revision=$2 timeout_seconds=$3
+  local deadline=$((SECONDS + timeout_seconds)) attempt=0
+  local remaining_seconds request_timeout sleep_seconds raw_response http_status body parsed
+  local response_revision state ready last_result="No readiness response"
+  while ((SECONDS < deadline)); do
+    ((attempt += 1))
+    remaining_seconds=$((deadline - SECONDS))
+    request_timeout=$((remaining_seconds < 30 ? remaining_seconds : 30))
+    if raw_response=$(curl \
+      --silent --show-error --header 'Cache-Control: no-cache' --write-out $'\n%{http_code}' \
+      --max-time "$request_timeout" "$readiness_url"); then
+      http_status=${raw_response##*$'\n'}
+      body=${raw_response%$'\n'*}
+      if [[ "$http_status" != "200" && "$http_status" != "503" ]]; then
+        last_result="Unexpected readiness HTTP status $http_status"
+      elif ! parsed=$(jq -ser '
+        if length != 1 then error("Invalid readiness response") else .[0] end
+        | if type != "object"
+          or (.ready | type) != "boolean"
+          or (.state | type) != "string"
+          or (.revision | type) != "string"
+        then error("Invalid readiness response")
+        elif (.revision | test("^[a-z][a-z0-9-]*--[a-z0-9-]+$") | not)
+          or (.state as $state | ["ready", "initializing", "failed", "restart-required", "stopping"] | index($state) == null)
+          or .ready != (.state == "ready")
+        then error("Inconsistent readiness response")
+        else [.revision, .state, (.ready | tostring)] | @tsv
+        end' <<< "$body" 2> /dev/null); then
+        last_result="Invalid or inconsistent readiness response"
+      else
+        IFS=$'\t' read -r response_revision state ready <<< "$parsed"
+        if [[ "$response_revision" != "$expected_revision" ]]; then
+          last_result="Waiting for revision $expected_revision; received $response_revision"
+        elif [[ "$http_status" == "200" && "$state" == "ready" && "$ready" == "true" ]]; then
+          echo "PyRIT runtime is ready on revision $expected_revision."
+          return 0
+        elif [[ "$http_status" == "503" && "$state" =~ ^(failed|restart-required|stopping)$ ]]; then
+          runtime_readiness_error "$expected_revision" "Runtime state is $state"
+        else
+          last_result="Runtime state is $state (HTTP $http_status)"
+        fi
+      fi
+    else
+      last_result="Readiness endpoint connection failed"
+    fi
+    echo "PyRIT runtime readiness attempt $attempt: $last_result"
+    remaining_seconds=$((deadline - SECONDS))
+    ((remaining_seconds > 0)) || break
+    sleep_seconds=$((remaining_seconds < 5 ? remaining_seconds : 5))
+    sleep "$sleep_seconds"
+  done
+  runtime_readiness_error "$expected_revision" "Timed out after ${timeout_seconds}s. $last_result"
+}
+
 verify_readiness() {
   local timeout_seconds=$1 expected_public_access=$2 expected_image=$3 unchanged_revision=${4:-}
   local public_network_access

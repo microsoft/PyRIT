@@ -118,6 +118,7 @@ main() {
     --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
     --template-file "$template_file" --mode Incremental --parameters "${parameters[@]}"
   verify_readiness 300 "$expected_public_access" "$immutable_image"
+  wait_for_runtime_readiness "${health_url%/api/health}/api/ready" "$revision" 300
   echo "Deployment healthy: $revision; verified $health_url; ACA public access: $expected_public_access; egress IPv4: $egress_ip"
 }
 

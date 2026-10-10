@@ -80,6 +80,7 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
     # Paths that bypass authentication
     _PUBLIC_PATHS: ClassVar[set[str]] = {
         "/api/health",
+        "/api/ready",
         "/api/auth/config",
         "/api/media",
     }

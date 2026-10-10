@@ -18,7 +18,7 @@ class CompatibilityMiddleware:
     """Enforce one exact packaged compatibility identity on business API requests."""
 
     _NEUTRAL_PATHS: ClassVar[frozenset[str]] = frozenset(
-        {"/api/health", "/api/auth/config", "/api/version", "/api/media"}
+        {"/api/health", "/api/ready", "/api/auth/config", "/api/version", "/api/media"}
     )
 
     def __init__(self, app: ASGIApp) -> None:
