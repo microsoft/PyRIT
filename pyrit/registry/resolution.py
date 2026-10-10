@@ -568,7 +568,7 @@ def resolve_constructor_args(
 
     Derives the ``Parameter`` contract for ``cls`` and applies it to
     ``raw_args``. For each raw argument: validate it is a declared parameter;
-    resolve registry-reference parameters by name; coerce simple string values
+    resolve registry-reference parameters by name; coerce constrained values and simple string values
     via ``Parameter.coerce_value``; pass everything else through unchanged.
 
     Args:
@@ -619,8 +619,10 @@ def resolve_constructor_args(
             )
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
-        elif (isinstance(value, str) and param.is_string_coercible) or (
-            isinstance(value_type, type) and issubclass(value_type, Enum)
+        elif value is not None and (
+            param.choices
+            or (isinstance(value, str) and param.is_string_coercible)
+            or (isinstance(value_type, type) and issubclass(value_type, Enum))
         ):
             try:
                 resolved[name] = param.coerce_value(value)

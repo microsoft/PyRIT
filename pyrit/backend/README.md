@@ -63,6 +63,9 @@ Admission also checks the effective dynamic scenario pools, including local fact
 tags and scenario filters, before changing the registry. Attack-owned constructor
 validators check bounds and other configuration constraints without constructing
 or executing attacks. Target and scorer compatibility stays an initialization check.
+Constrained list inputs are resolved to their declared enum or literal values.
+Deferred Python validation uses the same configured-default rules as decorated
+constructors; the factory retains omitted arguments and explicit `None` values.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.

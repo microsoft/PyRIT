@@ -7,6 +7,7 @@ import ast
 import asyncio
 import threading
 from collections.abc import Iterator
+from enum import Enum
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -34,7 +35,7 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios import airt
 from pyrit.scenario.scenarios.airt.leakage import Leakage
@@ -42,6 +43,18 @@ from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 from unit.mocks import MockPromptTarget
+
+
+class _Mode(Enum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
+
+class _ModeAttack(PromptSendingAttack):
+    def __init__(self, *, objective_target: MockPromptTarget, modes: list[_Mode]) -> None:
+        super().__init__(objective_target=objective_target)
+        self.modes = modes
+        self.mode_values = [mode.value for mode in modes]
 
 
 @pytest.fixture
@@ -84,6 +97,45 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
     assert metadata.model_dump_json()
     created = await service.create_async(CreateTechniqueRequest(name="from_alias", type="alias"))
     assert created.attack_type == "PromptSendingAttack"
+
+
+@pytest.mark.parametrize("modes", [["enabled", "disabled", "enabled"], []])
+def test_rest_enum_list_metadata_create_and_construction(
+    *,
+    registry: AttackTechniqueRegistry,
+    compatibility_headers: dict[str, str],
+    modes: list[str],
+) -> None:
+    from pyrit.executor.attack import AttackScoringConfig
+
+    AttackRegistry.get_registry_singleton().register_class(_ModeAttack, name="mode_attack")
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques/types")
+    assert response.status_code == 200, response.text
+    metadata = next(item for item in response.json()["items"] if item["attack_type"] == "mode_attack")
+    parameter = next(item for item in metadata["parameters"] if item["name"] == "modes")
+    assert parameter["is_list"]
+    assert parameter["choices"] == ["enabled", "disabled"]
+    response = client.post(
+        "/api/techniques", json={"name": "enum_list", "type": "mode_attack", "params": {"modes": modes}}
+    )
+    assert response.status_code == 201, response.text
+    factory = registry.instances.get("enum_list")
+    assert factory is not None
+    target = MockPromptTarget()
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    assert isinstance(technique.attack, _ModeAttack)
+    assert technique.attack.modes == [_Mode(mode) for mode in modes]
+    assert technique.attack.mode_values == modes
+    assert target.prompt_sent == []
+    revision = registry.catalog_revision
+    response = client.post(
+        "/api/techniques",
+        json={"name": "bad_enum_list", "type": "mode_attack", "params": {"modes": ["enabled", "missing"]}},
+    )
+    assert response.status_code == 400, response.text
+    assert registry.catalog_revision == revision
+    assert registry.instances.get("bad_enum_list") is None
 
 
 @pytest.mark.parametrize("limit", [1, 3, 200])
@@ -415,7 +467,7 @@ async def test_launch_survives_registration_between_resolution_and_construction_
             patch.object(scenarios, "_discover"),
             patch.object(service, "_initialize_scenario_async", side_effect=register_then_initialize_async),
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
@@ -496,7 +548,7 @@ async def test_rest_create_and_initialize_numeric_boundary_async(registry: Attac
         }
     )
     with patch.object(
-        CompoundDatasetAttackConfiguration,
+        DatasetAttackConfiguration,
         "get_attack_groups_by_dataset_async",
         new_callable=AsyncMock,
         return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
@@ -587,7 +639,7 @@ async def test_warm_catalog_estimates_and_summaries_refresh_without_changing_sna
                 }
             )
             with patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},

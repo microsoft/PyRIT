@@ -10,8 +10,15 @@ from unittest.mock import patch
 
 import pytest
 
+from pyrit.common.apply_defaults import REQUIRED_VALUE, GlobalDefaultValues
 from pyrit.converter import Base64Converter, ROT13Converter
-from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackScoringConfig,
+    ChunkedRequestAttack,
+    PromptSendingAttack,
+    RedTeamingAttack,
+)
 from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt, StructuredParameterValue
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
@@ -165,6 +172,46 @@ def test_factory_keeps_existing_constructor_coercion(registry: AttackTechniqueRe
         name="coerced", attack_type="PromptSendingAttack", params={"max_attempts_on_failure": "2"}
     )
     assert factory.get_creation_kwargs()["attack_kwargs"]["max_attempts_on_failure"] == 2
+
+
+@pytest.mark.parametrize("total_length", [None, REQUIRED_VALUE, 500])
+def test_factory_validation_matches_decorated_constructor_defaults(
+    *, registry: AttackTechniqueRegistry, total_length: Any
+) -> None:
+    defaults = GlobalDefaultValues()
+    defaults.set_default_value(class_type=ChunkedRequestAttack, parameter_name="total_length", value=500)
+    params = {"chunk_size": 250, "total_length": total_length}
+    target = MockPromptTarget()
+    with (
+        patch("pyrit.common.apply_defaults._global_default_values", defaults),
+        patch.object(defaults, "get_default_value", wraps=defaults.get_default_value) as lookup,
+    ):
+        factory = registry.create_factory(name="defaulted", attack_type="ChunkedRequestAttack", params=params)
+        assert not {"objective_target", "attack_adversarial_config", "attack_scoring_config"} & {
+            call.kwargs["parameter_name"] for call in lookup.call_args_list
+        }
+        assert factory.get_creation_kwargs()["attack_kwargs"] == params
+        direct = ChunkedRequestAttack(objective_target=target, **params)
+        technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    assert isinstance(technique.attack, ChunkedRequestAttack)
+    assert technique.attack._total_length == direct._total_length == 500
+    assert technique.attack._chunk_size == direct._chunk_size == 250
+    assert params["total_length"] is total_length
+    assert target.prompt_sent == []
+
+
+def test_factory_validation_rejects_invalid_effective_default(registry: AttackTechniqueRegistry) -> None:
+    defaults = GlobalDefaultValues()
+    defaults.set_default_value(class_type=ChunkedRequestAttack, parameter_name="total_length", value=100)
+    params = {"chunk_size": 250, "total_length": None}
+    revision = registry.catalog_revision
+    with patch("pyrit.common.apply_defaults._global_default_values", defaults):
+        with pytest.raises(ValueError, match="total_length must be >= chunk_size"):
+            registry.create_factory(name="invalid_default", attack_type="ChunkedRequestAttack", params=params)
+        with pytest.raises(ValueError, match="total_length must be >= chunk_size"):
+            ChunkedRequestAttack(objective_target=MockPromptTarget(), **params)
+    assert registry.catalog_revision == revision
+    assert registry.instances.get("invalid_default") is None
 
 
 @pytest.mark.parametrize(

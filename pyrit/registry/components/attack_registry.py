@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.models.identifiers import AttackIdentifier
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -57,9 +58,9 @@ class AttackRegistry(Registry["AttackStrategy", RegistryMetadata]):
         Raises:
             ValueError: If the attack rejects its supplied configuration.
         """
-        defaults = {
-            parameter.name: parameter.default
-            for parameter in self.get_class_metadata(attack_class).parameters
-            if not parameter.required
-        }
-        attack_class.validate_constructor_parameters({**defaults, **params})
+        effective = resolve_constructor_defaults(
+            class_type=attack_class,
+            arguments=params,
+            excluded_parameters={"objective_target", "attack_adversarial_config", "attack_scoring_config"},
+        )
+        attack_class.validate_constructor_parameters(effective)

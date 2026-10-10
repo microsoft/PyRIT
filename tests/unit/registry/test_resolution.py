@@ -73,6 +73,11 @@ class _EnumOnly:
         self.speed = speed
 
 
+class _EnumList:
+    def __init__(self, *, speeds: list[_Speed] | None) -> None:
+        self.speeds = speeds
+
+
 class _Plain:
     def __init__(
         self, *, count: int, ratio: float = 0.5, mode: Literal["a", "b"] = "a", note: str | None = None
@@ -196,6 +201,28 @@ class TestResolveConstructorArgs:
     def test_enum_string_coerces_to_member(self) -> None:
         resolved = _resolve(_EnumOnly, {"speed": "fast"})
         assert resolved == {"speed": _Speed.FAST}
+
+    @pytest.mark.parametrize("external_input", [False, True])
+    @pytest.mark.parametrize(
+        ("speeds", "expected"),
+        [
+            (["fast", "slow", "fast"], [_Speed.FAST, _Speed.SLOW, _Speed.FAST]),
+            ([_Speed.SLOW], [_Speed.SLOW]),
+            ([], []),
+            (None, None),
+        ],
+    )
+    def test_enum_lists_coerce_without_changing_supplied_values(
+        self, *, external_input: bool, speeds: Any, expected: Any
+    ) -> None:
+        original = speeds.copy() if isinstance(speeds, list) else speeds
+        resolved = resolve_constructor_args(cls=_EnumList, raw_args={"speeds": speeds}, external_input=external_input)
+        assert resolved == {"speeds": expected}
+        assert speeds == original
+
+    def test_enum_list_invalid_member_raises(self) -> None:
+        with pytest.raises(ValueError, match="Parameter 'speeds' of '_EnumList'"):
+            _resolve(_EnumList, {"speeds": ["fast", "missing"]})
 
     def test_forwarded_parent_params_are_coerced(self) -> None:
         resolved = _resolve(_ForwardingChild, {"label": "configured", "count": "3", "speed": "slow"})
