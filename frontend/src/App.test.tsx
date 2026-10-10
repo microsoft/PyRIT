@@ -395,6 +395,32 @@ jest.mock("./components/Scenarios/ScenarioCatalog", () => {
   };
 });
 
+jest.mock("./components/ScenarioPresets/ScenarioPresetLibrary", () => {
+  const MockScenarioPresetLibrary = () => <div data-testid="scenario-preset-library" />;
+  MockScenarioPresetLibrary.displayName = "MockScenarioPresetLibrary";
+  return {
+    __esModule: true,
+    default: MockScenarioPresetLibrary,
+  };
+});
+
+jest.mock("./components/ScenarioPresets/ScenarioPresetEditor", () => {
+  const { useParams } = jest.requireActual("react-router");
+  const MockScenarioPresetEditor = ({ mode }: { mode: string }) => {
+    const { presetName } = useParams();
+    return (
+      <div data-testid="scenario-preset-editor" data-mode={mode}>
+        {presetName ?? ""}
+      </div>
+    );
+  };
+  MockScenarioPresetEditor.displayName = "MockScenarioPresetEditor";
+  return {
+    __esModule: true,
+    default: MockScenarioPresetEditor,
+  };
+});
+
 jest.mock("./components/Scenarios/ScenarioDetail", () => {
   const MockScenarioDetail = ({
     defaultObjectiveTarget,
@@ -602,6 +628,46 @@ describe("App", () => {
 
     expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
+  });
+
+  it("renders the preset library as a registry section", () => {
+    renderApp("/registry/scenario-presets");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(screen.getByTestId("scenario-preset-library")).toBeInTheDocument();
+  });
+
+  it("redirects a bookmarked /scanner/presets to the registry section", async () => {
+    render(
+      <MemoryRouter initialEntries={["/scanner/presets"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTestId("scenario-preset-library")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+      /^\/registry\/scenario-presets$/
+    );
+  });
+
+  it("redirects a bookmarked preset editor URL, keeping the preset it named", async () => {
+    render(
+      <MemoryRouter initialEntries={["/scanner/presets/nightly_probe/edit"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    const editor = await screen.findByTestId("scenario-preset-editor");
+    expect(editor).toHaveAttribute("data-mode", "edit");
+    expect(editor).toHaveTextContent("nightly_probe");
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(
+      /^\/registry\/scenario-presets\/nightly_probe\/edit$/
+    );
   });
 
   it("renders the converter registry from its direct URL", async () => {

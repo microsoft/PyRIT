@@ -140,6 +140,12 @@ allow_custom_initializers: false
 # ~/.pyrit/custom_initializers.
 # custom_initializers_source: https://account.blob.core.windows.net/container/custom_initializers
 
+# Optional storage for scenario presets, the saved scenario configurations the
+# scanner UI launches from. This may be a local directory or an Azure Blob
+# container URI with an optional blob prefix. Container URIs may include a SAS;
+# otherwise DefaultAzureCredential is used. Defaults to ~/.pyrit/scenario_presets.
+# scenario_presets_source: https://account.blob.core.windows.net/container/scenario_presets
+
 # Local Backend Server
 # --------------------
 # Client settings used by pyrit_scan when connecting to or launching a backend.

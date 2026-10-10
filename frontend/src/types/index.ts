@@ -801,6 +801,70 @@ export interface ListRegisteredScenariosResponse {
   pagination: PaginationInfo
 }
 
+/**
+ * A saved, portable scenario configuration.
+ *
+ * Every optional field is tri-state: absent means "use the scenario's own default",
+ * so a preset only pins what the author deliberately chose. It carries no target,
+ * concurrency, retries or labels — those are launch-time decisions supplied by
+ * `ResolveScenarioPresetRequest`.
+ */
+export interface ScenarioPreset {
+  name: string
+  scenario_name: string
+  description?: string | null
+  /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  techniques?: string[] | null
+  dataset_names?: string[] | null
+  max_dataset_size?: number | null
+  dataset_filters?: Record<string, string[]> | null
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
+}
+
+/** One advisory problem found checking a preset against this deployment's registry. */
+export interface PresetIssue {
+  field: string
+  message: string
+}
+
+export interface ScenarioPresetResponse {
+  preset: ScenarioPreset
+  /** Opaque document version; required to update the preset. */
+  version: string
+  /** Empty when the preset is runnable here. Never blocks a save. */
+  issues: PresetIssue[]
+  /**
+   * How much this preset runs with its own techniques, datasets, and limits.
+   * Only the list endpoint fills this in, and only when estimates are requested;
+   * it stays null for a preset this deployment cannot resolve.
+   */
+  run_size?: ScenarioRunSizeEstimateResponse | null
+}
+
+export interface ScenarioPresetListResponse {
+  source: string
+  items: ScenarioPresetResponse[]
+}
+
+export interface UpdateScenarioPresetRequest {
+  preset: ScenarioPreset
+  expected_version: string
+}
+
+/** The launch-owned fields a preset deliberately omits. */
+export interface ResolveScenarioPresetRequest {
+  expected_version?: string | null
+  target_name: string
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  max_concurrency?: number | null
+  max_retries?: number | null
+  labels?: Record<string, string> | null
+}
+
 export interface RunScenarioRequest {
   scenario_name: string
   target_name: string

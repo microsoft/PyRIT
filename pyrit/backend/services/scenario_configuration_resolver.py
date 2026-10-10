@@ -8,14 +8,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario.core import (
+    CONVERTER_MODIFIER_PREFIX,
+    converter_name_from_modifier,
+    parse_technique_token,
+)
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
-
-_CONVERTER_MODIFIER_PREFIX = "converter."
 
 
 class ScenarioConfigurationResolver:
@@ -188,8 +191,7 @@ class ScenarioConfigurationResolver:
         technique_enums: list[Any] = []
         technique_converters: dict[str, list[Converter]] = {}
         for token in tokens:
-            base_name, _, remainder = token.partition(":")
-            modifiers = [modifier for modifier in remainder.split(":") if modifier] if remainder else []
+            base_name, modifiers = parse_technique_token(token)
             try:
                 technique_enum = technique_class(base_name)
             except ValueError:
@@ -207,7 +209,7 @@ class ScenarioConfigurationResolver:
         return technique_enums, technique_converters
 
     @staticmethod
-    def _resolve_converter_modifiers(*, modifiers: list[str], token: str) -> list[Converter]:
+    def _resolve_converter_modifiers(*, modifiers: tuple[str, ...], token: str) -> list[Converter]:
         """
         Resolve converter modifiers from one technique token.
 
@@ -223,13 +225,13 @@ class ScenarioConfigurationResolver:
         instances = ConverterRegistry.get_registry_singleton().instances
         converters: list[Converter] = []
         for modifier in modifiers:
-            if not modifier.startswith(_CONVERTER_MODIFIER_PREFIX):
+            converter_name = converter_name_from_modifier(modifier)
+            if converter_name is None:
                 raise ValueError(
                     f"Unknown technique modifier '{modifier}' in '{token}'. "
-                    f"Supported modifiers must use the '{_CONVERTER_MODIFIER_PREFIX}' prefix "
-                    f"(e.g. '{_CONVERTER_MODIFIER_PREFIX}translation_spanish')."
+                    f"Supported modifiers must use the '{CONVERTER_MODIFIER_PREFIX}' prefix "
+                    f"(e.g. '{CONVERTER_MODIFIER_PREFIX}translation_spanish')."
                 )
-            converter_name = modifier[len(_CONVERTER_MODIFIER_PREFIX) :]
             converter = instances.get(converter_name)
             if converter is None:
                 available = instances.get_names()

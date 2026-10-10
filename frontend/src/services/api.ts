@@ -35,7 +35,12 @@ import type {
   ChangeMainConversationResponse,
   ListRegisteredScenariosResponse,
   RegisteredScenario,
+  ResolveScenarioPresetRequest,
   RunScenarioRequest,
+  ScenarioPreset,
+  ScenarioPresetListResponse,
+  ScenarioPresetResponse,
+  UpdateScenarioPresetRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSummary,
@@ -556,6 +561,63 @@ export const scenariosApi = {
 
   resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
+}
+
+export const scenarioPresetsApi = {
+  list: async (
+    signal?: AbortSignal,
+    includeEstimates = true,
+  ): Promise<ScenarioPresetListResponse> => {
+    const params: Record<string, boolean> = {}
+    if (!includeEstimates) params.include_estimates = false
+    const response = await apiClient.get('/scenario-presets', { params, signal })
+    return response.data
+  },
+
+  get: async (name: string): Promise<ScenarioPresetResponse> => {
+    const response = await apiClient.get(`/scenario-presets/${encodeURIComponent(name)}`)
+    return response.data
+  },
+
+  /** Creates a preset that must not already exist; the server returns 409 when the name is taken. */
+  create: async (preset: ScenarioPreset): Promise<ScenarioPresetResponse> => {
+    const response = await apiClient.post('/scenario-presets', preset)
+    return response.data
+  },
+
+  /**
+   * Replaces a preset the caller has read. `expectedVersion` is the version returned
+   * by the read, so a concurrent edit fails with 409 instead of being overwritten.
+   */
+  update: async (
+    name: string,
+    preset: ScenarioPreset,
+    expectedVersion: string,
+  ): Promise<ScenarioPresetResponse> => {
+    const body: UpdateScenarioPresetRequest = { preset, expected_version: expectedVersion }
+    const response = await apiClient.put(`/scenario-presets/${encodeURIComponent(name)}`, body)
+    return response.data
+  },
+
+  remove: async (name: string): Promise<void> => {
+    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
+  },
+
+  /**
+   * Combines a stored preset with the launch-owned fields it omits into a runnable request.
+   * Sending `expected_version` fails with 409 when the preset changed after it was read,
+   * so a launch cannot silently run a configuration the operator never saw.
+   */
+  resolve: async (
+    name: string,
+    request: ResolveScenarioPresetRequest,
+  ): Promise<RunScenarioRequest> => {
+    const response = await apiClient.post(
+      `/scenario-presets/${encodeURIComponent(name)}/resolve`,
+      request,
+    )
     return response.data
   },
 }

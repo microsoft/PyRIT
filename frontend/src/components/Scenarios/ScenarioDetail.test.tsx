@@ -654,7 +654,7 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Backend-resolved preset members')).not.toBeInTheDocument()
   })
 
-  it('shows technique descriptions and tags', async () => {
+  it('shows technique descriptions', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({
         default_technique: 'default',
@@ -684,8 +684,6 @@ describe('ScenarioDetail', () => {
 
     expect(screen.getByText('Sends the objective directly.')).toBeInTheDocument()
     expect(screen.getByText('Places the jailbreak in the system prompt.')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Clear Recommended techniques' })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: 'Clear Single-turn techniques' })).toHaveLength(3)
   })
 
   it('renders only concrete techniques and de-duplicates their names', async () => {
@@ -713,32 +711,6 @@ describe('ScenarioDetail', () => {
     const request = mockStartRun.mock.calls[0][0]
     expect(request.techniques).toEqual(['crescendo', 'prompt_sending'])
     expect(new Set(request.techniques).size).toBe(request.techniques.length)
-  })
-
-  it('selects and clears all members of a tag', async () => {
-    mockGetScenario.mockResolvedValue(
-      makeScenario({
-        default_techniques: ['default_technique'],
-        all_techniques: ['default_technique', 'crescendo', 'many_shot'],
-        technique_summaries: [
-          { name: 'default_technique', description: 'Direct attack.', tags: ['single_turn'] },
-          { name: 'crescendo', description: 'Escalating attack.', tags: ['multi_turn'] },
-          { name: 'many_shot', description: 'Many-shot attack.', tags: ['multi_turn'] },
-        ],
-      }),
-    )
-    const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
-    await screen.findByTestId('scenario-target-select')
-
-    await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
-    expect(screen.getByTestId('technique-crescendo')).toBeChecked()
-    expect(screen.getByTestId('technique-many_shot')).toBeChecked()
-
-    await user.click(screen.getAllByRole('button', { name: 'Clear Multi-turn techniques' })[0])
-    expect(screen.getByTestId('technique-crescendo')).not.toBeChecked()
-    expect(screen.getByTestId('technique-many_shot')).not.toBeChecked()
-    expect(screen.getByTestId('technique-default_technique')).toBeChecked()
   })
 
   it('initializes a concrete default as custom and allows adding another concrete technique', async () => {
@@ -790,20 +762,6 @@ describe('ScenarioDetail', () => {
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
-  })
-
-  it('includes the baseline when a shared tag selects or clears its members', async () => {
-    const user = userEvent.setup()
-    renderDetail('/scanner/foundry.red_team_agent')
-    await screen.findByTestId('scenario-target-select')
-
-    await user.click(screen.getAllByRole('button', { name: 'Clear Single-turn techniques' })[0])
-    expect(screen.getByTestId('baseline-checkbox')).not.toBeChecked()
-    expect(screen.getByTestId('technique-default_technique')).not.toBeChecked()
-
-    await user.click(screen.getAllByRole('button', { name: 'Select Single-turn techniques' })[0])
-    expect(screen.getByTestId('baseline-checkbox')).toBeChecked()
-    expect(screen.getByTestId('technique-default_technique')).toBeChecked()
   })
 
   it('defaults the baseline checkbox to unchecked when the policy is disabled with include_baseline_by_default false', async () => {

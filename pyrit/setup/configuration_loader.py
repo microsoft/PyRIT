@@ -112,6 +112,8 @@ class ConfigurationLoader(YamlLoadable):
             bootstrap document should fail initialization.
         custom_initializers_source: Local directory or Azure Blob container URI,
             optionally followed by a blob prefix, used to persist custom initializer Python scripts.
+        scenario_presets_source: Local directory or Azure Blob container URI, optionally
+            followed by a blob prefix, used to persist scenario presets.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -163,6 +165,7 @@ class ConfigurationLoader(YamlLoadable):
     enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
     custom_initializers_source: str | None = None
+    scenario_presets_source: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
@@ -189,6 +192,7 @@ class ConfigurationLoader(YamlLoadable):
         self._normalize_initializers()
         self._validate_env_akv_ref()
         self._validate_custom_initializers_source()
+        self._validate_scenario_presets_source()
         self._normalize_server()
 
     def _validate_allow_custom_initializers(self) -> None:
@@ -208,10 +212,31 @@ class ConfigurationLoader(YamlLoadable):
         Raises:
             ValueError: If the source is not a non-empty string.
         """
-        if self.custom_initializers_source is not None and (
-            not isinstance(self.custom_initializers_source, str) or not self.custom_initializers_source.strip()
-        ):
-            raise ValueError("custom_initializers_source must be a non-empty local directory or container URI.")
+        self._validate_document_source(name="custom_initializers_source", value=self.custom_initializers_source)
+
+    def _validate_scenario_presets_source(self) -> None:
+        """
+        Validate the optional scenario preset storage source.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        self._validate_document_source(name="scenario_presets_source", value=self.scenario_presets_source)
+
+    @staticmethod
+    def _validate_document_source(*, name: str, value: Any) -> None:
+        """
+        Validate an optional document storage source.
+
+        Args:
+            name: The configuration key being validated, used in the error message.
+            value: The configured value.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{name} must be a non-empty local directory or container URI.")
 
     def _validate_env_akv_ref(self) -> None:
         """

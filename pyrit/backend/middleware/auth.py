@@ -74,6 +74,25 @@ def require_admin(request: Request) -> None:
         )
 
 
+def current_user_name(request: Request) -> str | None:
+    """
+    Return a display name for the signed-in user, or None when nobody is identified.
+
+    Authentication is optional in PyRIT, so most deployments have no identity to
+    report and callers must treat the result as unknown rather than anonymous.
+
+    Args:
+        request (Request): The request whose authenticated user to read.
+
+    Returns:
+        str | None: The user's display name, their email when no name is set, or None.
+    """
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, AuthenticatedUser):
+        return None
+    return user.name or user.email or None
+
+
 class EntraAuthMiddleware(BaseHTTPMiddleware):
     """Authenticate API requests through Microsoft Graph."""
 

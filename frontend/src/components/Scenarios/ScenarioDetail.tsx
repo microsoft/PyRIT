@@ -3,7 +3,6 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Badge,
   Button,
-  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -11,7 +10,6 @@ import {
   DialogSurface,
   DialogTitle,
   Field,
-  Input,
   MessageBar,
   MessageBarBody,
   mergeClasses,
@@ -19,7 +17,6 @@ import {
   Spinner,
   Text,
   Tooltip,
-  ToggleButton,
 } from '@fluentui/react-components'
 import {
   ArrowLeftRegular,
@@ -35,7 +32,6 @@ import { useRuntime } from '@/hooks/useRuntime'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import {
-  buildParametersFromForm,
   getInitialFormValues,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
@@ -50,42 +46,35 @@ import type {
   ScenarioRunEstimateResult,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunEstimateState,
-  ScenarioTechniqueSummary,
   TargetInstance,
 } from '@/types'
 import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
+import ScenarioDatasetFields from './ScenarioDatasetFields'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
+import ScenarioTechniqueSelector from './ScenarioTechniqueSelector'
+import {
+  buildScenarioConfig,
+  datasetSizeNotApplicable,
+  defaultMaxDatasetSize,
+  dynamicScenarioParameters,
+  parseDatasetNames,
+  uniqueTechniqueOptions,
+} from './scenarioConfigForm'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
-import { techniqueSetName } from './scenarioTechniqueSets'
+import {
+  DEFAULT_MAX_CONCURRENCY,
+  DEFAULT_MAX_RETRIES,
+  MAX_MAX_CONCURRENCY,
+  MAX_MAX_RETRIES,
+  MIN_MAX_CONCURRENCY,
+  MIN_MAX_RETRIES,
+  resolveSpinButtonValue,
+} from './scenarioRunLimits'
 
-/**
- * Common/opaque parameters every scenario declares via
- * `Scenario._common_scenario_parameters` — the launch form already exposes a
- * purpose-built control for each of these (target, techniques, datasets,
- * labels, concurrency, retries, baseline), and `technique_converters` has no
- * UI at all. They're hidden from the dynamic scenario-specific parameter list.
- */
-const COMMON_SCENARIO_PARAMETER_NAMES = new Set([
-  'objective_target',
-  'scenario_techniques',
-  'technique_converters',
-  'dataset_config',
-  'memory_labels',
-  'max_concurrency',
-  'max_retries',
-  'include_baseline',
-])
-
-const MIN_MAX_CONCURRENCY = 1
-const MAX_MAX_CONCURRENCY = 100
-const MIN_MAX_RETRIES = 0
-const MAX_MAX_RETRIES = 20
-const DEFAULT_MAX_CONCURRENCY = 10
-const DEFAULT_MAX_RETRIES = 0
 const ESTIMATE_DEBOUNCE_MS = 300
 
 function targetOptionLabel(target: TargetInstance): string {
@@ -95,65 +84,8 @@ function targetOptionLabel(target: TargetInstance): string {
     : target.target_registry_name
 }
 
-function defaultMaxDatasetSize(scenario: RegisteredScenario): string {
-  const limit = scenario.default_run_size.dataset_limit
-  return limit.state === 'value' ? String(limit.value) : ''
-}
-
-/** Resolves a Fluent `SpinButton` change event to a numeric value, preferring the parsed `value` over the raw `displayValue`. */
-function resolveSpinButtonValue(data: { value?: number | null; displayValue?: string }, previous: number): number {
-  if (typeof data.value === 'number') {
-    return data.value
-  }
-  const parsed = data.displayValue !== undefined ? Number(data.displayValue) : NaN
-  return Number.isFinite(parsed) ? parsed : previous
-}
 
 type LoadStatus = 'loading' | 'success' | 'not-found' | 'error'
-
-interface TechniqueOptions {
-  techniques: ScenarioTechniqueSummary[]
-  defaultTechniques: string[]
-}
-
-function uniqueTechniqueOptions(scenario: RegisteredScenario): TechniqueOptions {
-  const aggregateNames = new Set(scenario.aggregate_techniques)
-  const summariesByName = new Map(
-    scenario.technique_summaries.map((summary) => [summary.name, summary]),
-  )
-  const techniques: ScenarioTechniqueSummary[] = []
-  const seen = new Set<string>()
-  for (const name of scenario.all_techniques) {
-    if (!aggregateNames.has(name) && !seen.has(name)) {
-      techniques.push(summariesByName.get(name) ?? { name, description: null, tags: [] })
-      seen.add(name)
-    }
-  }
-  const concreteNames = new Set(techniques.map((technique) => technique.name))
-  const defaultTechniques = scenario.default_techniques.filter((name) => concreteNames.has(name))
-  if (defaultTechniques.length === 0 && concreteNames.has(scenario.default_technique)) {
-    defaultTechniques.push(scenario.default_technique)
-  }
-  return { techniques, defaultTechniques }
-}
-
-interface SelectableTechnique extends ScenarioTechniqueSummary {
-  isBaseline: boolean
-  disabled: boolean
-}
-
-const BASELINE_TECHNIQUE: ScenarioTechniqueSummary = {
-  name: 'baseline',
-  description: 'Sends each objective directly to the target for comparison.',
-  tags: ['baseline', 'single_turn'],
-}
-
-function parseDatasetNames(datasetOverride: string): string[] {
-  return datasetOverride
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-}
 
 function formatParameterPreview(value: ParameterFormValue | undefined): string {
   if (Array.isArray(value)) {
@@ -284,68 +216,18 @@ type EstimateRequestState =
       error: string
     }
 
-function buildEstimateRequest({
-  scenario,
-  targetName,
-  adversarialTargetName,
-  techniques,
-  dynamicParameters,
-  scenarioParamValues,
-  datasetOverride,
-  maxDatasetSize,
-  harmCategoriesFilter,
-  dataTypesFilter,
-  includeBaseline,
-}: BuildEstimateRequestInput): BuildEstimateRequestResult {
-  if (techniques.length === 0) {
-    return { ok: false, error: 'Select at least one technique.' }
+function buildEstimateRequest(input: BuildEstimateRequestInput): BuildEstimateRequestResult {
+  const configResult = buildScenarioConfig(input)
+  if (!configResult.ok) {
+    return configResult
   }
-
-  let scenarioParams: Record<string, unknown> | null = null
-  if (dynamicParameters.length > 0) {
-    const result = buildParametersFromForm(dynamicParameters, scenarioParamValues)
-    if (!result.ok) {
-      return result
-    }
-    scenarioParams = result.parameters
-  }
-
-  let maxDatasetSizeValue: number | undefined
-  const trimmedMaxDatasetSize = maxDatasetSize.trim()
-  if (trimmedMaxDatasetSize.length > 0) {
-    const parsed = Number(trimmedMaxDatasetSize)
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      return { ok: false, error: 'Max dataset size must be a positive integer.' }
-    }
-    maxDatasetSizeValue = parsed
-  }
-  const datasetNames = parseDatasetNames(datasetOverride)
-  const request: ScenarioRunSizeEstimateRequest = {
-    techniques,
-    include_baseline: includeBaseline,
-  }
+  const { scenario, targetName, adversarialTargetName } = input
+  const request: ScenarioRunSizeEstimateRequest = { ...configResult.config }
   if (targetName) {
     request.target_name = targetName
   }
   if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
-  }
-  if (datasetNames.length > 0) {
-    request.dataset_names = datasetNames
-  }
-  if (maxDatasetSizeValue !== undefined) {
-    request.max_dataset_size = maxDatasetSizeValue
-  }
-  const harmCategories = parseDatasetNames(harmCategoriesFilter)
-  const dataTypes = parseDatasetNames(dataTypesFilter)
-  if (harmCategories.length > 0 || dataTypes.length > 0) {
-    request.dataset_filters = {
-      ...(harmCategories.length > 0 ? { harm_categories: harmCategories } : {}),
-      ...(dataTypes.length > 0 ? { data_types: dataTypes } : {}),
-    }
-  }
-  if (scenarioParams) {
-    request.scenario_params = scenarioParams
   }
   return { ok: true, request }
 }
@@ -579,10 +461,8 @@ function ScenarioLaunchForm({
     [scenario],
   )
   const dynamicParameters = useMemo(
-    () => scenario.supported_parameters.filter(
-      (parameter) => !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name),
-    ),
-    [scenario.supported_parameters],
+    () => dynamicScenarioParameters(scenario),
+    [scenario],
   )
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
 
@@ -652,27 +532,12 @@ function ScenarioLaunchForm({
     }
   }
 
-  const selectableTechniques = useMemo<SelectableTechnique[]>(
-    () => [
-      {
-        ...BASELINE_TECHNIQUE,
-        isBaseline: true,
-        disabled: isBaselineForbidden,
-      },
-      ...techniqueOptions.map((technique) => ({
-        ...technique,
-        isBaseline: false,
-        disabled: false,
-      })),
-    ],
-    [isBaselineForbidden, techniqueOptions],
-  )
   const techniques = selectedTechniques
   const maxDatasetSizeOverride = maxDatasetSize.trim()
     && maxDatasetSize !== configuredDefaultMaxDatasetSize
     ? maxDatasetSize
     : ''
-  const datasetSizeLabel = scenario.default_run_size.dataset_limit.state === 'not_applicable'
+  const datasetSizeLabel = datasetSizeNotApplicable(scenario)
     ? 'Not applicable'
     : maxDatasetSize.trim() || configuredDefaultMaxDatasetSize || 'Scenario default'
   const estimateResult = useMemo(
@@ -840,48 +705,6 @@ function ScenarioLaunchForm({
     estimateState = { status: 'loading', scope: 'request' }
   }
 
-  const handleTechniqueChange = (technique: SelectableTechnique, checked: boolean): void => {
-    if (technique.isBaseline) {
-      setBaselineChecked(checked)
-    } else {
-      setSelectedTechniques((current) => {
-        if (checked) {
-          return current.includes(technique.name)
-            ? current
-            : [...current, technique.name]
-        }
-        return current.filter((name) => name !== technique.name)
-      })
-    }
-    setValidationError(null)
-  }
-
-  const isTechniqueSelected = (technique: SelectableTechnique): boolean => (
-    technique.isBaseline ? baselineChecked : selectedTechniques.includes(technique.name)
-  )
-
-  const handleTagChange = (tag: string): void => {
-    const members = selectableTechniques.filter(
-      (technique) => !technique.disabled && technique.tags.includes(tag),
-    )
-    const shouldSelect = members.some((technique) => !isTechniqueSelected(technique))
-    const memberNames = new Set(
-      members.filter((technique) => !technique.isBaseline).map((technique) => technique.name),
-    )
-    setSelectedTechniques((current) => {
-      const selected = new Set(current)
-      for (const name of memberNames) {
-        if (shouldSelect) selected.add(name)
-        else selected.delete(name)
-      }
-      return techniqueOptions.map((technique) => technique.name).filter((name) => selected.has(name))
-    })
-    if (members.some((technique) => technique.isBaseline)) {
-      setBaselineChecked(shouldSelect)
-    }
-    setValidationError(null)
-  }
-
   const updateScenarioParam = (name: string, value: ParameterFormValue): void => {
     setScenarioParamValues((current) => ({ ...current, [name]: value }))
   }
@@ -1033,70 +856,21 @@ function ScenarioLaunchForm({
               )}
             </section>
 
-            <section className={styles.section} aria-labelledby="techniques-section-title">
-              <Text id="techniques-section-title" as="h2" size={400} weight="semibold">
-                Techniques
-              </Text>
-              <Text size={200} className={styles.hint}>
-                Select individual techniques, or use a tag to select or clear all techniques with that tag.
-              </Text>
-              {techniqueSelectionInvalid && (
-                <Text className={styles.errorText} role="alert">
-                  Select at least one attack technique.
-                </Text>
-              )}
-              <div className={styles.techniqueList} role="group" aria-label="Techniques">
-                {selectableTechniques.map((technique) => {
-                  const selected = isTechniqueSelected(technique)
-                  return (
-                    <div className={styles.techniqueOption} key={technique.name}>
-                    <Checkbox
-                      className={styles.selectionControl}
-                      label={technique.name}
-                      checked={selected}
-                      disabled={submitting || technique.disabled}
-                      onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
-                      data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
-                    />
-                    <div className={styles.techniqueDetails}>
-                      {technique.description && (
-                        <Text size={200} className={styles.hint}>{technique.description}</Text>
-                      )}
-                      {technique.tags.length > 0 && (
-                        <div className={styles.techniqueTags} aria-label={`${technique.name} tags`}>
-                          {technique.tags.map((tag) => {
-                            const tagMembers = selectableTechniques.filter(
-                              (candidate) => !candidate.disabled && candidate.tags.includes(tag),
-                            )
-                            const tagSelected = tagMembers.length > 0 && tagMembers.every(isTechniqueSelected)
-                            return (
-                              <ToggleButton
-                                className={styles.techniqueTag}
-                                key={tag}
-                                size="small"
-                                appearance="outline"
-                                checked={tagSelected}
-                                disabled={submitting || tagMembers.length === 0}
-                                onClick={() => handleTagChange(tag)}
-                                aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
-                              >
-                                {techniqueSetName(tag)}
-                              </ToggleButton>
-                            )
-                          })}
-                        </div>
-                      )}
-                      {technique.disabled && (
-                        <Text size={200} className={styles.hint}>
-                          This scenario does not support a baseline comparison.
-                        </Text>
-                      )}
-                    </div>
-                  </div>
-                  )
-                })}
-              </div>
-            </section>
+            <ScenarioTechniqueSelector
+              techniqueOptions={techniqueOptions}
+              selectedTechniques={selectedTechniques}
+              includeBaseline={baselineChecked}
+              isBaselineForbidden={isBaselineForbidden}
+              disabled={submitting}
+              onTechniquesChange={(next) => {
+                setSelectedTechniques(next)
+                setValidationError(null)
+              }}
+              onIncludeBaselineChange={(next) => {
+                setBaselineChecked(next)
+                setValidationError(null)
+              }}
+            />
 
             <section className={styles.section} aria-labelledby="parameters-section-title">
               <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
@@ -1126,63 +900,19 @@ function ScenarioLaunchForm({
                     disabled={submitting}
                   />
                 )}
-                <Field
-                  label="Dataset override"
-                  hint="Comma-separated dataset names. Leave blank to use the scenario's default datasets."
-                >
-                  <Input
-                    className={styles.control}
-                    value={datasetOverride}
-                    disabled={submitting}
-                    onChange={(_, data) => setDatasetOverride(data.value)}
-                    placeholder={scenario.default_datasets.join(', ') || undefined}
-                    data-testid="dataset-override-input"
-                  />
-                </Field>
-                <Field
-                  label="Max dataset size"
-                  hint={scenario.default_run_size.dataset_limit.state === 'not_applicable'
-                    ? 'This scenario uses prompt-generation limits instead of a dataset size limit.'
-                    : configuredDefaultMaxDatasetSize
-                    ? `The scenario default is ${configuredDefaultMaxDatasetSize}. Edit it to override the default.`
-                    : 'Enter a positive integer to limit the selected dataset size. Leave empty to use scenario defaults.'}
-                >
-                  <Input
-                    className={styles.numberInput}
-                    type="number"
-                    min={1}
-                    value={maxDatasetSize}
-                    disabled={submitting || scenario.default_run_size.dataset_limit.state === 'not_applicable'}
-                    onChange={(_, data) => setMaxDatasetSize(data.value)}
-                    data-testid="max-dataset-size-input"
-                  />
-                </Field>
-                <Field
-                  label="Harm categories"
-                  hint="Comma-separated values. A seed must match every listed category."
-                >
-                  <Input
-                    className={styles.control}
-                    value={harmCategoriesFilter}
-                    disabled={submitting}
-                    placeholder="cyber, violence"
-                    onChange={(_, data) => setHarmCategoriesFilter(data.value)}
-                    data-testid="harm-categories-filter-input"
-                  />
-                </Field>
-                <Field
-                  label="Data types"
-                  hint="Comma-separated values. A seed can match any listed data type."
-                >
-                  <Input
-                    className={styles.control}
-                    value={dataTypesFilter}
-                    disabled={submitting}
-                    placeholder="text, image_path"
-                    onChange={(_, data) => setDataTypesFilter(data.value)}
-                    data-testid="data-types-filter-input"
-                  />
-                </Field>
+                <ScenarioDatasetFields
+                  scenario={scenario}
+                  datasetOverride={datasetOverride}
+                  maxDatasetSize={maxDatasetSize}
+                  harmCategoriesFilter={harmCategoriesFilter}
+                  dataTypesFilter={dataTypesFilter}
+                  configuredDefaultMaxDatasetSize={configuredDefaultMaxDatasetSize}
+                  disabled={submitting}
+                  onDatasetOverrideChange={setDatasetOverride}
+                  onMaxDatasetSizeChange={setMaxDatasetSize}
+                  onHarmCategoriesFilterChange={setHarmCategoriesFilter}
+                  onDataTypesFilterChange={setDataTypesFilter}
+                />
                 <Field label="Max concurrency">
                   <SingleStepSpinButton
                     className={styles.numberInput}

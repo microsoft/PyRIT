@@ -437,7 +437,7 @@ class RunScenarioRequest(BaseModel):
     dataset_names: _RequestNames | None = Field(
         None, description="Dataset names to use (uses scenario default if omitted)"
     )
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
+    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
     dataset_filters: _RequestFilters | None = Field(
         None,
         description=(
