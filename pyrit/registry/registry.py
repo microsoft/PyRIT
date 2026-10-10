@@ -739,6 +739,37 @@ class Registry(ABC, Generic[T, MetadataT]):
         )
         return cls(**resolved)
 
+    def create_instance_from_external_input(self, name: str, *, params: Mapping[str, object]) -> T:
+        """
+        Build a configured instance from external input such as a REST or CLI request.
+
+        Unlike ``create_instance``, which serves in-process callers that may pass any
+        Python object, this accepts only parameters with ``Parameter.is_external_input``
+        and registry references given by name. Anything else is rejected before
+        construction; the constructor still validates the values it receives.
+
+        Args:
+            name (str): The catalog name to build.
+            params (Mapping[str, object]): Constructor arguments from the external caller.
+
+        Returns:
+            T: The constructed instance.
+
+        Raises:
+            KeyError: If the name is not registered.
+            ValueError: If an argument is not a valid constructor parameter or not an
+                external input, a registry reference cannot be resolved, or a value
+                cannot be coerced.
+        """
+        cls = self.get_class(name)
+        resolved = resolve_constructor_args(
+            cls=cls,
+            raw_args=dict(params),
+            identifier_type=self._identifier_type(),
+            external_input=True,
+        )
+        return cls(**resolved)
+
     def __contains__(self, name: str) -> bool:
         """
         Check if a name is registered.
@@ -813,6 +844,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         type_name: str,
         params: Mapping[str, object] | None = None,
         registry_metadata: dict[str, Any] | None = None,
+        external_input: bool = False,
     ) -> InstanceT:
         """
         Build and store a configured instance under an explicit name.
@@ -823,12 +855,20 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             params (Mapping[str, object] | None): Constructor arguments.
             registry_metadata (dict[str, Any] | None): Per-entry metadata to store
                 with the instance.
+            external_input (bool): Whether ``params`` come from an external caller, in which
+                case the instance is built with ``create_instance_from_external_input``.
+                Defaults to False.
 
         Returns:
             InstanceT: The constructed and registered instance.
         """
         self.instances.validate_name_available(name)
-        instance = self.create_instance(type_name, **dict(params) if params is not None else {})
+        args = dict(params) if params is not None else {}
+        instance = (
+            self.create_instance_from_external_input(type_name, params=args)
+            if external_input
+            else self.create_instance(type_name, **args)
+        )
         self.instances.register(instance, name=name, metadata=registry_metadata)
         return instance
 
@@ -882,7 +922,9 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             if parameter.name in inputs
         }
 
-    def recreate_instance(self, *, source: InstanceT, params: Mapping[str, object]) -> InstanceT:
+    def recreate_instance(
+        self, *, source: InstanceT, params: Mapping[str, object], external_input: bool = False
+    ) -> InstanceT:
         """
         Build an independent component; never change or register the source.
 
@@ -898,6 +940,13 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         }
         if unknown:
             raise ValueError(f"Unknown constructor parameters: {', '.join(sorted(unknown))}")
+        if external_input:
+            params = resolve_constructor_args(
+                cls=type(source),
+                raw_args=dict(params),
+                identifier_type=self._identifier_type(),
+                external_input=True,
+            )
         with self._catalog_lock:
             self._ensure_discovered()
             names = sorted(name for name, cls in self._classes.items() if cls is type(source))

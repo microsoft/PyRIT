@@ -226,6 +226,24 @@ await output_scenario_async(figstep_result)
 #
 # **Aggregate techniques:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
+#
+# **Dataset requirements:** `--dataset-names` replaces the default datasets, so it must include
+# every dataset the selected techniques read. Otherwise the scenario stops before running and names
+# each missing dataset. Datasets already loaded into memory never fill the gap.
+#
+# Framework callers cannot supply inline seeds or seed groups. `StringAssemblyDataExfil` can use
+# an empty `dataset_names` list because its prompts are built in.
+#
+# | Technique | Required datasets |
+# |---|---|
+# | MarkdownImageExfil, ColabAIDataLeakage, PlaygroundMarkdownExfil, MarkdownURIImageExfilExtended, MarkdownURINonImageExfilExtended | `garak_example_domains_xss` |
+# | TaskXSS | `garak_xss_normal_instructions`, `garak_web_html_js` |
+# | MarkdownXSS | `garak_markdown_js` |
+# | StringAssemblyDataExfil | None (built-in seeds) |
+#
+# ```bash
+# pyrit_scan run garak.web_injection --target openai_chat --techniques task_xss --dataset-names garak_xss_normal_instructions garak_web_html_js
+# ```
 
 # %%
 web_injection_scenario = WebInjection(max_prompts_per_technique=1)

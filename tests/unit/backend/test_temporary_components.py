@@ -21,6 +21,7 @@ from pyrit.backend.models.attacks import (
     SaveConversationRequest,
 )
 from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
+from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
 from pyrit.backend.models.scorers import CreateScorerRequest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.routes import converters, scorers, targets
@@ -40,6 +41,7 @@ from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from unit.backend.mocks import _settle_send_async
 
 
 @pytest.fixture(autouse=True)
@@ -453,6 +455,65 @@ class TestTemporaryComponents:
             await TargetService().build_from_source_async(spec)
         await changed.cleanup_target_async()
         await source.cleanup_target_async()
+
+    async def test_source_overrides_keep_external_input_validation_async(self) -> None:
+        source = source_target()
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        try:
+            with pytest.raises(ValueError, match="cannot be set through the API"):
+                await TargetService().build_from_source_async(
+                    SourceInstanceSpec(
+                        source_name="source",
+                        source_hash=source.get_identifier().hash,
+                        params={"httpx_client_kwargs": {"timeout": 5}},
+                    )
+                )
+        finally:
+            await source.cleanup_target_async()
+
+    async def test_repeated_send_owns_each_temperature_target_async(self, sqlite_instance: SQLiteMemory) -> None:
+        source = source_target()
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        built = await TargetService().build_from_source_async(
+            SourceInstanceSpec(
+                source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+            )
+        )
+        binding = TargetBinding(
+            source_name="source",
+            source_hash=source.get_identifier().hash,
+            temperature=0.8,
+            effective_hash=built.get_identifier().hash,
+        )
+        await built.cleanup_target_async()
+        sender = MessageSendService(scheduler=ManualSendScheduler())
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source", target_binding=binding)
+            )
+            with patch.object(sender, "_execute_message_async", new_callable=AsyncMock) as execute:
+                status = await sender.submit_async(
+                    attack_result_id=created.attack_result_id,
+                    request=MessageSendRequest(
+                        target_registry_name="source",
+                        target_conversation_id=created.conversation_id,
+                        submission_id="temporary-repeat",
+                        count=3,
+                        role="user",
+                        pieces=[MessagePieceRequest(original_value="test")],
+                    ),
+                )
+                status = await _settle_send_async(service=sender, status=status)
+            assert status.state == MessageSendState.COMPLETED
+            targets = [call.kwargs["target"] for call in execute.await_args_list]
+            assert len(targets) == 3
+            assert len({id(target) for target in targets}) == 3
+            assert all(target._temperature == 0.8 and target._client.is_closed() for target in targets)
+            assert all(target is not source for target in targets)
+            assert not source._client.is_closed()
+        finally:
+            await sender.shutdown_async()
+            await source.cleanup_target_async()
 
     async def test_converter_preview_isolated_and_provenance_survives_discard_async(self) -> None:
         source = CaesarConverter(caesar_offset=1)

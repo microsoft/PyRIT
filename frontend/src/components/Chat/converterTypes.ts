@@ -1,5 +1,6 @@
 import type {
-  ConverterInputPiece, MessageAttachment, MessagePieceRequest, PieceConversion,
+  ConverterConfigurationRequest, ConverterInputPiece, ConverterPipelineStage,
+  MessageAttachment, MessagePieceRequest, PieceConversion,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { mimeTypeToDataType } from '@/utils/messageMapper'
@@ -70,5 +71,27 @@ export function applyConvertedValues(
       applied_converter_ids: conversion.converterInstanceIds,
       ...(conversion.converterProvenance ? { applied_converter_provenance: conversion.converterProvenance } : {}),
     } : piece
+  })
+}
+
+/** Build unapplied pipelines for independent repeats, skipping exact applied previews. */
+export function buildRequestConverterConfigurations(
+  inputs: ConverterInputPiece[],
+  pieceIds: string[],
+  pipelines: Record<string, ConverterPipelineStage[]>,
+  conversions: Record<string, PieceConversion>,
+): ConverterConfigurationRequest[] {
+  return pieceIds.flatMap((pieceId: string, index: number): ConverterConfigurationRequest[] => {
+    if (conversions[pieceId]) return []
+    const input = inputs.find((candidate: ConverterInputPiece) => candidate.id === pieceId)
+    if (!input) throw new Error('Message piece has no matching converter input.')
+    const stages = pipelines[input.pieceType] ?? []
+    if (stages.some((stage: ConverterPipelineStage) => stage.temporary)) {
+      throw new Error('Apply temporary converter settings with Add converted value before repeating a message.')
+    }
+    return stages.length ? [{
+      converter_ids: stages.map((stage: ConverterPipelineStage) => stage.converterId),
+      indexes_to_apply: [index],
+    }] : []
   })
 }

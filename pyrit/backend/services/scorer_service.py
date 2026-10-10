@@ -37,21 +37,30 @@ class ScorerService:
 
     async def list_scorer_types_async(self) -> ScorerTypeResponse:
         """
-        List registered scorer class metadata without constructing scorers.
+        List the scorer types external callers can build, without constructing scorers.
+
+        Each entry lists only the parameters external callers may supply, each
+        described in the form callers send it; types that need a Python object for a
+        required parameter are left out.
 
         Returns:
-            ScorerTypeResponse: All registered scorer type metadata.
+            ScorerTypeResponse: Scorer type metadata for external callers.
         """
 
         def list_types() -> ScorerTypeResponse:
             items = [
                 ScorerTypeEntry(
                     scorer_type=metadata.class_name,
-                    parameters=list(metadata.parameters),
+                    parameters=[
+                        parameter.for_external_catalog()
+                        for parameter in metadata.parameters
+                        if parameter.is_external_input
+                    ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
+                if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
             ]
             return ScorerTypeResponse(items=items)
 
@@ -118,6 +127,7 @@ class ScorerService:
                 name=request.name,
                 type_name=request.type,
                 params=request.params,
+                external_input=True,
             )
             return self._build_instance(name=request.name, scorer=scorer)
 

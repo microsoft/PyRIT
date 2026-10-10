@@ -60,6 +60,7 @@ class AdaptiveScenario(Scenario):
     """
 
     VERSION: ClassVar[int]
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     @abstractmethod

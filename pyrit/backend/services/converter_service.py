@@ -126,9 +126,11 @@ class ConverterService:
         """
         List all available converter types from the converter class registry.
 
-        Returns every constructible converter. Deciding which entries to surface
-        to a user is a presentation concern owned by the caller (e.g. the
-        frontend), not this service.
+        Returns every converter that external callers can build, with only the
+        parameters they may supply, each described in the form callers send it;
+        converters that need a Python object for a required parameter are left out.
+        Deciding which entries to surface to a user is a presentation concern owned
+        by the caller (e.g. the frontend), not this service.
 
         Returns:
             ConverterTypeResponse containing all available converter classes.
@@ -138,11 +140,14 @@ class ConverterService:
                 converter_type=metadata.class_name,
                 supported_input_types=list(metadata.supported_input_types),
                 supported_output_types=list(metadata.supported_output_types),
-                parameters=list(metadata.parameters),
+                parameters=[
+                    parameter.for_external_catalog() for parameter in metadata.parameters if parameter.is_external_input
+                ],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
             )
             for metadata in self._registry.get_all_registered_class_metadata()
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
         ]
 
         return ConverterTypeResponse(items=items)
@@ -227,9 +232,13 @@ class ConverterService:
                     raise ValueError("name is required when register=true")
                 self._registry.instances.validate_name_available(request.name)
             converter_obj = (
-                await construct_component_async(self._registry.recreate_instance, source=source, params=params)
+                await construct_component_async(
+                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                )
                 if source is not None
-                else await construct_component_async(self._registry.create_instance, request.type, **params)
+                else await construct_component_async(
+                    self._registry.create_instance_from_external_input, request.type, params=params
+                )
             )
             if not request.register:
                 if (
@@ -302,7 +311,9 @@ class ConverterService:
                     converter_type=type(source).__name__, params=spec.params
                 )
                 owned_paths.extend(paths)
-                obj = await construct_component_async(self._registry.recreate_instance, source=source, params=params)
+                obj = await construct_component_async(
+                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                )
                 if spec.effective_hash and obj.get_identifier().hash != spec.effective_hash:
                     raise ValueError("Temporary converter configuration has changed")
                 converters.append((converter_id, type(obj).__name__, obj))
