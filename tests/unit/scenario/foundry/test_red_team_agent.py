@@ -135,6 +135,9 @@ def mock_memory_seed_groups():
 def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
     mock_config.dataset_names = ["foundry_red_team"]
     return mock_config
@@ -384,7 +387,7 @@ class TestFoundryInitialization:
         # Error should occur during initialize_async when it resolves seed groups.
         # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching.
         with patch(
-            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async",
             new_callable=AsyncMock,
         ):
             scenario.set_params_from_args(

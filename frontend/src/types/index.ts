@@ -808,7 +808,7 @@ export interface RunScenarioRequest {
   initializers?: string[] | null
   techniques?: string[] | null
   dataset_names?: string[] | null
-  max_dataset_size?: number | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
   max_concurrency?: number
   max_retries?: number
@@ -869,7 +869,7 @@ export interface ScenarioRunSizeEstimateRequest {
   adversarial_target_name?: string | null
   techniques?: string[] | null
   dataset_names?: string[] | null
-  max_dataset_size?: number | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null

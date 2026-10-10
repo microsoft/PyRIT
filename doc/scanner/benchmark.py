@@ -56,7 +56,7 @@
 # %%
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.benchmark import AdversarialBenchmark
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer, TechniqueInitializer
@@ -71,7 +71,7 @@ objective_target = OpenAIChatTarget()
 # %%
 from pyrit.scenario.benchmark import AdversarialBenchmarkTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
 
 scenario = AdversarialBenchmark()
 scenario.set_params_from_args(

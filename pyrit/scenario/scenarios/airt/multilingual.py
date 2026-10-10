@@ -24,6 +24,7 @@ from pyrit.scenario.core import (
     ScenarioTechnique,
     get_default_adversarial_target,
 )
+from pyrit.scenario.core.dataset_configuration import DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     build_baseline_atomic_attack,
@@ -220,7 +221,9 @@ class Multilingual(Scenario):
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
             technique_class=technique_class,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=5),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=5
+            ),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )

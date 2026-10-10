@@ -325,13 +325,13 @@ class ScenarioRunService:
             raw_request = {"adversarial_target_name": None, **raw_request}
         if (
             not isinstance(raw_request, dict)
-            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS)
+            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size")
             or raw_request["include_baseline"] is None
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
             request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS}, strict=True
+                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}, strict=True
             )
         except ValidationError as exc:
             raise ScenarioRunConflictError(

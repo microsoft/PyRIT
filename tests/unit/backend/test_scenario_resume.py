@@ -724,7 +724,9 @@ async def test_resume_missing_scenario_registration_is_explicit_async(
             await service.resume_run_async(scenario_result_id=str(stored.id))
 
 
-@pytest.mark.parametrize("missing", [name for name in _LAUNCH_REQUEST_FIELDS if name != "adversarial_target_name"])
+@pytest.mark.parametrize(
+    "missing", [name for name in _LAUNCH_REQUEST_FIELDS if name not in {"adversarial_target_name", "max_dataset_size"}]
+)
 async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
     *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
 ) -> None:
@@ -740,6 +742,33 @@ async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
         with pytest.raises(ScenarioRunConflictError, match="incomplete"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         prepare.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "limit_args",
+    [
+        {},
+        {"max_dataset_size": None},
+        {"max_dataset_size": ""},
+        {"max_dataset_size": "default"},
+        {"max_dataset_size": "all"},
+        {"max_dataset_size": 1},
+    ],
+)
+async def test_saved_total_limit_round_trips_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], limit_args: dict[str, int | str | None]
+) -> None:
+    service, _ = resume_environment
+    prepared = await service._prepare_run_async(
+        request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, **limit_args)
+    )
+    stored = (
+        await CentralMemory.get_memory_instance().get_scenario_results_async(
+            scenario_result_ids=[prepared.scenario._scenario_result_id]
+        )
+    )[0]
+    restored = service._restore_launch_request(stored=stored)
+    assert restored.max_dataset_size == (limit_args.get("max_dataset_size") or "default")
 
 
 async def test_resume_older_launch_record_without_adversarial_selection_async(

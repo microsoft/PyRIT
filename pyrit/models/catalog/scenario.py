@@ -18,8 +18,9 @@ from enum import Enum
 from math import prod
 from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field, computed_field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, BeforeValidator, Field, computed_field, field_validator, model_validator
 
+from pyrit.models.dataset_limit import normalize_dataset_limit
 from pyrit.models.parameter import Parameter
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -62,6 +63,12 @@ _RequestLabels = Annotated[
 #   - data_types -> OR + exact: a seed matches ANY value, compared for exact equality. So
 #     ``data_types=text,image_path`` is a union.
 DATASET_FILTERS: frozenset[str] = frozenset({"harm_categories", "data_types"})
+
+
+_RequestDatasetLimit = Annotated[
+    Annotated[int, Field(ge=1, strict=True)] | Literal["all", "default"] | None,
+    BeforeValidator(normalize_dataset_limit),
+]
 
 
 def _validate_dataset_filter_mapping(
@@ -392,7 +399,12 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
     dataset_names: _RequestNames | None = Field(
         None, description="Dataset names to estimate (uses scenario default if omitted)"
     )
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
+    max_dataset_size: _RequestDatasetLimit = Field(
+        "default",
+        description="Total selected logical seed-group limit. Omitted, null, empty, or 'default': scenario default. "
+        "'all': no total limit. "
+        "Per-dataset limits remain in effect.",
+    )
     dataset_filters: _RequestFilters | None = Field(
         None,
         description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
@@ -437,7 +449,12 @@ class RunScenarioRequest(BaseModel):
     dataset_names: _RequestNames | None = Field(
         None, description="Dataset names to use (uses scenario default if omitted)"
     )
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum items per dataset")
+    max_dataset_size: _RequestDatasetLimit = Field(
+        "default",
+        description="Total selected logical seed-group limit. Omitted, null, empty, or 'default': scenario default. "
+        "'all': no total limit. "
+        "Per-dataset limits remain in effect.",
+    )
     dataset_filters: _RequestFilters | None = Field(
         None,
         description=(
