@@ -40,6 +40,7 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.fallback_scorer import _FallbackScorer
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY, normalize_score_to_float
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -154,6 +155,25 @@ async def test_complete_primary_skips_fallback_async(
         child_score.id,
     }
     assert isinstance(wrapper, FloatScaleScorer if family == "float_scale" else TrueFalseScorer)
+
+
+@pytest.mark.parametrize("primary_resolves", [False, True])
+async def test_selected_original_float_value_stays_readable_async(*, primary_resolves: bool) -> None:
+    primary, fallback = _TrueFalseScorer(), _TrueFalseScorer()
+    wrapper = TrueFalseFallbackScorer(scorer=primary, fallback_scorer=fallback)
+    primary_score = _score(
+        family="true_false",
+        value="True" if primary_resolves else None,
+        metadata={ORIGINAL_FLOAT_VALUE_KEY: 0.3},
+    )
+    fallback_score = _score(family="true_false", value="True", metadata={ORIGINAL_FLOAT_VALUE_KEY: 0.6})
+    with (
+        patch.object(primary, "_score_scorable_async", new_callable=AsyncMock, return_value=[primary_score]),
+        patch.object(fallback, "_score_scorable_async", new_callable=AsyncMock, return_value=[fallback_score]),
+    ):
+        result = (await wrapper.score_async(scorable=ContentScorable(value="evidence")))[0]
+
+    assert normalize_score_to_float(result) == (0.3 if primary_resolves else 0.6)
 
 
 @pytest.mark.parametrize("fallback_abstains", [False, True])
