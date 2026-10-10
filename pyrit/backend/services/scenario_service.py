@@ -23,7 +23,6 @@ from pyrit.models.catalog.scenario import (
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
-from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
 
 logger = logging.getLogger(__name__)
 _ESTIMATE_CACHE_SIZE = 128
@@ -423,8 +422,7 @@ class ScenarioService:
             construction_complete.set()
         if execution_timed_out.is_set():
             raise asyncio.CancelledError
-        with read_only_dataset_resolution():
-            return await scenario.get_default_run_size_estimate_async()
+        return await scenario.get_default_run_size_estimate_async()
 
     def _clear_estimate_task(self, *, task: _EstimateTask, cache_key: _EstimateCacheKey) -> None:
         """Remove a completed single-flight task without disturbing a replacement."""

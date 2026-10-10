@@ -17,7 +17,7 @@ from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
@@ -130,8 +130,9 @@ class TestTextAdaptiveBasics:
 
     def test_default_dataset_config(self):
         config = TextAdaptive.default_dataset_config()
-        assert isinstance(config, CompoundDatasetAttackConfiguration)
-        assert all(child.max_dataset_size == 4 for child in config._configurations)
+        assert isinstance(config, DatasetAttackConfiguration)
+        assert config.max_per_dataset == 4
+        assert config.max_total == "all"
         assert config.dataset_names == TextAdaptive.required_datasets()
 
     def test_required_datasets_non_empty(self):
@@ -226,7 +227,7 @@ class TestTextAdaptiveAtomicAttacks:
         **scenario_kwargs,
     ):
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=seed_groups,
@@ -281,7 +282,7 @@ class TestTextAdaptiveAtomicAttacks:
             "hate": [_make_seed_group(value="obj-h1", harm_categories=["hate"])],
         }
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -333,7 +334,7 @@ class TestTextAdaptiveAtomicAttacks:
     async def test_no_usable_techniques_raises(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj")]}
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -361,7 +362,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -408,7 +409,7 @@ class TestTextAdaptiveAtomicAttacks:
         # Only the plain factory (no seed_technique) is compatible.
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -462,7 +463,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -508,7 +509,7 @@ class TestTextAdaptiveAtomicAttacks:
         narrow_factory = _make_fake_factory(scoring_config_type=NarrowScoringConfig)
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -558,7 +559,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -604,7 +605,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -641,7 +642,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -671,7 +672,7 @@ class TestTextAdaptiveBaselinePolicy:
     async def test_initialize_async_accepts_explicit_baseline(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -693,7 +694,7 @@ class TestTextAdaptiveBaselinePolicy:
         """
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -719,7 +720,7 @@ class TestTextAdaptiveBaselinePolicy:
             ]
         }
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,

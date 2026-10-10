@@ -2134,7 +2134,7 @@ async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(
             await asyncio.wait_for(target.cleanup_target_async(), timeout=2.0)
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 async def test_normalizer_stops_owned_client_when_startup_is_cancelled_async(
     *,
     sdk: Any,

@@ -50,6 +50,9 @@ def mock_dataset_config(mock_memory_seeds):
     """Create a mock dataset config that returns the seed groups."""
     seed_groups = [AttackSeedGroup(seeds=[seed]) for seed in mock_memory_seeds]
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_leakage": seed_groups})
     mock_config.dataset_names = ["airt_leakage"]
     return mock_config
