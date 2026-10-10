@@ -4,6 +4,7 @@
 import asyncio
 import logging
 from enum import Enum
+from typing import Any
 from uuid import uuid4
 
 from typing_extensions import override
@@ -130,7 +131,7 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
     HF_DATASET_NAME: str = "nvidia/Aegis-AI-Content-Safety-Dataset-2.0"
     harm_categories: list[str] = [c.value.lower() for c in AegisHarmCategory]
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
-    size: str = "huge"  # 19093 annotated human-LLM interactions across all splits after filtering
+    size: str = "huge"  # 13246 unique unsafe prompts from 19093 annotated rows across all splits
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
@@ -231,7 +232,9 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
             ],
         }
 
-        seed_prompts: list[SeedUnion] = []
+        # A prompt can appear in several rows (one per labeled response). Keep one seed per prompt, with the
+        # first row's metadata and the categories of every kept row.
+        merged: dict[str, tuple[dict[str, Any], list[str]]] = {}
 
         for split_name in hf_dataset:
             for example in hf_dataset[split_name]:
@@ -251,10 +254,6 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                     if violated_categories
                     else []
                 )
-                standardized_categories = self._standardize_harm_categories(
-                    prompt_harm_categories,
-                    alias_overrides=alias_overrides,
-                )
 
                 # Filter by harm_categories if specified
                 if self._selected_category_values is not None and not any(
@@ -262,25 +261,34 @@ class _AegisContentSafetyDataset(_RemoteDatasetLoader):
                 ):
                     continue
 
-                seed_prompts.append(
-                    SeedPrompt(
-                        value=prompt_value,
-                        data_type="text",
-                        dataset_name=self.dataset_name,
-                        harm_categories=standardized_categories if standardized_categories else None,
-                        source=self.source,
-                        authors=self._AUTHORS,
-                        groups=self._GROUPS,
-                        metadata={
-                            "id": example.get("id"),
-                            "prompt_label": example.get("prompt_label"),
-                            "response_label": example.get("response_label"),
-                            "prompt_label_source": example.get("prompt_label_source"),
-                            "response_label_source": example.get("response_label_source"),
-                            "aegis_violated_categories": ", ".join(prompt_harm_categories),
-                        },
-                    )
+                _, merged_categories = merged.setdefault(prompt_value, (example, []))
+                merged_categories.extend(cat for cat in prompt_harm_categories if cat not in merged_categories)
+
+        seed_prompts: list[SeedUnion] = []
+        for prompt_value, (example, prompt_harm_categories) in merged.items():
+            standardized_categories = self._standardize_harm_categories(
+                prompt_harm_categories,
+                alias_overrides=alias_overrides,
+            )
+            seed_prompts.append(
+                SeedPrompt(
+                    value=prompt_value,
+                    data_type="text",
+                    dataset_name=self.dataset_name,
+                    harm_categories=standardized_categories if standardized_categories else None,
+                    source=self.source,
+                    authors=self._AUTHORS,
+                    groups=self._GROUPS,
+                    metadata={
+                        "id": example.get("id"),
+                        "prompt_label": example.get("prompt_label"),
+                        "response_label": example.get("response_label"),
+                        "prompt_label_source": example.get("prompt_label_source"),
+                        "response_label_source": example.get("response_label_source"),
+                        "aegis_violated_categories": ", ".join(prompt_harm_categories),
+                    },
                 )
+            )
 
         if not seed_prompts:
             raise ValueError("SeedDataset cannot be empty. Check your filter criteria.")

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,7 +12,7 @@ from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_messa
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation, SeedPrompt
+from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoringExpectation, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -79,6 +80,82 @@ async def test_true_false_scorer_parses_json_boolean(patch_central_database, boo
     assert len(score) == 1
     assert score[0].get_value() is expected
     assert score[0].score_value in ("true", "false")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("verdict", [True, False])
+@pytest.mark.parametrize(
+    "metadata, expected_metadata",
+    [
+        ({"source": "judge", "count": 2, "confidence": 0.9}, {"source": "judge", "count": 2, "confidence": 0.9}),
+        ("service detail", {"metadata": "service detail"}),
+        (2, {"metadata": 2}),
+        (0.9, {"metadata": 0.9}),
+        (None, {}),
+        ({}, {}),
+    ],
+)
+async def test_json_metadata_round_trips_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    verdict: bool,
+    metadata: dict[str, str | int | float] | str | int | float | None,
+    expected_metadata: dict[str, str | int | float],
+) -> None:
+    target = MockPromptTarget()
+    scorer = SelfAskTrueFalseScorer.from_question(
+        chat_target=target, question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
+    )
+    message = await store_message_async(MessagePiece(role="assistant", original_value="scored content").to_message())
+    expectation = ScoringExpectation(objective="Assess grounding")
+    response = MessagePiece(
+        role="assistant",
+        original_value=json.dumps(
+            {
+                "score_value": verdict,
+                "description": "Grounding verdict",
+                "rationale": "Judge explanation",
+                "metadata": metadata,
+            }
+        ),
+    ).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]):
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation)
+
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    score = stored[0]
+    assert score.get_value() is verdict
+    assert score.score_type == "true_false"
+    assert score.score_category == ["grounded"]
+    assert score.score_value_description == "Grounding verdict"
+    assert score.score_rationale == "Judge explanation"
+    assert score.score_metadata == expected_metadata
+    assert score.scored_expectation == expectation
+    assert score.message_piece_id == message.get_piece().id
+    assert len(score.observation_ids) == 1
+    assert score == Score.model_validate_json(scores[0].model_dump_json())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "response_text", ["", "[]", "{}", '{"score_value": "maybe", "rationale": "Judge explanation"}']
+)
+async def test_invalid_judge_response_does_not_persist_a_score_async(
+    *, sqlite_instance: MemoryInterface, response_text: str
+) -> None:
+    target = MockPromptTarget()
+    scorer = SelfAskTrueFalseScorer.from_question(
+        chat_target=target, question=TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.GROUNDED.value)
+    )
+    response = MessagePiece(role="assistant", original_value=response_text).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]) as send:
+        with pytest.raises(InvalidJsonException, match="Error in scorer SelfAskTrueFalseScorer"):
+            await scorer.score_text_async("scored content")
+
+    assert send.await_count == 2
+    assert await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True) == []
 
 
 async def test_true_false_scorer_set_system_prompt(patch_central_database, scorer_true_false_response: Message):

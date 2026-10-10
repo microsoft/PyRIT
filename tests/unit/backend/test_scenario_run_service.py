@@ -65,6 +65,8 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
 )
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
+from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
@@ -153,11 +155,55 @@ def _make_request(
         techniques=techniques,
         scenario_result_id=scenario_result_id,
         dataset_names=dataset_names,
-        max_dataset_size=max_dataset_size,
+        **({"max_dataset_size": max_dataset_size} if max_dataset_size is not None else {}),
         dataset_filters=dataset_filters,
         include_baseline=include_baseline,
         scenario_params=scenario_params,
     )
+
+
+@pytest.mark.parametrize(
+    ("scenario_params", "rejected"),
+    [
+        ({"dataset_config": "x"}, "'dataset_config' of 'airt.scam' cannot be set through the API"),
+        ({"objective_target": {"name": "x"}}, "airt.scam.objective_target: expected a registry name"),
+        ({"unknown": None}, "Unknown parameter 'unknown' for 'airt.scam'"),
+        ({"max_concurrency": 2}, None),
+    ],
+)
+async def test_start_run_checks_scenario_params_in_the_preparation_worker(
+    patch_central_database: MagicMock, scenario_params: dict[str, Any], rejected: str | None
+) -> None:
+    loop_thread = threading.current_thread()
+    lookup_threads: list[threading.Thread] = []
+
+    def get_class(name: str) -> type[Scenario]:
+        lookup_threads.append(threading.current_thread())
+        return Scam
+
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.side_effect = get_class
+    service = ScenarioRunService()
+    request = _make_request(scenario_name="airt.scam", scenario_params=scenario_params)
+
+    with (
+        patch(f"{_REGISTRY_PATCH_BASE}.ScenarioRegistry.get_registry_singleton", return_value=registry),
+        patch.object(
+            service,
+            "_run_initializers_async",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("initializers reached"),
+        ) as run_initializers,
+        pytest.raises(ValueError if rejected else RuntimeError, match=rejected or "initializers reached"),
+    ):
+        await service.start_run_async(request=request)
+
+    assert lookup_threads
+    assert loop_thread not in lookup_threads
+    assert run_initializers.await_count == (0 if rejected else 1)
+    # The finished preparation's done callback can still be queued when its error reaches the caller.
+    await asyncio.sleep(0)
+    await service.close_async()
 
 
 def _make_db_scenario_result(
@@ -621,6 +667,8 @@ class TestScenarioRunServiceStartRun:
 
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._technique_class = _JailbreakTechnique
+        mock_sr = mock_all_registries["scenario_registry"]
+        mock_sr.get_class.return_value.supported_parameters.return_value = Jailbreak.supported_parameters()
         objective_target = mock_all_registries["target_registry"].instances.get.return_value
         scenario_params = {"num_jailbreaks": 2, "num_jailbreak_attempts": 1}
 
@@ -663,6 +711,7 @@ class TestScenarioRunServiceStartRun:
 
         service = ScenarioRunService()
         mock_sr = mock_all_registries["scenario_registry"]
+        mock_sr.get_class.return_value.supported_parameters.return_value = Jailbreak.supported_parameters()
         mock_memory = mock_all_registries["memory"]
         mock_all_registries["scenario_instance"]._technique_class = _JailbreakTechnique
         records: dict[str, MagicMock] = {}
@@ -767,19 +816,44 @@ class TestScenarioRunServiceStartRun:
         assert init_call.kwargs["include_baseline"] is False
 
     async def test_start_run_max_dataset_size_uses_default_config(self, mock_all_registries) -> None:
-        """``max_dataset_size`` with no ``dataset_names`` reuses the scenario's default config."""
-        default_config = MagicMock()
-        default_config.max_dataset_size = 100  # original
+        """A total override copies the default configuration without mutating it."""
+        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_total=100)
         scenario_instance = mock_all_registries["scenario_instance"]
         scenario_instance._default_dataset_config = default_config
 
         service = ScenarioRunService()
         await service.start_run_async(request=_make_request(max_dataset_size=5))
 
-        # max_dataset_size on the default config was overridden
-        assert default_config.max_dataset_size == 5
+        assert default_config.max_total == 100
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
-        assert init_call.kwargs["dataset_config"] is default_config
+        assert init_call.kwargs["dataset_config"] is not default_config
+        assert init_call.kwargs["dataset_config"].max_total == 5
+
+    @pytest.mark.parametrize(
+        ("limit_args", "expected"),
+        [
+            ({}, 20),
+            ({"max_dataset_size": None}, 20),
+            ({"max_dataset_size": ""}, 20),
+            ({"max_dataset_size": "default"}, 20),
+            ({"max_dataset_size": "all"}, "all"),
+            ({"max_dataset_size": 7}, 7),
+        ],
+    )
+    async def test_start_run_resolves_total_limit_async(
+        self, *, mock_all_registries: dict[str, Any], limit_args: dict[str, Any], expected: int | str
+    ) -> None:
+        default_config = DatasetAttackConfiguration(dataset_names=["original"], max_total=20)
+        mock_all_registries["scenario_instance"]._default_dataset_config = default_config
+        service = ScenarioRunService()
+        await service.start_run_async(
+            request=RunScenarioRequest(scenario_name="test", target_name="my_target", **limit_args)
+        )
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        config = init_call.kwargs.get("dataset_config", default_config)
+        assert config.max_total == expected
+        saved = init_call.kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        assert saved["max_dataset_size"] == (limit_args.get("max_dataset_size") or "default")
 
     async def test_start_run_dataset_names_preserves_subclass_config_type(self, mock_all_registries) -> None:
         """``dataset_names`` rebuilds the config using the scenario's own DatasetConfiguration subclass.
@@ -831,10 +905,12 @@ class TestScenarioRunServiceStartRun:
         built_config = init_call.kwargs["dataset_config"]
         assert type(built_config) is _MarkerDatasetConfiguration
         assert built_config.dataset_names == ["only_this"]
-        assert built_config.max_dataset_size is None
+        assert built_config.max_dataset_size == "all"
 
-    async def test_start_run_dataset_names_rejects_incompatible_subclass_constructor(self, mock_all_registries) -> None:
-        """Reject overrides that cannot preserve scenario-specific dataset configuration."""
+    async def test_start_run_dataset_names_preserves_custom_constructor_state_async(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
+        """Copy overrides without calling a subclass constructor again."""
 
         class _RequiresExtraArgConfiguration(DatasetConfiguration):
             def __init__(self, *, required_extra: str, **kwargs: Any) -> None:
@@ -848,13 +924,12 @@ class TestScenarioRunServiceStartRun:
         )
 
         service = ScenarioRunService()
-        with pytest.raises(
-            ValueError,
-            match="does not support overriding dataset names.*_RequiresExtraArgConfiguration",
-        ):
-            await service.start_run_async(request=_make_request(dataset_names=["custom"]))
-
-        mock_all_registries["scenario_registry"].create_and_initialize_async.assert_not_awaited()
+        await service.start_run_async(request=_make_request(dataset_names=["custom"]))
+        init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
+        config = init_call.kwargs["dataset_config"]
+        assert isinstance(config, _RequiresExtraArgConfiguration)
+        assert config._required_extra == "seeded"
+        assert config.dataset_names == ["custom"]
 
     async def test_start_run_dataset_filters_new_config(self, mock_all_registries) -> None:
         """``dataset_filters`` with ``dataset_names`` builds a config carrying the filters."""
@@ -891,7 +966,8 @@ class TestScenarioRunServiceStartRun:
 
         init_call = mock_all_registries["scenario_registry"].create_and_initialize_async.await_args
         built_config = init_call.kwargs["dataset_config"]
-        assert built_config is default_config
+        assert built_config is not default_config
+        assert default_config.filters == {}
         assert built_config.filters == {"harm_categories": ["cyber"]}
 
     async def test_start_run_dataset_names_introspection_failure_raises(self, mock_memory) -> None:

@@ -184,7 +184,8 @@ class SeedDatasetFilter:
             SeedDatasetMetadata(size={"large"}, modalities={"image"}),
         ])
 
-    Passing both flat kwargs and criteria raises ValueError.
+    Passing both flat kwargs and criteria raises ValueError, as does passing an
+    empty criteria list. Omit `criteria` entirely for an unfiltered match-all filter.
 
     Special tags:
     - "all": Returns every dataset, ignores all other fields. This tag will
@@ -193,7 +194,7 @@ class SeedDatasetFilter:
       strict_match=True, loses its shortcut and is treated as a normal tag.
 
     Args:
-        criteria: Explicit list of SeedDatasetMetadata to OR-match against.
+        criteria: Explicit non-empty list of SeedDatasetMetadata to OR-match against.
         strict_match: If True, within-axis matching uses AND (all filter values
             must be present) instead of OR (any overlap suffices).
         **kwargs: Flat metadata fields (tags, size, modalities, etc.) for simple use.
@@ -221,12 +222,13 @@ class SeedDatasetFilter:
             ])
 
         Args:
-            criteria: Explicit list of SeedDatasetMetadata to OR-match against.
+            criteria: Explicit non-empty list of SeedDatasetMetadata to OR-match against.
             strict_match: If True, within-axis matching uses AND instead of OR.
             **kwargs: Flat metadata fields passed to SeedDatasetMetadata.
 
         Raises:
-            ValueError: If both criteria and flat kwargs are provided.
+            ValueError: If both criteria and flat kwargs are provided, or if an
+                explicit criteria list is empty.
         """
         if criteria is not None and kwargs:
             raise ValueError("Cannot pass both 'criteria' and flat metadata kwargs. Use one or the other.")
@@ -256,11 +258,19 @@ class SeedDatasetFilter:
         Warn about contradictory filter configurations.
 
         Raises:
-            ValueError: If a criterion requests a filter axis with an empty set, or if
-                strict_match is True and any criterion has multiple values for a singular
-                field (size, source_type). Both checks are skipped when any criterion
-                carries the 'all' tag, since 'all' bypasses every other field.
+            ValueError: If the criteria list is empty, if a criterion requests a filter
+                axis with an empty set, or if strict_match is True and any criterion has
+                multiple values for a singular field (size, source_type). The latter two
+                checks are skipped when any criterion carries the 'all' tag, since 'all'
+                bypasses every other field.
         """
+        # Only an explicit `criteria=[]` reaches here; the kwargs and no-arg branches
+        # always produce exactly one criterion. An empty list would make the `any(...)`
+        # over criteria in _match_filter_to_metadata vacuously False, so the filter
+        # would silently match no dataset at all.
+        if not self.criteria:
+            raise ValueError("'criteria' must contain at least one metadata criterion.")
+
         # An empty set is not a filter. Without strict_match nothing can overlap with it,
         # and with strict_match nothing can be outside it, so the same filter would match
         # either no dataset at all or every dataset, depending on one flag. None is how a

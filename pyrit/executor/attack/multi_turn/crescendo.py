@@ -257,14 +257,24 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         )
 
         # Set the maximum number of backtracks and turns
-        if max_backtracks < 0:
-            raise ValueError("max_backtracks must be non-negative")
-
-        if max_turns <= 0:
-            raise ValueError("max_turns must be positive")
+        CrescendoAttack.validate_constructor_parameters({"max_backtracks": max_backtracks, "max_turns": max_turns})
 
         self._max_backtracks = max_backtracks
         self._max_turns = max_turns
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate search bounds without constructing an attack.
+
+        Raises:
+            ValueError: If backtracks are negative or turns are not positive.
+        """
+        super().validate_constructor_parameters(params)
+        if "max_backtracks" in params and params["max_backtracks"] < 0:
+            raise ValueError("max_backtracks must be non-negative")
+        if "max_turns" in params and params["max_turns"] <= 0:
+            raise ValueError("max_turns must be positive")
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """

@@ -39,8 +39,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
     Children are true/false scorers of any evidence kind, so a scorer over a message can be
     composed with one over evidence that is not a message at all.
 
-    Built-in AND, OR, and MAJORITY aggregators opt into order-independent evaluation
-    identity. Duplicates remain significant; custom aggregators and execution stay ordered.
+    Built-in AND, OR, and MAJORITY aggregators, including their raise-on-empty variants,
+    opt into order-independent evaluation identity. Duplicates remain significant;
+    custom aggregators and execution stay ordered.
     """
 
     def __init__(
@@ -87,6 +88,9 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
                 TrueFalseScoreAggregator.AND,
                 TrueFalseScoreAggregator.OR,
                 TrueFalseScoreAggregator.MAJORITY,
+                TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY,
+                TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY,
+                TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY,
             )
         )
         return self._create_identifier(
