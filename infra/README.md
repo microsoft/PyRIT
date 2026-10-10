@@ -513,6 +513,8 @@ Each internal app stage (test, and prod after approval) does these steps in sequ
 5. If the job fails or times out, stop. The app stays offline and is not deployed. Fix the cause and run the stage again.
 6. Deploy the app with `PYRIT_REQUIRE_CURRENT_SCHEMA=true`. The app checks the schema and does not migrate. If the app template did not change (for example, a rerun with the same image), the stage activates the previous revision again.
 
+Azure SQL initialization checks the schema without migrating by default, including calls to `initialize_pyrit_async`. A migration requires the explicit migration command, or `skip_schema_migration=False` for non-production initialization. The internal backend's `PYRIT_REQUIRE_CURRENT_SCHEMA=true` also blocks that initialization opt-in and fails startup on a schema mismatch. The job can share the backend identity: SQL DDL permission alone does not trigger migrations. SQLite initialization is unchanged.
+
 Because the app is offline during the migration, migrations do not need to be compatible with the previous image.
 
 The job and backend use the same configuration loading rules: deployment-generated defaults, with `pyritConfigFileUri` as an optional override, then the configured environment sources. The job does not run initializers. `AZURE_SQL_DB_CONNECTION_STRING` must use a structured `mssql+pyodbc://` URL whose host and database match `sqlServerFqdn` and `sqlDatabaseName`. Opaque `odbc_connect`/DSN URLs and query parameters that override the target are rejected. A mismatch stops the migration before any database connection is opened.

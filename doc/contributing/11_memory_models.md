@@ -60,7 +60,22 @@ If you changed the schema in a meaningful way (added a table, added a foreign ke
 
 ## How Migrations Run at Startup
 
-Schema migrations are triggered inside each memory class constructor (`SQLiteMemory.__init__` and `AzureSQLMemory.__init__`). When `skip_schema_migration=False` (the default), the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
+SQLite keeps automatic schema initialization (`skip_schema_migration=False`). Azure SQL defaults to `skip_schema_migration=True`: construction and `initialize_pyrit_async("AzureSQL")` check the schema without changing it. Granting SQL DDL permission does not enable automatic migrations.
+
+For Azure SQL, run the explicit deployment migration command:
+
+```bash
+uv run --no-sync python -m pyrit.cli.pyrit_migrate \
+  --config-file /path/to/.pyrit_conf \
+  --expected-server <server>.database.windows.net \
+  --expected-database <database>
+```
+
+The command validates the database target, applies migrations, and checks the resulting schema. It can migrate production because the command is an explicit action. It does not run PyRIT initializers.
+
+For non-production Azure SQL initialization, callers can instead explicitly pass `skip_schema_migration=False` to `AzureSQLMemory` or `initialize_pyrit_async`. The production connection guard and `PYRIT_REQUIRE_CURRENT_SCHEMA=true` still prevent initialization from migrating, even with this opt-in.
+
+When initialization runs a migration, the inherited `_run_schema_migration()` method on `MemoryInterface` runs:
 
 ```
 SQLiteMemory.__init__() / AzureSQLMemory.__init__()
@@ -81,11 +96,13 @@ Both SQLite and AzureSQL follow the same migration path: first `run_schema_migra
 
 Migrations run inside a transaction (`engine.begin()`), so a failed migration rolls back cleanly. The version tracking table is `pyrit_memory_alembic_version`.
 
-Users can skip migrations by passing `skip_schema_migration=True` to the memory class constructor. When using `initialize_pyrit_async()`, this can be forwarded via `**memory_instance_kwargs`:
+Users can skip SQLite migrations by passing `skip_schema_migration=True` to the memory class constructor. When using `initialize_pyrit_async()`, this can be forwarded via `**memory_instance_kwargs`:
 
 ```python
 await initialize_pyrit_async("SQLite", skip_schema_migration=True)
 ```
+
+Azure SQL check-only initialization logs a warning on schema mismatch. Internal deployments set `PYRIT_REQUIRE_CURRENT_SCHEMA=true` to fail startup on a mismatch. SQLite behavior is unchanged.
 
 ## Important Rules
 
