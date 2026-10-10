@@ -5,7 +5,16 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+
+
+class SurfaceMatch(str, Enum):
+    """How a surface locator selects files."""
+
+    EXACT = "exact"
+    GLOB = "glob"
 
 
 class SurfaceEntry(BaseModel):

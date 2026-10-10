@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import UTC, datetime, timedelta
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
@@ -10,44 +13,49 @@ from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
     Condition,
+    Contains,
     ContentWritten,
+    Equals,
     Observation,
-    ScoringScope,
+    Regex,
+    ScoringExpectation,
     SurfaceCoverage,
     SurfaceEntry,
+    SurfaceMatch,
     SurfaceObservationPayload,
     SurfaceScorable,
     TraceScorable,
     scorable_from_dict,
 )
 
+if TYPE_CHECKING:
+    from pyrit.models import TextMatcher
+
 _NOW = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 _SOURCE = ComponentIdentifier(class_name="FakeSource", class_module="tests.fake")
 
 
-def _entry(uri: str = "/data/out.txt", **kwargs: object) -> SurfaceEntry:
-    values: dict[str, object] = {
-        "uri": uri,
-        "size_bytes": 5,
-        "sha256": "a" * 64,
-        "modified_at": _NOW,
-        "content": "hello",
-    }
-    values.update(kwargs)
-    return SurfaceEntry(**values)  # type: ignore[arg-type]
-
-
-def test_surface_scorable_round_trips_with_scope() -> None:
-    scorable = SurfaceScorable(
-        uri="/data/**",
-        match="glob",
-        scope=ScoringScope(window=(_NOW, _NOW + timedelta(minutes=1)), labels={"session": "s1"}, attempt_id="a1"),
+def _entry(
+    *,
+    uri: str = "/data/out.txt",
+    sha256: str | None = "a" * 64,
+    content: str | None = "hello",
+    content_truncated: bool = False,
+) -> SurfaceEntry:
+    return SurfaceEntry(
+        uri=uri, size_bytes=5, sha256=sha256, modified_at=_NOW, content=content, content_truncated=content_truncated
     )
+
+
+def test_surface_scorable_round_trips() -> None:
+    scorable = SurfaceScorable(uri="/data/**", match=SurfaceMatch.GLOB)
 
     restored = scorable_from_dict(scorable.model_dump(mode="json"))
 
     assert restored == scorable
     assert isinstance(restored, SurfaceScorable)
+    assert restored.match is SurfaceMatch.GLOB
+    assert scorable.model_dump(mode="json") == {"scorable_type": "surface", "uri": "/data/**", "match": "glob"}
 
 
 @pytest.mark.parametrize("uri", ["", "/data/\x00out.txt"])
@@ -56,25 +64,34 @@ def test_surface_scorable_rejects_unusable_locators(uri: str) -> None:
         SurfaceScorable(uri=uri)
 
 
-def test_scope_rejects_window_that_ends_before_it_starts() -> None:
-    with pytest.raises(ValidationError, match="must not end before it starts"):
-        ScoringScope(window=(_NOW, _NOW - timedelta(seconds=1)))
+@pytest.mark.parametrize("matcher", [None, Contains(value="secret"), Equals(value="answer"), Regex(value=r"key=\d+")])
+def test_content_written_round_trips_through_condition_registry(matcher: TextMatcher | None) -> None:
+    condition = ContentWritten(uri="/data/*", match=SurfaceMatch.GLOB, matcher=matcher)
+
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    expectation = ScoringExpectation(conditions=(condition,))
+    assert ScoringExpectation.model_validate_json(expectation.model_dump_json()) == expectation
 
 
-def test_scope_requires_aware_window() -> None:
-    with pytest.raises(ValidationError):
-        ScoringScope(window=(datetime(2026, 1, 1), datetime(2026, 1, 2)))  # noqa: DTZ001
+@pytest.mark.parametrize("match", ["exact", "glob"])
+def test_surface_match_accepts_serialized_values(match: str) -> None:
+    scorable = SurfaceScorable.model_validate({"uri": "/data/out.txt", "match": match})
+    condition = ContentWritten.model_validate({"uri": "/data/out.txt", "match": match})
+
+    assert scorable.match is SurfaceMatch(match)
+    assert condition.match is scorable.match
 
 
-def test_content_written_round_trips_through_condition_registry() -> None:
-    condition = ContentWritten(uri="/data/*", match="glob", contains="secret")
+def test_surface_match_rejects_unknown_values() -> None:
+    with pytest.raises(ValidationError, match="match"):
+        SurfaceScorable.model_validate({"uri": "/data/out.txt", "match": "unknown"})
+    with pytest.raises(ValidationError, match="match"):
+        ContentWritten.model_validate({"uri": "/data/out.txt", "match": "unknown"})
 
-    assert Condition.model_validate(condition.model_dump()) == condition
 
-
-def test_content_written_rejects_empty_contains() -> None:
-    with pytest.raises(ValidationError):
-        ContentWritten(uri="/data/out.txt", contains="")
+def test_surface_scorable_rejects_unused_surface_selector() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        SurfaceScorable.model_validate({"uri": "/data/out.txt", "surface": "file"})
 
 
 def test_truncated_entry_requires_retained_text() -> None:
@@ -101,7 +118,7 @@ def test_exact_scope_payload_holds_only_its_location() -> None:
 
 
 def test_payload_rejects_repeated_locations() -> None:
-    scope = SurfaceScorable(uri="/data/*", match="glob")
+    scope = SurfaceScorable(uri="/data/*", match=SurfaceMatch.GLOB)
     with pytest.raises(ValidationError, match="each location once"):
         SurfaceObservationPayload(scope=scope, entries=(_entry(), _entry()))
 
@@ -134,7 +151,7 @@ def test_observation_round_trips_surface_payload() -> None:
     ],
 )
 def test_observation_rejects_inconsistent_surface_acquisition(
-    acquisition: Acquisition, complete: bool, entries: tuple[SurfaceEntry, ...], match: str
+    *, acquisition: Acquisition, complete: bool, entries: tuple[SurfaceEntry, ...], match: str
 ) -> None:
     scope = SurfaceScorable(uri="/data/out.txt")
     with pytest.raises(ValidationError, match=match):

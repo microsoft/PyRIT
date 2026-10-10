@@ -24,6 +24,7 @@ from pyrit.models import (
     Observation,
     SurfaceCoverage,
     SurfaceEntry,
+    SurfaceMatch,
     SurfaceObservationPayload,
 )
 
@@ -31,11 +32,6 @@ if TYPE_CHECKING:
     from pyrit.models import SurfaceScorable
 
 logger = logging.getLogger(__name__)
-
-_READ_CHUNK_BYTES = 1 << 16
-# Opening a FIFO for reading blocks until a writer appears. Non-blocking open lets the
-# type check run first; regular files ignore the flag.
-_OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
 
 
 class _FileLimitReachedError(Exception):
@@ -83,12 +79,13 @@ class LocalFileSurfaceSource:
     whole acquisition. Cancelling the awaiting coroutine stops the worker thread at its
     next entry or chunk.
 
-    Only the scope's ``window`` can be checked here, against each file's modification time.
-    A file a run wrote with its original timestamp preserved, or one another process touched
-    during the window, is attributed wrongly; correlating an external write to a run is best
-    effort. ``attempt_id`` and ``labels`` need a source that controls how writes are emitted,
-    so this source records in the observation's metadata that it did not apply them.
+    The snapshot shows what the root holds when it is read, not which run wrote it. A caller
+    that needs attribution gives each attempt its own root.
     """
+
+    _READ_CHUNK_BYTES = 1 << 16
+    # Nonblocking open lets the file type check reject a FIFO without waiting for a writer.
+    _OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
 
     def __init__(
         self,
@@ -131,7 +128,7 @@ class LocalFileSurfaceSource:
         return ComponentIdentifier.of(
             self,
             params={
-                "acquisition_version": 3,
+                "acquisition_version": 4,
                 "root": str(self._root),
                 "max_files": self._max_files,
                 "max_content_bytes": self._max_content_bytes,
@@ -145,29 +142,27 @@ class LocalFileSurfaceSource:
         Acquire one bounded snapshot of the named locations.
 
         Args:
-            scorable (SurfaceScorable): The locations to read and the scope they must fall in.
+            scorable (SurfaceScorable): The locations to read.
 
         Returns:
             Observation: The snapshot, including acquisition and coverage state.
 
         Raises:
-            ValueError: If the scorable names another surface or leaves the root.
+            ValueError: If the scorable leaves the root.
             asyncio.CancelledError: If the awaiting task is cancelled; the worker stops too.
         """
-        if scorable.surface != "file":
-            raise ValueError(f"LocalFileSurfaceSource reads the 'file' surface, not {scorable.surface!r}.")
         relative = PurePosixPath(scorable.uri.lstrip("/"))
         if ".." in relative.parts or not relative.parts:
             raise ValueError("A file surface locator must name a location inside the root.")
         cancel = threading.Event()
         try:
-            return await asyncio.to_thread(self._acquire, scorable, relative, cancel)
+            return await asyncio.to_thread(self._acquire, scorable=scorable, relative=relative, cancel=cancel)
         except asyncio.CancelledError:
             # to_thread cannot interrupt its worker; the flag stops it at the next checkpoint.
             cancel.set()
             raise
 
-    def _acquire(self, scorable: SurfaceScorable, relative: PurePosixPath, cancel: threading.Event) -> Observation:
+    def _acquire(self, *, scorable: SurfaceScorable, relative: PurePosixPath, cancel: threading.Event) -> Observation:
         try:
             root = Path(os.path.realpath(self._root, strict=True))
         except OSError:
@@ -181,22 +176,18 @@ class LocalFileSurfaceSource:
             cancel=cancel, listed_entries_left=self._max_listed_entries, read_bytes_left=self._max_read_bytes
         )
         try:
-            if scorable.match == "exact":
+            if scorable.match is SurfaceMatch.EXACT:
                 candidates = self._exact_candidate(root=root, relative=relative, budget=budget)
             else:
                 candidates = self._glob_candidates(root=root, parts=relative.parts, budget=budget)
 
             entries: list[SurfaceEntry] = []
-            excluded = 0
-            window = scorable.scope.window if scorable.scope is not None else None
             for parts in candidates:
                 budget.check()
-                location = scorable.uri if scorable.match == "exact" else "/" + "/".join(parts)
-                entry = self._read_confined(root=root, parts=parts, location=location, window=window, budget=budget)
-                if isinstance(entry, SurfaceEntry):
+                location = scorable.uri if scorable.match is SurfaceMatch.EXACT else "/" + "/".join(parts)
+                entry = self._read_confined(root=root, parts=parts, location=location, budget=budget)
+                if entry is not None:
                     entries.append(entry)
-                elif entry == "excluded":
-                    excluded += 1
         except _AcquisitionCancelledError:
             logger.info("Surface acquisition stopped after cancellation.")
             raise
@@ -207,7 +198,6 @@ class LocalFileSurfaceSource:
             acquisition=Acquisition.PARTIAL if reasons else Acquisition.COMPLETE,
             reasons=reasons,
             entries=tuple(entries),
-            excluded=excluded,
         )
 
     # --- enumeration ---------------------------------------------------------------------
@@ -244,28 +234,34 @@ class LocalFileSurfaceSource:
         Returns:
             list[tuple[str, ...]]: Matching file locations, at most ``max_files``, sorted.
         """
-        found: dict[tuple[str, ...], None] = {}
+        found: set[tuple[str, ...]] = set()
+        listings: dict[tuple[str, ...], list[tuple[str, str]] | None] = {}
+        visited: set[tuple[tuple[str, ...], int]] = set()
 
         def add_candidate(candidate: tuple[str, ...]) -> None:
             if candidate not in found:
                 if len(found) >= self._max_files:
                     raise _FileLimitReachedError
-                found[candidate] = None
+                found.add(candidate)
 
-        def walk(prefix: tuple[str, ...], index: int) -> None:
-            if index >= len(parts):
+        def walk(*, prefix: tuple[str, ...], index: int) -> None:
+            budget.check()
+            if index >= len(parts) or (prefix, index) in visited:
                 return
+            visited.add((prefix, index))
             pattern = parts[index]
             if pattern == "**":
-                walk(prefix, index + 1)
-            listing = self._list_directory(root=root, prefix=prefix, budget=budget)
+                walk(prefix=prefix, index=index + 1)
+            if prefix not in listings:
+                listings[prefix] = self._list_directory(root=root, prefix=prefix, budget=budget)
+            listing = listings[prefix]
             if listing is None:
                 return
             last = index == len(parts) - 1
             for name, kind in listing:
                 if pattern == "**":
                     if kind == "dir":
-                        walk((*prefix, name), index)
+                        walk(prefix=(*prefix, name), index=index)
                     elif last:
                         add_candidate((*prefix, name))
                     continue
@@ -276,10 +272,10 @@ class LocalFileSurfaceSource:
                         continue
                     add_candidate((*prefix, name))
                 elif kind == "dir":
-                    walk((*prefix, name), index + 1)
+                    walk(prefix=(*prefix, name), index=index + 1)
 
         try:
-            walk((), 0)
+            walk(prefix=(), index=0)
         except _FileLimitReachedError:
             # Stop enumerating as soon as one candidate more than the limit is seen.
             budget.reasons.append("file_limit_exceeded")
@@ -331,22 +327,21 @@ class LocalFileSurfaceSource:
         root: Path,
         parts: tuple[str, ...],
         location: str,
-        window: tuple[datetime, datetime] | None,
         budget: _Budget,
-    ) -> SurfaceEntry | str | None:
+    ) -> SurfaceEntry | None:
         """
         Open one location, prove the open handle is inside the root, then read through it.
 
         Returns:
-            SurfaceEntry | str | None: The entry, "excluded" when it falls outside the window,
-            or None when it was not read; the reason is recorded on the budget.
+            SurfaceEntry | None: The entry, or None when it was not read; the reason is
+            recorded on the budget.
 
         Raises:
             _AcquisitionCancelledError: If the awaiting coroutine was cancelled.
         """
         path = root.joinpath(*parts)
         try:
-            fd = os.open(path, _OPEN_FLAGS)
+            fd = os.open(path, self._OPEN_FLAGS)
         except FileNotFoundError:
             budget.reasons.append("dangling_link" if os.path.islink(path) else "read_failed")
             return None
@@ -359,7 +354,7 @@ class LocalFileSurfaceSource:
             except OSError:
                 budget.reasons.append("confinement_unverified")
                 return None
-            if not _is_within(opened, root):
+            if not _is_within(opened=opened, root=root):
                 budget.reasons.append("link_outside_root")
                 return None
             info = os.fstat(fd)
@@ -367,8 +362,6 @@ class LocalFileSurfaceSource:
                 budget.reasons.append("not_a_file")
                 return None
             modified_at = datetime.fromtimestamp(info.st_mtime, tz=UTC)
-            if window is not None and not window[0] <= modified_at <= window[1]:
-                return "excluded"
             return self._read_entry(fd=fd, location=location, info=info, modified_at=modified_at, budget=budget)
         except _AcquisitionCancelledError:
             raise
@@ -390,9 +383,9 @@ class LocalFileSurfaceSource:
             budget.check()
             if budget.read_bytes_left <= 0:
                 # The budget ran out exactly at the recorded size: one byte confirms the end.
-                complete = read >= info.st_size and not _read_chunk(fd, 1)
+                complete = read >= info.st_size and not _read_chunk(fd=fd, size=1)
                 break
-            chunk = _read_chunk(fd, min(_READ_CHUNK_BYTES, budget.read_bytes_left))
+            chunk = _read_chunk(fd=fd, size=min(self._READ_CHUNK_BYTES, budget.read_bytes_left))
             if not chunk:
                 complete = True
                 break
@@ -423,25 +416,15 @@ class LocalFileSurfaceSource:
         acquisition: Acquisition,
         reasons: tuple[str, ...],
         entries: tuple[SurfaceEntry, ...] = (),
-        excluded: int = 0,
     ) -> Observation:
-        # Only the window can be checked against a file system. Record any correlation keys this
-        # source could not apply, so a reader does not mistake them for checked attribution.
-        unapplied: list[str] = []
-        if scorable.scope is not None and scorable.scope.attempt_id is not None:
-            unapplied.append("attempt_id")
-        if scorable.scope is not None and scorable.scope.labels:
-            unapplied.append("labels")
         return Observation(
             source_identifier=self.get_identifier(),
             acquisition=acquisition,
             scorable=scorable,
-            metadata={"scope_keys_not_applied": ",".join(unapplied)} if unapplied else {},
             payload=SurfaceObservationPayload(
                 scope=scorable,
                 entries=entries,
                 coverage=SurfaceCoverage(complete=acquisition is Acquisition.COMPLETE, reasons=reasons),
-                excluded_outside_scope=excluded,
             ),
         )
 
@@ -453,7 +436,7 @@ def _scandir(path: Path) -> os._ScandirIterator[str]:  # noqa: SLF001
     return os.scandir(path)
 
 
-def _read_chunk(fd: int, size: int) -> bytes:
+def _read_chunk(*, fd: int, size: int) -> bytes:
     return os.read(fd, size)
 
 
@@ -464,7 +447,7 @@ def _link_is_directory(entry: os.DirEntry[str]) -> bool:
         return False
 
 
-def _is_within(opened: str, root: Path) -> bool:
+def _is_within(*, opened: str, root: Path) -> bool:
     """
     Compare normalized absolute paths; the root was resolved by the same operating system.
 

@@ -45,7 +45,6 @@ if TYPE_CHECKING:
         MessageScorable,
         Scorable,
         ScorableUnion,
-        ScoringScope,
         SurfaceScorable,
         TraceScorable,
         scorable_from_dict,
@@ -58,7 +57,7 @@ if TYPE_CHECKING:
         UndeterminedScoreError,
         UnvalidatedScore,
     )
-    from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry
+    from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry, SurfaceMatch
     from pyrit.models.score.text_matcher import Contains, Equals, Regex, TextMatcher
     from pyrit.models.score.trace import (
         ToolExecution,
@@ -96,9 +95,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score.score",
     "ScoreType": "pyrit.models.score.score",
     "ScoringExpectation": "pyrit.models.score.expectation",
-    "ScoringScope": "pyrit.models.score.scorable",
     "SurfaceCoverage": "pyrit.models.score.surface",
     "SurfaceEntry": "pyrit.models.score.surface",
+    "SurfaceMatch": "pyrit.models.score.surface",
     "SurfaceObservationPayload": "pyrit.models.score.observation",
     "SurfaceScorable": "pyrit.models.score.scorable",
     "ToolCallRequirement": "pyrit.models.score.condition",

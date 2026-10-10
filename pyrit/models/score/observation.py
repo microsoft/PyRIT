@@ -25,7 +25,7 @@ from pyrit.models.score.scorable import (
     SurfaceScorable,
     TraceScorable,
 )
-from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry
+from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry, SurfaceMatch
 from pyrit.models.score.trace import ToolExecution, TraceCoverage
 
 if TYPE_CHECKING:
@@ -366,13 +366,7 @@ class ToolEventsObservationPayload(BaseModel):
 
 
 class SurfaceObservationPayload(BaseModel):
-    """
-    An immutable snapshot of the locations a surface scorable names.
-
-    Entries are the locations that fell inside the scorable's scope. Locations a source saw
-    but excluded as outside the scope are counted, not retained, so a reader can tell
-    "nothing there" from "something there that this run did not write".
-    """
+    """An immutable snapshot of the locations a surface scorable names, as they were when read."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -381,7 +375,6 @@ class SurfaceObservationPayload(BaseModel):
     scope: SurfaceScorable
     entries: tuple[SurfaceEntry, ...] = ()
     coverage: SurfaceCoverage = Field(default_factory=SurfaceCoverage)
-    excluded_outside_scope: int = Field(default=0, ge=0)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -413,7 +406,7 @@ class SurfaceObservationPayload(BaseModel):
         uris = [entry.uri for entry in self.entries]
         if len(set(uris)) != len(uris):
             raise ValueError("Surface entries must name each location once.")
-        if self.scope.match == "exact" and any(uri != self.scope.uri for uri in uris):
+        if self.scope.match is SurfaceMatch.EXACT and any(uri != self.scope.uri for uri in uris):
             raise ValueError("An exact surface scope can only hold an entry for its own location.")
         return self
 

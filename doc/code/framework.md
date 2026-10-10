@@ -287,10 +287,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
-  root directory. `FileWriteScorer` builds the scorable from its `ContentWritten` condition and,
-  for a `MessageScorable`, scopes it to the run with a `ScoringScope` (the attack's id and time
-  window). Correlating an external write to a run is best effort; a source applies the parts
-  of the scope it can check and records the rest.
+  root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
+  evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
 - Raw `ObservationSource` implementations acquire evidence without criteria.
   `ConversationSource` captures whole-conversation references; the conversation scorer owns
   role filtering and rendering. `TargetJudge` is a separate, expectation-bound collaborator:

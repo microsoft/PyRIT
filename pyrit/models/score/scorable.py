@@ -7,10 +7,11 @@ import uuid  # noqa: TC003  (runtime-required by Pydantic field annotations)
 from abc import ABC
 from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
+from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -156,55 +157,18 @@ class TraceScorable(Scorable):
         return self
 
 
-class ScoringScope(BaseModel):
-    """
-    Which run's evidence a location-shaped scorable means.
-
-    A location such as ``/data/out.txt`` names a place, not a write: the path alone cannot say
-    which run put the current content there. A scope narrows the question. Correlating an
-    external write to a run is best effort, so a source applies the parts it can check and
-    ignores the rest.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    #: Evidence must fall inside this closed interval, typically the attack's own lifetime.
-    window: tuple[AwareDatetime, AwareDatetime] | None = None
-    #: Correlation keys a framework built on PyRIT controls. PyRIT never interprets them.
-    labels: dict[str, str] = Field(default_factory=dict)
-    #: The ``attack_result_id`` allocated when the owning attack execution started.
-    attempt_id: str | None = Field(default=None, min_length=1)
-
-    @model_validator(mode="after")
-    def _validate_window(self) -> ScoringScope:
-        """
-        Reject a window that ends before it starts.
-
-        Returns:
-            ScoringScope: The validated scope.
-
-        Raises:
-            ValueError: If the window end precedes its start.
-        """
-        if self.window is not None and self.window[1] < self.window[0]:
-            raise ValueError("A ScoringScope window must not end before it starts.")
-        return self
-
-
 class SurfaceScorable(Scorable):
     """
-    A location that may or may not have been written.
+    A file location to inspect when evidence is acquired.
 
-    ``uri`` names one location, or with ``match="glob"`` every location the pattern covers,
-    so "any file written under ``/data/``" is a question a scorer can ask. ``surface`` selects
-    the source implementation that reads it.
+    ``uri`` names one location, or with ``SurfaceMatch.GLOB`` every location the pattern
+    covers. A location names a place, not a write: it does not identify the run that put
+    the content there.
     """
 
     scorable_type: Literal["surface"] = "surface"
     uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")
-    surface: str = Field(default="file", min_length=1)
-    match: Literal["exact", "glob"] = "exact"
-    scope: ScoringScope | None = None
+    match: SurfaceMatch = SurfaceMatch.EXACT
 
 
 # Polymorphic union of scorables that can be stored on a Score. Every member declares a
