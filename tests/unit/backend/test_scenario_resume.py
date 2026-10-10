@@ -4,6 +4,7 @@
 """Offline resume coverage using real scenario persistence and harmless mocked targets."""
 
 import asyncio
+import pathlib
 import threading
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, ClassVar
@@ -27,6 +28,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     Message,
+    MessagePiece,
     Parameter,
     ScenarioResult,
     ScenarioRunState,
@@ -34,6 +36,7 @@ from pyrit.models import (
     SeedObjective,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.seeds import yaml_seed_loader
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.core import (
@@ -47,6 +50,7 @@ from pyrit.scenario.core import (
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
+from pyrit.scenario.scenarios.foundry.red_team_agent import RedTeamAgent
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
@@ -239,6 +243,123 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
                 finally:
                     await service.shutdown_async()
                     _build_rapid_response_technique.cache_clear()
+
+
+async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async(
+    patch_central_database: object, sqlite_instance: SQLiteMemory
+) -> None:
+    loop = asyncio.get_running_loop()
+    backend_thread = threading.get_ident()
+    entered, heartbeat, stop = (asyncio.Event() for _ in range(3))
+    release = threading.Event()
+    target = MockPromptTarget()
+    reads = 0
+    original_load = yaml_seed_loader._read_yaml
+    original_read = sqlite_instance.get_seeds_async
+    original_write = sqlite_instance.add_scenario_results_to_memory_async
+
+    class OfflineFoundry(RedTeamAgent):
+        def __init__(self, *, scenario_result_id: str | None = None) -> None:
+            super().__init__(
+                scenario_result_id=scenario_result_id,
+                attack_scoring_config=AttackScoringConfig(
+                    objective_scorer=SubStringScorer(substring="Say hello"),
+                    refusal_scorer=SubStringScorer(substring="refused"),
+                ),
+            )
+
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Say hello", dataset_name="harmbench")], added_by="offline-test"
+    )
+
+    def load_template(file: str | pathlib.Path) -> dict[str, Any]:
+        nonlocal reads
+        loop.call_soon_threadsafe(entered.set)
+        assert threading.get_ident() != backend_thread
+        assert get_default_adversarial_target() is target
+        reads += 1
+        if not release.wait(5):
+            raise TimeoutError("Foundry disk read was not released.")
+        return original_load(file)
+
+    async def heartbeat_async() -> None:
+        while not stop.is_set():
+            await asyncio.sleep(0.005)
+            if entered.is_set():
+                heartbeat.set()
+
+    async def read_seeds_async(**kwargs: Any) -> Sequence[Seed]:
+        assert asyncio.get_running_loop() is loop
+        return await original_read(**kwargs)
+
+    async def write_results_async(*, scenario_results: Sequence[ScenarioResult]) -> None:
+        assert asyncio.get_running_loop() is loop
+        await original_write(scenario_results=scenario_results)
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        assert asyncio.get_running_loop() is loop
+        assert get_default_adversarial_target() is target
+        message = normalized_conversation[-1]
+        target.prompt_sent.append(message.get_value())
+        return [
+            MessagePiece(
+                role="assistant",
+                original_value='{"next_message": "Say hello", "rationale": "Offline", "last_response_summary": "None"}',
+                conversation_id=message.message_pieces[0].conversation_id,
+            ).to_message()
+        ]
+
+    with patch.object(ScenarioRegistry, "_discover"), patch.object(TargetRegistry, "_discover"):
+        scenarios = ScenarioRegistry()
+        scenarios.register_class(OfflineFoundry, name="offline.foundry")
+        targets = TargetRegistry()
+        targets.instances.register(target, name=_TARGET_NAME)
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=scenarios),
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=targets),
+            patch.object(yaml_seed_loader, "_read_yaml", side_effect=load_template),
+            patch.object(sqlite_instance, "get_seeds_async", side_effect=read_seeds_async) as read_seeds,
+            patch.object(
+                sqlite_instance, "add_scenario_results_to_memory_async", side_effect=write_results_async
+            ) as write,
+            patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
+        ):
+            service = ScenarioRunService()
+            pulse = asyncio.create_task(heartbeat_async())
+            launch = asyncio.create_task(
+                service.start_run_async(
+                    request=RunScenarioRequest(
+                        scenario_name="offline.foundry",
+                        target_name=_TARGET_NAME,
+                        adversarial_target_name=_TARGET_NAME,
+                        techniques=["crescendo"],
+                        max_concurrency=1,
+                        include_baseline=False,
+                    )
+                )
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                await asyncio.wait_for(heartbeat.wait(), 1)
+                assert not launch.done()
+                release.set()
+                response = await asyncio.wait_for(launch, 10)
+                await _wait_for_idle_async(service)
+                stored = await sqlite_instance.get_scenario_result_header_async(
+                    scenario_result_id=response.scenario_result_id
+                )
+                assert stored is not None and stored.scenario_run_state == ScenarioRunState.COMPLETED
+                assert reads > 0
+                assert len(target.prompt_sent) == 2
+                assert read_seeds.call_count > 0
+                assert write.call_count > 0
+            finally:
+                release.set()
+                stop.set()
+                try:
+                    await asyncio.gather(launch, pulse)
+                finally:
+                    await service.shutdown_async()
 
 
 async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) -> ScenarioResult:

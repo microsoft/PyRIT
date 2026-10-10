@@ -17,6 +17,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
@@ -478,6 +479,15 @@ class RedTeamAgent(Scenario):
 
         Returns:
             list[AtomicAttack]: The list of AtomicAttack instances in this scenario.
+        """
+        return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
+
+    def _build_atomic_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build Foundry attacks and converters off the event loop.
+
+        Returns:
+            list[AtomicAttack]: The configured Foundry attacks.
         """
         seed_groups = list(context.seed_groups)
         atomic_attacks: list[AtomicAttack] = []

@@ -3,10 +3,13 @@
 
 """Tests for the RedTeamAgent class."""
 
+import pathlib
+import threading
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import (
     AnsiAttackConverter,
@@ -40,7 +43,9 @@ from pyrit.executor.attack import (
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
+from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
 from pyrit.scenario.foundry import (  # type: ignore[ty:unresolved-import]
@@ -200,6 +205,44 @@ def mock_runtime_env():
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "technique", [FoundryTechnique.Crescendo, FoundryTechnique.Tap, FoundryTechnique.Jailbreak, FoundryTechnique.Tense]
+)
+async def test_foundry_templates_are_loaded_off_loop_async(
+    *,
+    technique: FoundryTechnique,
+    sqlite_instance: SQLiteMemory,
+    mock_float_threshold_scorer: FloatScaleThresholdScorer,
+) -> None:
+    backend_thread = threading.get_ident()
+    original_load = yaml_seed_loader._read_yaml
+
+    def load_template(file: str | pathlib.Path) -> dict[str, Any]:
+        assert threading.get_ident() != backend_thread
+        return original_load(file)
+
+    target = MockPromptTarget()
+    scenario = RedTeamAgent(
+        adversarial_chat=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=mock_float_threshold_scorer),
+    )
+    scenario.set_params_from_args(
+        args={
+            "objective_target": target,
+            "scenario_techniques": [technique],
+            "dataset_config": DatasetAttackConfiguration(
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="Say hello")])]
+            ),
+            "include_baseline": False,
+        }
+    )
+    with patch.object(yaml_seed_loader, "_read_yaml", side_effect=load_template) as read:
+        await scenario.initialize_async()
+    assert read.call_count > 0
+    assert scenario.atomic_attack_count == 1
 
 
 @pytest.mark.usefixtures(*FIXTURES)
