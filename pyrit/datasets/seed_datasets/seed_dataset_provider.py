@@ -108,6 +108,31 @@ class SeedDatasetProvider(ABC):
         return cls._registry.copy()
 
     @classmethod
+    async def get_providers_by_name_async(cls, *, dataset_names: list[str]) -> dict[str, "SeedDatasetProvider"]:
+        """
+        Resolve registered providers by name without parsing metadata or fetching seeds.
+
+        Returns:
+            dict[str, SeedDatasetProvider]: Matching providers; missing names are omitted.
+        """
+        return await asyncio.to_thread(cls._get_providers_by_name, dataset_names=dataset_names)
+
+    @classmethod
+    def _get_providers_by_name(cls, *, dataset_names: list[str]) -> dict[str, "SeedDatasetProvider"]:
+        cls._materialize_builtin_providers()
+        requested = set(dataset_names)
+        providers: dict[str, SeedDatasetProvider] = {}
+        for provider_class in cls._registry.values():
+            provider = provider_class()
+            name = provider.dataset_name
+            if name not in requested:
+                continue
+            if name in providers:
+                raise ValueError(f"Multiple registered providers have dataset name '{name}'.")
+            providers[name] = provider
+        return providers
+
+    @classmethod
     async def get_all_dataset_names_async(cls, filters: SeedDatasetFilter | None = None) -> list[str]:
         """
         Get the names of all registered datasets.

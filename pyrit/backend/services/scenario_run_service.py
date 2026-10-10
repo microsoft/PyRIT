@@ -324,13 +324,13 @@ class ScenarioRunService:
             raw_request = {"adversarial_target_name": None, **raw_request}
         if (
             not isinstance(raw_request, dict)
-            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS)
+            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size")
             or raw_request["include_baseline"] is None
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
             request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS}, strict=True
+                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}, strict=True
             )
         except ValidationError as exc:
             raise ScenarioRunConflictError(
@@ -1995,6 +1995,12 @@ class ScenarioRunService:
         Returns:
             dict[str, ScenarioTechniqueSummary]: Technique metadata keyed by name.
         """
+        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+
+        revision = AttackTechniqueRegistry.get_registry_singleton().catalog_revision
+        if getattr(self, "_technique_metadata_revision", None) != revision:
+            self._technique_metadata_cache.clear()
+            self._technique_metadata_revision = revision
         cached = self._technique_metadata_cache.get(scenario_name)
         if cached is not None:
             return cached

@@ -67,9 +67,11 @@
 #      Matrix-shaped scenarios delegate to `build_matrix_atomic_attacks(context=...)` in one line.
 #
 # 3. **Default Dataset**: Pass `default_dataset_config=` to `super().__init__()` to specify the datasets your scenario uses out of the box.
-#    - Returns a `DatasetConfiguration` with one or more named datasets (e.g., `DatasetConfiguration(dataset_names=["my_dataset"])`)
+#    - Returns a `DatasetAttackConfiguration` with named sources (e.g., `sources=[DatasetSource(name="my_dataset")]`)
 #    - Users can override this at runtime via `--dataset-names` in the CLI or by passing a custom `dataset_config` programmatically
-#    - `DatasetAttackConfiguration` selects at most 5 attack groups unless you set `max_dataset_size`; `max_dataset_size=None` uses all groups
+#    - Named sources select at most 5 attack groups per dataset by default; `max_total` caps the union. For any limit, omitted/`None`/empty/`"default"` uses the default; `"all"` removes that limit.
+#    - The deprecated `max_dataset_size` is an exact alias for `max_total`, not a way to disable source caps. To keep the old total-only selection, use `max_per_dataset="all", max_total=10`; to remove both caps, set both to `"all"`. `None` now uses the default, not unlimited selection.
+#    - New runs prepare missing registered datasets once; reads, estimates, and resume never fetch
 #
 # 4. **Constructor**: Use `@apply_defaults` decorator and call `super().__init__()` with scenario metadata:
 #    - `name`: Descriptive name for your scenario
@@ -97,7 +99,8 @@
 # %%
 from pyrit.common import apply_defaults
 from pyrit.scenario import (
-    DatasetConfiguration,
+    DatasetAttackConfiguration,
+    DatasetSource,
     Scenario,
     ScenarioTechnique,
 )
@@ -143,7 +146,9 @@ class MyScenario(Scenario):
             version=self.VERSION,
             objective_scorer=self._objective_scorer,
             technique_class=MyTechnique,
-            default_dataset_config=DatasetConfiguration(dataset_names=["dataset_name"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name="dataset_name")], max_total=4
+            ),
             scenario_result_id=scenario_result_id,
         )
 

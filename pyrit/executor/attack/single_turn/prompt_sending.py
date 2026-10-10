@@ -127,10 +127,21 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         )
 
         # Set the maximum attempts on failure
-        if max_attempts_on_failure < 0:
-            raise ValueError("max_attempts_on_failure must be a non-negative integer")
+        PromptSendingAttack.validate_constructor_parameters({"max_attempts_on_failure": max_attempts_on_failure})
 
         self._max_attempts_on_failure = max_attempts_on_failure
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the retry bound without constructing an attack.
+
+        Raises:
+            ValueError: If the retry bound is negative.
+        """
+        super().validate_constructor_parameters(params)
+        if "max_attempts_on_failure" in params and params["max_attempts_on_failure"] < 0:
+            raise ValueError("max_attempts_on_failure must be a non-negative integer")
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """

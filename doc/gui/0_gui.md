@@ -1,6 +1,6 @@
 # PyRIT GUI (CoPyRIT)
 
-CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent UI. It provides an interactive way to run attacks, configure targets and converters, and view results — all from a browser.
+CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent UI. It provides an interactive way to run attacks, configure targets, converters, and techniques, and view results — all from a browser.
 
 ## Getting Started
 
@@ -109,6 +109,16 @@ a new attack resets both. Default changes in another tab apply to the next new
 chat, not the current draft.
 
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
+
+If the prompt box is disabled, hover over it or click it to see a list of reasons.
+Keyboard users can focus the box and press Enter to open the same list.
+Target processing errors show the complete stored error details. To continue after
+an error, use **Copy conversation** on the failed prompt and select **New conversation**
+or **New attack**. Both destinations copy the safe history before the failed prompt
+and restore that prompt as an unsent draft with its original attachments.
+Targets that cannot replay history start with an empty new attack.
+After a reload or runtime change, converter choices cannot be restored.
+A warning beside the recovered draft tells you to select and apply converters again before sending.
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
@@ -458,6 +468,21 @@ technique, or dataset before trying again.
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
+### Technique Registry
+
+Open **Registry > Techniques**, or go to `/registry/techniques`. Targets and
+Converters keep their existing registry URLs.
+
+Search or filter registered techniques, then select **Details** to inspect one.
+Select **New technique** to configure an existing attack with basic settings,
+ordered converters, and optional adversarial prompts. The objective target is
+selected when you run a scenario. Seeds and conversation settings need a Python
+initializer. Creation does not run an attack.
+
+New techniques are available in compatible scenarios and are lost on restart or
+reinitialization. The pane does not edit or delete techniques.
+See the [backend README](../../pyrit/backend/README.md#techniques) for the API.
 
 ### Target Configuration
 
