@@ -167,6 +167,7 @@ class AudioAchillesHeel(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Audio payload dominated: a text-only baseline of the derived objective drops the audio
     # entirely and is a weak comparison point (Garak has no text-only variant). Baseline stays

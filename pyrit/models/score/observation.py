@@ -19,6 +19,7 @@ from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
 from pyrit.models.score.scorable import (
     ContentEntryScorable,
     ContentScorable,
+    ConversationScorable,
     MessageScorable,
     ScorableUnion,  # noqa: TC001  (runtime-required by Pydantic field annotations)
     TraceScorable,
@@ -248,6 +249,55 @@ class ScorerTargetResponsePayload(BaseModel):
         return self
 
 
+def _conversation_piece_digest(piece: MessagePiece) -> str:
+    """
+    Hash the fields used to identify, order, filter, and render conversation evidence.
+
+    Returns:
+        str: SHA-256 evidence digest.
+    """
+    return _digest_evidence(
+        {
+            "content": _response_piece_digest(piece, include_id=True),
+            "conversation_id": piece.conversation_id,
+            "sequence": piece.sequence,
+        }
+    )
+
+
+class ConversationObservationPayload(BaseModel):
+    """An ordered, reference-backed snapshot of acquired conversation messages."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["conversation"] = "conversation"
+    schema_version: Literal[1] = 1
+    message_piece_ids: tuple[uuid.UUID, ...]
+    message_piece_digests: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _validate_references(self) -> ConversationObservationPayload:
+        """
+        Validate snapshot references.
+
+        Returns:
+            ConversationObservationPayload: The validated snapshot.
+
+        Raises:
+            ValueError: If references are empty, duplicated, or lack valid digests.
+        """
+        if not self.message_piece_ids or len(set(self.message_piece_ids)) != len(self.message_piece_ids):
+            raise ValueError("Conversation observations require nonempty, unique message references.")
+        if len(self.message_piece_ids) != len(self.message_piece_digests):
+            raise ValueError("Conversation observations require one digest for each message piece.")
+        if any(
+            len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
+            for digest in self.message_piece_digests
+        ):
+            raise ValueError("Conversation observation digests must be lowercase SHA-256 values.")
+        return self
+
+
 class ToolEventsObservationPayload(BaseModel):
     """An immutable allowlisted tool snapshot, with arguments and results not retained."""
 
@@ -314,7 +364,7 @@ class ToolEventsObservationPayload(BaseModel):
 
 
 ObservationPayload = Annotated[
-    ScorerTargetResponsePayload | ToolEventsObservationPayload,
+    ScorerTargetResponsePayload | ToolEventsObservationPayload | ConversationObservationPayload,
     Field(discriminator="kind"),
 ]
 
@@ -331,6 +381,23 @@ class Observation(BaseModel):
     scorable: ScorableUnion
     payload: ObservationPayload
     metadata: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_conversation_snapshot(self) -> Observation:
+        """
+        Validate conversation acquisition and scope.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If the anchor or acquisition is incompatible.
+        """
+        if isinstance(self.payload, ConversationObservationPayload) and (
+            not isinstance(self.scorable, ConversationScorable) or self.acquisition is not Acquisition.COMPLETE
+        ):
+            raise ValueError("Conversation observations require a conversation anchor and complete acquisition.")
+        return self
 
     @model_validator(mode="after")
     def _validate_target_response(self) -> Observation:
@@ -396,6 +463,8 @@ class Observation(BaseModel):
     @property
     def evidence_message_piece_ids(self) -> tuple[uuid.UUID, ...]:
         """All message references needed to validate this observation."""
+        if isinstance(self.payload, ConversationObservationPayload):
+            return self.payload.message_piece_ids
         scored = self.scored_message_piece_id
         response_ids = self.response_message_piece_ids
         return response_ids if scored is None or scored in response_ids else (*response_ids, scored)
@@ -418,6 +487,23 @@ class Observation(BaseModel):
             ValueError: If scored or response evidence is missing, modified, or unsupported.
         """
         if isinstance(self.payload, ToolEventsObservationPayload):
+            return
+        if isinstance(self.payload, ConversationObservationPayload):
+            if not isinstance(self.scorable, ConversationScorable):
+                raise ValueError("Conversation evidence requires a conversation anchor.")
+            previous_sequence = -1
+            for piece_id, digest in zip(
+                self.payload.message_piece_ids, self.payload.message_piece_digests, strict=True
+            ):
+                piece = message_pieces.get(piece_id)
+                if (
+                    piece is None
+                    or piece.conversation_id != self.scorable.conversation_id
+                    or _conversation_piece_digest(piece) != digest
+                    or piece.sequence < previous_sequence
+                ):
+                    raise ValueError(f"Conversation observation references missing or modified evidence: {piece_id}.")
+                previous_sequence = piece.sequence
             return
         payload = self.payload
         payload.validate_scored_evidence(

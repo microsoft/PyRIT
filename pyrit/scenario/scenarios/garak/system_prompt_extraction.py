@@ -98,6 +98,7 @@ class SystemPromptExtraction(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Template-dominated like the Doctor/Jailbreak scenarios: the bare system prompt with no
     # extraction request is a weak comparison point, so baseline is off by default.
