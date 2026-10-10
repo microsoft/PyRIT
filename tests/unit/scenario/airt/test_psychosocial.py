@@ -621,6 +621,37 @@ class TestPsychosocialCrossProduct:
             await scenario.initialize_async()
         assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
 
+    async def test_dataset_subset_narrows_the_sub_harms(self, mock_objective_target):
+        scenario = _scenario_with_mock_scorers()
+        with _patch_base_seed_groups(_make_seed_groups()):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": DatasetAttackConfiguration(
+                        sources=[DatasetSource(name="airt_licensed_therapist")]
+                    ),
+                }
+            )
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+            await scenario.initialize_async()
+        assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
+        assert {a.display_group for a in scenario._atomic_attacks} == {"licensed_therapist"}
+        assert [dataset.name for dataset in estimate.datasets] == ["airt_licensed_therapist"]
+
+    async def test_sub_harm_without_its_dataset_is_rejected(self, mock_objective_target):
+        scenario = _scenario_with_mock_scorers()
+        with pytest.raises(DatasetConstraintError, match="needs 'airt_imminent_crisis'"):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "sub_harm": "imminent_crisis",
+                    "dataset_config": DatasetAttackConfiguration(
+                        sources=[DatasetSource(name="airt_licensed_therapist")]
+                    ),
+                }
+            )
+            await scenario.initialize_async()
+
     async def test_unrelated_source_is_rejected(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
         with pytest.raises(DatasetConstraintError, match="sub-harm datasets"):
