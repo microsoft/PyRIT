@@ -1239,6 +1239,56 @@ async def test_cleanup_rejects_queued_turn_and_drains_active_send_async(
     client.stop.assert_awaited_once()
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_continuing_a_conversation_without_its_session_raises_async(
+    *,
+    sdk: Any,
+    client: NonCallableMagicMock,
+    sqlite_instance: MemoryInterface,
+) -> None:
+    """A copied or restarted conversation must not be answered by a fresh session that never saw its turns."""
+    conversation_id = "conversation-started-elsewhere"
+    session = client.create_session.return_value
+    session.send_and_wait.side_effect = [_assistant_reply("FIRST")]
+    first_target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    await _send_normalized_async(
+        target=first_target, original_value="My secret word is avocado.", conversation_id=conversation_id
+    )
+
+    # A new target instance (e.g. after a backend restart) has the memory but not the Copilot session.
+    second_target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    with pytest.raises(Exception, match="Error sending prompt") as raised:
+        await _send_normalized_async(
+            target=second_target, original_value="What is my secret word?", conversation_id=conversation_id
+        )
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert "no Copilot session for conversation" in str(raised.value.__cause__)
+
+    client.create_session.assert_awaited_once()
+    assert session.send_and_wait.await_count == 1
+    await first_target.cleanup_target_async()
+    await second_target.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_system_prompt_alone_still_starts_a_session_async(
+    *,
+    sdk: Any,
+    client: NonCallableMagicMock,
+    sqlite_instance: MemoryInterface,
+) -> None:
+    conversation_id = "system-only-conversation"
+    client.create_session.return_value.send_and_wait.side_effect = [_assistant_reply("OK")]
+    target = GitHubCopilotTarget(model_name="gpt-5-mini")
+    await target.set_system_prompt_async(system_prompt="Be brief.", conversation_id=conversation_id)
+
+    response = await _send_normalized_async(target=target, original_value="hi", conversation_id=conversation_id)
+
+    assert response.get_piece().converted_value == "OK"
+    client.create_session.assert_awaited_once()
+    await target.cleanup_target_async()
+
+
 @pytest.mark.usefixtures("patch_central_database", "sdk")
 def test_target_advertises_native_text_only_capabilities() -> None:
     capabilities = GitHubCopilotTarget(model_name="gpt-4o").capabilities
