@@ -619,7 +619,7 @@ def resolve_constructor_args(
             )
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
-        elif value is not None and (
+        elif (
             param.choices
             or (isinstance(value, str) and param.is_string_coercible)
             or (isinstance(value_type, type) and issubclass(value_type, Enum))
