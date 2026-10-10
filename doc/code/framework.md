@@ -286,16 +286,23 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
-- `pyrit.score.observation` owns acquisition and replay support, not evaluation.
-  `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
-  and matchers decide whether it meets a condition. Its local SDK exporter
-  supports caller-owned, in-process capture, not a remote collector or durable store.
+- Raw `ObservationSource` implementations acquire evidence without criteria.
+  `ConversationSource` captures whole-conversation references; the conversation scorer owns
+  role filtering and rendering. `TargetJudge` is a separate, expectation-bound collaborator:
+  scorers own prompts and verdict conversion, handlers own parsing, and the normalizer owns
+  transport and retries. The message-scoring boundary captures evidence explicitly in a
+  `JudgmentRequest`; the request and exchange do not read ambient scoring context.
+  When the judge's response is blocked, conversation scoring handles direct and message-triggered
+  calls the same way. If it returns an undetermined score, it retains the evidence snapshot.
+- The local SDK exporter supports caller-owned, in-process capture, not a remote collector or
+  durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
 - Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets
   to their children; leaves reject unsupported conditions. Typed message scorers receive criteria
   through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
-  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
+  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook;
+  hidden legacy overrides fail at construction rather than silently changing a verdict.
 - A condition-based leaf declares one `CONDITION_TYPE` and requires exactly one condition of that
   type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
   conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
@@ -396,6 +403,7 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
+- The registry accepts only explicitly supported external inputs, permits opaque Python objects only for in-process callers, and leaves component validation to constructors.
 
 ## [Setup](./setup/0_setup)
 

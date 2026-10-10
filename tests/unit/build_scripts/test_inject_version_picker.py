@@ -7,8 +7,12 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "build_scripts" / "inject_version_picker.py"
@@ -99,3 +103,13 @@ def test_handles_html_without_head(injector_module, tmp_path):
     out = (site / "fragment.html").read_text(encoding="utf-8")
     assert '<meta name="pyrit-docs-base" content="/PyRIT">' in out
     assert "pyrit-version-picker" in out
+
+
+def test_embedded_player_opts_out(*, injector_module: ModuleType, tmp_path: Path) -> None:
+    html = (
+        "<!doctype html>\n<!-- pyrit-no-version-picker -->\n"
+        "<html><head></head><body><video controls></video></body></html>"
+    )
+    site = _build_site(tmp_path, html)
+    assert injector_module.main(["--site-dir", str(site), "--base", "/PyRIT/latest"]) == 0
+    assert (site / "index.html").read_text(encoding="utf-8") == html

@@ -53,6 +53,7 @@ from pyrit.score import (
 from pyrit.score.llm_scoring import _run_llm_scoring_async
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
+from pyrit.score.observation.target_judge import JudgmentRequest
 
 
 @pytest.fixture
@@ -483,13 +484,15 @@ async def test_scorer_send_chat_target_async_bad_json_exception_retries(bad_json
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="123",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="123",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
     # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py
@@ -507,13 +510,15 @@ async def test_scorer_score_value_with_llm_exception_display_prompt_id(patch_cen
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="123",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="123",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
 
@@ -553,12 +558,14 @@ async def test_llm_scoring_selects_retry_mode_for_opted_in_judgments_async(
         await _run_llm_scoring_async(
             chat_target=target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="Judge this answer.",
-            value="The answer to judge.",
-            data_type="text",
-            scored_prompt_id="saved-answer-id",
-            objective="Name France's capital",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="Judge this answer.",
+                value="The answer to judge.",
+                data_type="text",
+                scored_prompt_id="saved-answer-id",
+                expectation=ScoringExpectation(objective="Name France's capital"),
+            ),
             fresh_conversation_per_attempt=True,
         )
 
@@ -649,12 +656,14 @@ async def test_fresh_llm_scoring_preserves_caller_cancellation_async(
             _run_llm_scoring_async(
                 chat_target=target,
                 response_handler=JsonSchemaResponseHandler(),
-                scorer_identifier=scorer.get_identifier(),
-                system_prompt="Judge this answer.",
-                value="The answer to judge.",
-                data_type="text",
-                scored_prompt_id="saved-answer-id",
-                objective="Name France's capital",
+                request=JudgmentRequest(
+                    scorer_identifier=scorer.get_identifier(),
+                    system_prompt="Judge this answer.",
+                    value="The answer to judge.",
+                    data_type="text",
+                    scored_prompt_id="saved-answer-id",
+                    expectation=ScoringExpectation(objective="Name France's capital"),
+                ),
                 fresh_conversation_per_attempt=True,
             )
         )
@@ -836,13 +845,15 @@ async def test_scorer_send_chat_target_async_good_response(good_json, patch_cent
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value="message_value",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     assert chat_target.send_prompt_async.call_count == 1
@@ -864,13 +875,15 @@ async def test_scorer_remove_markdown_json_called(good_json, patch_central_datab
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="123",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="123",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
         mock_remove_markdown_json.assert_called_once()
@@ -895,14 +908,16 @@ async def test_score_value_with_llm_prepended_text_message_piece_creates_multipi
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value=str(image_path),
-        data_type="image_path",
-        scored_prompt_id="123",
-        prepended_text="objective: test\nresponse:",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value=str(image_path),
+            data_type="image_path",
+            scored_prompt_id="123",
+            prepended_text="objective: test\nresponse:",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     # Verify send_prompt_async was called
@@ -940,13 +955,15 @@ async def test_score_value_with_llm_no_prepended_text_creates_single_piece_messa
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value="objective: test\nresponse: some text",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="objective: test\nresponse: some text",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     # Get the message that was sent
@@ -980,14 +997,16 @@ async def test_score_value_with_llm_prepended_text_works_with_audio(good_json, p
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value=str(audio_path),
-        data_type="audio_path",
-        scored_prompt_id="123",
-        prepended_text="objective: transcribe and evaluate\nresponse:",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value=str(audio_path),
+            data_type="audio_path",
+            scored_prompt_id="123",
+            prepended_text="objective: transcribe and evaluate\nresponse:",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     # Get the message that was sent
@@ -2856,13 +2875,15 @@ async def test_score_value_with_llm_skips_reasoning_piece(good_json, patch_centr
     result = await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt="system_prompt",
-        value="message_value",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt="system_prompt",
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     assert result.raw_score_value == "1"
@@ -2887,13 +2908,15 @@ async def test_score_value_with_llm_without_system_prompt(good_json, patch_centr
     await _run_llm_scoring_async(
         chat_target=chat_target,
         response_handler=JsonSchemaResponseHandler(),
-        scorer_identifier=scorer.get_identifier(),
-        system_prompt=None,
-        value="message_value",
-        data_type="text",
-        scored_prompt_id="123",
-        category="category",
-        objective="task",
+        request=JudgmentRequest(
+            scorer_identifier=scorer.get_identifier(),
+            system_prompt=None,
+            value="message_value",
+            data_type="text",
+            scored_prompt_id="123",
+            category="category",
+            expectation=ScoringExpectation(objective="task"),
+        ),
     )
 
     chat_target.set_system_prompt_async.assert_not_called()
@@ -2924,13 +2947,15 @@ async def test_score_value_with_llm_raises_when_scorer_response_blocked(patch_ce
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="test-prompt-id",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="test-prompt-id",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
     # A blocked response is a terminal condition, not a transient JSON error: it must not retry.
@@ -2962,13 +2987,15 @@ async def test_score_value_with_llm_raises_empty_response_when_no_text_piece(pat
         await _run_llm_scoring_async(
             chat_target=chat_target,
             response_handler=JsonSchemaResponseHandler(),
-            scorer_identifier=scorer.get_identifier(),
-            system_prompt="system_prompt",
-            value="message_value",
-            data_type="text",
-            scored_prompt_id="test-prompt-id",
-            category="category",
-            objective="task",
+            request=JudgmentRequest(
+                scorer_identifier=scorer.get_identifier(),
+                system_prompt="system_prompt",
+                value="message_value",
+                data_type="text",
+                scored_prompt_id="test-prompt-id",
+                category="category",
+                expectation=ScoringExpectation(objective="task"),
+            ),
         )
 
     # No parseable text is terminal here, not a transient JSON error: it must not retry.
@@ -2994,12 +3021,16 @@ class _ForwarderTrueFalseScorer(MessageTrueFalseScorer):
         unvalidated = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             response_handler=self._response_handler,
-            scorer_identifier=self.get_identifier(),
-            system_prompt=self._system_prompt,
-            value=message_piece.converted_value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    scorer_identifier=self.get_identifier(),
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    expectation=ScoringExpectation(objective=objective),
+                )
+            ),
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
 
@@ -3023,13 +3054,17 @@ class _DirectTransportTrueFalseScorer(MessageTrueFalseScorer):
 
         unvalidated = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
             response_handler=self._response_handler,
-            value=message_piece.converted_value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    expectation=ScoringExpectation(objective=objective),
+                )
+            ),
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="true_false")]
 
@@ -3050,12 +3085,16 @@ class _ForwarderFloatScaleScorer(MessageFloatScaleScorer):
         unvalidated = await _run_llm_scoring_async(
             chat_target=self._prompt_target,
             response_handler=self._response_handler,
-            scorer_identifier=self.get_identifier(),
-            system_prompt=self._system_prompt,
-            value=message_piece.converted_value,
-            data_type="text",
-            scored_prompt_id=message_piece.id,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    scorer_identifier=self.get_identifier(),
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    expectation=ScoringExpectation(objective=objective),
+                )
+            ),
         )
         return [unvalidated.to_score(score_value=unvalidated.raw_score_value, score_type="float_scale")]
 
