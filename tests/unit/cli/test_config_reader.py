@@ -11,6 +11,7 @@ import pytest
 
 from pyrit.cli import _config_reader
 from pyrit.cli._config_reader import (
+    DEFAULT_AUTH_MODE,
     DEFAULT_SERVER_STARTUP_TIMEOUT,
     DEFAULT_SERVER_URL,
     ConfigError,
@@ -24,6 +25,7 @@ from pyrit.cli._config_reader import (
 def test_default_server_url_constant():
     assert DEFAULT_SERVER_URL == "http://localhost:8000"
     assert DEFAULT_SERVER_STARTUP_TIMEOUT == 120.0
+    assert DEFAULT_AUTH_MODE == "auto"
 
 
 def test_read_server_url_returns_none_when_no_files(tmp_path):
@@ -133,6 +135,19 @@ def test_read_server_settings_overlay_overrides_startup_timeout(tmp_path):
         )
 
 
+def test_read_server_settings_overlay_overrides_auth_mode(tmp_path):
+    default = tmp_path / "default.yaml"
+    default.write_text("server:\n  url: http://default:8000\n  auth_mode: auto\n", encoding="utf-8")
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text("server:\n  auth_mode: azure_cli\n", encoding="utf-8")
+
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default):
+        assert read_server_settings(config_file=overlay) == ServerSettings(
+            url="http://default:8000",
+            auth_mode="azure_cli",
+        )
+
+
 def test_read_server_settings_overlay_timeout_preserves_default_url(tmp_path):
     default = tmp_path / "default.yaml"
     default.write_text("server:\n  url: http://default:8000\n  startup_timeout: 180\n", encoding="utf-8")
@@ -189,6 +204,16 @@ def test_read_server_settings_rejects_invalid_startup_timeout(tmp_path, startup_
 
     with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
         with pytest.raises(ConfigError, match="server.startup_timeout"):
+            read_server_settings(config_file=bad)
+
+
+@pytest.mark.parametrize("auth_mode", ["interactive", "", 123, True])
+def test_read_server_settings_rejects_invalid_auth_mode(tmp_path, auth_mode):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(f"server:\n  auth_mode: {auth_mode}\n", encoding="utf-8")
+
+    with patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", tmp_path / "missing.yaml"):
+        with pytest.raises(ConfigError, match="server.auth_mode"):
             read_server_settings(config_file=bad)
 
 

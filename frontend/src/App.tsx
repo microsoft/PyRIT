@@ -1,51 +1,115 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Routes, Route, Navigate, useNavigate, useLocation, useSearchParams, matchPath } from 'react-router'
+import { useState, useCallback, useEffect, useRef, useMemo, useTransition } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
+import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
 import { Joyride } from 'react-joyride'
-import { useTheme } from './hooks/useTheme'
+import { ThemeProvider, useTheme } from './hooks/useTheme'
+import { UserPreferencesProvider, useUserPreferences } from './hooks/useUserPreferences'
+import { RuntimeBanner, RuntimeProvider, useRuntime } from '@/hooks/useRuntime'
 import MainLayout from './components/Layout/MainLayout'
 import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
-import Initializers from './components/Initializers/Initializers'
+import ConverterRegistry from './components/Registry/ConverterRegistry'
+import RegistryLayout from './components/Registry/RegistryLayout'
+import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
+import HistoryPage from './components/History/HistoryPage'
+import type { HistoryTab } from './components/History/HistoryPage'
+import ScenarioHistory from './components/History/ScenarioHistory'
+import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
+import ScenarioDetail from './components/Scenarios/ScenarioDetail'
+import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
+import { useAuthConfig } from './auth/AuthConfigContext'
+import { useTargetPreferences } from './hooks/useTargetPreferences'
+import { useTargetRegistry } from './hooks/useTargetRegistry'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
-import type { ViewName } from './components/Sidebar/Navigation'
-import type { TargetInstance, TargetInfo } from './types'
 import {
+  scenarioHistoryFiltersFromSearchParams,
+  scenarioHistoryFiltersToSearchParams,
+} from './components/History/scenarioHistoryFilters'
+import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
+import type { ViewName } from './components/Sidebar/Navigation'
+import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo, TargetInstance, TargetPreferences, TargetReference, UserPreferences } from './types'
+import {
+  resolveTargetReference,
+  targetReference,
   targetEndpoint,
   targetIdentifierHash,
   targetModelName,
   targetType,
 } from './utils/targetIdentity'
-import { attacksApi, versionApi } from './services/api'
+import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { useTour } from './hooks/useTour'
+import {
+  attackConversationRoutePath,
+  attackRoutePath,
+  routerPathParamValue,
+  scenarioRunProvenance,
+  scenarioRunRoutePath,
+} from './utils/routeParams'
 
 const AUTO_DISMISS_MS = 5_000
+const HISTORY_ATTACKS_PATH = '/history/attacks'
+const HISTORY_SCANNER_PATH = '/history/scanner'
 
 /** Maps each navigable view to its canonical URL path. */
 const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
-  history: '/history',
-  config: '/config',
-  initializers: '/initializers',
+  history: HISTORY_ATTACKS_PATH,
+  registry: '/registry/targets',
+  scenarios: '/scanner',
+  configuration: '/config',
 }
 
-/** Resolves the active view from a URL path, defaulting to home for unknown paths. */
+/**
+ * Resolves the active view from a URL path, defaulting to home for unknown
+ * paths. Scanner catalog routes and persisted scanner-history routes are
+ * prefix-matched since they carry path parameters rather than single canonical
+ * `VIEW_PATHS` entries.
+ */
 function viewFromPath(pathname: string): ViewName {
+  if (pathname === '/history' || pathname.startsWith('/history/') || pathname.startsWith('/scanner-history/')) {
+    return 'history'
+  }
+  if (pathname === '/targets' || pathname.startsWith('/registry')) {
+    return 'registry'
+  }
+  if (
+    pathname === VIEW_PATHS.scenarios
+    || pathname.startsWith(`${VIEW_PATHS.scenarios}/`)
+  ) {
+    return 'scenarios'
+  }
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,
   )
   return match ? match[0] : 'home'
+}
+
+function LegacyScenarioRunRedirect() {
+  const { scenarioResultId } = useParams<{ scenarioResultId: string }>()
+  return <Navigate replace to={scenarioRunRoutePath(routerPathParamValue(scenarioResultId))} />
+}
+
+function LegacyScenarioHistoryRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`${HISTORY_SCANNER_PATH}${location.search}`} />
+}
+
+function LegacyAttackHistoryRedirect() {
+  const location = useLocation()
+  return <Navigate replace to={`${HISTORY_ATTACKS_PATH}${location.search}`} />
 }
 
 /** Status of the in-flight attack load for an /attacks/:id route. */
@@ -54,16 +118,30 @@ type AttackLoadStatus = 'loading' | 'success' | 'not-found' | 'error'
 /** Attack data named by the URL; `id` marks which attack the data belongs to. */
 interface LoadedAttack {
   id: string
+  loadSequence: number
+  targetSource: 'persisted' | 'created'
+  targetGeneration?: string
   mainConversationId: string | null
   labels: Record<string, string> | null
+  operator: string | null
   target: TargetInfo | null
+  targetUnbound?: boolean
+  createdTarget?: TargetInstance
   relatedConversationIds: string[]
+  objective: string
+  outcome: NonNullable<AttackSummary['outcome']>
+  automatedScore: BackendScore | null
+  humanScore: BackendScore | null
+  lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
 }
 
-const attackPath = (attackId: string) => `/attacks/${attackId}`
-const conversationPath = (attackId: string, conversationId: string) =>
-  `/attacks/${attackId}/conversations/${conversationId}`
+interface ServerDefaults {
+  generation: string
+  revision: number
+  labels: Record<string, string>
+  error: string | null
+}
 
 function ConnectionBannerContainer() {
   const { status, reconnectCount } = useConnectionHealth()
@@ -87,10 +165,32 @@ function ConnectionBannerContainer() {
   return <ConnectionBanner status={status} />
 }
 
-function App() {
-  const { instance } = useMsal()
+function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
+  const { generation, ready } = useRuntime()
   const navigate = useNavigate()
+  const [isNavigatingToCreatedAttack, startCreatedAttackTransition] = useTransition()
   const location = useLocation()
+  const registry = useTargetRegistry()
+  const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
+  const targetDefaults = useTargetPreferences(registry.targets)
+  const [draftSession, setDraftSession] = useState<{
+    pathname: string
+    key: number
+    target: TargetReference | null
+  }>({ pathname: location.pathname, key: 0, target: targetDefaults.preferences.objective })
+  if (draftSession.pathname !== location.pathname) {
+    setDraftSession({
+      pathname: location.pathname,
+      key: draftSession.key + (location.pathname === VIEW_PATHS.chat ? 1 : 0),
+      target: targetDefaults.preferences.objective,
+    })
+  }
+  const draftTarget = !registry.loading && !registry.error && draftSession.target
+    ? resolveTargetReference(draftSession.target, registry.targets) : null
+  const setDefaultTarget = (role: keyof TargetPreferences, target: TargetInstance | null): void => {
+    if (target) registry.rememberTarget(target)
+    targetDefaults.setDefault(role, target)
+  }
 
   // The URL is the source of truth for which attack/conversation is open.
   const conversationMatch = matchPath(
@@ -101,19 +201,76 @@ function App() {
   const routeAttackId = conversationMatch?.params.attackId ?? attackMatch?.params.attackId ?? null
   const routeConversationId = conversationMatch?.params.conversationId ?? null
   const currentView: ViewName = routeAttackId !== null ? 'chat' : viewFromPath(location.pathname)
+  const [canManageConfiguration, setCanManageConfiguration] = useState(false)
+  const [chatToolbarContainer, setChatToolbarContainer] = useState<HTMLDivElement | null>(null)
 
-  const [activeTarget, setActiveTarget] = useState<TargetInstance | null>(null)
-  const [globalLabels, setGlobalLabels] = useState<Record<string, string>>({ ...DEFAULT_GLOBAL_LABELS })
+  useEffect(() => {
+    let cancelled = false
+    authApi.getAccess()
+      .then((access) => {
+        if (!cancelled) setCanManageConfiguration(access.isAdmin)
+      })
+      .catch(() => {
+        if (!cancelled) setCanManageConfiguration(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [generation])
+
+  const [serverDefaults, setServerDefaults] = useState<ServerDefaults | null>(null)
+  const [defaultsRevision, setDefaultsRevision] = useState(0)
+  const defaultLabels = serverDefaults?.labels ?? DEFAULT_GLOBAL_LABELS
+  const defaultsCurrent = serverDefaults !== null
+    && serverDefaults.generation === generation
+    && serverDefaults.revision === defaultsRevision
+  const defaultsError = defaultsCurrent ? serverDefaults.error : null
+  const defaultsReady = defaultsCurrent && !defaultsError
+  const globalLabels = useMemo<Record<string, string>>(() => Object.fromEntries(
+    Object.entries({
+      ...defaultLabels,
+      ...preferences.labels,
+      ...(operatorAlias ? { operator: operatorAlias } : {}),
+    }).filter((entry): entry is [string, string] => entry[1] !== null),
+  ), [defaultLabels, preferences.labels, operatorAlias])
+
+  const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
+    const changedKeys = Object.keys({ ...globalLabels, ...labels })
+      .filter((key: string) => !(operatorAlias && key === 'operator') && labels[key] !== globalLabels[key])
+    updatePreferences((current: UserPreferences) => {
+      const overrides = { ...current.labels }
+      for (const key of changedKeys) {
+        if (labels[key] === defaultLabels[key]) {
+          delete overrides[key]
+        } else {
+          overrides[key] = labels[key] ?? null
+        }
+      }
+      return { ...current, labels: overrides }
+    })
+  }, [defaultLabels, globalLabels, operatorAlias, updatePreferences])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
   // the History nav button can restore filters after visiting another view.
   const [searchParams, setSearchParams] = useSearchParams()
   const historyFilters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams])
+  const scenarioHistoryFilters = useMemo(
+    () => scenarioHistoryFiltersFromSearchParams(searchParams),
+    [searchParams],
+  )
+  const scenarioResultId = useMemo(
+    () => scenarioRunProvenance(searchParams),
+    [searchParams],
+  )
   const lastHistorySearch = useRef('')
+  const lastScenarioHistorySearch = useRef('')
   useEffect(() => {
-    if (location.pathname === VIEW_PATHS.history) {
+    if (location.pathname === HISTORY_ATTACKS_PATH) {
       lastHistorySearch.current = location.search
+    }
+    if (location.pathname === HISTORY_SCANNER_PATH) {
+      lastScenarioHistorySearch.current = location.search
     }
   }, [location.pathname, location.search])
 
@@ -121,7 +278,17 @@ function App() {
     setSearchParams(filtersToSearchParams(filters), { replace: true })
   }, [setSearchParams])
 
-    /** App version display, attached to feedback context */
+  const handleScenarioHistoryFiltersChange = useCallback((filters: ScenarioHistoryFilters) => {
+    setSearchParams(scenarioHistoryFiltersToSearchParams(filters), { replace: true })
+  }, [setSearchParams])
+
+  const handleHistoryTabChange = useCallback((tab: HistoryTab) => {
+    const path = tab === 'attacks' ? HISTORY_ATTACKS_PATH : HISTORY_SCANNER_PATH
+    const search = tab === 'attacks' ? lastHistorySearch.current : lastScenarioHistorySearch.current
+    navigate(path + search)
+  }, [navigate])
+
+  /** App version display, attached to feedback context */
   const [appVersion, setAppVersion] = useState<string>('')
   /** Whether the feedback dialog is currently open */
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -131,67 +298,48 @@ function App() {
   // When set, the loader skips exactly one fetch for this id — used after
   // first-message/branch creation seeds the data, avoiding a redundant getAttack.
   const skipNextLoadForAttackId = useRef<string | null>(null)
+  const attackLoadSequence = useRef(0)
   // The attack whose deep-linked conversation id we have already validated.
   const validatedConversationForAttack = useRef<string | null>(null)
 
-  // Fetch default labels from backend, then override operator with active account if available
+  // User choices remain separate, so a late response cannot replace an edit.
   useEffect(() => {
+    if (!ready) return
     let ignore = false
 
-    async function initLabels() {
-      let defaultLabels: Record<string, string> = {}
+    async function initLabels(): Promise<void> {
       try {
         const data = await versionApi.getVersion()
-        if (data.default_labels && Object.keys(data.default_labels).length > 0) {
-          defaultLabels = data.default_labels
-        }
+        if (ignore) return
+        setServerDefaults({
+          generation,
+          revision: defaultsRevision,
+          labels: { ...DEFAULT_GLOBAL_LABELS, ...data.default_labels },
+          error: null,
+        })
         if (data.display || data.version) {
-          if (!ignore) setAppVersion(data.display ?? data.version ?? '')
+          setAppVersion(data.display ?? data.version ?? '')
         }
-      } catch {
-        /* version fetch handled elsewhere */
+      } catch (error: unknown) {
+        if (ignore) return
+        setServerDefaults((previous) => ({
+          generation,
+          revision: defaultsRevision,
+          labels: previous?.labels ?? DEFAULT_GLOBAL_LABELS,
+          error: toApiError(error).detail,
+        }))
       }
-
-      if (ignore) return
-
-      const account = instance.getActiveAccount?.()
-      const alias = account?.username ? account.username.split('@')[0].toLowerCase() : null
-
-      setGlobalLabels(prev => {
-        const next = { ...prev, ...defaultLabels }
-        if (alias) {
-          next.operator = alias
-        }
-        return next
-      })
     }
 
-    initLabels()
+    void initLabels()
     return () => { ignore = true }
-  }, [instance])
+  }, [generation, ready, defaultsRevision])
 
-  const handleSetActiveTarget = useCallback((target: TargetInstance) => {
-    setActiveTarget(prev => {
-      const isSame = prev &&
-        prev.target_registry_name === target.target_registry_name &&
-        targetType(prev) === targetType(target) &&
-        (targetEndpoint(prev) ?? '') === (targetEndpoint(target) ?? '') &&
-        (targetModelName(prev) ?? '') === (targetModelName(target) ?? '')
-      if (isSame) return prev
-      // Switching targets no longer clears the loaded attack.  The cross-target
-      // guard in ChatWindow prevents sending to a mismatched target, and the
-      // backend enforces this server-side as well.  Clearing state here was
-      // confusing because navigating to config to pick the *correct* target
-      // would wipe the conversation the user was trying to continue.
-      return target
-    })
-  }, [])
   // Hydrate loadedAttack from the routed attack id. Depends on routeAttackId
   // ONLY, so switching conversations within an attack never refetches.
   useEffect(() => {
     if (!routeAttackId) {
       // Intentional cleanup of async-sourced state, not a derivable render value.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoadedAttack(null)
       validatedConversationForAttack.current = null
       return
@@ -201,13 +349,23 @@ function App() {
       return
     }
     let cancelled = false
+    const loadSequence = attackLoadSequence.current + 1
+    attackLoadSequence.current = loadSequence
     setLoadedAttack({
       id: routeAttackId,
+      loadSequence,
+      targetSource: 'persisted',
       status: 'loading',
       mainConversationId: null,
       labels: null,
+      operator: null,
       target: null,
       relatedConversationIds: [],
+      objective: '',
+      outcome: 'undetermined',
+      automatedScore: null,
+      humanScore: null,
+      lastResponseMessagePieceId: null,
     })
     attacksApi
       .getAttack(routeAttackId)
@@ -215,10 +373,23 @@ function App() {
         if (cancelled) return
         setLoadedAttack({
           id: routeAttackId,
+          loadSequence,
+          targetSource: 'persisted',
           mainConversationId: attack.conversation_id,
           labels: attack.labels ?? {},
+          operator: attack.operator ?? null,
           target: attack.target ?? null,
-          relatedConversationIds: attack.related_conversation_ids ?? [],
+          targetUnbound: attack.target_unbound === true,
+          relatedConversationIds: attack.related_conversations
+            ? attack.related_conversations
+                .filter((reference) => reference.conversation_type === 'pruned')
+                .map((reference) => reference.conversation_id)
+            : (attack.related_conversation_ids ?? []),
+          objective: attack.objective ?? '',
+          outcome: attack.outcome ?? 'undetermined',
+          automatedScore: attack.automated_score ?? null,
+          humanScore: attack.human_score ?? null,
+          lastResponseMessagePieceId: attack.last_response?.id ?? null,
           status: 'success',
         })
       })
@@ -230,11 +401,19 @@ function App() {
         const isMissing = toApiError(err).status === 404
         setLoadedAttack({
           id: routeAttackId,
+          loadSequence,
+          targetSource: 'persisted',
           status: isMissing ? 'not-found' : 'error',
           mainConversationId: null,
           labels: null,
+          operator: null,
           target: null,
           relatedConversationIds: [],
+          objective: '',
+          outcome: 'undetermined',
+          automatedScore: null,
+          humanScore: null,
+          lastResponseMessagePieceId: null,
         })
       })
     // Drop a stale response once the route has moved on to another attack.
@@ -248,7 +427,28 @@ function App() {
   const readyAttack = attackForRoute?.status === 'success' ? attackForRoute : null
   const isAttackNotFound = attackForRoute?.status === 'not-found'
   const isAttackError = attackForRoute?.status === 'error'
-  const isLoadingAttack = routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError
+  const isLoadingAttack = isNavigatingToCreatedAttack
+    || (routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError)
+  const {
+    activeTarget: resolvedChatTarget,
+    resolutionStatus: targetResolutionStatus,
+    retryResolution: retryTargetResolution,
+  } = useAttackTargetResolution({
+    attackId: readyAttack?.id ?? null,
+    attackLoadSequence: readyAttack?.loadSequence ?? 0,
+    attackTarget: readyAttack?.target ?? null,
+    attackTargetSource: readyAttack?.targetSource ?? 'persisted',
+    createdTarget: readyAttack?.createdTarget,
+    targetUnbound: readyAttack?.targetUnbound,
+    createdTargetGeneration: readyAttack?.targetGeneration,
+  })
+  const [unboundTarget, setUnboundTarget] = useState<{ attackId: string; target: TargetReference | null } | null>(null)
+  const selectedUnboundTarget = !registry.loading && !registry.error
+    && unboundTarget?.attackId === routeAttackId && unboundTarget?.target
+    ? resolveTargetReference(unboundTarget.target, registry.targets) : null
+  const activeTarget = targetResolutionStatus === 'unbound'
+    ? selectedUnboundTarget
+    : routeAttackId ? resolvedChatTarget : draftTarget
   const activeConversationId = readyAttack
     ? routeConversationId ?? readyAttack.mainConversationId
     : null
@@ -265,10 +465,10 @@ function App() {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
       if (!isKnown) {
-        navigate(attackPath(readyAttack.id), { replace: true })
+        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
       }
     }
-  }, [readyAttack, routeConversationId, navigate])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId])
 
   const handleNavigate = useCallback((view: ViewName) => {
     // Re-attach the last filter query so returning to history restores filters.
@@ -283,40 +483,101 @@ function App() {
     navigate(VIEW_PATHS.chat)
   }, [navigate])
 
-  const handleConversationCreated = useCallback((arId: string, convId: string) => {
+  const handleConversationCreated = useCallback((
+    arId: string,
+    convId: string,
+    objective?: string,
+    selectedTarget?: TargetInstance | null,
+  ) => {
     // Seed the freshly-created attack synchronously and tell the loader to skip
     // its next fetch for this id, so the attack opens without a redundant load.
-    const target: TargetInfo | null = activeTarget
+    const createdTarget = selectedTarget === undefined ? activeTarget : selectedTarget
+    const target: TargetInfo | null = createdTarget
       ? {
-          target_type: targetType(activeTarget),
-          endpoint: targetEndpoint(activeTarget),
-          model_name: targetModelName(activeTarget),
-          identifier_hash: targetIdentifierHash(activeTarget),
+          target_type: targetType(createdTarget),
+          target_registry_name: createdTarget.target_registry_name,
+          endpoint: targetEndpoint(createdTarget),
+          model_name: targetModelName(createdTarget),
+          identifier_hash: targetIdentifierHash(createdTarget),
         }
       : null
     skipNextLoadForAttackId.current = arId
+    const loadSequence = attackLoadSequence.current + 1
+    attackLoadSequence.current = loadSequence
     setLoadedAttack({
       id: arId,
+      loadSequence,
+      targetSource: 'created',
+      targetGeneration: generation,
       mainConversationId: convId,
       // New attack uses the current user's labels, so it is never operator-locked.
       labels: null,
+      operator: null,
       target,
+      targetUnbound: createdTarget === null,
+      createdTarget: createdTarget ?? undefined,
       relatedConversationIds: [],
+      objective: objective ?? '',
+      outcome: 'undetermined',
+      automatedScore: null,
+      humanScore: null,
+      lastResponseMessagePieceId: null,
       status: 'success',
     })
     // Replace when promoting an empty /chat to its attack url (first message);
     // push when branching from an existing attack so Back returns to the source.
-    navigate(attackPath(arId), { replace: routeAttackId === null })
-  }, [activeTarget, routeAttackId, navigate])
+    // Keep sends blocked until the new route exposes the created attack's identity.
+    startCreatedAttackTransition(() => {
+      navigate(attackRoutePath(arId), { replace: routeAttackId === null })
+    })
+  }, [activeTarget, generation, routeAttackId, navigate, startCreatedAttackTransition])
+
+  const handleObjectiveChange = useCallback((objective: string) => {
+    setLoadedAttack((current) => current ? { ...current, objective } : current)
+  }, [])
+
+  const handleHumanScoreChange = useCallback((humanScore: BackendScore | null, outcome: AttackOutcome) => {
+    setLoadedAttack((current) => current?.id === routeAttackId ? { ...current, humanScore, outcome } : current)
+  }, [routeAttackId])
+
+  const handleAttackChange = useCallback((attack: AttackSummary) => {
+    setLoadedAttack((current) => (
+      current && current.id === attack.attack_result_id
+        ? {
+            ...current,
+            target: attack.target ?? null,
+            targetUnbound: attack.target_unbound === true,
+            targetSource: 'persisted',
+            relatedConversationIds: (attack.related_conversations ?? [])
+              .filter((reference) => reference.conversation_type === 'pruned')
+              .map((reference) => reference.conversation_id),
+            objective: attack.objective ?? '',
+            outcome: attack.outcome ?? 'undetermined',
+            automatedScore: attack.automated_score ?? null,
+            humanScore: attack.human_score ?? null,
+            lastResponseMessagePieceId: attack.last_response?.id ?? null,
+          }
+        : current
+    ))
+  }, [])
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
-    navigate(conversationPath(routeAttackId, convId))
-  }, [routeAttackId, navigate])
+    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId))
+  }, [routeAttackId, navigate, scenarioResultId])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
-    navigate(attackPath(openAttackResultId))
+    navigate(attackRoutePath(openAttackResultId))
   }, [navigate])
+
+  const handleOpenScenarioRun = useCallback((scenarioResultId: string) => {
+    navigate(scenarioRunRoutePath(scenarioResultId), {
+      state: {
+        fromScenarioHistory: true,
+        scenarioHistorySearch: location.search,
+      },
+    })
+  }, [location.search, navigate])
 
   const chatElement = isAttackNotFound || isAttackError ? (
     <AttackNotFound
@@ -327,20 +588,44 @@ function App() {
     />
   ) : (
     <ChatWindow
+      key={draftSession.key}
+      toolbarContainer={chatToolbarContainer}
       onNewAttack={handleNewAttack}
       activeTarget={activeTarget}
+      availableTargets={registry.targets}
+      targetsLoading={registry.loading}
+      targetsError={registry.error}
+      onRefreshTargets={registry.refresh}
+      onSelectTarget={(target: TargetInstance | null) => {
+        if (readyAttack?.targetUnbound) {
+          setUnboundTarget({ attackId: readyAttack.id, target: target ? targetReference(target) : null })
+        }
+        else setDraftSession((current) => ({ ...current, target: target ? targetReference(target) : null }))
+      }}
+      defaultBranchTarget={targetDefaults.objectiveTarget}
       attackResultId={readyAttack ? readyAttack.id : null}
       conversationId={readyAttack ? readyAttack.mainConversationId : null}
       activeConversationId={activeConversationId}
       onConversationCreated={handleConversationCreated}
       onSelectConversation={handleSelectConversation}
+      onObjectiveChange={handleObjectiveChange}
+      onHumanScoreChange={handleHumanScoreChange}
+      onAttackChange={handleAttackChange}
       labels={globalLabels}
-      onLabelsChange={setGlobalLabels}
+      defaultsReady={defaultsReady}
       onNavigate={handleNavigate}
-      attackLabels={readyAttack ? readyAttack.labels : null}
+      attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
+      targetResolutionStatus={targetResolutionStatus}
+      onRetryTargetResolution={retryTargetResolution}
       isLoadingAttack={isLoadingAttack}
       relatedConversationCount={readyAttack ? readyAttack.relatedConversationIds.length : 0}
+      objective={readyAttack ? readyAttack.objective : ''}
+      outcome={readyAttack?.outcome}
+      automatedScore={readyAttack?.automatedScore}
+      humanScore={readyAttack?.humanScore}
+      lastResponseMessagePieceId={readyAttack?.lastResponseMessagePieceId}
+      scenarioResultId={readyAttack ? scenarioResultId : null}
     />
   )
 
@@ -351,7 +636,8 @@ function App() {
     handleNavigate,
     resolved === 'dark',
     currentView,
-    activeTarget !== null,
+    targetDefaults.objectiveTarget !== null,
+    canManageConfiguration,
   )
 
   return (
@@ -363,16 +649,55 @@ function App() {
             currentView={currentView}
             onNavigate={handleNavigate}
             onOpenFeedback={() => setFeedbackOpen(true)}
+            canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
+            labels={globalLabels}
+            onLabelsChange={handleGlobalLabelsChange}
+            operatorReadOnly={Boolean(operatorAlias)}
+            toolbarRef={setChatToolbarContainer}
           >
+            {ready && !defaultsReady && (
+              <MessageBar intent={defaultsError ? 'error' : 'info'}>
+                <MessageBarBody>
+                  {defaultsError
+                    ? `Could not load default labels. ${defaultsError}`
+                    : 'Loading default labels.'}
+                  {' '}New attacks and scans are unavailable until default labels are loaded.
+                  {defaultsError && (
+                    <Button onClick={() => setDefaultsRevision((revision: number) => revision + 1)}>
+                      Retry default labels
+                    </Button>
+                  )}
+                </MessageBarBody>
+              </MessageBar>
+            )}
+            {preferenceError && (
+              <MessageBar intent="warning">
+                <MessageBarBody>{preferenceError}</MessageBarBody>
+              </MessageBar>
+            )}
+            {!registry.loading && !registry.error && (
+              (['objective', 'adversarial'] as const).map((role) => (
+                targetDefaults.preferences[role]
+                && !(role === 'objective' ? targetDefaults.objectiveTarget : targetDefaults.adversarialTarget)
+                ? (
+                  <MessageBar key={role} intent="warning">
+                    <MessageBarBody>
+                      The saved default {role} target is unavailable or has changed. Select a new default in the registry.
+                      <Button appearance="subtle" onClick={() => setDefaultTarget(role, null)}>
+                        Clear {role} default
+                      </Button>
+                    </MessageBarBody>
+                  </MessageBar>
+                ) : null
+              ))
+            )}
             <Routes>
               <Route
                 path="/"
                 element={
                   <Home
-                    labels={globalLabels}
-                    onLabelsChange={setGlobalLabels}
-                    activeTarget={activeTarget}
+                    activeTarget={targetDefaults.objectiveTarget}
                     onNavigate={handleNavigate}
                     onOpenAttack={handleOpenAttack}
                   />
@@ -390,26 +715,78 @@ function App() {
                 path="/attacks/:attackId/conversations/:conversationId"
                 element={chatElement}
               />
+              <Route path="/registry" element={<RegistryLayout />}>
+                <Route index element={<Navigate to="/registry/targets" replace />} />
+                <Route
+                  path="targets"
+                  element={
+                    <TargetConfig
+                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                      defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                      onSetDefaultObjectiveTarget={(target: TargetInstance | null) => setDefaultTarget('objective', target)}
+                      onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
+                      onTargetsLoaded={registry.synchronizeTargets}
+                    />
+                  }
+                />
+                <Route path="converters" element={<ConverterRegistry />} />
+              </Route>
+              <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
+              <Route path="/scanner" element={<ScenarioCatalog />} />
               <Route
-                path="/config"
+                path="/scanner/:scenarioName"
                 element={
-                  <TargetConfig
-                    activeTarget={activeTarget}
-                    onSetActiveTarget={handleSetActiveTarget}
+                  registry.loading ? <Spinner label="Loading target defaults..." /> : registry.error ? (
+                    <MessageBar intent="error">
+                      <MessageBarBody>
+                        {registry.error}
+                        <Button onClick={registry.refresh}>Retry targets</Button>
+                      </MessageBarBody>
+                    </MessageBar>
+                  ) : <ScenarioDetail
+                    targets={registry.targets}
+                    defaultObjectiveTarget={targetDefaults.objectiveTarget}
+                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                    labels={globalLabels}
+                    defaultsReady={defaultsReady}
+                    onNavigate={handleNavigate}
                   />
                 }
               />
-              <Route path="/initializers" element={<Initializers />} />
+              <Route path="/scanner-history" element={<LegacyScenarioHistoryRedirect />} />
+              <Route path="/scanner-history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
+              <Route path="/scanner-history/:scenarioResultId" element={<ScenarioRunPage />} />
+              <Route path="/scenario-history" element={<LegacyScenarioHistoryRedirect />} />
+              <Route path="/scenario-history/:scenarioResultId" element={<LegacyScenarioRunRedirect />} />
+              <Route path="/config" element={<Configuration />} />
+              <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
               <Route
-                path="/history"
+                path={HISTORY_ATTACKS_PATH}
                 element={
-                  <AttackHistory
-                    onOpenAttack={handleOpenAttack}
-                    filters={historyFilters}
-                    onFiltersChange={handleFiltersChange}
-                    activeTarget={activeTarget}
-                    onNavigate={handleNavigate}
-                  />
+                  <HistoryPage selectedTab="attacks" onTabChange={handleHistoryTabChange}>
+                    <AttackHistory
+                      onOpenAttack={handleOpenAttack}
+                      filters={historyFilters}
+                      onFiltersChange={handleFiltersChange}
+                      activeTarget={targetDefaults.objectiveTarget}
+                      onNavigate={handleNavigate}
+                      showTitle={false}
+                    />
+                  </HistoryPage>
+                }
+              />
+              <Route
+                path={HISTORY_SCANNER_PATH}
+                element={
+                  <HistoryPage selectedTab="scanner" onTabChange={handleHistoryTabChange}>
+                    <ScenarioHistory
+                      filters={scenarioHistoryFilters}
+                      onFiltersChange={handleScenarioHistoryFiltersChange}
+                      onOpenRun={handleOpenScenarioRun}
+                      onNavigate={handleNavigate}
+                      showTitle={false}
+                    />
+                  </HistoryPage>
                 }
               />
               <Route path="*" element={<Navigate to="/" replace />} />
@@ -428,6 +805,26 @@ function App() {
           )}
       </ConnectionHealthProvider>
     </ErrorBoundary>
+  )
+}
+
+function App() {
+  const { instance, accounts = [] } = useMsal()
+  const authConfig = useAuthConfig()
+  const account = instance.getActiveAccount?.() ?? accounts[0]
+  const accountKey = account?.homeAccountId
+    ? `${account.tenantId}:${account.homeAccountId}`
+    : authConfig.clientId ? null : 'local'
+  const operatorAlias = account?.username ? account.username.split('@')[0].toLowerCase() : null
+  return (
+    <RuntimeProvider>
+      <RuntimeBanner />
+      <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
+        <ThemeProvider>
+          <AppContent operatorAlias={operatorAlias} />
+        </ThemeProvider>
+      </UserPreferencesProvider>
+    </RuntimeProvider>
   )
 }
 

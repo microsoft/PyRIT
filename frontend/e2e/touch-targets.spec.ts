@@ -1,9 +1,16 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./_fixtures";
+import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
+import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
+import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+
+const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const MINIMUM_TOUCH_TARGET_SIZE = 44;
+const LONG_SCORE_VALUE = "a".repeat(200);
 
 const TARGETS = [
   makeTarget({
@@ -44,6 +51,18 @@ const TARGETS = [
       supported_output_modalities: ["text"],
     },
   }),
+  makeTarget({
+    target_registry_name: "mobile-speech-target",
+    target_type: "OpenAITTSTarget",
+    endpoint: "https://speech.example.test",
+    model_name: "tts-mobile",
+    capabilities: {
+      supports_multi_turn: false,
+      supports_system_prompt: false,
+      supported_input_modalities: ["text"],
+      supported_output_modalities: ["audio_path"],
+    },
+  }),
 ];
 
 const MESSAGES = [
@@ -74,7 +93,20 @@ const MESSAGES = [
         converted_value_data_type: "text",
         original_value: "Deterministic assistant response for touch-target tests.",
         converted_value: "Deterministic assistant response for touch-target tests.",
-        scores: [],
+        scores: Array.from({ length: 9 }, (_unused: unknown, scoreIndex: number) => ({
+          id: `mobile-assistant-score-${scoreIndex}`,
+          message_piece_id: "mobile-assistant-piece",
+          scorer_type: `SelfAskRefusalScorer${scoreIndex}`,
+          score_type: scoreIndex === 0 ? "unknown" : "true_false",
+          score_value:
+            scoreIndex === 0
+              ? LONG_SCORE_VALUE
+              : "false",
+          is_objective_score: scoreIndex === 0,
+          score_category: ["refusal"],
+          score_rationale: `Deterministic rationale ${scoreIndex} for touch-target tests.`,
+          timestamp: `2026-07-22T13:10:0${scoreIndex}.500Z`,
+        })),
         response_error: "none",
       },
     ],
@@ -124,9 +156,18 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/auth/access") {
+      await route.fulfill(jsonResponse({ isAdmin: true }));
+      return;
+    }
+    if (apiPath === "/runtime") {
+      await route.fulfill(jsonResponse(READY_RUNTIME));
+      return;
+    }
     if (apiPath === "/version") {
       await route.fulfill(
         jsonResponse({
+          ...mockVersion(),
           version: "touch-target-test",
           display: "touch-target-test",
           default_labels: {
@@ -150,7 +191,51 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/targets/catalog") {
+    if (apiPath === "/config" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          content: "initializers: []\n",
+          source: "C:/Users/test/.pyrit/.pyrit_conf",
+          version: "touch-target-config-v1",
+        })
+      );
+      return;
+    }
+    if (apiPath === "/config/runtime" && method === "GET") {
+      await route.fulfill(jsonResponse(READY_RUNTIME_STATUS));
+      return;
+    }
+    if (apiPath === "/initializers/settings" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          configured: [],
+        })
+      );
+      return;
+    }
+    if (apiPath === "/initializers" && method === "GET") {
+      await route.fulfill(
+        jsonResponse({
+          items: [
+            {
+              initializer_name: "load_default_datasets",
+              initializer_type: "DatasetInitializer",
+              description: "Loads the default datasets.",
+              required_env_vars: [],
+              supported_parameters: [],
+            },
+          ],
+          pagination: {
+            limit: 200,
+            has_more: false,
+            next_cursor: null,
+            prev_cursor: null,
+          },
+        })
+      );
+      return;
+    }
+    if (apiPath === "/targets/types") {
       await route.fulfill(
         jsonResponse({
           items: [
@@ -183,7 +268,7 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/converters/catalog" || apiPath === "/converters") {
+    if (apiPath === "/converters/types" || apiPath === "/converters") {
       await route.fulfill(jsonResponse({ items: [] }));
       return;
     }
@@ -217,6 +302,8 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
           attack_type: "PromptSendingAttack",
           conversation_id: "mobile-conversation-001",
           related_conversation_ids: [],
+          objective:
+            "Deterministic long objective that does not fit on a single line of the mobile objective header and must be truncated with a disclosure toggle.",
           labels: {
             operator: "mobile_operator",
             operation: "touch_targets",
@@ -232,10 +319,30 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
+    if (apiPath === "/attacks/mobile-attack-001/message-sends" && method === "POST") {
+      await fulfillMessageSend(route, makeAddMessageResponse(
+        "mobile-attack-001", "mobile-conversation-001", MESSAGES,
+        null, {
+          target: {
+            target_type: "RoundRobinTarget", identifier_hash: "mobile-round-robin-hash",
+            endpoint: null, model_name: "mobile-router",
+          },
+        },
+      ));
+      return;
+    }
     if (apiPath === "/attacks/mobile-attack-001/messages") {
       await route.fulfill(
         method === "POST"
-          ? jsonResponse({ messages: { messages: MESSAGES } })
+          ? jsonResponse(makeAddMessageResponse(
+              "mobile-attack-001", "mobile-conversation-001", MESSAGES,
+              null, {
+                target: {
+                  target_type: "RoundRobinTarget", identifier_hash: "mobile-round-robin-hash",
+                  endpoint: null, model_name: "mobile-router",
+                },
+              },
+            ))
           : jsonResponse({ messages: MESSAGES })
       );
       return;
@@ -265,6 +372,31 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
     }
     if (apiPath === "/attacks/converter-options") {
       await route.fulfill(jsonResponse({ converter_types: [] }));
+      return;
+    }
+    if (apiPath === "/scenarios/catalog" || apiPath === "/scenarios/runs") {
+      await route.fulfill(
+        jsonResponse({
+          items: [],
+          pagination: {
+            limit: 50,
+            has_more: false,
+            next_cursor: null,
+            prev_cursor: null,
+          },
+        })
+      );
+      return;
+    }
+    if (apiPath === "/scenarios/runs/queue") {
+      await route.fulfill(
+        jsonResponse({
+          revision: 0,
+          snapshot_at: "2026-07-22T13:10:00.000Z",
+          active: null,
+          queued: [],
+        })
+      );
       return;
     }
 
@@ -299,6 +431,14 @@ async function expectCompactDesktopTarget(locator: Locator): Promise<void> {
   expect(box.height).toBeLessThan(MINIMUM_TOUCH_TARGET_SIZE);
 }
 
+async function expectCompactDesktopTargets(locator: Locator): Promise<void> {
+  const count = await locator.count();
+  expect(count).toBeGreaterThan(0);
+  for (let index = 0; index < count; index += 1) {
+    await expectCompactDesktopTarget(locator.nth(index));
+  }
+}
+
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
   const dimensions = await page.evaluate(() => ({
     viewportWidth: document.documentElement.clientWidth,
@@ -312,9 +452,9 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function startChatWithMessages(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Configuration", exact: true }).click();
-  await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
-  await page.getByRole("button", { name: "Set Active" }).first().click();
+  await page.getByRole("button", { name: "Registry", exact: true }).click();
+  await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
+  await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await page.getByTestId("chat-input").fill(
     "Assess this deterministic mobile prompt"
@@ -332,7 +472,34 @@ test.beforeEach(async ({ page }) => {
 test.describe("Mobile touch targets", () => {
   test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
-  test("keeps Home, Configuration, and History controls at least 44px", async ({
+  test("keeps the empty-chat objective editor usable on a narrow screen", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
+    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+
+    await page.getByRole("button", { name: "Add objective" }).click();
+    const objectiveInput = page.getByRole("textbox", {
+      name: "Attack objective",
+    });
+    await expectMinimumTouchTarget(objectiveInput);
+    await objectiveInput.fill(
+      "Evaluate whether the response satisfies this mobile attack objective"
+    );
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Save" })
+    );
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Cancel" })
+    );
+    await expectNoDocumentOverflow(page);
+  });
+
+  test("keeps Home, Registry, and History controls at least 44px", async ({
     page,
   }) => {
     await page.goto("/");
@@ -354,9 +521,9 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page
-      .getByRole("button", { name: "Configuration", exact: true })
+      .getByRole("button", { name: "Registry", exact: true })
       .click();
-    await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
 
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Refresh", exact: true })
@@ -365,12 +532,32 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "New Target", exact: true })
     );
     await expectMinimumTouchTargets(
-      page.getByRole("button", { name: "Set Active" })
+      page.getByRole("region", { name: "Target defaults" }).getByRole("combobox")
     );
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Expand inner targets" })
     );
-    await expectMinimumTouchTarget(page.locator("select"));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
+    for (const filter of ["type", "input", "output", "capability"]) {
+      await expectMinimumTouchTarget(page.getByRole("button", { name: `Open Filter by ${filter}:`, exact: true }));
+    }
+    const capabilityFilter = page.getByRole("combobox", { name: "Filter by capability:", exact: true });
+    await capabilityFilter.click();
+    await expectMinimumTouchTargets(page.getByRole("menuitemcheckbox"));
+    await page.getByRole("menuitemcheckbox", { name: "System Prompt", exact: true }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Multi-turn", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+    await expect(capabilityFilter).toHaveValue("Capabilities: System Prompt (+1)");
+    const capabilityWidths = await capabilityFilter.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(capabilityWidths.scrollWidth).toBeLessThanOrEqual(capabilityWidths.clientWidth);
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
     await page.goto("/history");
@@ -403,11 +590,99 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
+  test("keeps the Initializer selector at least 44px", async ({ page }) => {
+    await page.goto("/config");
+    await page.getByRole("tab", { name: "Initializers", exact: true }).click();
+
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Browse available initializers" })
+    );
+    await expectNoDocumentOverflow(page);
+  });
+
   test("keeps Chat message, input, and conversation controls at least 44px", async ({
     page,
   }) => {
-    await page.goto("/");
-    await startChatWithMessages(page);
+    await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
+    // Deep-link directly into the attack (rather than creating one through
+    // the chat flow) so the objective is actually hydrated from the backend:
+    // the create-attack flow seeds the objective as "" client-side and never
+    // loads the long mocked objective, so the disclosure toggle would never
+    // render and this test would silently skip checking it.
+    await page.goto("/attacks/mobile-attack-001");
+    await expect(
+      page.getByText("Deterministic assistant response for touch-target tests.")
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("toggle-objective-header-btn")
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
+    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
+    await page.goBack();
+    await expect(
+      page.getByTestId("toggle-objective-header-btn")
+    ).toBeVisible();
+
+    const scoreStack = page.getByTestId("message-score-stack-1");
+    await expect(scoreStack).toBeVisible();
+    await expectMinimumTouchTarget(scoreStack);
+    await scoreStack.click();
+
+    const scoreDetails = page.locator(
+      '[data-testid^="message-score-details-1-"]'
+    );
+    const scoreValue = scoreDetails.getByText(LONG_SCORE_VALUE, { exact: true });
+    await expect(scoreValue).toBeVisible();
+    const scoreGeometry = await scoreDetails.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(scoreGeometry.scrollWidth).toBeLessThanOrEqual(
+      scoreGeometry.clientWidth
+    );
+    const valueGeometry = await scoreValue.evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(valueGeometry.scrollWidth).toBeLessThanOrEqual(
+      valueGeometry.clientWidth
+    );
+    await expectNoDocumentOverflow(page);
+
+    const scoreTabs = page.locator('[data-testid^="message-score-tab-1-"]');
+    await expect(scoreTabs).toHaveCount(2);
+    await expectMinimumTouchTargets(scoreTabs);
+    await scoreTabs.nth(1).click();
+
+    const shortScoreValue = scoreDetails.getByText("false", { exact: true });
+    await expect(shortScoreValue).toBeVisible();
+    const shortValueGeometry = await shortScoreValue.evaluate((element) => ({
+      valueWidth: element.getBoundingClientRect().width,
+      rowWidth: element.parentElement?.getBoundingClientRect().width ?? 0,
+    }));
+    expect(shortValueGeometry.valueWidth).toBeLessThan(
+      shortValueGeometry.rowWidth
+    );
+
+    const moreScores = page.getByRole("button", {
+      name: "More scores, 7 hidden",
+    });
+    await expect(moreScores).toBeVisible();
+    await expectMinimumTouchTarget(moreScores);
+    await moreScores.click();
+
+    const scoreMenuItems = page.getByRole("menuitem");
+    await expect(scoreMenuItems).toHaveCount(7);
+    await expectMinimumTouchTargets(scoreMenuItems);
+    await page.keyboard.press("Escape");
+    await expect(scoreMenuItems).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(scoreStack).toHaveAttribute("aria-expanded", "false");
+    // Leave the restored trigger focus so its tooltip cannot cover the next control.
+    await scoreStack.press("Tab");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
 
     await expectMinimumTouchTargets(
       page.locator(
@@ -418,16 +693,45 @@ test.describe("Mobile touch targets", () => {
           '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',
           '[data-testid="toggle-converter-panel-btn"]',
+          '[data-testid="toggle-objective-header-btn"]',
           '[data-testid="chat-input"]',
           '[data-testid="send-message-btn"]',
           '[data-testid="copy-to-input-btn-1"]',
-          '[data-testid="copy-to-new-conv-btn-1"]',
-          '[data-testid="branch-conv-btn-1"]',
-          '[data-testid="branch-attack-btn-1"]',
+          '[aria-label="Edit objective"]',
+          '[aria-label^="Objective achieved outcome:"]',
         ].join(",")
       )
     );
     await expectNoDocumentOverflow(page);
+
+    await page.getByTestId("copy-to-input-btn-1").click();
+    for (const name of ["This conversation", "New conversation", "New attack"]) {
+      await expectMinimumTouchTarget(page.getByRole("menuitem", { name, exact: true }));
+    }
+    await page.keyboard.press("Escape");
+
+    const outcomeButton = page.getByRole("button", {
+      name: /Objective achieved outcome:/,
+    });
+    await outcomeButton.click();
+    await page.setViewportSize({ width: 320, height: 568 });
+
+    const resultDetails = page.getByText("Attack Result Details").locator("..");
+    await expect(resultDetails).toBeVisible();
+    await expect(async () => {
+      const popoverBounds = await resultDetails.boundingBox();
+      if (!popoverBounds) {
+        throw new Error("Expected attack result details bounds");
+      }
+      expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
+      expect(popoverBounds.y + popoverBounds.height).toBeLessThanOrEqual(568);
+    }).toPass();
+    await expectMinimumTouchTarget(
+      page.getByRole("button", { name: "Update" })
+    );
+    await expectNoDocumentOverflow(page);
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
 
     await page.getByTestId("toggle-panel-btn").click();
     await expect(
@@ -453,34 +757,42 @@ test.describe("Mobile touch targets", () => {
     await page.goto("/");
     await page.getByTestId("start-tour").click();
 
-    await expect(page.getByText("1 of 5")).toBeVisible();
+    // Scope to the tooltip: the views the tour visits have their own
+    // "Next" controls, such as History's pagination.
+    const tooltip = page.getByTestId("tour-tooltip-card");
+
+    await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
     await expectMinimumTouchTargets(
-      page.getByRole("button", {
+      tooltip.getByRole("button", {
         name: /^(Close|Skip tour|Next)$/,
       })
     );
 
-    for (const step of [2, 3, 4]) {
-      await page
+    for (let step = 2; step < TOUR_STEP_COUNT; step += 1) {
+      await tooltip
         .getByRole("button", { name: "Next", exact: true })
         .click({ force: true });
-      await expect(page.getByText(`${step} of 5`)).toBeVisible();
+      await expect(
+        page.getByText(`${step} of ${TOUR_STEP_COUNT}`)
+      ).toBeVisible();
       await expectMinimumTouchTargets(
-        page.getByRole("button", {
+        tooltip.getByRole("button", {
           name: /^(Close|Skip tour|Back|Next)$/,
         })
       );
     }
 
-    await page
+    await tooltip
       .getByRole("button", { name: "Next", exact: true })
       .click({ force: true });
-    await expect(page.getByText("5 of 5")).toBeVisible();
+    await expect(
+      page.getByText(`${TOUR_STEP_COUNT} of ${TOUR_STEP_COUNT}`)
+    ).toBeVisible();
     await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Back", exact: true })
+      tooltip.getByRole("button", { name: "Back", exact: true })
     );
     await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Anchors Away!", exact: true })
+      tooltip.getByRole("button", { name: "Anchors Away!", exact: true })
     );
   });
 });
@@ -509,18 +821,35 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   );
 
   await page
-    .getByRole("button", { name: "Configuration", exact: true })
+    .getByRole("button", { name: "Registry", exact: true })
     .click();
-  await expect(page.getByText("gpt-4o-mobile")).toBeVisible();
+  await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Refresh", exact: true })
   );
-  await expectCompactDesktopTarget(page.locator("select"));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by type:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by input:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by output:", exact: true }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Filter by capability:", exact: true }));
+  await page.getByRole("combobox", { name: "Filter by capability:", exact: true }).click();
+  await expectCompactDesktopTargets(page.getByRole("menuitemcheckbox"));
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitemcheckbox")).toHaveCount(0);
+  await expectCompactDesktopTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
   await expectCompactDesktopTarget(
-    page.getByRole("button", { name: "Set Active" }).first()
+    page.getByRole("combobox", { name: "Default objective target", exact: true })
+  );
+  await expectCompactDesktopTarget(
+    page.getByRole("combobox", { name: "Default adversarial target", exact: true })
   );
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Expand inner targets" })
+  );
+
+  await page.goto("/config");
+  await page.getByRole("tab", { name: "Initializers", exact: true }).click();
+  await expectCompactDesktopTarget(
+    page.getByRole("button", { name: "Browse available initializers" })
   );
 
   await startChatWithMessages(page);
@@ -541,7 +870,7 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await page.getByTestId("start-tour").click();
-  await expect(page.getByText("1 of 5")).toBeVisible();
+  await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
   await expectCompactDesktopTarget(
     page.getByRole("button", { name: "Close", exact: true })
   );

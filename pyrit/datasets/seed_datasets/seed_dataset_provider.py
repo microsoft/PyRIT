@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import importlib
 import inspect
 import logging
 from abc import ABC, abstractmethod
@@ -103,6 +104,7 @@ class SeedDatasetProvider(ABC):
         Returns:
             dict[str, type[SeedDatasetProvider]]: Dictionary mapping class names to provider classes.
         """
+        cls._materialize_builtin_providers()
         return cls._registry.copy()
 
     @classmethod
@@ -123,6 +125,7 @@ class SeedDatasetProvider(ABC):
             >>> names = await SeedDatasetProvider.get_all_dataset_names_async()
             >>> print(f"Available datasets: {', '.join(names)}")
         """
+        cls._materialize_builtin_providers()
         dataset_names = set()
         for provider_class in cls._registry.values():
             try:
@@ -219,8 +222,12 @@ class SeedDatasetProvider(ABC):
             filter_vals = getattr(criterion, field.name)
             meta_vals = getattr(metadata, field.name)
 
-            if filter_vals is None or meta_vals is None:
+            if filter_vals is None:
                 continue
+
+            # A requested axis cannot match metadata that does not declare it.
+            if meta_vals is None:
+                return False
 
             if strict_match:
                 if filter_vals - meta_vals:
@@ -268,6 +275,8 @@ class SeedDatasetProvider(ABC):
             ...     dataset_names=["harmbench", "DarkBench"]
             ... )
         """
+        cls._materialize_builtin_providers()
+
         # Validate dataset names if specified
         if dataset_names is not None:
             available_names = await cls.get_all_dataset_names_async()
@@ -344,3 +353,14 @@ class SeedDatasetProvider(ABC):
 
         logger.info(f"Successfully fetched {len(datasets)} unique datasets from {len(cls._registry)} providers")
         return list(datasets.values())
+
+    @classmethod
+    def _materialize_builtin_providers(cls) -> None:
+        """Import every built-in dataset provider into the provider registry."""
+        for package_name in (
+            "pyrit.datasets.seed_datasets.local",
+            "pyrit.datasets.seed_datasets.remote",
+        ):
+            package = importlib.import_module(package_name)
+            for export_name in package.__all__:
+                getattr(package, export_name)

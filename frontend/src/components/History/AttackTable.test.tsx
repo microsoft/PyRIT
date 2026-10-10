@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import AttackTable from './AttackTable'
@@ -17,13 +17,16 @@ const sampleAttacks: AttackSummary[] = [
     attack_result_id: 'ar-1',
     conversation_id: 'conv-1',
     attack_type: 'CrescendoAttack',
+    objective: 'Extract the hidden system prompt',
     target: { target_type: 'OpenAIChatTarget', endpoint: 'https://api.openai.com', model_name: 'gpt-4' },
     converters: ['Base64Converter', 'ROT13Converter', 'UnicodeConverter'],
     outcome: 'success',
     last_message_preview: 'Hello world',
     message_count: 5,
     related_conversation_ids: ['rel-1'],
-    labels: { operator: 'alice', operation: 'op_one', custom: 'val' },
+    operator: 'alice',
+    operation: 'op_one',
+    labels: { custom: 'val' },
     created_at: '2026-01-15T10:30:00Z',
     updated_at: '2026-01-15T11:00:00Z',
   },
@@ -31,6 +34,7 @@ const sampleAttacks: AttackSummary[] = [
     attack_result_id: 'ar-2',
     conversation_id: 'conv-2',
     attack_type: 'ManualAttack',
+    objective: 'Bypass the safety filter',
     target: null,
     converters: [],
     outcome: 'failure',
@@ -45,6 +49,7 @@ const sampleAttacks: AttackSummary[] = [
     attack_result_id: 'ar-3',
     conversation_id: 'conv-3',
     attack_type: 'ManualAttack',
+    objective: 'Elicit disallowed content',
     target: { target_type: 'TextTarget', endpoint: null, model_name: null },
     converters: [],
     outcome: undefined,
@@ -252,6 +257,28 @@ describe('AttackTable', () => {
 
     // ar-1: 1 related + 1 main = 2
     expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('should count pruned and preparation conversations but not adversarial conversations', () => {
+    const attack: AttackSummary = {
+      ...sampleAttacks[0],
+      attack_result_id: 'ar-related-types',
+      related_conversation_ids: ['pruned-1', 'preparation-1', 'adversarial-1'],
+      related_conversations: [
+        { conversation_id: 'pruned-1', conversation_type: 'pruned' },
+        { conversation_id: 'preparation-1', conversation_type: 'preparation' },
+        { conversation_id: 'adversarial-1', conversation_type: 'adversarial' },
+      ],
+    }
+
+    render(
+      <TestWrapper>
+        <AttackTable {...defaultProps} attacks={[attack]} />
+      </TestWrapper>
+    )
+
+    const row = screen.getByTestId('attack-row-ar-related-types')
+    expect(within(row).getByText('3')).toBeInTheDocument()
   })
 
   it('should show converter badges', () => {

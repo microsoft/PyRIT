@@ -4,11 +4,27 @@
 from collections.abc import Sequence
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, MessagePiece, Score, SeedPrompt
+from pyrit.common.text_helper import is_non_empty_string
+from pyrit.models import (
+    ComponentIdentifier,
+    JsonSchemaDefinition,
+    MessagePiece,
+    Observation,
+    Score,
+    ScoringExpectation,
+    SeedPrompt,
+    UnvalidatedScore,
+)
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
-from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
-from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+from pyrit.score.llm_scoring import _parse_judgment_observation
+from pyrit.score.observation.execution import _ObservationEvidence
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
+from pyrit.score.response_handler import (
+    JsonSchemaResponseHandler,
+    NumericRangeResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.system_prompt import _render_system_prompt_template
 
@@ -18,7 +34,7 @@ _DEFAULT_HARM_CATEGORY = "security"
 
 def _normalize_harm_categories(harm_categories: Sequence[str] | str) -> tuple[str, ...]:
     categories = (harm_categories,) if isinstance(harm_categories, str) else tuple(harm_categories)
-    if not categories or any(not isinstance(category, str) or not category.strip() for category in categories):
+    if not categories or any(not is_non_empty_string(category) for category in categories):
         raise ValueError("harm_categories must contain at least one non-empty string.")
     if len(set(categories)) != len(categories):
         raise ValueError("harm_categories must not contain duplicates.")
@@ -54,7 +70,7 @@ def render_insecure_code_system_prompt(
     )
 
 
-class InsecureCodeScorer(FloatScaleScorer):
+class InsecureCodeScorer(MessageFloatScaleScorer):
     """
     A scorer that uses an LLM to evaluate code snippets for potential security vulnerabilities.
 
@@ -98,18 +114,21 @@ class InsecureCodeScorer(FloatScaleScorer):
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
 
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
 
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
 
         rendered_value, schema = self._resolve_system_prompt(system_prompt)
         self._system_prompt = rendered_value
         # When the caller does not supply a response handler, the default JSON handler carries the
         # schema (if any) declared by the system prompt and enforces the numeric score contract, so
         # the round-trip forwards the schema to the scoring target. A caller-supplied handler owns
-        # its own response contract.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(
-            response_schema=schema, numeric_value=True
+        # its own wire format.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(response_schema=schema, numeric_value=True)
+        # Keep score-domain validation in the parser callback so out-of-range values retry.
+        self._response_handler = NumericRangeResponseHandler(
+            response_handler=wire_format_handler, minimum_value=0, maximum_value=1
         )
 
         self._harm_categories = _normalize_harm_categories(harm_categories)
@@ -168,36 +187,63 @@ class InsecureCodeScorer(FloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Scores the given message piece using LLM to detect security vulnerabilities.
-
-        Args:
-            message_piece (MessagePiece): The code snippet to be scored.
-            objective (str | None): Optional objective description for scoring. Defaults to None.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A list containing a single Score object.
-
-        Raises:
-            InvalidJsonException: If the response is not valid JSON or the score value is not a float.
+            list[Score]: The scorer's verdict.
         """
-        unvalidated_score = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=self._system_prompt,
+        unvalidated_score = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=message_piece.original_value,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            category=self._harm_categories,
-            objective=objective,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=self._system_prompt,
+                    value=message_piece.converted_value,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._harm_categories,
+                )
+            ),
         )
 
-        # Convert UnvalidatedScore to Score, applying scaling and metadata
-        score = unvalidated_score.to_score(
-            score_value=str(self.scale_value_float(float(unvalidated_score.raw_score_value), 0, 1)),
+        return [self._convert_score(unvalidated_score)]
+
+    def _judgment_replay_identifier(self) -> dict[str, object]:
+        """Return the shared insecure-code conversion contract."""
+        return {"version": 1}
+
+    def _score_judgment_observation(
+        self,
+        *,
+        observation: Observation,
+        evidence: _ObservationEvidence,
+        expectation: ScoringExpectation | None,
+    ) -> list[Score]:
+        """
+        Replay retained insecure-code judgment evidence.
+
+        Returns:
+            list[Score]: The normalized replay score.
+        """
+        unvalidated = _parse_judgment_observation(
+            observation=observation,
+            evidence=evidence,
+            response_handler=self._response_handler,
+            scorer_identifier=self.get_identifier(),
+            judgment_replay_identifier=self._get_judgment_replay_identifier(),
+            expectation=expectation,
+            category=self._harm_categories,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _convert_score(self, unvalidated: UnvalidatedScore) -> Score:
+        return unvalidated.to_score(
+            score_value=str(self.scale_value_float(float(unvalidated.raw_score_value), 0, 1)),
             score_type="float_scale",
         )
-
-        return [score]

@@ -1,8 +1,6 @@
 name: red_team_image_generation
 description: |
   A strategy for generating images with an adversarial chat bot
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: AI Red Team

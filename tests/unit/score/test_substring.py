@@ -5,13 +5,80 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from unit.mocks import get_image_message_piece
+from unit.mocks import get_image_message_piece, store_message_async
 
-from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
+from pyrit.analytics import ApproximateTextMatching, ExactTextMatching, TextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece
-from pyrit.score import SubStringScorer
+from pyrit.models import MatchesObjective, MessagePiece, ScoringExpectation
+from pyrit.score import ContentScorable, MessageScorable, Scorer, SubStringScorer
+
+
+@pytest.mark.parametrize(
+    "first,second,substring,text",
+    [
+        (ExactTextMatching(), ExactTextMatching(case_sensitive=True), "Hello", "hello"),
+        (ExactTextMatching(), ExactTextMatching(ignore_whitespace=False), " hello ", "hello"),
+        (ApproximateTextMatching(threshold=0.3), ApproximateTextMatching(threshold=0.5), "hello", "hallo"),
+        (ApproximateTextMatching(n=2), ApproximateTextMatching(n=3), "hello", "he lo"),
+        (ApproximateTextMatching(), ApproximateTextMatching(case_sensitive=True), "HELLO", "hello"),
+    ],
+)
+async def test_substring_identifier_distinguishes_matcher_behavior(
+    patch_central_database: MemoryInterface, first: TextMatching, second: TextMatching, substring: str, text: str
+) -> None:
+    first_scorer = SubStringScorer(substring=substring, text_matcher=first)
+    second_scorer = SubStringScorer(substring=substring, text_matcher=second)
+
+    first_scores = await first_scorer.score_text_async(text)
+    second_scores = await second_scorer.score_text_async(text)
+
+    assert first_scores[0].get_value() is not second_scores[0].get_value()
+    assert first_scorer.get_identifier().hash != second_scorer.get_identifier().hash
+    assert first_scorer.get_identifier().eval_hash != second_scorer.get_identifier().eval_hash
+
+
+@pytest.mark.parametrize("matcher_class", [ExactTextMatching, ApproximateTextMatching])
+def test_substring_identifier_stable_for_equivalent_matchers(
+    patch_central_database: MemoryInterface, matcher_class: type[ExactTextMatching] | type[ApproximateTextMatching]
+) -> None:
+    first = SubStringScorer(substring="hello", text_matcher=matcher_class())
+    second = SubStringScorer(substring="hello", text_matcher=matcher_class())
+
+    assert first.get_identifier().hash == second.get_identifier().hash
+    assert first.get_identifier().eval_hash == second.get_identifier().eval_hash
+
+
+async def test_substring_accepts_custom_matcher_without_identifier_hook(
+    patch_central_database: MemoryInterface,
+) -> None:
+    class CustomMatcher:
+        def is_match(self, *, target: str, text: str) -> bool:
+            return target == text
+
+    scorer = SubStringScorer(substring="hello", text_matcher=CustomMatcher())
+    scores = await scorer.score_text_async("hello")
+
+    assert scores[0].get_value() is True
+    assert scorer.get_identifier().params["text_matcher"] == "CustomMatcher"
+
+
+def test_substring_custom_matcher_can_supply_identifier_params(patch_central_database: MemoryInterface) -> None:
+    class CustomMatcher:
+        def __init__(self, *, case_sensitive: bool) -> None:
+            self.case_sensitive = case_sensitive
+
+        def is_match(self, *, target: str, text: str) -> bool:
+            return target == text if self.case_sensitive else target.lower() == text.lower()
+
+        def get_identifier_params(self) -> dict[str, bool]:
+            return {"case_sensitive": self.case_sensitive}
+
+    first = SubStringScorer(substring="hello", text_matcher=CustomMatcher(case_sensitive=True))
+    second = SubStringScorer(substring="hello", text_matcher=CustomMatcher(case_sensitive=False))
+
+    assert first.get_identifier().hash != second.get_identifier().hash
+    assert first.get_identifier().eval_hash != second.get_identifier().eval_hash
 
 
 @pytest.fixture
@@ -19,18 +86,15 @@ def image_message_piece() -> MessagePiece:
     return get_image_message_piece()
 
 
-async def test_score_async_unsupported_data_type_returns_false(
+async def test_score_async_unsupported_data_type_returns_empty(
     patch_central_database, image_message_piece: MessagePiece
 ):
     image_message_piece.not_in_memory = True
     request = image_message_piece.to_message()
     scorer = SubStringScorer(substring="test", categories=["new_category"])
 
-    # With raise_on_no_valid_pieces=False (default), returns False for unsupported data types
-    scores = await scorer.score_async(request)
-    assert len(scores) == 1
-    assert scores[0].get_value() is False
-    assert "No supported pieces" in scores[0].score_rationale
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(request)))
+    assert scores == []
 
     os.remove(image_message_piece.converted_value)
 
@@ -48,6 +112,22 @@ async def test_substring_scorer_score(sub_string: str, patch_central_database):
     assert score[0].score_type == "true_false"
     assert score[0].score_category == ["new_category"]
     assert score[0].message_piece_id is None
+
+
+async def test_substring_scorer_does_not_match_objective(patch_central_database):
+    scorer = SubStringScorer(substring="needle")
+
+    assert scorer.condition_type is None
+    assert scorer.get_condition_types() == frozenset()
+    with pytest.raises(ValueError, match="does not support"):
+        await Scorer.score_with_scorers_async(
+            scorable=ContentScorable(value="needle"),
+            scorers=[scorer],
+            expectation=ScoringExpectation(
+                objective="find the configured substring",
+                conditions=(MatchesObjective(),),
+            ),
+        )
 
 
 async def test_substring_scorer_case_sensitive():
@@ -105,7 +185,7 @@ async def test_substring_scorer_adds_to_memory():
         scorer = SubStringScorer(substring="string", categories=["new_category"])
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_substring_scorer_no_category():
@@ -114,4 +194,4 @@ async def test_substring_scorer_no_category():
         scorer = SubStringScorer(substring="string")
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()

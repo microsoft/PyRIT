@@ -4,9 +4,9 @@
 import enum
 import functools
 import pathlib
-import random
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
+from pyrit.common.random_context import get_random_generator
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedDataset, SeedPrompt
 
@@ -45,7 +45,10 @@ class PolicyPuppetryTemplate(enum.Enum):
         Returns:
             PolicyPuppetryTemplate: A random member of the enum.
         """
-        return random.choice(list(cls))
+        return get_random_generator(
+            namespace=f"{cls.__module__}.{cls.__qualname__}",
+            stream="template",
+        ).choice(list(cls))
 
 
 @functools.lru_cache(maxsize=1)

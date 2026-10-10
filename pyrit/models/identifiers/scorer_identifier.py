@@ -31,6 +31,9 @@ class ScorerIdentifier(ComponentIdentifier):
     ``chat_target`` constructor arg, and ``sub_scorers`` is an included parameter
     aliased to the composite scorer's ``scorers`` arg. Their identifier types make
     them references resolved by name from the target and scorer registries.
+
+    The optional ``sub_scorers_order_independent`` param declares that the
+    aggregation verdict does not depend on child order.
     """
 
     component_type: ClassVar[ComponentType] = ComponentType.SCORER
@@ -44,6 +47,8 @@ class ScorerIdentifier(ComponentIdentifier):
     prompt_target: Annotated[TargetIdentifier | None, Evaluate.Include(), Param.Include(alias="chat_target")] = None
     #: Nested scorers a composite wraps, typed recursively. The composite
     #: constructor arg is ``scorers`` (a list), so the build marker aliases it.
-    sub_scorers: Annotated[list[ScorerIdentifier], Evaluate.Include(), Param.Include(alias="scorers")] = Field(
-        default_factory=list
-    )
+    sub_scorers: Annotated[
+        list[ScorerIdentifier],
+        Evaluate.Include(unordered_when="sub_scorers_order_independent"),
+        Param.Include(alias="scorers"),
+    ] = Field(default_factory=list)

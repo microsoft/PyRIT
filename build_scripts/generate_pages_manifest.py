@@ -3,7 +3,7 @@
 """Generate a pages.json manifest listing every rendered HTML page in a built site.
 
 Usage:
-    python build_scripts/generate_pages_manifest.py \\
+    python -m build_scripts.generate_pages_manifest \\
         --site-dir dist/0.13.0 \\
         --output dist/0.13.0/pages.json
 

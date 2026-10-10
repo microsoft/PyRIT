@@ -33,7 +33,8 @@ Set up a PyRIT development environment on your local machine.
    wget -qO- https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Python 3.12**: uv will automatically download and use the correct Python version based on `.python-version`
+2. **Python 3.11-3.14**: PyRIT supports these versions, and CI tests all of them. The repository does
+   not pin an interpreter, so `uv` selects a compatible one for you (downloading it if needed).
 
 3. **Git**. Git is required to clone the repo locally. It is available to download [here](https://git-scm.com/downloads).
     ```bash
@@ -46,7 +47,7 @@ Set up a PyRIT development environment on your local machine.
 
 1. Navigate to the directory where you cloned the PyRIT repo.
 
-2. The repository includes a `.python-version` file that pins Python 3.12. Run:
+2. From the root of your clone, run:
 
 ```bash
 uv sync
@@ -54,10 +55,13 @@ uv sync
 
 This command will:
 - Create a `.venv` directory with a virtual environment
-- Install Python 3.12 if not already available
+- Download a supported Python version if none is already available
 - Install PyRIT in editable mode; `uv sync` by default installs in editable mode so no extra flag is necessary
 - Install all dependencies including dev tools (pytest, ruff, etc.) via the `dev` dependency group
 - Create a `uv.lock` file for reproducible builds
+
+To pin your checkout to a single version, run `uv python pin 3.12`. That writes a
+`.python-version` file, which is local to your working copy and not tracked by the repository.
 
 
 3. Verify Installation
@@ -151,6 +155,28 @@ uv sync --extra playwright --extra gcg
 ```
 
 ### Development Workflow
+
+#### Keep the backend, CLI, and frontend in lockstep
+
+The backend, CLI, and browser bundle must have exactly the same
+`<Python package version>+g<full source commit>` compatibility identity. Editable
+installation stamps the checkout; Vite stamps its bundle from the same source.
+After changing commits, refresh the stamp and restart the backend and Vite:
+
+```bash
+python -m build_scripts.stamp_compatibility --development
+```
+
+For locally packaged frontend assets, run
+`python -m build_scripts.prepare_package --development`. Dirty local changes warn
+but do not change the identity. These assets cannot be published. Wheel and sdist
+build hooks reject dirty sources and build matching assets automatically; installed
+clients read their packaged stamp, never local Git or the connected backend.
+
+A compatibility failure requires matching artifacts, not bypassing the header.
+Reload the browser only after matching artifacts are deployed; mounted UI state is
+retained when a later mismatch blocks work. Do not automatically replay mutations.
+See [the protocol and API example](../../pyrit/backend/README.md#strict-lockstep-compatibility).
 
 #### Adding New Dependencies
 

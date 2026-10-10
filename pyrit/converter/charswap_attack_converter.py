@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
 import string
 
 from pyrit.converter.text_selection_strategy import (
@@ -21,6 +20,7 @@ class CharSwapConverter(WordLevelConverter):
         self,
         *,
         max_iterations: int = 10,
+        seed: int | None = None,
         word_selection_strategy: WordSelectionStrategy | None = None,
     ) -> None:
         """
@@ -31,6 +31,7 @@ class CharSwapConverter(WordLevelConverter):
         Args:
             max_iterations (int): Number of times to generate perturbed prompts.
                 The higher the number the higher the chance that words are different from the original prompt.
+            seed (int | None): Optional seed for reproducible character swaps. Defaults to None.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, defaults to WordProportionSelectionStrategy(proportion=0.2).
 
@@ -48,6 +49,7 @@ class CharSwapConverter(WordLevelConverter):
             raise ValueError("max_iterations must be greater than 0")
 
         self._max_iterations = max_iterations
+        self._seed = seed
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -59,6 +61,7 @@ class CharSwapConverter(WordLevelConverter):
         return self._create_identifier(
             params={
                 "max_iterations": self._max_iterations,
+                "seed": self._seed,
             },
         )
 
@@ -85,9 +88,10 @@ class CharSwapConverter(WordLevelConverter):
             str: The perturbed word with swapped characters.
         """
         if word not in string.punctuation and len(word) > 3:
+            rng = self._get_random_generator(stream="character-swaps")
             idx_elements = list(word)
             for _ in range(self._max_iterations):
-                idx1 = random.randint(1, len(word) - 2)
+                idx1 = rng.randint(1, len(word) - 2)
                 # Swap characters
                 idx_elements[idx1], idx_elements[idx1 + 1] = (
                     idx_elements[idx1 + 1],

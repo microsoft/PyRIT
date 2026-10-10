@@ -26,7 +26,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     TreeOfAttacksWithPruningAttack,
     _TreeOfAttacksNode,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, ScoringExpectation
 from pyrit.prompt_normalizer import PromptNormalizer
 
 # Text the JsonSchemaNormalizer appends when the target cannot enforce a schema
@@ -115,6 +115,8 @@ async def test_tap_forwards_schema_to_adversarial_target(patch_central_database)
         attack_id=attack.get_identifier(),
         attack_strategy_name="TreeOfAttacksWithPruningAttack",
         modality_router=_ModalityFeedbackRouter(adversarial_chat=adversarial, objective_target=objective),
+        record_objective_conversation=lambda *, conversation_id: None,
+        expectation=ScoringExpectation(objective="Test objective"),
     )
 
     await node._send_to_adversarial_chat_async(prompt_text="hello")

@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, MutableSequence
+from collections.abc import Awaitable, Callable, MutableSequence, Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
@@ -13,8 +15,9 @@ from typing import (
     cast,
 )
 
-from openai.types.responses import Response, ResponseOutputRefusal, ResponseOutputText
+from openai.types.responses import FunctionToolParam, Response, ResponseOutputRefusal, ResponseOutputText
 from openai.types.shared import ReasoningEffort
+from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.common import forward_init_parameters
 from pyrit.exceptions import (
@@ -30,20 +33,21 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
     PromptResponseError,
-    TokenUsage,
-    read_usage_int,
-    read_usage_value,
+    ToolExecutionMetadata,
 )
+from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.tool_call_history import parse_function_call, parse_function_call_output
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
-    warn_truncated_response,
 )
-from pyrit.prompt_target.openai.openai_error_handling import _is_content_filter_error
+from pyrit.prompt_target.openai._response_adapter import ResponsesResponseAdapter
+from pyrit.prompt_target.openai._response_adapter import token_usage_from_responses as token_usage_from_responses
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 
 if TYPE_CHECKING:
@@ -53,7 +57,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Tool function registry (agentic extension)
 ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -61,6 +64,12 @@ ToolExecutor = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 class _SerializedPiece:
     item: dict[str, Any]
     placement: Literal["inline", "top_level"]
+
+
+@dataclass(frozen=True)
+class _ToolDispatchResult:
+    output: object
+    invoked: bool
 
 
 class MessagePieceType(str, Enum):
@@ -80,45 +89,13 @@ class MessagePieceType(str, Enum):
     MCP_APPROVAL_REQUEST = "mcp_approval_request"
 
 
-def token_usage_from_responses(usage: Any) -> TokenUsage:
-    """
-    Build a ``TokenUsage`` from a Responses API ``usage`` payload.
-
-    The Responses API reports usage under different names than Chat Completions -- top-level
-    ``input_tokens`` / ``output_tokens`` / ``total_tokens`` with ``input_tokens_details`` and
-    ``output_tokens_details`` breakdowns -- so the field names are resolved here rather than by
-    ``token_usage_from_chat_completion``. Both parsers share the format-agnostic reads
-    (``read_usage_value`` / ``read_usage_int``), so a partial usage payload contributes only the
-    counts the provider actually reports. ``total_tokens`` is derived when the provider omits it.
-
-    Args:
-        usage (Any): The Responses API usage object.
-
-    Returns:
-        TokenUsage: The parsed token usage.
-    """
-    input_details = read_usage_value(source=usage, name="input_tokens_details")
-    output_details = read_usage_value(source=usage, name="output_tokens_details")
-
-    input_tokens = read_usage_int(source=usage, name="input_tokens")
-    output_tokens = read_usage_int(source=usage, name="output_tokens")
-    total_tokens = read_usage_int(source=usage, name="total_tokens")
-    if total_tokens is None and input_tokens is not None and output_tokens is not None:
-        total_tokens = input_tokens + output_tokens
-
-    extra: dict[str, int] = {}
-    cache_write_tokens = read_usage_int(source=input_details, name="cache_write_tokens")
-    if cache_write_tokens is not None:
-        extra["cache_write_tokens"] = cache_write_tokens
-
-    return TokenUsage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_tokens=total_tokens,
-        reasoning_tokens=read_usage_int(source=output_details, name="reasoning_tokens"),
-        cached_tokens=read_usage_int(source=input_details, name="cached_tokens"),
-        extra=extra,
-    )
+class _ResponseToolCallContent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    type: str = Field(min_length=1, pattern=r"\S")
+    call_id: str | None = None
+    query: str | None = None
+    name: str | None = None
+    arguments: str | None = None
 
 
 class OpenAIResponseTarget(OpenAITarget):
@@ -131,6 +108,7 @@ class OpenAIResponseTarget(OpenAITarget):
     https://platform.openai.com/docs/api-reference/responses/create
     """
 
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -150,12 +128,15 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
         )
     )
+    _response_adapter = ResponsesResponseAdapter()
 
     @forward_init_parameters
     def __init__(
         self,
         *,
         custom_functions: dict[str, ToolExecutor] | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
         max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -163,6 +144,7 @@ class OpenAIResponseTarget(OpenAITarget):
         reasoning_summary: Literal["auto", "concise", "detailed"] | None = None,
         extra_body_parameters: dict[str, Any] | None = None,
         fail_on_missing_function: bool = False,
+        execute_tools: bool = True,
         custom_configuration: TargetConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
@@ -170,7 +152,10 @@ class OpenAIResponseTarget(OpenAITarget):
         Initialize the OpenAIResponseTarget with the provided parameters.
 
         Args:
-            custom_functions: Mapping of user-defined function names (e.g., "my_func").
+            custom_functions: Mapping of user-defined function names to executors.
+            tools: Tools to advertise to the endpoint and execute on the host.
+            tool_providers: Providers whose tools are discovered before the first request,
+                advertised to the endpoint, and registered for host-side execution.
             model_name (str, Optional): The name of the model (or deployment name in Azure).
                 If no value is provided, the OPENAI_RESPONSES_MODEL environment variable will be used.
             endpoint (str, Optional): The target URL for the OpenAI service.
@@ -199,6 +184,10 @@ class OpenAIResponseTarget(OpenAITarget):
                 an unknown function or does not output a function; if False, return a structured error so we can
                 wrap it as function_call_output and let the model potentially recover
                 (e.g., pick another tool or ask for clarification).
+            execute_tools: Whether to execute returned calls locally. If False, return
+                the first response without running registered functions. Tool discovery,
+                provider scopes, and advertisement remain enabled. This does not disable
+                provider-hosted tools configured in extra_body_parameters.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
@@ -230,9 +219,15 @@ class OpenAIResponseTarget(OpenAITarget):
 
         self._extra_body_parameters = extra_body_parameters
 
-        # Per-instance tool/func registries:
         self._custom_functions: dict[str, ToolExecutor] = custom_functions or {}
+        self._direct_tools = tuple(tools or ())
+        self._tools = list(self._direct_tools)
+        self._tool_providers = list(tool_providers or [])
+        self._tools_initialized = False
+        self._tool_initialization_lock = asyncio.Lock()
         self._fail_on_missing_function: bool = fail_on_missing_function
+        self._execute_tools = execute_tools
+        self._suppress_tools = False
 
         # Extract the grammar 'tool' if one is present
         # See
@@ -247,6 +242,18 @@ class OpenAIResponseTarget(OpenAITarget):
                     tool_name = tool.get("name")
                     logger.debug("Detected grammar tool: %s", tool_name)
                     self._grammar_name = tool_name
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history through the pure serializers used for sending."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            for piece in message.message_pieces:
+                if piece.converted_value_data_type == "tool_call":
+                    self._serialize_tool_call(piece)
+                elif piece.converted_value_data_type == "function_call":
+                    self._serialize_function_call(piece)
+                elif piece.converted_value_data_type == "function_call_output":
+                    self._serialize_function_call_output(piece)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -263,6 +270,13 @@ class OpenAIResponseTarget(OpenAITarget):
                 "reasoning_effort": self._reasoning_effort,
                 "reasoning_summary": self._reasoning_summary,
                 "extra_body_parameters": self._extra_body_parameters,
+                "execute_tools": None if self._execute_tools else False,
+                "tools": sorted(
+                    (self._to_openai_function_tool(tool=tool) for tool in self._direct_tools),
+                    key=lambda tool: tool["name"],
+                )
+                or None,
+                "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
             },
         )
 
@@ -323,16 +337,18 @@ class OpenAIResponseTarget(OpenAITarget):
         return {"role": "developer", "content": content}
 
     def _serialize_function_call(self, piece: MessagePiece) -> "ResponseFunctionToolCallParam":
-        stored = json.loads(piece.original_value)
+        call = parse_function_call(piece)
+        if not isinstance(call.function, FunctionCall):
+            raise ValueError("Function-call history requires structured function arguments.")
         return {
-            "type": stored["type"],
-            "call_id": stored["call_id"],
-            "name": stored["name"],
-            "arguments": stored["arguments"],
+            "type": "function_call",
+            "call_id": call.id,
+            "name": call.function.name,
+            "arguments": call.function.arguments,
         }
 
     def _serialize_tool_call(self, piece: MessagePiece) -> dict[str, Any]:
-        stored = json.loads(piece.original_value)
+        stored = _ResponseToolCallContent.model_validate_json(piece.converted_value).model_dump(exclude_unset=True)
         if stored.get("type") == "web_search_call":
             return {
                 "type": stored["type"],
@@ -344,13 +360,10 @@ class OpenAIResponseTarget(OpenAITarget):
         return filtered
 
     def _serialize_function_call_output(self, piece: MessagePiece) -> "FunctionCallOutput":
-        payload = json.loads(piece.original_value)
-        output = payload.get("output")
-        if not isinstance(output, str):
-            output = json.dumps(output, separators=(",", ":"))
+        call_id, output = parse_function_call_output(piece)
         return {
             "type": "function_call_output",
-            "call_id": payload["call_id"],
+            "call_id": call_id,
             "output": output,
         }
 
@@ -435,7 +448,12 @@ class OpenAIResponseTarget(OpenAITarget):
 
         Returns:
             dict: The request body to send to the Responses API.
+
+        Raises:
+            ValueError: If the conversation contains an unsupported input.
         """
+        if not self._suppress_tools:
+            await self._initialize_tools_async()
         input_items = await self._build_input_for_multi_modal_async(conversation)
 
         text_format = self._build_text_format(json_config=json_config)
@@ -455,8 +473,44 @@ class OpenAIResponseTarget(OpenAITarget):
         if self._extra_body_parameters:
             body_parameters.update(self._extra_body_parameters)
 
+        if self._tools and not self._suppress_tools:
+            advertised_tools = [self._to_openai_function_tool(tool=tool) for tool in self._tools]
+            body_parameters["tools"] = [*body_parameters.get("tools", []), *advertised_tools]
+
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
+
+    async def _initialize_tools_async(self) -> None:
+        async with self._tool_initialization_lock:
+            if self._tools_initialized:
+                return
+            tools = await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+            self._validate_tool_registrations(tools)
+            self._tools = tools
+            self._tools_initialized = True
+
+    def _validate_tool_registrations(self, tools: Sequence[Tool]) -> None:
+        declared_functions = {
+            definition["name"]
+            for definition in (self._extra_body_parameters or {}).get("tools", [])
+            if definition.get("type") == "function" and isinstance(definition.get("name"), str)
+        }
+        conflicts = {tool.name for tool in tools} & (set(self._custom_functions) | declared_functions)
+        if conflicts:
+            raise ValueError(
+                "Tools conflict with custom_functions or extra_body_parameters function declarations: "
+                f"{sorted(conflicts)}"
+            )
+
+    @staticmethod
+    def _to_openai_function_tool(*, tool: Tool) -> FunctionToolParam:
+        return {
+            "type": "function",
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+            "strict": tool.strict,
+        }
 
     def _build_reasoning_config(self) -> dict[str, Any] | None:
         """
@@ -492,148 +546,15 @@ class OpenAIResponseTarget(OpenAITarget):
         logger.info("Using json_object format without schema - consider providing a schema for better results")
         return {"format": {"type": "json_object"}}
 
-    def _check_content_filter(self, response: Any) -> bool:
-        """
-        Check if a Response API response has a content filter error.
-
-        The Responses API signals content filtering in two ways:
-        1. Via ``response.error`` with a content_filter code (older/alternative path)
-        2. Via ``response.status == "incomplete"`` with
-           ``response.incomplete_details.reason == "content_filter"``
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            True if content was filtered, False otherwise.
-        """
-        # Path 1: error-based detection (e.g., error.code == "content_filter")
-        if hasattr(response, "error") and response.error is not None:
-            response_dict = response.model_dump()
-            if _is_content_filter_error(response_dict):
-                return True
-
-        # Path 2: incomplete status with content_filter reason
-        if getattr(response, "status", None) == "incomplete":
-            incomplete_details = getattr(response, "incomplete_details", None)
-            if incomplete_details and getattr(incomplete_details, "reason", None) == "content_filter":
-                return True
-
-        return False
-
-    def _extract_partial_content(self, response: Any) -> str | None:
-        """
-        Extract partial content from a Response API response that was content-filtered.
-
-        When the Responses API triggers a content filter, the response may contain partial
-        output in ``response.output`` message sections with ``status='completed'``. Messages
-        with ``status='incomplete'`` typically contain refusal text and are excluded.
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            The partial text content from completed output messages, or None if no
-            partial content was generated.
-        """
-        try:
-            if not hasattr(response, "output") or not response.output:
-                return None
-            parts: list[str] = []
-            for section in response.output:
-                if getattr(section, "type", None) != MessagePieceType.MESSAGE:
-                    continue
-                # Only include completed messages — incomplete messages contain refusal text
-                if getattr(section, "status", None) != "completed":
-                    continue
-                content = getattr(section, "content", None)
-                parts.extend(
-                    content_item.text
-                    for content_item in content or []
-                    if isinstance(content_item, ResponseOutputText) and content_item.text
-                )
-            return "\n".join(parts) if parts else None
-        except (AttributeError, IndexError, TypeError):
-            return None
-
-    def _validate_response(self, response: Response, request: MessagePiece) -> None:
-        """
-        Validate a Response API response for errors.
-
-        Checks for:
-        - Error responses (excluding content filtering which is checked separately)
-        - Truncation at the token limit (``max_output_tokens``), which is warned about, not raised
-        - Invalid status
-        - Empty output
-
-        Truncation is treated as valid, with a warning, so that
-        ``_construct_message_from_response_async`` can preserve any completed output (reasoning,
-        partial text) or fall back to a graceful empty response. Genuinely empty responses (no
-        truncation) are raised so the retry logic can attempt to get a complete response. Content
-        filter responses are handled separately by ``_check_content_filter``.
-
-        Args:
-            response: The Response object from the OpenAI SDK.
-            request: The original request MessagePiece.
-
-        Raises:
-            PyritException: For unexpected response structures or errors.
-            EmptyResponseException: When the API returns no valid output (and was not truncated).
-        """
-        # Check for error response - error is a ResponseError object or None
-        # (content_filter is handled by _check_content_filter)
-        if response.error is not None and response.error.code != "content_filter":
-            raise PyritException(message=f"Response error: {response.error.code} - {response.error.message}")
-
-        # Truncation: the model hit max_output_tokens. Mirroring OpenAIChatTarget's handling of
-        # finish_reason == "length", warn instead of raising so the run continues -- reasoning models
-        # can spend the whole budget on hidden reasoning before emitting a visible answer, and a low
-        # limit may be a deliberate configuration. Construction preserves any completed output
-        # (reasoning, partial text) and falls back to a graceful empty response.
-        if self._is_truncated_response(response):
-            warn_truncated_response(
-                signal="status='incomplete', reason='max_output_tokens'",
-                limit_parameter="max_output_tokens",
-            )
-            return
-
-        # Check status - should be "completed" for successful responses
-        if response.status != "completed":
-            raise PyritException(message=f"Unexpected status: {response.status}")
-
-        # Check for empty output
-        if not response.output:
-            logger.error("The response returned no valid output.")
-            raise EmptyResponseException(message="The response returned an empty response.")
-
-    def _is_truncated_response(self, response: Response) -> bool:
-        """
-        Return True if the response was cut off by the ``max_output_tokens`` limit.
-
-        The Responses API signals truncation via ``status == "incomplete"`` with
-        ``incomplete_details.reason == "max_output_tokens"`` (``content_filter`` is handled
-        separately by ``_check_content_filter``).
-
-        Args:
-            response: A Response object from the OpenAI SDK.
-
-        Returns:
-            bool: True if the response was truncated at the token limit, False otherwise.
-        """
-        if response.status != "incomplete":
-            return False
-        incomplete_details = response.incomplete_details
-        reason = incomplete_details.reason if incomplete_details else None
-        return reason == "max_output_tokens"
-
     async def _construct_message_from_response_async(self, response: Response, request: MessagePiece) -> Message:
         """
         Construct a Message from a Response API response.
 
-        For a truncated response (see ``_is_truncated_response``), empty output sections are
-        tolerated, partial tool/function calls are skipped so an incomplete call cannot re-enter the
-        agentic loop, and a graceful empty text piece is appended when no visible response was
-        produced. Reasoning, any partial text, and structured refusals are always preserved.
+        Empty output sections are tolerated on a truncated response (see
+        ``_is_truncated_response``), where partial tool/function calls are also skipped so an
+        incomplete call cannot re-enter the agentic loop. Whenever no visible response was
+        produced — truncated or completed — a graceful empty text piece is appended. Reasoning,
+        any partial text, and structured refusals are always preserved.
 
         Args:
             response: The Response object from OpenAI SDK.
@@ -672,7 +593,16 @@ class OpenAIResponseTarget(OpenAITarget):
             if piece.original_value and piece.original_value_data_type != "reasoning":
                 has_visible_response = True
 
-        if truncated and not has_visible_response:
+        if not has_visible_response:
+            # Append a graceful empty marker piece and keep any reasoning pieces when a
+            # response with no readable section is found
+            if not truncated:
+                logger.warning(
+                    "Responses output for conversation %s completed with no readable section; "
+                    "returning an empty response marker. Reasoning-only output or a section type "
+                    "PyRIT does not model can cause this.",
+                    request.conversation_id,
+                )
             empty_piece = build_empty_truncated_response(request=request).message_pieces[0]
             extracted_response_pieces.append(empty_piece)
 
@@ -682,20 +612,17 @@ class OpenAIResponseTarget(OpenAITarget):
         # This must stay ahead of the metadata writes below, which target the first piece.
         extracted_response_pieces.sort(key=lambda piece: piece.converted_value_data_type == "reasoning")
 
-        # Capture token usage in the first piece's metadata. This also runs on the truncated path:
-        # usage is populated on token-limit responses and is most valuable there, since the whole
-        # budget may have been spent on hidden reasoning with no visible answer.
-        usage = getattr(response, "usage", None)
-        if usage is not None and extracted_response_pieces:
-            extracted_response_pieces[0].prompt_metadata.update(token_usage_from_responses(usage).to_metadata())
+        # Capture token usage and the stop reason in the first piece's metadata. This also runs on
+        # the truncated path: usage is populated on token-limit responses and is most valuable
+        # there, since the whole budget may have been spent on hidden reasoning with no visible
+        # answer.
+        self._capture_response_metadata(response=response, pieces=extracted_response_pieces)
 
         if truncated and extracted_response_pieces:
             extracted_response_pieces[0].mark_as_truncated()
 
         return Message(message_pieces=extracted_response_pieces)
 
-    @limit_requests_per_minute
-    @pyrit_target_retry
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Send prompt, handle agentic tool calls (function_call), return all messages.
@@ -713,6 +640,13 @@ class OpenAIResponseTarget(OpenAITarget):
             List of messages generated during the interaction (assistant responses and tool messages).
             The normalizer will persist all of these to memory.
         """
+        async with AsyncExitStack() as provider_stack:
+            for provider in () if self._suppress_tools else self._tool_providers:
+                if isinstance(provider, _ScopedToolProvider):
+                    await provider_stack.enter_async_context(provider.execution_scope_async())
+            return await self._run_tool_call_loop_async(normalized_conversation=normalized_conversation)
+
+    async def _run_tool_call_loop_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
         last_piece = message.message_pieces[-1]
@@ -723,51 +657,50 @@ class OpenAIResponseTarget(OpenAITarget):
         # Track all responses generated during this interaction
         responses_to_return: list[Message] = []
 
-        # Main agentic loop - each back-and-forth creates a new message
-        tool_call_section: dict[str, Any] | None = None
-
         while True:
             logger.info(f"Sending conversation with {len(working_conversation)} messages to the prompt target")
 
             body = await self._construct_request_body_async(conversation=working_conversation, json_config=json_config)
 
-            # Use unified error handling - automatically detects Response and validates
-            result = await self._handle_openai_request_async(
-                api_call=lambda body=body: self._client.responses.create(**body),
-                request=message,
-            )
+            result = await self._send_model_request_async(body=body, request=message)
+            if not self._execute_tools:
+                return [result]
 
             # Add result to conversation and responses list
             working_conversation.append(result)
             responses_to_return.append(result)
 
-            # Extract tool call if present
-            tool_call_section = self._find_last_pending_tool_call(result)
+            tool_call_sections = self._find_pending_tool_calls(result)
 
-            # If no tool call, we're done
-            if not tool_call_section:
+            if not tool_call_sections:
                 break
 
-            # Execute the tool/function
-            tool_output = await self._execute_call_section_async(tool_call_section)
-
-            # Create a new message with the tool output
-            tool_piece = self._make_tool_piece(tool_output, tool_call_section["call_id"], reference_piece=message_piece)
-            tool_message = Message(message_pieces=[tool_piece])
-
-            # Add tool output message to conversation and responses list
-            working_conversation.append(tool_message)
-            responses_to_return.append(tool_message)
-
-            # Continue loop to send tool result and get next response
+            for tool_call_section in tool_call_sections:
+                tool_output = await self._execute_call_section_async(tool_call_section)
+                tool_piece = self._make_tool_piece(
+                    result=tool_output,
+                    call_id=tool_call_section["call_id"],
+                    reference_piece=message_piece,
+                )
+                tool_message = Message(message_pieces=[tool_piece])
+                working_conversation.append(tool_message)
+                responses_to_return.append(tool_message)
 
         # Return all responses (normalizer will persist all of them to memory)
         return responses_to_return
 
+    @pyrit_target_retry
+    @limit_requests_per_minute
+    async def _send_model_request_async(self, *, body: dict[str, Any], request: Message) -> Message:
+        return await self._handle_openai_request_async(
+            api_call=lambda: self._client.responses.create(**body),
+            request=request,
+        )
+
     def _parse_response_message_content(
         self,
         *,
-        content: list[ResponseOutputText | ResponseOutputRefusal],
+        content: Sequence[object],
         message_piece: MessagePiece,
         error: PromptResponseError | None,
         tolerate_empty: bool = False,
@@ -776,7 +709,7 @@ class OpenAIResponseTarget(OpenAITarget):
         Parse a Responses API message content union into a PyRIT message piece.
 
         Args:
-            content (list[ResponseOutputText | ResponseOutputRefusal]): Typed message content.
+            content (Sequence[object]): Provider content to validate as text or refusal parts.
             message_piece (MessagePiece): The original request piece.
             error (PromptResponseError | None): Any response error classification.
             tolerate_empty (bool): When True, empty content returns None instead of raising
@@ -965,7 +898,13 @@ class OpenAIResponseTarget(OpenAITarget):
         Returns:
             The tool-call section dict, or None if not found.
         """
-        for piece in reversed(reply.message_pieces):
+        calls = self._find_pending_tool_calls(reply)
+        return calls[-1] if calls else None
+
+    def _find_pending_tool_calls(self, reply: Message) -> list[dict[str, Any]]:
+        """Return all function calls in an assistant response in provider order."""
+        calls: list[dict[str, Any]] = []
+        for piece in reply.message_pieces:
             # Filter on data_type to skip reasoning/message pieces that also have api_role "assistant".
             if piece.api_role == "assistant" and piece.original_value_data_type == "function_call":
                 try:
@@ -974,34 +913,33 @@ class OpenAIResponseTarget(OpenAITarget):
                     continue
                 if isinstance(section, dict) and section.get("type") == "function_call":
                     # Do NOT skip function_call even if status == "completed" — we still need to emit the output.
-                    return cast("dict[str, Any]", section)
-        return None
+                    calls.append(cast("dict[str, Any]", section))
+        return calls
 
-    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_call_section_async(self, tool_call_section: dict[str, Any]) -> _ToolDispatchResult:
         """
-        Execute a function_call from the custom_functions registry.
+        Execute a function call using the matching tool.
 
         Args:
             tool_call_section: The function_call section dict.
 
         Returns:
-            A dict payload (will be serialized and sent as function_call_output).
-            If fail_on_missing_function=False and a function is missing or no function is not called, returns:
-            {"error": "function_not_found", "missing_function": "<name>", "available_functions": [...]}
+            The output payload and whether the tool was invoked. Tolerant dispatch failures
+            retain their error payload with invoked=False.
 
         Raises:
             ValueError: If the function call section is missing a 'name' field.
             ValueError: If the function arguments are malformed.
-            KeyError: If the function name is not registered in custom_functions.
+            KeyError: If the function name is not registered.
         """
         name = tool_call_section.get("name")
         if not name:
             if self._fail_on_missing_function:
                 raise ValueError("Function call section missing 'name' field")
-            return {
-                "error": "missing_function_name",
-                "tool_call_section": tool_call_section,
-            }
+            return _ToolDispatchResult(
+                output={"error": "missing_function_name", "tool_call_section": tool_call_section},
+                invoked=False,
+            )
 
         args_json = tool_call_section.get("arguments", "{}")
         try:
@@ -1011,39 +949,54 @@ class OpenAIResponseTarget(OpenAITarget):
             if self._fail_on_missing_function:
                 raise ValueError(f"Malformed arguments for function '{name}': {args_json}") from None
             logger.warning("Malformed arguments for function '%s': %s", name, args_json)
-            return {
-                "error": "malformed_arguments",
-                "function": name,
-                "raw_arguments": args_json,
-            }
+            return _ToolDispatchResult(
+                output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                invoked=False,
+            )
+        await self._initialize_tools_async()
+        configured_tool = next((tool for tool in self._tools if tool.name == name), None)
+        if configured_tool is not None:
+            if not isinstance(args, dict):
+                if self._fail_on_missing_function:
+                    raise ValueError(f"Arguments for function '{name}' must be a JSON object")
+                return _ToolDispatchResult(
+                    output={"error": "malformed_arguments", "function": name, "raw_arguments": args_json},
+                    invoked=False,
+                )
+            return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
-        fn = self._custom_functions.get(name)
-        if fn is None:
-            if self._fail_on_missing_function:
-                raise KeyError(f"Function '{name}' is not registered")
-            # Tolerant mode: return a structured error so we can wrap it as function_call_output
-            available = sorted(self._custom_functions.keys())
-            logger.warning("Function '%s' not registered. Available: %s", name, available)
-            return {
+        custom_function = self._custom_functions.get(name)
+        if custom_function is not None:
+            return _ToolDispatchResult(output=await custom_function(cast("dict[str, Any]", args)), invoked=True)
+
+        if self._fail_on_missing_function:
+            raise KeyError(f"Function '{name}' is not registered")
+        available_functions = sorted({*(tool.name for tool in self._tools), *self._custom_functions})
+        logger.warning("Function '%s' not registered. Available: %s", name, available_functions)
+        return _ToolDispatchResult(
+            output={
                 "error": "function_not_found",
                 "missing_function": name,
-                "available_functions": available,
-            }
+                "available_functions": available_functions,
+            },
+            invoked=False,
+        )
 
-        return await fn(args)
-
-    def _make_tool_piece(self, output: dict[str, Any], call_id: str, *, reference_piece: MessagePiece) -> MessagePiece:
+    def _make_tool_piece(
+        self, *, result: _ToolDispatchResult, call_id: str, reference_piece: MessagePiece
+    ) -> MessagePiece:
         """
         Create a function_call_output MessagePiece.
 
         Args:
-            output: The tool output to wrap.
+            result: The dispatch result to record.
             call_id: The call ID for the function call.
             reference_piece: A reference piece to copy conversation context from.
 
         Returns:
             A MessagePiece containing the function call output.
         """
+        output = result.output
         output_str = output if isinstance(output, str) else json.dumps(output, separators=(",", ":"))
         return MessagePiece(
             role="tool",
@@ -1053,4 +1006,5 @@ class OpenAIResponseTarget(OpenAITarget):
             ),
             original_value_data_type="function_call_output",
             conversation_id=reference_piece.conversation_id,
+            prompt_metadata=ToolExecutionMetadata(invoked=result.invoked).to_metadata(),
         )

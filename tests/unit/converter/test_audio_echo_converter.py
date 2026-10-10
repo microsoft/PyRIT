@@ -2,14 +2,45 @@
 # Licensed under the MIT license.
 
 
+import asyncio
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_echo_converter import AudioEchoConverter
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize("stereo", [False, True])
+@pytest.mark.parametrize(
+    ("samples", "expected"),
+    [
+        ([128, 128, 128, 128], [128, 128, 128, 128]),
+        ([192, 64, 128, 128], [192, 64, 160, 96]),
+        ([127, 128, 128, 128], [127, 128, 128, 128]),
+        ([255, 0, 255, 0], [255, 0, 255, 0]),
+    ],
+)
+async def test_echo_unsigned_pcm_async(tmp_path: Path, stereo: bool, samples: list[int], expected: list[int]) -> None:
+    """Echo adds signed amplitudes, not the unsigned PCM silence offset."""
+    data = np.array(samples, dtype=np.uint8)
+    expected_data = np.array(expected, dtype=np.uint8)
+    if stereo:
+        data = np.column_stack((data, np.full(len(data), 128, dtype=np.uint8)))
+        expected_data = np.column_stack((expected_data, np.full(len(data), 128, dtype=np.uint8)))
+    source = tmp_path / "unsigned.wav"
+    await asyncio.to_thread(wavfile.write, source, 8000, data)
+
+    result = await AudioEchoConverter(delay=2 / 8000, decay=0.5).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    assert rate == 8000
+    assert output.dtype == np.uint8
+    np.testing.assert_array_equal(output, expected_data)
 
 
 async def test_echo_adds_delayed_signal(sqlite_instance):
@@ -96,32 +127,44 @@ async def test_echo_file_not_found():
 
 def test_echo_invalid_delay_zero():
     """delay of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="delay must be greater than 0"):
+    with pytest.raises(ValueError, match="delay must be a finite number greater than 0"):
         AudioEchoConverter(delay=0, decay=0.5)
 
 
 def test_echo_invalid_delay_negative():
     """Negative delay should raise ValueError."""
-    with pytest.raises(ValueError, match="delay must be greater than 0"):
+    with pytest.raises(ValueError, match="delay must be a finite number greater than 0"):
         AudioEchoConverter(delay=-0.5, decay=0.5)
+
+
+@pytest.mark.parametrize("delay", [float("nan"), float("inf"), float("-inf")])
+def test_echo_invalid_delay_non_finite(delay: float):
+    with pytest.raises(ValueError, match="delay must be a finite number greater than 0"):
+        AudioEchoConverter(delay=delay, decay=0.5)
 
 
 def test_echo_invalid_decay_zero():
     """decay of 0 should raise ValueError."""
-    with pytest.raises(ValueError, match="decay must be between 0 and 1"):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
         AudioEchoConverter(delay=0.3, decay=0)
 
 
 def test_echo_invalid_decay_one():
     """decay of 1 should raise ValueError."""
-    with pytest.raises(ValueError, match="decay must be between 0 and 1"):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
         AudioEchoConverter(delay=0.3, decay=1.0)
 
 
 def test_echo_invalid_decay_above_one():
     """decay > 1 should raise ValueError."""
-    with pytest.raises(ValueError, match="decay must be between 0 and 1"):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
         AudioEchoConverter(delay=0.3, decay=1.5)
+
+
+@pytest.mark.parametrize("decay", [float("nan"), float("inf"), float("-inf")])
+def test_echo_invalid_decay_non_finite(decay: float):
+    with pytest.raises(ValueError, match="decay must be a finite number between 0 and 1"):
+        AudioEchoConverter(delay=0.3, decay=decay)
 
 
 async def test_echo_unsupported_input_type(sqlite_instance):

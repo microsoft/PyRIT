@@ -4,7 +4,7 @@
 import itertools
 import logging
 import os
-from collections.abc import Awaitable, Callable, MutableSequence
+from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
 from typing import Any, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
@@ -27,12 +27,14 @@ from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_response_format,
     build_text_chat_messages,
     is_text_only_conversation,
+    validate_chat_tool_message,
 )
 from pyrit.prompt_target.common.chat_completions_response_parser import (
     build_content_filter_message,
     build_response_pieces_async,
-    capture_token_usage,
+    capture_usage_and_finish_reason,
     extract_partial_content,
+    get_finish_reason,
     is_content_filter_response,
     validate_chat_completion_response,
 )
@@ -42,10 +44,14 @@ from pyrit.prompt_target.common.target_capabilities import (
     get_known_capabilities,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 from pyrit.prompt_target.common.utils import (
+    build_empty_truncated_response,
     limit_requests_per_minute,
     validate_temperature,
     validate_top_p,
+    warn_truncated_response,
 )
 from pyrit.prompt_target.openai.openai_chat_audio_config import OpenAIChatAudioConfig
 
@@ -101,6 +107,33 @@ def _build_output_modalities(*, audio: bool) -> frozenset[frozenset[PromptDataTy
         output.append(cast("frozenset[PromptDataType]", frozenset({"audio_path"})))
         output.append(cast("frozenset[PromptDataType]", frozenset({"text", "audio_path"})))
     return frozenset(output)
+
+
+def _provider_specific_headers(provider_specific_header: Any) -> dict[str, str]:
+    """
+    Collect the headers from every ``provider_specific_header`` entry.
+
+    LiteLLM accepts one entry or a sequence of entries and merges the ``extra_headers`` of each
+    entry scoped to the resolved provider. Every entry is collected so a conflict check does
+    not depend on provider resolution.
+
+    Args:
+        provider_specific_header (Any): The ``provider_specific_header`` request value.
+
+    Returns:
+        dict[str, str]: The headers of all entries.
+    """
+    if isinstance(provider_specific_header, Mapping):
+        entries: Sequence[Any] = (provider_specific_header,)
+    elif isinstance(provider_specific_header, Sequence):
+        entries = provider_specific_header
+    else:
+        return {}
+    headers: dict[str, str] = {}
+    for entry in entries:
+        if isinstance(entry, Mapping):
+            headers.update(entry.get("extra_headers") or {})
+    return headers
 
 
 class LiteLLMChatTarget(PromptTarget):
@@ -161,10 +194,15 @@ class LiteLLMChatTarget(PromptTarget):
             lookup and identification when the provider/model string differs from a known model.
         max_requests_per_minute: Client-side request cap.
         custom_configuration: Override the derived target configuration.
+        trace_config: Request tracing configuration. Tracing is disabled by default because a
+            provider or gateway is not known to accept W3C trace context. Pass
+            ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
+            sends a fresh ``traceparent`` in ``extra_headers``.
     """
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
+    _SUPPORTS_TOOL_CALL_HISTORY = True
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -196,6 +234,7 @@ class LiteLLMChatTarget(PromptTarget):
         underlying_model: str | None = None,
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize a LiteLLMChatTarget.
@@ -215,6 +254,7 @@ class LiteLLMChatTarget(PromptTarget):
             underlying_model=underlying_model,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
         )
 
         # Resolve api_key: explicit value/callable > LITELLM_API_KEY env var > None (LiteLLM
@@ -321,9 +361,16 @@ class LiteLLMChatTarget(PromptTarget):
             supports_system_prompt=True,
             supports_json_output=supports_json_output,
             supports_json_schema=supports_json_schema,
-            input_modalities=_build_input_modalities(image=supports_vision, audio=supports_audio_input),
+            input_modalities=_build_input_modalities(image=supports_vision, audio=supports_audio_input)
+            | (TOOL_CALL_INPUT_MODALITIES if _supports("supports_function_calling") else frozenset()),
             output_modalities=_build_output_modalities(audio=supports_audio_output),
         )
+
+    def validate_tool_history(self, messages: Sequence[Message]) -> None:
+        """Check stored tool history and Chat Completions tool-message constraints."""
+        super().validate_tool_history(messages)
+        for message in messages:
+            validate_chat_tool_message(message)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -372,6 +419,19 @@ class LiteLLMChatTarget(PromptTarget):
         messages = await self._build_chat_messages_async(normalized_conversation)
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
+        # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
+        # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
+        # so all three are checked for manual values.
+        trace_headers = request_trace_headers(
+            request=message,
+            headers=body.get("extra_headers") or {},
+            default_headers={
+                **(body.get("headers") or {}),
+                **_provider_specific_headers(body.get("provider_specific_header")),
+            },
+        )
+        if trace_headers:
+            body["extra_headers"] = trace_headers
 
         try:
             response = await litellm.acompletion(**body)
@@ -382,15 +442,24 @@ class LiteLLMChatTarget(PromptTarget):
         # exception) so attacks can continue and blocked-content scorers can still score.
         if is_content_filter_response(response):
             logger.warning("Output content filtered by content policy.")
-            return [
-                build_content_filter_message(
-                    response=response,
-                    request=request_piece,
-                    partial_content=extract_partial_content(response),
-                )
-            ]
+            filter_message = build_content_filter_message(
+                response=response,
+                request=request_piece,
+                partial_content=extract_partial_content(response),
+            )
+            # A filtered response still reports the tokens (and cost) it consumed, which would
+            # otherwise be lost precisely where a red teamer most wants to see it.
+            capture_usage_and_finish_reason(pieces=filter_message.message_pieces, response=response)
+            self._capture_response_cost(pieces=filter_message.message_pieces, response=response)
+            return [filter_message]
 
-        validate_chat_completion_response(response=response)
+        # A response cut off at the token limit may legitimately carry a partial answer (or no
+        # content at all), so skip the strict empty-response validation for it — mirroring
+        # OpenAIChatTarget. Truncation is flagged on the piece by the construct step below.
+        if self._is_truncated_response(response):
+            warn_truncated_response(signal="finish_reason='length'", limit_parameter="max_tokens")
+        else:
+            validate_chat_completion_response(response=response)
         return [await self._construct_message_from_response_async(response=response, request=request_piece)]
 
     async def _resolve_api_key_async(self) -> str | None:
@@ -459,13 +528,54 @@ class LiteLLMChatTarget(PromptTarget):
 
         return {k: v for k, v in body.items() if v is not None}
 
+    @staticmethod
+    def _is_truncated_response(response: Any) -> bool:
+        """
+        Whether the response was cut off at the output-token limit.
+
+        Args:
+            response (Any): The LiteLLM completion response object.
+
+        Returns:
+            bool: True when the first choice's ``finish_reason`` is ``"length"``.
+        """
+        return get_finish_reason(response=response) == "length"
+
     async def _construct_message_from_response_async(self, *, response: Any, request: MessagePiece) -> Message:
+        """
+        Construct a Message from a LiteLLM completion response.
+
+        Args:
+            response (Any): The LiteLLM completion response object.
+            request (MessagePiece): The originating request piece.
+
+        Returns:
+            Message: Constructed message with one or more MessagePiece entries.
+
+        Raises:
+            EmptyResponseException: If a non-truncated response contains no content, audio, or tool
+                calls. A truncated (``finish_reason == "length"``) response with no content instead
+                yields a graceful empty piece so the run continues. Truncated responses are flagged
+                via ``MessagePiece.mark_as_truncated`` on the first piece.
+        """
         audio_format = self._audio_response_config.audio_format if self._audio_response_config else "wav"
+        truncated = self._is_truncated_response(response)
         pieces = await build_response_pieces_async(response=response, request=request, audio_format=audio_format)
         if not pieces:
+            # A truncated (finish_reason == "length") response may legitimately produce no content;
+            # return a graceful empty piece so the run continues. Validation already raised for
+            # genuinely empty (non-truncated) responses.
+            if truncated:
+                empty_message = build_empty_truncated_response(request=request)
+                capture_usage_and_finish_reason(pieces=empty_message.message_pieces, response=response)
+                self._capture_response_cost(pieces=empty_message.message_pieces, response=response)
+                empty_message.message_pieces[0].mark_as_truncated()
+                return empty_message
             raise EmptyResponseException(message="Failed to extract any response content from LiteLLM.")
-        capture_token_usage(pieces=pieces, response=response)
+        capture_usage_and_finish_reason(pieces=pieces, response=response)
         self._capture_response_cost(pieces=pieces, response=response)
+        if truncated:
+            pieces[0].mark_as_truncated()
         return Message(message_pieces=pieces)
 
     def _capture_response_cost(self, *, pieces: list[MessagePiece], response: Any) -> None:
@@ -477,7 +587,9 @@ class LiteLLMChatTarget(PromptTarget):
         model-aware and is unique to LiteLLM (the raw OpenAI SDK response carries no cost), so this
         mirrors ``capture_token_usage`` and writes ``token_usage_cost`` alongside the token counts.
         The value is stored as a string to honor the ``prompt_metadata`` value contract, and any
-        failure is swallowed so cost accounting never breaks the response path.
+        failure is swallowed so cost accounting never breaks the response path. This has to run
+        after usage capture, which clears the whole ``token_usage_`` prefix and would otherwise
+        drop the cost again.
 
         Args:
             pieces (list[MessagePiece]): The constructed response pieces.

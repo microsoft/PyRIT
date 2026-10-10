@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.executor.attack import RedTeamingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -27,6 +27,10 @@ def _mock_id(name: str) -> ComponentIdentifier:
     return ComponentIdentifier(class_name=name, class_module="test")
 
 
+def _mock_target_id(name: str) -> TargetIdentifier:
+    return TargetIdentifier(class_name=name, class_module="test")
+
+
 def _technique_class():
     """Get the dynamically-generated CyberTechnique class."""
     from pyrit.scenario.scenarios.airt.cyber import _build_cyber_technique
@@ -42,14 +46,14 @@ def _technique_class():
 @pytest.fixture
 def mock_objective_target():
     mock = MagicMock(spec=PromptTarget)
-    mock.get_identifier.return_value = _mock_id("MockObjectiveTarget")
+    mock.get_identifier.return_value = _mock_target_id("MockObjectiveTarget")
     return mock
 
 
 @pytest.fixture
 def mock_adversarial_target():
     mock = MagicMock(spec=PromptTarget)
-    mock.get_identifier.return_value = _mock_id("MockAdversarialTarget")
+    mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock
 
 
@@ -78,6 +82,7 @@ def reset_technique_registry():
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
+    adv_target.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     target_registry = TargetRegistry.get_registry_singleton()
     target_registry.instances.register(adv_target, name="adversarial_chat")
 

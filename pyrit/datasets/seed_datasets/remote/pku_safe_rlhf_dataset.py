@@ -50,7 +50,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
-    size: str = "huge"  # 73907 prompt-response pairs across 19 harm categories
+    size: str = "huge"  # 38641 unique prompts from 73907 prompt-response pairs across 19 harm categories
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
@@ -103,7 +103,7 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
         return "pku_safe_rlhf"
 
     @override
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch PKU-SafeRLHF dataset and return as SeedDataset.
 
@@ -146,7 +146,9 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             "Violence": [HarmCategory.VIOLENT_CONTENT],
             "White-Collar Crime": [HarmCategory.SCAMS, HarmCategory.DECEPTION],
         }
-        seed_prompts: list[SeedPrompt] = []
+        # PKU-SafeRLHF has one row per response pair, so a prompt can repeat many times. Keep one seed per
+        # prompt and merge the harm categories of every kept row.
+        harm_categories_by_prompt: dict[str, set[str]] = {}
 
         for item in data:
             is_unsafe = not (item["is_response_0_safe"] and item["is_response_1_safe"])
@@ -169,26 +171,28 @@ class _PKUSafeRLHFDataset(_RemoteDatasetLoader):
             if not self.filter_harm_categories or any(
                 category in self.filter_harm_categories for category in harm_categories
             ):
-                standardized_harm_categories = self._standardize_harm_categories(
+                harm_categories_by_prompt.setdefault(item["prompt"], set()).update(harm_categories)
+
+        seed_prompts = [
+            SeedPrompt(
+                value=prompt,
+                data_type="text",
+                dataset_name=self.dataset_name,
+                harm_categories=self._standardize_harm_categories(
                     sorted(harm_categories),
                     alias_overrides=harm_category_alias_overrides,
-                )
-                seed_prompts.append(
-                    SeedPrompt(
-                        value=item["prompt"],
-                        data_type="text",
-                        dataset_name=self.dataset_name,
-                        harm_categories=standardized_harm_categories,
-                        description=(
-                            "This is a Hugging Face dataset that labels a prompt and 2 responses categorizing "
-                            "their helpfulness or harmfulness. Only the 'prompt' column is extracted."
-                        ),
-                        source=f"https://huggingface.co/datasets/{self.source}",
-                        authors=self._AUTHORS,
-                        groups=self._GROUPS,
-                        metadata=({"pku_categories": ", ".join(sorted(harm_categories))} if harm_categories else None),
-                    )
-                )
+                ),
+                description=(
+                    "This is a Hugging Face dataset that labels a prompt and 2 responses categorizing "
+                    "their helpfulness or harmfulness. Only the 'prompt' column is extracted."
+                ),
+                source=f"https://huggingface.co/datasets/{self.source}",
+                authors=self._AUTHORS,
+                groups=self._GROUPS,
+                metadata=({"pku_categories": ", ".join(sorted(harm_categories))} if harm_categories else None),
+            )
+            for prompt, harm_categories in harm_categories_by_prompt.items()
+        ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from PKU-SafeRLHF dataset")
 

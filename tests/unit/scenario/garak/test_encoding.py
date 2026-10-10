@@ -456,6 +456,39 @@ class TestEncodingAtomicAttacks:
                 assert isinstance(run.attack_technique.attack, PromptSendingAttack)
                 assert len(run._seed_groups) == len(mock_attack_seed_groups)
 
+    async def test_get_prompt_attacks_with_empty_templates(
+        self, mock_objective_target, mock_objective_scorer, mock_attack_seed_groups, mock_dataset_config
+    ):
+        """Test that an explicitly empty template list creates only the raw attack."""
+        from unittest.mock import patch
+
+        with patch.object(
+            Encoding,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"memory": mock_attack_seed_groups},
+        ):
+            scenario = Encoding(
+                objective_scorer=mock_objective_scorer,
+                encoding_templates=[],
+            )
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": mock_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
+
+            attack_runs = scenario._get_prompt_attacks(
+                converters=[Base64Converter()],
+                encoding_name="base64",
+                variant_slug="base64",
+                context=scenario._build_scenario_context(seed_groups_by_dataset={"memory": mock_attack_seed_groups}),
+            )
+
+            assert [attack.atomic_attack_name for attack in attack_runs] == ["base64_raw"]
+
     async def test_attack_runs_include_objectives(
         self,
         mock_objective_target,

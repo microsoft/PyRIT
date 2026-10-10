@@ -84,10 +84,11 @@ class HarmHumanLabeledEntry(HumanLabeledEntry):
 @dataclass
 class ObjectiveHumanLabeledEntry(HumanLabeledEntry):
     """
-    A class that represents a human-labeled dataset entry for a specific objective. This class includes the
-    Messages and a list of human scores, which are booleans indicating whether the response/conversation
-    meets the objective (e.g., 0 for not meeting the objective, 1 for meeting the objective). The objective is a
-    string that represents the objective (e.g., "how to make a Molotov cocktail?).
+    A human-labeled entry for one assistant response and a specific objective.
+
+    The conversation must contain exactly one assistant message. Other messages provide
+    context for scorers that read conversation history. Each human score indicates
+    whether the labeled response meets the objective.
     """
 
     human_scores: list[bool]
@@ -398,7 +399,7 @@ class HumanLabeledDataset:
             if len(harm_categories) > 1:
                 raise ValueError("Evaluating a dataset with multiple harm categories is not currently supported.")
 
-        elif self.metrics_type == MetricsType.OBJECTIVE:
+        else:
             for index, entry in enumerate(self.entries):
                 if not isinstance(entry, ObjectiveHumanLabeledEntry):
                     raise ValueError(

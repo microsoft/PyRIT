@@ -38,6 +38,16 @@ async def test_caesar_converter_preserves_case():
     assert result.output_type == "text"
 
 
+@pytest.mark.parametrize(
+    ("offset", "expected"),
+    [(3, "3456789012"), (13, "3456789012"), (25, "5678901234"), (-3, "7890123456"), (-13, "7890123456")],
+)
+async def test_caesar_converter_shifts_digits_by_offset_modulo_ten(offset, expected):
+    converter = CaesarConverter(caesar_offset=offset)
+    result = await converter.convert_async(prompt="0123456789", input_type="text")
+    assert result.output_text == expected
+
+
 async def test_caesar_converter_with_description():
     converter = CaesarConverter(caesar_offset=1, append_description=True)
     result = await converter.convert_async(prompt="hello", input_type="text")

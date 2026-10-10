@@ -25,7 +25,7 @@ class ManualCopilotAuthenticator(Authenticator):
         3. Go to the Network tab.
         4. Filter by "Socket" connections or search for "Chathub".
         5. Start typing in the chat to initiate a WebSocket connection.
-        6. Look for the latest WebSocket connection to ``substrate.office.com/m365Copilot/Chathub``.
+        6. Look for the latest WebSocket connection to ``substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
         7. You may find the ``access_token`` in the request URL or in the request payload.
 
     Note:

@@ -10,11 +10,11 @@ Target types are set at app startup via initializers - you cannot add new types 
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
-    TargetCatalogResponse,
     TargetListResponse,
+    TargetTypeResponse,
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.models.catalog.target import TargetInstance
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
 )
 async def list_targets(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: str | None = Query(None, description="Pagination cursor (target_registry_name)"),
+    cursor: CursorStr | None = Query(None, description="Pagination cursor (target_registry_name)"),
 ) -> TargetListResponse:
     """
     List target instances with pagination.
@@ -46,21 +46,21 @@ async def list_targets(  # pyrit-async-suffix-exempt
 
 
 @router.get(
-    "/catalog",
-    response_model=TargetCatalogResponse,
+    "/types",
+    response_model=TargetTypeResponse,
     responses={
         500: {"model": ProblemDetail, "description": "Internal server error"},
     },
 )
-async def list_target_catalog() -> TargetCatalogResponse:  # pyrit-async-suffix-exempt
+async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exempt
     """
-    List all available target types from the backend target registry.
+    List target types projected from ``TargetRegistry`` metadata.
 
     Returns:
-        TargetCatalogResponse: List of available target types.
+        TargetTypeResponse: Available target types and build parameters.
     """
     service = get_target_service()
-    return await service.list_target_catalog_async()
+    return await service.list_target_types_async()
 
 
 @router.post(
@@ -112,7 +112,7 @@ async def create_target(
     },
 )
 async def get_target(
-    target_registry_name: str,
+    target_registry_name: IdentifierStr,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Get a target instance by registry name.

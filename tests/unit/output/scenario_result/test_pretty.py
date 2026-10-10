@@ -57,8 +57,8 @@ async def test_write_async_renders_full_summary(printer, capsys):
         target_params={"model_name": "gpt-test", "endpoint": "https://example.com"},
         attack_results={
             "technique_a": [
-                _attack_result(outcome=AttackOutcome.SUCCESS),
-                _attack_result(outcome=AttackOutcome.FAILURE),
+                _attack_result(outcome=AttackOutcome.SUCCESS, objective="obj1"),
+                _attack_result(outcome=AttackOutcome.FAILURE, objective="obj2"),
             ],
             "technique_b": [_attack_result(outcome=AttackOutcome.SUCCESS)],
         },
@@ -76,7 +76,8 @@ async def test_write_async_renders_full_summary(printer, capsys):
     assert "https://example.com" in out
     assert "Overall Statistics" in out
     assert "Total Techniques: 2" in out
-    assert "Total Attack Results: 3" in out
+    assert "Total Objective Executions: 3" in out
+    assert "Total Attempts: 3" in out
     assert "Per-Group Breakdown" in out
     assert "technique_a" in out
     assert "technique_b" in out
@@ -152,7 +153,9 @@ async def test_write_async_raises_when_scorer_identifier_present_without_scorer_
 )
 async def test_write_async_color_bands_for_success_rate(patch_central_database, capsys, expected_rate, attack_outcomes):
     p = PrettyScenarioResultMemoryPrinter(enable_colors=True)
-    result = _scenario_result(attack_results={"s": [_attack_result(outcome=o) for o in attack_outcomes]})
+    result = _scenario_result(
+        attack_results={"s": [_attack_result(outcome=o, objective=f"obj{i}") for i, o in enumerate(attack_outcomes)]}
+    )
     await p.write_async(result)
     out = capsys.readouterr().out
     assert f"Overall Success Rate: {expected_rate}%" in out
@@ -170,7 +173,7 @@ async def test_write_async_per_group_breakdown_with_display_group_map(printer, c
     await printer.write_async(result)
     out = capsys.readouterr().out
     assert "Group: Group X" in out
-    assert "Number of Results: 2" in out
+    assert "Objective Executions: 2" in out
 
 
 async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys):
@@ -178,7 +181,7 @@ async def test_write_async_per_group_breakdown_with_empty_group(printer, capsys)
     await printer.write_async(result)
     out = capsys.readouterr().out
     assert "Group: empty_technique" in out
-    assert "Number of Results: 0" in out
+    assert "Objective Executions: 0" in out
     assert "Success Rate: 0%" in out
 
 
@@ -219,8 +222,8 @@ async def test_write_async_sorts_groups_by_success_rate_descending(patch_central
             "low": [_attack_result(outcome=AttackOutcome.FAILURE)],
             "high": [_attack_result(outcome=AttackOutcome.SUCCESS)],
             "mid": [
-                _attack_result(outcome=AttackOutcome.SUCCESS),
-                _attack_result(outcome=AttackOutcome.FAILURE),
+                _attack_result(outcome=AttackOutcome.SUCCESS, objective="obj1"),
+                _attack_result(outcome=AttackOutcome.FAILURE, objective="obj2"),
             ],
         },
     )
@@ -240,3 +243,50 @@ async def test_write_async_sort_is_stable_for_ties(patch_central_database, capsy
     await sorting_printer.write_async(result)
     # Tied 100% groups retain their original relative order; 0% group goes last.
     assert _group_order(capsys.readouterr().out) == ["first_success", "second_success", "fail"]
+
+
+# --- attacks view ---
+
+
+async def test_render_attacks_lists_each_attack(printer):
+    a1 = _attack_result(objective="obj-1")
+    a2 = _attack_result(outcome=AttackOutcome.FAILURE, objective="obj-2")
+    result = _scenario_result(attack_results={"tech_a": [a1], "tech_b": [a2]})
+
+    text = await printer.render_async(result, view="attacks")
+
+    assert "Attack Results" in text
+    assert "obj-1" in text
+    assert "obj-2" in text
+    assert a1.attack_result_id in text
+    assert a2.attack_result_id in text
+    assert "tech_a" in text
+    assert "tech_b" in text
+    assert "Total attacks: 2" in text
+
+
+async def test_render_attacks_limit_truncates(printer):
+    attacks = [_attack_result(objective=f"o{i}") for i in range(3)]
+    result = _scenario_result(attack_results={"tech_a": attacks})
+
+    text = await printer.render_async(result, view="attacks", limit=1)
+
+    assert "Showing 1 of 3 attacks" in text
+
+
+async def test_render_attacks_filters_by_ids(printer):
+    keep = _attack_result(objective="keep")
+    drop = _attack_result(objective="drop")
+    result = _scenario_result(attack_results={"tech_a": [keep, drop]})
+
+    text = await printer.render_async(result, view="attacks", attack_result_ids=[keep.attack_result_id])
+
+    assert "keep" in text
+    assert "drop" not in text
+    assert "Total attacks: 1" in text
+
+
+async def test_render_attacks_empty(printer):
+    # Build directly (the _scenario_result helper substitutes a default for {}).
+    text = await printer.render_async(make_scenario_result(attack_results={}), view="attacks")
+    assert "No attack results" in text

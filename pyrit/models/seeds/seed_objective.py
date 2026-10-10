@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import model_validator
 
 from pyrit.common.path import PATHS_DICT
+from pyrit.models.score.condition import ConditionTuple  # noqa: TC001  (runtime Pydantic annotation)
 from pyrit.models.seeds.seed import Seed
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,8 @@ class SeedObjective(Seed):
     # Objectives are always text. Narrowing the base field rejects non-text values up-front
     # rather than silently dropping them downstream.
     data_type: Literal["text"] = "text"
+
+    conditions: ConditionTuple = ()
 
     @model_validator(mode="after")
     def _validate_and_render(self) -> SeedObjective:

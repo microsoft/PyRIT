@@ -7,6 +7,7 @@ import ast
 import hashlib
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path  # noqa: TC003 - registry annotation resolution
 from typing import TYPE_CHECKING, Any
 
 from docx import Document
@@ -16,8 +17,6 @@ from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from pyrit.memory import DataTypeSerializer
     from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 

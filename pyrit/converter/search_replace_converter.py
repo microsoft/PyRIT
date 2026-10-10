@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import random
 import re
 
 from pyrit.converter.converter import Converter, ConverterResult
@@ -61,7 +60,7 @@ class SearchReplaceConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        replace = random.choice(self._replace_list)
+        replace = self._get_random_generator(stream="replacement").choice(self._replace_list)
 
         return ConverterResult(
             output_text=re.sub(self._pattern, replace, prompt, flags=self._regex_flags), output_type="text"

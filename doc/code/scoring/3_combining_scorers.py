@@ -14,11 +14,21 @@
 # %% [markdown]
 # Scorers are composable. Rather than building one complex scorer, combine small ones:
 # aggregate several true/false scorers, invert a result, convert a float-scale score to a
-# boolean with a threshold, or lift any scorer to evaluate a whole conversation.
+# boolean with a threshold, or lift a message scorer to evaluate a whole conversation.
 #
 # These wrappers are themselves scorers, so they plug into attacks and the batch scorer
 # exactly like the leaf scorers on the [True/False](1_true_false_scorers.ipynb) and
 # [Float-scale](2_float_scale_scorers.ipynb) pages.
+#
+# A wrapper must support every input condition through its children. Before scoring, it
+# validates the whole tree and gives each child only its supported conditions, retaining
+# objective context. For example, a Q&A/objective composite sends `AnswerMatches` to the
+# Q&A judge and `MatchesObjective` to the objective judge. Direct leaves reject extra
+# conditions. Missing criteria are errors, not skipped branches, even under `OR`.
+#
+# `ConversationSource` acquires the history; the wrapper filters roles and renders it for the child.
+# A message trigger still selects the full current history, including turns after that message.
+# Each score links to a fixed snapshot. New turns affect new acquisitions, not old snapshots.
 #
 # The [class hierarchy](0_scoring.ipynb#the-class-hierarchy) explains what each wrapper
 # *is*. This diagram instead shows runtime composition: what each wrapper may contain.
@@ -42,6 +52,8 @@
 #         INV["TrueFalseInverterScorer<br/>negates one result"]
 #         CONV["create_conversation_scorer()<br/>scores concatenated history"]
 #         THRESH["FloatScaleThresholdScorer<br/>score ≥ threshold"]
+#         FSFALL["FloatScaleFallbackScorer<br/>alternative float-scale judge"]
+#         TFFALL["TrueFalseFallbackScorer<br/>alternative true/false judge"]
 #         CONV ~~~ THRESH
 #     end
 #
@@ -54,12 +66,16 @@
 #     TF -->|"1+ via scorers="| COMP
 #     TF -->|"1 via scorer="| INV
 #     FS -->|"1 via scorer="| THRESH
-#     TF -->|"1 via scorer="| CONV
-#     FS -->|"1 via scorer="| CONV
+#     FS -->|"2 comparable single-result scorers"| FSFALL
+#     TF -->|"2 comparable single-result scorers"| TFFALL
+#     TF -->|"1 scorer supporting text content"| CONV
+#     FS -->|"1 scorer supporting text content"| CONV
 #
 #     COMP -. is a .-> TFOUT
 #     INV -. is a .-> TFOUT
 #     THRESH -. is a .-> TFOUT
+#     FSFALL -. is a .-> FSOUT
+#     TFFALL -. is a .-> TFOUT
 #     CONV -. "for true/false input" .-> TFOUT
 #     CONV -. "for float-scale input" .-> FSOUT
 #
@@ -67,7 +83,7 @@
 #     classDef wrapper fill:#fff4e5,stroke:#f29900,color:#3d2600;
 #     classDef output fill:#e6f4ea,stroke:#34a853,color:#17351f;
 #     class TF,FS input;
-#     class COMP,INV,THRESH,CONV wrapper;
+#     class COMP,INV,THRESH,CONV,FSFALL,TFFALL wrapper;
 #     class TFOUT,FSOUT output;
 # ```
 
@@ -76,9 +92,24 @@
 # `TrueFalseCompositeScorer` requires at least one `TrueFalseScorer` and combines their
 # single results with `AND`, `OR`, or `MAJORITY`; `TrueFalseInverterScorer` accepts one
 # `TrueFalseScorer`. `FloatScaleThresholdScorer` is the cross-kind adapter: it accepts one
-# `FloatScaleScorer` and produces a `TrueFalseScorer`. `create_conversation_scorer()`
-# accepts only those two base types and returns a dynamic wrapper that remains the same
-# scorer kind as its input.
+# `FloatScaleScorer` and produces a `TrueFalseScorer`. `FloatScaleFallbackScorer` accepts two
+# `FloatScaleScorer`s and produces a `FloatScaleScorer`. `TrueFalseFallbackScorer` does the
+# same for two `TrueFalseScorer`s. Each fallback wrapper tries the primary first and calls
+# the fallback only when the primary returns an undetermined score. These wrappers forward the same
+# `Scorable` to their children, so each child must support that evidence kind.
+#
+# `create_conversation_scorer()` accepts a true/false or float-scale scorer that supports
+# text `ContentScorable` evidence. It returns a dynamic wrapper that remains the same scorer
+# kind as its input.
+#
+# An empty child result means that the scorer did not apply. A composite scorer ignores empty
+# child results and aggregates the remaining results. It returns an empty list if every child
+# result is empty. Inverter and threshold wrappers pass an empty result through unchanged.
+# A conversation wrapper returns an empty result when it finds no applicable conversation
+# evidence or its child returns no score. Any outer wrapper then applies the rules above.
+#
+# Deprecated message-shaped calls remain on `MessageScorer`, but generic wrappers do not
+# project those APIs from their children. Score wrappers through the canonical `Scorable` API.
 #
 # For example, float-scale → conversation → threshold →
 # inversion is supported; a generic `Scorer` outside those base types is not.
@@ -146,12 +177,69 @@ print(f"[threshold] near-copy   -> {near_copy.get_value()}")
 print(f"[threshold] independent -> {original.get_value()}")
 
 # %% [markdown]
+# ## Routing abstentions to a fallback scorer
+#
+# Both float-scale and true/false scorers can return `ScoreStatus.UNDETERMINED`.
+# A fallback wrapper evaluates the same evidence with a second scorer only when the
+# primary returns that status. A completed `False` or `0.0` is a valid judgment and does
+# not trigger fallback. This lets a fast primary handle most inputs without calling an
+# expensive second judge each time.
+#
+# Both children must belong to the same result family, support the same condition types,
+# and return exactly one score when applicable. The wrapper validates both children
+# before scoring and passes each its supported expectation. If fallback runs, the results
+# must refer to the same evidence and expectation; categories must match when both
+# results supply them. An unreadable judgment can have no category labels. Configure equivalent
+# criteria and, for float-scale scorers, comparable numeric meanings: matching types and
+# categories does not prove that two rubrics measure the same thing.
+#
+# These local examples use equivalent criteria in each pair. Both primary scorers return
+# a complete score, so neither fallback runs. In an application, use a second implementation
+# of the same criterion when the primary can return an undetermined result.
+# %%
+from pyrit.models import ContentScorable
+from pyrit.score import FloatScaleFallbackScorer, TrueFalseFallbackScorer
+
+overlap_scorer = FloatScaleFallbackScorer(
+    scorer=PlagiarismScorer(reference_text=reference),
+    fallback_scorer=PlagiarismScorer(reference_text=reference),
+)
+word_scorer = TrueFalseFallbackScorer(
+    scorer=SubStringScorer(substring="answer"),
+    fallback_scorer=SubStringScorer(substring="answer"),
+)
+for fallback_wrapper in (overlap_scorer, word_scorer):
+    score = (await fallback_wrapper.score_async(scorable=ContentScorable(value="The answer is here.")))[0]
+    assert score.score_metadata["resolved_by"] == "primary"
+    print(f"{type(fallback_wrapper).__name__}: {score.get_value()} ({score.score_metadata['resolved_by']})")
+
+# %% [markdown]
+# A non-applicable primary (`[]`) returns `[]` without calling the fallback. A non-applicable
+# fallback leaves the primary's undetermined judgment in place. If both abstain, the result
+# remains undetermined. Exceptions propagate; they are not treated as abstentions.
+#
+# Multiple child results are rejected rather than paired by position or discarded.
+# Aggregate them explicitly before using fallback if a single aggregate is meaningful.
+#
+# The root call persists its result and the returned results of nested scorers in one transaction.
+# This does not retain temporary scores used only within a scorer's internal aggregation.
+# It returns only its own result. Default memory queries exclude intermediate scores;
+# use `include_intermediate=True` to include them, or retrieve a score by its ID.
+# No parent-child score links are stored. The wrapper creates a new score without modifying
+# either child result and retains their observation links. Metadata records `resolved_by`
+# as `"primary"` or `"fallback"`. Child metadata keys are prefixed with `primary.` and
+# `fallback.`, so duplicate keys and nested fallback details are not overwritten.
+# When fallback is attempted, `primary_rationale` is retained and `fallback_status` records
+# `"complete"`, `"undetermined"`, or `"not_applicable"`. A fallback judgment also supplies
+# `fallback_rationale`; the combined rationale explains both attempts.
+
+# %% [markdown]
 # ## Scoring a whole conversation
 #
 # Some signals only emerge across turns — persuasion, gradual persona breaks, escalation.
-# `create_conversation_scorer()` wraps any `TrueFalseScorer` or `FloatScaleScorer` so it
-# scores the concatenated conversation instead of a single message. The returned scorer is
-# the same type as the one it wraps.
+# `create_conversation_scorer()` renders the conversation as text and passes that
+# `ContentScorable` to a true/false or float-scale scorer. The returned scorer keeps the same
+# result family as the scorer it wraps.
 #
 # Pass it any one message from the conversation; its `conversation_id` is used to pull the
 # full history from memory. Below we build a short conversation by hand and wrap a local
@@ -160,7 +248,7 @@ print(f"[threshold] independent -> {original.get_value()}")
 import uuid
 
 from pyrit.memory import CentralMemory
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, MessageScorable
 from pyrit.score import create_conversation_scorer
 
 memory = CentralMemory.get_memory_instance()
@@ -175,14 +263,30 @@ turns = [
     MessagePiece(role="assistant", original_value="Okay, yes I am AI.", conversation_id=conversation_id).to_message(),
 ]
 for turn in turns:
-    memory.add_message_to_memory(request=turn)
+    (await memory.add_message_to_memory_async(request=turn))
 
 persona_breach_scorer = SubStringScorer(substring="I am AI", categories=["persona_breach"])
 conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)
 
 # Any message from the conversation works as the trigger.
-score = (await conversation_scorer.score_async(turns[0]))[0]  # type: ignore
+score = (await conversation_scorer.score_async(scorable=MessageScorable.from_message(turns[0])))[0]  # type: ignore
 print(f"[conversation] persona breach across turns -> {score.get_value()}")
+
+# %% [markdown]
+# To name the whole conversation directly, use `ConversationScorable`.
+# The following example uses the conversation stored above and a per-call text criterion.
+# %%
+from pyrit.models import Contains, ConversationScorable, OutputMatches, ScoringExpectation
+from pyrit.score import OutputMatchesScorer
+
+output_scorer = create_conversation_scorer(scorer=OutputMatchesScorer())
+scores = await output_scorer.score_async(
+    scorable=ConversationScorable(conversation_id=conversation_id),
+    expectation=ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="I am AI")),)),
+)
+assert scores[0].get_value() is True
+assert scores[0].scorable == ConversationScorable(conversation_id=conversation_id)
+print(f"[conversation output match] {scores[0].get_value()}")
 
 # %% [markdown]
 # For a richer, real-world example, wrap a `SelfAskLikertScorer` with the

@@ -4,6 +4,7 @@
 
 import pytest
 
+from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
 from pyrit.models.seeds.seed_prompt import SeedPrompt
@@ -57,6 +58,40 @@ def test_attack_seed_group_consistent_group_id():
     group_ids = {s.prompt_group_id for s in group.seeds}
     assert len(group_ids) == 1
     assert None not in group_ids
+
+
+def test_logical_id_ignores_random_prompt_group_id_and_round_trips() -> None:
+    first = AttackSeedGroup(seeds=[_make_objective(value="goal"), _make_prompt(value="context")])
+    second = AttackSeedGroup(seeds=[_make_objective(value="goal"), _make_prompt(value="context")])
+
+    assert first.seeds[0].prompt_group_id != second.seeds[0].prompt_group_id
+    assert first.logical_id == second.logical_id
+
+    identifier = AtomicAttackIdentifier.build(
+        attack_identifier=ComponentIdentifier(class_name="Attack", class_module="tests"),
+        seed_group=first,
+    )
+    restored = AtomicAttackIdentifier.model_validate(identifier.model_dump(mode="json"))
+    assert restored.logical_seed_group_id == first.logical_id
+
+
+def test_logical_id_preserves_canonical_seed_order() -> None:
+    first = AttackSeedGroup(
+        seeds=[
+            _make_objective(value="goal"),
+            _make_prompt(value="first", sequence=0),
+            _make_prompt(value="second", sequence=1),
+        ]
+    )
+    second = AttackSeedGroup(
+        seeds=[
+            _make_objective(value="goal"),
+            _make_prompt(value="second", sequence=0),
+            _make_prompt(value="first", sequence=1),
+        ]
+    )
+
+    assert first.logical_id != second.logical_id
 
 
 def test_attack_seed_group_with_multiple_prompts():

@@ -17,10 +17,37 @@ import pytest
 
 from pyrit.common.path import HOME_PATH
 from pyrit.models import MessagePiece, TokenUsage
-from pyrit.prompt_target import OpenAIChatAudioConfig, OpenAIChatTarget, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import (
+    OpenAIChatAudioConfig,
+    OpenAIChatTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    discover_target_capabilities_async,
+)
+from pyrit.prompt_target.common.chat_completions_response_parser import (
+    DEFAULT_VALID_FINISH_REASONS,
+)
 
 # Path to sample audio file for testing
 SAMPLE_AUDIO_FILE = HOME_PATH / "assets" / "converted_audio.wav"
+
+
+@pytest.mark.run_only_if_all_tests
+async def test_openai_chat_accepts_synthetic_tool_history(sqlite_instance, azure_gpt5_chat_args) -> None:
+    target = OpenAIChatTarget(**azure_gpt5_chat_args)
+    target.apply_capabilities(
+        capabilities=target.capabilities.model_copy(
+            update={
+                "input_modalities": frozenset({frozenset({"text"})}),
+            }
+        )
+    )
+    capabilities = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[],
+        test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})},
+    )
+    assert {"function_call", "function_call_output"} <= set(capabilities.supported_input_modalities)
 
 
 @pytest.fixture()
@@ -234,6 +261,7 @@ async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, azure
     1. Token usage is recoverable via ``TokenUsage.from_metadata``
     2. Token counts are positive integers
     3. The total equals input + output
+    4. The provider's ``finish_reason`` is captured alongside it
     """
     target = OpenAIChatTarget(**azure_gpt5_chat_args)
 
@@ -258,3 +286,4 @@ async def test_openai_chat_target_token_usage_in_metadata(sqlite_instance, azure
     assert usage.output_tokens is not None and usage.output_tokens > 0
     assert usage.total_tokens is not None and usage.total_tokens > 0
     assert usage.total_tokens == usage.input_tokens + usage.output_tokens
+    assert first_piece.prompt_metadata["finish_reason"] in DEFAULT_VALID_FINISH_REASONS

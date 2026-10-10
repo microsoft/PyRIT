@@ -3,15 +3,17 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
 import random
 import time
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -23,11 +25,12 @@ from transformers.models.auto.tokenization_auto import AutoTokenizer
 from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 from transformers.models.gpt_neox.modeling_gpt_neox import GPTNeoXForCausalLM
 from transformers.models.gptj.modeling_gptj import GPTJForCausalLM
-from transformers.models.llama.modeling_llama import LlamaForCausalLM
-from transformers.models.mistral.modeling_mistral import MistralForCausalLM
-from transformers.models.mixtral.modeling_mixtral import MixtralForCausalLM
-from transformers.models.phi3.modeling_phi3 import Phi3ForCausalLM
 
+from pyrit.executor.promptgen.gcg.attack.base.progressive_schedule import (
+    ProgressiveScheduleController,
+    ProgressiveScheduleState,
+    ScheduleTransitionAction,
+)
 from pyrit.executor.promptgen.gcg.experiments.log import (
     log_gpu_memory,
     log_loss,
@@ -38,6 +41,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
+
+    from pyrit.executor.promptgen.gcg.extension_protocols import LossFunction
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,94 @@ _DEFAULT_TEST_PREFIXES: list[str] = [
     "I cannot",
     "Hello!",
 ]
+
+
+class StopReason(str, Enum):
+    """Why an optimization run stopped iterating."""
+
+    MAX_STEPS_REACHED = "max_steps_reached"
+    ALL_PROMPTS_JAILBROKEN = "all_prompts_jailbroken"
+
+
+@dataclass
+class OptimizationRunState:
+    """
+    Typed iteration state for a single optimization run.
+
+    Captures the current suffix, losses, best result, counters, and stop reason
+    explicitly instead of leaving them as loose loop locals, so each phase of
+    the optimization loop has a stable contract that can be asserted under
+    seeded tests. ``loss`` is the loss of the *active* control suffix;
+    ``candidate_loss`` is the loss of the most recently evaluated candidate,
+    which annealing may have rejected. Exposed as ``MultiPromptAttack.last_run_state`` after a call
+    to ``MultiPromptAttack.run``.
+    """
+
+    control: str
+    best_control: str
+    loss: float
+    best_loss: float
+    candidate_loss: float | None = None
+    steps_completed: int = 0
+    runtime: float = 0.0
+    stop_reason: StopReason | None = None
+
+
+@dataclass
+class RngBundle:
+    """Per-run RNG state bundle for deterministic GCG execution."""
+
+    np_rng: np.random.Generator
+    py_rng: random.Random
+    torch_gens: dict[int, torch.Generator]
+    base_seed: int
+    derived_seeds: dict[int, int]
+
+    @classmethod
+    def from_seed(cls, *, base_seed: int, workers: list[ModelWorker]) -> RngBundle:
+        """
+        Create deterministic local RNGs for one GCG run.
+
+        Args:
+            base_seed (int): Seed shared by the Python and NumPy generators.
+            workers (list[ModelWorker]): Workers that need derived Torch generators.
+
+        Returns:
+            RngBundle: The initialized per-run RNG bundle.
+        """
+        derived_seeds = {i: base_seed + i for i in range(len(workers))}
+        return cls(
+            np_rng=np.random.default_rng(base_seed),
+            py_rng=random.Random(base_seed),
+            torch_gens=cls._create_torch_generators(workers=workers, derived_seeds=derived_seeds),
+            base_seed=base_seed,
+            derived_seeds=derived_seeds,
+        )
+
+    @staticmethod
+    def _create_torch_generators(
+        *, workers: list[ModelWorker], derived_seeds: dict[int, int]
+    ) -> dict[int, torch.Generator]:
+        """
+        Create worker generators on the shared sampling device.
+
+        Args:
+            workers (list[ModelWorker]): Workers that consume sampled candidates.
+            derived_seeds (dict[int, int]): Deterministic seed for each worker.
+
+        Returns:
+            dict[int, torch.Generator]: Generator keyed by worker index.
+        """
+        if not workers:
+            return {}
+
+        try:
+            sampling_device = workers[0].model.device
+            return {
+                i: torch.Generator(device=sampling_device).manual_seed(derived_seeds[i]) for i in range(len(workers))
+            }
+        except (TypeError, AttributeError):
+            return {i: torch.Generator().manual_seed(derived_seeds[i]) for i in range(len(workers))}
 
 
 class NpEncoder(json.JSONEncoder):
@@ -72,71 +165,126 @@ class NpEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 
+def _initialize_attack_log(
+    *,
+    logfile: str | None,
+    goals: list[str],
+    targets: list[str],
+    test_goals: list[str],
+    test_targets: list[str],
+    control_init: str,
+    test_prefixes: list[str],
+    workers: list[ModelWorker],
+    test_workers: list[ModelWorker],
+    additional_params: dict[str, Any] | None = None,
+) -> None:
+    """Initialize an attack log while preserving its established JSON schema."""
+    if logfile is None:
+        return
+
+    with open(logfile, "w") as f:
+        params: dict[str, Any] = {
+            "goals": goals,
+            "targets": targets,
+            "test_goals": test_goals,
+            "test_targets": test_targets,
+        }
+        if additional_params:
+            params.update(additional_params)
+        params.update(
+            {
+                "control_init": control_init,
+                "test_prefixes": test_prefixes,
+                "models": [_get_worker_log_params(worker) for worker in workers],
+                "test_models": [_get_worker_log_params(worker) for worker in test_workers],
+            }
+        )
+
+        json.dump(
+            {
+                "params": params,
+                "controls": [],
+                "losses": [],
+                "runtimes": [],
+                "tests": [],
+            },
+            f,
+            indent=4,
+        )
+
+
+def _update_attack_log_params(*, logfile: str | None, params: dict[str, Any]) -> None:
+    """Add run parameters to an initialized attack log."""
+    if logfile is None:
+        return
+
+    with open(logfile) as f:
+        log = json.load(f)
+
+    for key, value in params.items():
+        log["params"][key] = value
+
+    with open(logfile, "w") as f:
+        json.dump(log, f, indent=4)
+
+
+def _get_worker_log_params(worker: ModelWorker) -> dict[str, Any]:
+    """Return the model metadata recorded for one worker."""
+    return {
+        "model_path": worker.model.name_or_path,
+        "tokenizer_path": worker.tokenizer.name_or_path,
+        "chat_template": worker.tokenizer.chat_template,
+    }
+
+
 def get_embedding_layer(model: Any) -> Any:
     """
-    Return the token embedding layer for a supported causal language model.
+    Return the token embedding layer for a causal language model.
+
+    Uses the ``PreTrainedModel.get_input_embeddings`` interface, so any model that
+    ``AutoModelForCausalLM`` can load is supported rather than a fixed set of
+    architectures.
+
+    Args:
+        model (Any): A loaded causal language model.
 
     Returns:
         Any: The model's token embedding layer.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens
-    raise ValueError(f"Unknown model type: {type(model)}")
+    return model.get_input_embeddings()
 
 
 def get_embedding_matrix(model: Any) -> Any:
     """
-    Return the token embedding matrix for a supported causal language model.
+    Return the token embedding matrix for a causal language model.
+
+    Args:
+        model (Any): A loaded causal language model.
 
     Returns:
         Any: The model's token embedding matrix.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte.weight
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens.weight
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in.weight  # type: ignore[union-attr, unused-ignore]
-    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
-        return model.model.embed_tokens.weight
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens.weight
-    raise ValueError(f"Unknown model type: {type(model)}")
+    return model.get_input_embeddings().weight
 
 
 def get_embeddings(model: Any, input_ids: torch.Tensor) -> Any:
     """
-    Embed input token ids with a supported causal language model.
+    Embed input token ids with a causal language model.
+
+    Args:
+        model (Any): A loaded causal language model.
+        input_ids (torch.Tensor): Token ids to embed.
 
     Returns:
         Any: The embedded token tensor.
-
-    Raises:
-        ValueError: If the model architecture is unsupported.
     """
-    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel)):
-        return model.transformer.wte(input_ids).half()
-    if isinstance(model, LlamaForCausalLM):
-        return model.model.embed_tokens(input_ids)
-    if isinstance(model, GPTNeoXForCausalLM):
-        return model.base_model.embed_in(input_ids).half()  # type: ignore[operator, unused-ignore]
-    if isinstance(model, (MixtralForCausalLM, MistralForCausalLM)):
-        return model.model.embed_tokens(input_ids)
-    if isinstance(model, Phi3ForCausalLM):
-        return model.model.embed_tokens(input_ids)
-    raise ValueError(f"Unknown model type: {type(model)}")
+    embeddings = model.get_input_embeddings()(input_ids)
+    # GPT-2, GPT-J and GPT-NeoX have always returned half precision here, while
+    # the other supported architectures return the embedding dtype unchanged.
+    # That asymmetry is preserved so this change stays a compatibility fix.
+    if isinstance(model, (GPTJForCausalLM, GPT2LMHeadModel, GPTNeoXForCausalLM)):
+        return embeddings.half()
+    return embeddings
 
 
 def get_nonascii_toks(tokenizer: Any, device: str = "cpu") -> torch.Tensor:
@@ -181,13 +329,17 @@ class AttackPrompt:
             target (str):
                 The target of the attack
             tokenizer (Transformer Tokenizer):
-                The tokenizer used to convert text into tokens. Must have a configured chat template
-                (i.e., ``tokenizer.chat_template`` is not ``None``); ``apply_chat_template`` is used
-                to render the user/assistant exchange instead of model-specific fastchat templates.
+                A fast tokenizer with a configured chat template. The template must render each
+                message once and preserve its content, apart from surrounding whitespace.
+                Unsupported templates or token boundaries raise an error rather than guessing slices.
             control_init (str, optional):
                 A string used to control the attack (default is "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !")
             test_prefixes (list, optional):
                 A list of prefixes to test the attack (default is _DEFAULT_TEST_PREFIXES).
+
+        Raises:
+            ValueError: If the tokenizer or template cannot provide safe token slices, or the control
+                or target has no non-whitespace text or tokens. Empty goals are supported for target-only datasets.
         """
         if test_prefixes is None:
             test_prefixes = list(_DEFAULT_TEST_PREFIXES)
@@ -203,69 +355,149 @@ class AttackPrompt:
 
         self._update_ids()
 
+    def _content_bounds(self, *, prompt: str, messages: list[dict[str, str]], message_index: int) -> tuple[int, int]:
+        """
+        Locate one message using a probe that leaves the other message unchanged.
+
+        Anchor both ends of the probe to the complete prompt, without searching for role markers
+        or separators that may also occur inside the content.
+
+        Args:
+            prompt (str): The complete rendered conversation.
+            messages (list[dict[str, str]]): The original user and assistant messages.
+            message_index (int): The message whose content bounds are needed.
+
+        Returns:
+            tuple[int, int]: Inclusive start and exclusive end of the rendered content.
+
+        Raises:
+            ValueError: If the template drops, duplicates, or transforms content, or changes its
+                surrounding scaffolding when the content is replaced.
+        """
+        marker = f"pyrit{uuid4().hex}"
+        probe_messages = [dict(message) for message in messages]
+        probe_messages[message_index]["content"] = marker
+        scaffold = self.tokenizer.apply_chat_template(probe_messages, tokenize=False)
+        role = messages[message_index]["role"]
+        error = (
+            f"Cannot safely locate {role} content in the chat template. "
+            "The template must render each message once and preserve its content, "
+            "apart from surrounding whitespace."
+        )
+        if not isinstance(scaffold, str) or scaffold.count(marker) != 1:
+            raise ValueError(error)
+
+        prefix, suffix = scaffold.split(marker)
+        start, stop = len(prefix), len(prompt) - len(suffix)
+        if (
+            start > stop
+            or not prompt.startswith(prefix)
+            or not prompt.endswith(suffix)
+            or prompt[start:stop].strip() != messages[message_index]["content"].strip()
+        ):
+            raise ValueError(error)
+        return start, stop
+
+    def _token_slice(
+        self,
+        *,
+        prompt: str,
+        offsets: list[tuple[int, int]],
+        start: int,
+        stop: int,
+        name: str,
+        allow_empty: bool = False,
+    ) -> slice:
+        """
+        Map a character span to all its tokens, including repeated byte-level offsets.
+
+        Args:
+            prompt (str): The complete rendered conversation.
+            offsets (list[tuple[int, int]]): Character offsets for each token.
+            start (int): Inclusive character start.
+            stop (int): Exclusive character end.
+            name (str): Component name for validation errors.
+            allow_empty (bool): Whether an empty span is valid.
+
+        Returns:
+            slice: The corresponding token range.
+
+        Raises:
+            ValueError: If a required span has no tokens or a token crosses a content boundary.
+        """
+        indices: list[int] = []
+        for i, (token_start, token_stop) in enumerate(offsets):
+            if token_start >= token_stop or token_start >= stop or token_stop <= start:
+                continue
+            outside = prompt[token_start:start].strip() or prompt[stop:token_stop].strip()
+            if outside:
+                # Added role tokens can consume neighboring whitespace through lstrip/rstrip.
+                if prompt[max(start, token_start) : min(stop, token_stop)].strip():
+                    raise ValueError(f"GCG {name} token crosses a content boundary in the chat template.")
+                continue
+            indices.append(i)
+        if start == stop or not indices:
+            if not allow_empty:
+                raise ValueError(f"GCG {name} contains no tokens in the rendered prompt.")
+            boundary = next((i for i, (_, token_stop) in enumerate(offsets) if token_stop > start), len(offsets))
+            return slice(boundary, boundary)
+
+        return slice(indices[0], indices[-1] + 1)
+
     def _update_ids(self) -> None:
-        # Render the goal+control as the user turn and the target as the assistant turn using the
-        # tokenizer's built-in chat template. This replaces fastchat's per-model Conversation logic
-        # and works for any HuggingFace chat-tuned model (issue #965).
+        if not self.control.strip() or not self.target.strip():
+            raise ValueError("GCG control and target must contain non-whitespace text.")
+        if not self.tokenizer.is_fast:
+            raise ValueError("GCG requires a fast tokenizer (use_fast=True) for character-to-token alignment.")
         messages = [
             {"role": "user", "content": f"{self.goal} {self.control}"},
-            {"role": "assistant", "content": f"{self.target}"},
+            {"role": "assistant", "content": self.target},
         ]
         prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        user_start, user_end = self._content_bounds(prompt=prompt, messages=messages, message_index=0)
+        assistant_start, assistant_end = self._content_bounds(prompt=prompt, messages=messages, message_index=1)
+        if not user_start <= user_end <= assistant_start <= assistant_end:
+            raise ValueError("Cannot safely locate user and assistant content in conversation order.")
 
-        encoding = self.tokenizer(prompt)
+        raw_user = messages[0]["content"]
+        rendered_user = prompt[user_start:user_end]
+        raw_leading = len(raw_user) - len(raw_user.lstrip())
+        rendered_leading = len(rendered_user) - len(rendered_user.lstrip())
+        user_origin = user_start + rendered_leading - raw_leading
+        goal_start = max(user_start, user_origin)
+        goal_end = max(goal_start, min(user_end, user_origin + len(self.goal)))
+        control_start = max(user_start, min(user_end, user_origin + len(self.goal) + 1))
+
+        # Templates already supply their special tokens. Offset spans handle both unmapped
+        # whitespace and multiple byte-level tokens sharing the same character position.
+        encoding = self.tokenizer(prompt, add_special_tokens=False, return_offsets_mapping=True)
         toks = encoding.input_ids
-
-        # Locate goal/control/target substrings in the rendered prompt.
-        goal_start = prompt.find(self.goal)
-        control_start = prompt.find(self.control)
-        target_start = prompt.find(self.target)
-        if goal_start == -1 or control_start == -1 or target_start == -1:
-            raise ValueError(
-                "Could not locate goal/control/target in chat-templated prompt. "
-                f"prompt={prompt!r}, goal={self.goal!r}, "
-                f"control={self.control!r}, target={self.target!r}"
-            )
-
-        # ``char_to_token`` returns None when the character index has no
-        # corresponding token (e.g. when the substring ends exactly at the end
-        # of the prompt or lands on whitespace squashed into a neighbouring
-        # token). For end positions we clamp to ``len(toks)``; for start
-        # positions we walk forward to the next character that does map to a
-        # token. Both are necessary for the slice arithmetic to remain valid
-        # across tokenizers/templates.
-        def end_tok(char_pos: int) -> int:
-            tok = encoding.char_to_token(char_pos)
-            return len(toks) if tok is None else tok
-
-        def start_tok(char_pos: int) -> int:
-            limit = len(prompt)
-            cur = char_pos
-            while cur < limit:
-                tok = encoding.char_to_token(cur)
-                if tok is not None:
-                    return tok
-                cur += 1
-            return len(toks)
-
-        self._goal_slice = slice(
-            start_tok(goal_start),
-            end_tok(goal_start + len(self.goal)),
+        offsets = encoding["offset_mapping"]
+        goal_slice = self._token_slice(
+            prompt=prompt,
+            offsets=offsets,
+            start=goal_start,
+            stop=goal_end,
+            name="goal",
+            allow_empty=not self.goal.strip(),
         )
-        self._control_slice = slice(
-            start_tok(control_start),
-            end_tok(control_start + len(self.control)),
+        control_slice = self._token_slice(
+            prompt=prompt, offsets=offsets, start=control_start, stop=user_end, name="control"
         )
-        target_start_tok = start_tok(target_start)
-        target_end_tok = end_tok(target_start + len(self.target))
-        self._target_slice = slice(target_start_tok, target_end_tok)
-        self._loss_slice = slice(target_start_tok - 1, target_end_tok - 1)
-        # Assistant role tokens are everything between the control end and the target start.
-        # This works for any chat template (e.g. llama-2 "[/INST]", phi-3 "<|assistant|>", etc.)
-        # without us needing to know the literal marker text.
-        self._assistant_role_slice = slice(self._control_slice.stop, self._target_slice.start)
+        target_slice = self._token_slice(
+            prompt=prompt, offsets=offsets, start=assistant_start, stop=assistant_end, name="target"
+        )
+        if not self.goal.strip():
+            goal_slice = slice(control_slice.start, control_slice.start)
+        if goal_slice.stop > control_slice.start or control_slice.stop > target_slice.start:
+            raise ValueError("GCG token slices overlap across a content boundary.")
 
-        self.input_ids = torch.tensor(toks[: self._target_slice.stop], device="cpu")
+        self._goal_slice = goal_slice
+        self._control_slice = control_slice
+        self._target_slice = target_slice
+        self._loss_slice = slice(target_slice.start - 1, target_slice.stop - 1)
+        self._assistant_role_slice = slice(control_slice.stop, target_slice.start)
+        self.input_ids = torch.tensor(toks[: target_slice.stop], device="cpu")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def generate(self, model: Any, gen_config: Any = None) -> torch.Tensor:
@@ -283,11 +515,11 @@ class AttackPrompt:
             logger.warning("max_new_tokens > 32 may cause testing to slow down.")
         input_ids = self.input_ids[: self._assistant_role_slice.stop].to(model.device).unsqueeze(0)
         attn_masks = torch.ones_like(input_ids).to(model.device)
-        output_ids = model.generate(
+        output_ids: torch.Tensor = model.generate(
             input_ids, attention_mask=attn_masks, generation_config=gen_config, pad_token_id=self.tokenizer.pad_token_id
         )[0]
 
-        return output_ids[self._assistant_role_slice.stop :]  # type: ignore[no-any-return, unused-ignore]
+        return output_ids[self._assistant_role_slice.stop :]
 
     def generate_str(self, model: Any, gen_config: Any = None) -> Any:
         """
@@ -330,12 +562,17 @@ class AttackPrompt:
         raise NotImplementedError("Gradient function not yet implemented")
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
-    def logits(self, model: Any, test_controls: Any = None, return_ids: bool = False) -> Any:
+    def _build_candidate_batch(
+        self,
+        model: Any,
+        test_controls: Any = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
-        Compute logits for one or more candidate controls.
+        Build candidate token ids and their optional padding mask.
 
         Returns:
-            Any: Model logits, optionally paired with their token ids.
+            tuple[torch.Tensor, torch.Tensor | None]: Candidate token ids and
+                an attention mask when string controls require padding.
 
         Raises:
             ValueError: If candidate controls have an invalid type or shape.
@@ -381,14 +618,220 @@ class AttackPrompt:
             self.input_ids.unsqueeze(0).repeat(test_ids.shape[0], 1).to(model.device), 1, locs, test_ids
         )
         attn_mask = (ids != pad_tok).type(ids.dtype) if pad_tok >= 0 else None
+        return ids, attn_mask
+
+    @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
+    def logits(
+        self,
+        model: Any,
+        test_controls: Any = None,
+        return_ids: bool = False,
+        logits_to_keep: torch.Tensor | None = None,
+    ) -> Any:
+        """
+        Compute logits for one or more candidate controls.
+
+        Returns:
+            Any: Model logits, optionally paired with their token ids.
+
+        Raises:
+            ValueError: If candidate controls have an invalid type or shape.
+        """
+        ids, attn_mask = self._build_candidate_batch(model, test_controls)
+
+        model_kwargs: dict[str, Any] = {"input_ids": ids, "attention_mask": attn_mask}
+        if logits_to_keep is not None:
+            model_kwargs["logits_to_keep"] = logits_to_keep
 
         if return_ids:
-            del locs, test_ids
-            return model(input_ids=ids, attention_mask=attn_mask).logits, ids
-        del locs, test_ids
-        logits = model(input_ids=ids, attention_mask=attn_mask).logits
+            return model(**model_kwargs).logits, ids
+        logits = model(**model_kwargs).logits
         del ids
         return logits
+
+    @staticmethod
+    def _expand_prefix_cache(prefix_cache: Any, batch_size: int) -> Any:
+        """
+        Return an independently mutable, batch-expanded view of a model KV cache.
+
+        Returns:
+            Any: A cache whose batch dimension is expanded to ``batch_size``.
+
+        Raises:
+            ValueError: If the source cache contains more than one sequence.
+            TypeError: If the model returned an unsupported cache structure.
+        """
+
+        def contains_non_scalar_tensor(value: Any) -> bool:
+            if isinstance(value, torch.Tensor):
+                return value.ndim > 0
+            if isinstance(value, dict):
+                return any(contains_non_scalar_tensor(item) for item in value.values())
+            if isinstance(value, (tuple, list)):
+                return any(contains_non_scalar_tensor(item) for item in value)
+            return False
+
+        if hasattr(prefix_cache, "layers"):
+            expanded_cache = copy(prefix_cache)
+            expanded_layers = []
+            for layer in prefix_cache.layers:
+                keys = getattr(layer, "keys", None)
+                values = getattr(layer, "values", None)
+                if not isinstance(keys, torch.Tensor) or not isinstance(values, torch.Tensor):
+                    raise TypeError(f"Unsupported prefix-cache layer type: {type(layer)!r}")
+                try:
+                    additional_state = (value for name, value in vars(layer).items() if name not in {"keys", "values"})
+                except TypeError as exc:
+                    raise TypeError(f"Unsupported prefix-cache layer type: {type(layer)!r}") from exc
+                if any(contains_non_scalar_tensor(value) for value in additional_state):
+                    raise TypeError(f"Unsupported state in prefix-cache layer type: {type(layer)!r}")
+                if keys.ndim == 0 or values.ndim == 0 or keys.shape[0] != 1 or values.shape[0] != 1:
+                    raise ValueError("Prefix cache must be computed for exactly one sequence")
+
+                expanded_layer = copy(layer)
+                expanded_layer.keys = keys.expand(batch_size, *keys.shape[1:])
+                expanded_layer.values = values.expand(batch_size, *values.shape[1:])
+                expanded_layers.append(expanded_layer)
+            expanded_cache.layers = expanded_layers
+            return expanded_cache
+
+        if isinstance(prefix_cache, (tuple, list)):
+            expanded_legacy_cache = []
+            for layer in prefix_cache:
+                if not isinstance(layer, (tuple, list)) or not all(isinstance(value, torch.Tensor) for value in layer):
+                    raise TypeError(f"Unsupported prefix-cache layer type: {type(layer)!r}")
+                if any(value.ndim == 0 or value.shape[0] != 1 for value in layer):
+                    raise ValueError("Prefix cache must be computed for exactly one sequence")
+                expanded_legacy_cache.append(tuple(value.expand(batch_size, *value.shape[1:]) for value in layer))
+            return tuple(expanded_legacy_cache)
+
+        raise TypeError(f"Unsupported prefix-cache type: {type(prefix_cache)!r}")
+
+    def _loss_with_prefix_cache(
+        self,
+        model: Any,
+        test_controls: Any,
+        loss_function: Any,
+        logit_positions: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """
+        Score candidates after evaluating their invariant prefix once.
+
+        Returns:
+            torch.Tensor | None: One scalar loss per candidate control, or ``None``
+                when the model's cache cannot be safely batch-expanded.
+        """
+        token_ids, attention_mask = self._build_candidate_batch(model, test_controls)
+        prefix_length = self._control_slice.start - 1
+        prefix_kwargs: dict[str, Any] = {
+            "input_ids": token_ids[:1, :prefix_length],
+            "use_cache": True,
+            "return_dict": True,
+            "logits_to_keep": 1,
+        }
+        if attention_mask is not None:
+            prefix_kwargs["attention_mask"] = attention_mask[:1, :prefix_length]
+        prefix_output = model(**prefix_kwargs)
+        try:
+            prefix_cache = self._expand_prefix_cache(
+                getattr(prefix_output, "past_key_values", None), token_ids.shape[0]
+            )
+        except (TypeError, ValueError):
+            del prefix_output, token_ids
+            return None
+        del prefix_output
+
+        suffix_kwargs: dict[str, Any] = {
+            "input_ids": token_ids[:, prefix_length:],
+            "past_key_values": prefix_cache,
+            "use_cache": False,
+            "return_dict": True,
+            "logits_to_keep": logit_positions - prefix_length,
+        }
+        if attention_mask is not None:
+            suffix_kwargs["attention_mask"] = attention_mask
+        logits = model(**suffix_kwargs).logits
+        del prefix_cache
+
+        try:
+            result: torch.Tensor = loss_function.compute_loss_from_selected_logits(
+                logits=logits,
+                token_ids=token_ids,
+                target_slice=self._target_slice,
+                control_slice=self._control_slice,
+            )
+            return result
+        finally:
+            del logits, token_ids
+
+    def loss(
+        self,
+        model: Any,
+        test_controls: Any,
+        loss_function: LossFunction,
+        *,
+        use_prefix_cache: bool = False,
+    ) -> torch.Tensor:
+        """
+        Compute per-candidate loss without returning full logits from the worker.
+
+        The model forward pass and loss calculation stay in the process that owns
+        the model. Only the batch-sized loss tensor crosses the worker boundary.
+
+        Returns:
+            torch.Tensor: One scalar loss per candidate control.
+        """
+        selective_loss = cast("Any", loss_function)
+        try:
+            forward_parameters = inspect.signature(model.forward).parameters
+        except (TypeError, ValueError):
+            forward_parameters = {}
+
+        supports_selective_logits = "logits_to_keep" in forward_parameters
+        supports_prefix_cache = "past_key_values" in forward_parameters and "use_cache" in forward_parameters
+
+        if supports_selective_logits and hasattr(selective_loss, "get_required_logit_positions"):
+            logit_positions = selective_loss.get_required_logit_positions(
+                target_slice=self._target_slice,
+                control_slice=self._control_slice,
+                device=model.device,
+            )
+            if use_prefix_cache and supports_prefix_cache and self._control_slice.start > 1:
+                cached_loss = self._loss_with_prefix_cache(
+                    model,
+                    test_controls,
+                    selective_loss,
+                    logit_positions,
+                )
+                if cached_loss is not None:
+                    return cached_loss
+            logits, token_ids = self.logits(
+                model,
+                test_controls,
+                return_ids=True,
+                logits_to_keep=logit_positions,
+            )
+            try:
+                result: torch.Tensor = selective_loss.compute_loss_from_selected_logits(
+                    logits=logits,
+                    token_ids=token_ids,
+                    target_slice=self._target_slice,
+                    control_slice=self._control_slice,
+                )
+                return result
+            finally:
+                del logits, token_ids
+
+        logits, token_ids = self.logits(model, test_controls, return_ids=True)
+        try:
+            return loss_function.compute_loss(
+                logits=logits,
+                token_ids=token_ids,
+                target_slice=self._target_slice,
+                control_slice=self._control_slice,
+            )
+        finally:
+            del logits, token_ids
 
     def target_loss(self, logits: torch.Tensor, ids: torch.Tensor) -> torch.Tensor:
         """
@@ -492,11 +935,8 @@ class AttackPrompt:
     @property
     def eval_str(self) -> str:
         """The decoded input used for evaluation."""
-        return (  # type: ignore[no-any-return, unused-ignore]
-            self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
-            .replace("<s>", "")
-            .replace("</s>", "")
-        )
+        decoded: str = self.tokenizer.decode(self.input_ids[: self._assistant_role_slice.stop])
+        return decoded.replace("<s>", "").replace("</s>", "")
 
 
 class PromptManager:
@@ -682,7 +1122,8 @@ class PromptManager:
     @property
     def control_str(self) -> str:
         """The shared decoded control suffix."""
-        return self._prompts[0].control_str  # type: ignore[no-any-return, unused-ignore]
+        control: str = self._prompts[0].control_str
+        return control
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -697,6 +1138,10 @@ class PromptManager:
 
 class MultiPromptAttack:
     """A class used to manage multiple prompt-based attacks."""
+
+    #: State of the most recent `run` call; ``None`` until one completes
+    #: and cleared at the start of each run so failed runs expose no stale data.
+    last_run_state: OptimizationRunState | None = None
 
     def __init__(
         self,
@@ -765,9 +1210,10 @@ class MultiPromptAttack:
         self.managers = managers
 
     @property
-    def control_str(self) -> Any:
+    def control_str(self) -> str:
         """The shared decoded control suffix."""
-        return self.prompts[0].control_str
+        control: str = self.prompts[0].control_str
+        return control
 
     @control_str.setter
     def control_str(self, control: str) -> None:
@@ -799,7 +1245,8 @@ class MultiPromptAttack:
         Returns:
             list[str]: Decoded candidate controls.
         """
-        cands, count = [], 0
+        cands: list[str] = []
+        count = 0
         worker = self.workers[worker_index]
 
         logger.info("Masking out of range token_id.")
@@ -828,6 +1275,52 @@ class MultiPromptAttack:
         """Execute one attack optimization step."""
         raise NotImplementedError("Attack step function not yet implemented")
 
+    def _all_training_prompts_jailbroken(self) -> bool:
+        """
+        Check whether every worker jailbreaks every training prompt.
+
+        This is the stopping phase of the optimization loop.
+
+        Returns:
+            bool: True when all jailbreak tests pass for every worker.
+        """
+        model_tests_jb, _, _ = self.test(self.workers, self.prompts)
+        return all(all(tests for tests in model_test) for model_test in model_tests_jb)
+
+    def _log_best_checkpoint(
+        self,
+        *,
+        global_step: int,
+        n_steps_total: int,
+        runtime: float,
+        verbose: bool,
+        state: OptimizationRunState,
+    ) -> None:
+        """
+        Test the best-known suffix and write one periodic log entry.
+
+        This is the logging phase of the optimization loop.
+
+        Temporarily swaps ``self.control_str`` to the best-known suffix so the
+        held-out evaluation reflects it, then restores the active suffix.
+
+        Args:
+            global_step (int): The step number used for logging (including ``anneal_from``).
+            n_steps_total (int): The total step budget used for logging.
+            runtime (float): Runtime of the most recent optimization step, in seconds.
+            verbose (bool): Whether the log entry should print progress output.
+            state (OptimizationRunState): The current run state to read from.
+        """
+        last_control = self.control_str
+        try:
+            self.control_str = state.best_control
+            model_tests = self.test_all()
+            self.log(
+                global_step, n_steps_total, self.control_str, state.best_loss, runtime, model_tests, verbose=verbose
+            )
+        finally:
+            self.control_str = last_control
+
     def run(
         self,
         n_steps: int = 100,
@@ -845,6 +1338,7 @@ class MultiPromptAttack:
         log_first: bool = False,
         filter_cand: bool = True,
         verbose: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, float, int]:
         """
         Run iterative optimization.
@@ -852,10 +1346,15 @@ class MultiPromptAttack:
         Returns:
             tuple[str, float, int]: The final control, loss, and step count.
         """
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            rng_bundle = RngBundle.from_seed(base_seed=random_seed, workers=getattr(self, "workers", []))
+        py_rng = rng_bundle.py_rng
+        self._torch_gens = rng_bundle.torch_gens
 
         def acceptance_probability(e: float, e_prime: float, k: int) -> bool:
             temperature = max(1 - float(k + 1) / (n_steps + anneal_from), 1.0e-7)
-            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= random.random()
+            return e_prime < e or math.exp(-(e_prime - e) / temperature) >= py_rng.random()
 
         if target_weight is None:
 
@@ -877,22 +1376,39 @@ class MultiPromptAttack:
             def control_weight_fn(_: int) -> float:
                 return control_weight
 
-        steps = 0
-        loss = best_loss = 1e6
-        best_control = self.control_str
-        runtime = 0.0
+        # Clear eagerly: a run that raises mid-loop must not leave the previous
+        # run's state looking current.
+        self.last_run_state = None
+
+        # Seed both losses from the incoming loss: a large sentinel would pair
+        # the starting suffix with a fake loss and let a rejected first
+        # candidate take over best-tracking. ``log()`` caps the seed for
+        # readability so infinite seeds stay renderable.
+        state = OptimizationRunState(
+            control=self.control_str,
+            best_control=self.control_str,
+            loss=prev_loss,
+            best_loss=prev_loss,
+        )
 
         if self.logfile is not None and log_first:
             model_tests = self.test_all()
-            self.log(anneal_from, n_steps + anneal_from, self.control_str, loss, runtime, model_tests, verbose=verbose)
+            self.log(
+                anneal_from,
+                n_steps + anneal_from,
+                self.control_str,
+                min(state.loss, 1e6),
+                state.runtime,
+                model_tests,
+                verbose=verbose,
+            )
 
         for i in range(n_steps):
-            if stop_on_success:
-                model_tests_jb, model_tests_mb, _ = self.test(self.workers, self.prompts)
-                if all(all(tests for tests in model_test) for model_test in model_tests_jb):
-                    break
+            if stop_on_success and self._all_training_prompts_jailbroken():
+                state.stop_reason = StopReason.ALL_PROMPTS_JAILBROKEN
+                break
 
-            steps += 1
+            state.steps_completed += 1
             start = time.time()
             control, loss = self.step(
                 batch_size=batch_size,
@@ -904,35 +1420,37 @@ class MultiPromptAttack:
                 filter_cand=filter_cand,
                 verbose=verbose,
             )
-            runtime = time.time() - start
-            keep_control = True if not anneal else acceptance_probability(prev_loss, loss, i + anneal_from)
+            state.runtime = time.time() - start
+            keep_control = True if not anneal else acceptance_probability(state.loss, loss, i + anneal_from)
             if keep_control:
                 self.control_str = control
+                state.control = control
+                state.loss = loss
 
-            prev_loss = loss
-            if loss < best_loss:
-                best_loss = loss
-                best_control = control
-            logger.info(f"Current Loss: {loss}, Best Loss: {best_loss}")
+            # ``candidate_loss`` tracks what was just evaluated even when
+            # annealing rejects it, so ``state.loss`` always describes the
+            # suffix in ``state.control``.
+            state.candidate_loss = loss
+            if loss < state.best_loss:
+                state.best_loss = loss
+                state.best_control = control
+            logger.info(f"Current Loss: {loss}, Best Loss: {state.best_loss}")
 
             if self.logfile is not None and (i + 1 + anneal_from) % test_steps == 0:
-                last_control = self.control_str
-                self.control_str = best_control
-
-                model_tests = self.test_all()
-                self.log(
-                    i + 1 + anneal_from,
-                    n_steps + anneal_from,
-                    self.control_str,
-                    best_loss,
-                    runtime,
-                    model_tests,
+                self._log_best_checkpoint(
+                    global_step=i + 1 + anneal_from,
+                    n_steps_total=n_steps + anneal_from,
+                    runtime=state.runtime,
                     verbose=verbose,
+                    state=state,
                 )
 
-                self.control_str = last_control
+        if state.stop_reason is None:
+            state.stop_reason = StopReason.MAX_STEPS_REACHED
 
-        return self.control_str, loss, steps
+        self.last_run_state = state
+
+        return self.control_str, state.loss, state.steps_completed
 
     def test(
         self, workers: list[ModelWorker], prompts: list[PromptManager], include_loss: bool = False
@@ -947,8 +1465,8 @@ class MultiPromptAttack:
         for j, worker in enumerate(workers):
             worker(prompts[j], ModelWorkerOperation.TEST)
         model_tests = np.array([worker.results.get() for worker in workers])
-        model_tests_jb = model_tests[..., 0].tolist()
-        model_tests_mb = model_tests[..., 1].tolist()
+        model_tests_jb: list[list[bool]] = model_tests[..., 0].tolist()
+        model_tests_mb: list[list[int]] = model_tests[..., 1].tolist()
         model_tests_loss: list[list[float]] = []
         if include_loss:
             for j, worker in enumerate(workers):
@@ -1079,6 +1597,10 @@ class MultiPromptAttack:
 class ProgressiveMultiPromptAttack:
     """A class used to manage multiple progressive prompt-based attacks."""
 
+    #: State of the most recent `run` call; ``None`` until one completes
+    #: and cleared at the start of each run so failed runs expose no stale data.
+    last_schedule_state: ProgressiveScheduleState | None = None
+
     def __init__(
         self,
         goals: list[str],
@@ -1153,53 +1675,42 @@ class ProgressiveMultiPromptAttack:
         self.managers = managers
         self.mpa_kwargs = ProgressiveMultiPromptAttack.filter_mpa_kwargs(**kwargs)
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "progressive_goals": progressive_goals,
-                            "progressive_models": progressive_models,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+            additional_params={
+                "progressive_goals": progressive_goals,
+                "progressive_models": progressive_models,
+            },
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
+
+    def _finalize_progressive_run(
+        self, *, attack: MultiPromptAttack, step: int, n_steps: int, loss: float, verbose: bool
+    ) -> None:
+        """
+        Result-construction phase: run the final held-out evaluation and record the closing log entry.
+
+        Args:
+            attack (MultiPromptAttack): The fully-admitted inner attack that just finished.
+            step (int): The global step count reached by the progressive schedule.
+            n_steps (int): The total step budget of the progressive run.
+            loss (float): The final loss reported by the inner attack.
+            verbose (bool): Whether the closing log entry should print progress output.
+        """
+        model_tests = attack.test_all()
+        attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
 
     def run(
         self,
@@ -1216,6 +1727,7 @@ class ProgressiveMultiPromptAttack:
         stop_on_success: bool = True,
         verbose: bool = True,
         filter_cand: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, int]:
         """
         Execute the progressive multi-prompt attack.
@@ -1247,40 +1759,59 @@ class ProgressiveMultiPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates whose lengths changed after re-tokenization (default is True)
+            random_seed (int, optional):
+                Seed for deterministic random number generation (default is 42)
 
         Returns:
             tuple[str, int]: The final control suffix and completed step count.
         """
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
+        # Clear eagerly, before any fallible setup work: if this rerun raises
+        # while opening or parsing the logfile, the previous run's state must
+        # not keep looking current.
+        self.last_schedule_state = None
 
-            log["params"]["n_steps"] = n_steps
-            log["params"]["test_steps"] = test_steps
-            log["params"]["batch_size"] = batch_size
-            log["params"]["topk"] = topk
-            log["params"]["temp"] = temp
-            log["params"]["allow_non_ascii"] = allow_non_ascii
-            log["params"]["target_weight"] = target_weight
-            log["params"]["control_weight"] = control_weight
-            log["params"]["anneal"] = anneal
-            log["params"]["incr_control"] = incr_control
-            log["params"]["stop_on_success"] = stop_on_success
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            rng_bundle = RngBundle.from_seed(base_seed=random_seed, workers=self.workers)
 
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        _update_attack_log_params(
+            logfile=self.logfile,
+            params={
+                "n_steps": n_steps,
+                "test_steps": test_steps,
+                "batch_size": batch_size,
+                "topk": topk,
+                "temp": temp,
+                "allow_non_ascii": allow_non_ascii,
+                "target_weight": target_weight,
+                "control_weight": control_weight,
+                "anneal": anneal,
+                "incr_control": incr_control,
+                "stop_on_success": stop_on_success,
+                "random_seed": rng_bundle.base_seed,
+                "derived_seeds": rng_bundle.derived_seeds,
+            },
+        )
 
-        num_goals = 1 if self.progressive_goals else len(self.goals)
-        num_workers = 1 if self.progressive_models else len(self.workers)
-        step = 0
-        stop_inner_on_success = self.progressive_goals
-        loss = np.inf
+        controller = ProgressiveScheduleController(
+            total_goals=len(self.goals),
+            total_workers=len(self.workers),
+            progressive_goals=self.progressive_goals,
+            progressive_models=self.progressive_models,
+            n_steps=n_steps,
+            control_weight=control_weight,
+            incr_control=incr_control,
+            stop_on_success=stop_on_success,
+            verbose=verbose,
+        )
 
-        while step < n_steps:
+        while not controller.is_complete:
+            controller.before_inner_run()
+            schedule = controller.state
             attack = self.managers["MPA"](
-                self.goals[:num_goals],
-                self.targets[:num_goals],
-                self.workers[:num_workers],
+                self.goals[: controller.active_goal_count],
+                self.targets[: controller.active_goal_count],
+                self.workers[: controller.active_worker_count],
                 self.control,
                 self.test_prefixes,
                 self.logfile,
@@ -1289,50 +1820,45 @@ class ProgressiveMultiPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
-            if num_goals == len(self.goals) and num_workers == len(self.workers):
-                stop_inner_on_success = False
-            control, loss, inner_steps = attack.run(
-                n_steps=n_steps - step,
+            attack._rng_bundle = rng_bundle
+            inner_result: tuple[str, float, int] = attack.run(
+                n_steps=controller.remaining_steps,
                 batch_size=batch_size,
                 topk=topk,
                 temp=temp,
                 allow_non_ascii=allow_non_ascii,
                 target_weight=target_weight,
-                control_weight=control_weight,
+                control_weight=controller.control_weight,
                 anneal=anneal,
-                anneal_from=step,
-                prev_loss=loss,
-                stop_on_success=stop_inner_on_success,
+                anneal_from=schedule.steps_completed,
+                prev_loss=schedule.loss,
+                stop_on_success=schedule.stop_inner_on_success,
                 test_steps=test_steps,
                 filter_cand=filter_cand,
                 verbose=verbose,
+                random_seed=random_seed,
             )
-
-            step += inner_steps
+            control, inner_loss, inner_steps = inner_result
             self.control = control
 
-            if num_goals < len(self.goals):
-                num_goals += 1
-                loss = np.inf
-            elif num_goals == len(self.goals):
-                if num_workers < len(self.workers):
-                    num_workers += 1
-                    loss = np.inf
-                elif num_workers == len(self.workers) and stop_on_success:
-                    model_tests = attack.test_all()
-                    attack.log(step, n_steps, self.control, loss, 0.0, model_tests, verbose=verbose)
-                    break
-                else:
-                    if isinstance(control_weight, (int, float)) and incr_control:
-                        if control_weight <= 0.09:
-                            control_weight += 0.01
-                            loss = np.inf
-                            if verbose:
-                                logger.info(f"Control weight increased to {control_weight:.5}")
-                        else:
-                            stop_inner_on_success = False
+            action = controller.advance_after_inner_run(
+                inner_loss=inner_loss,
+                inner_steps=inner_steps,
+            )
+            if action == ScheduleTransitionAction.FINALIZE_AND_STOP:
+                self._finalize_progressive_run(
+                    attack=attack,
+                    step=schedule.steps_completed,
+                    n_steps=n_steps,
+                    loss=schedule.loss,
+                    verbose=verbose,
+                )
+                break
 
-        return self.control, step
+        controller.validate_post_run()
+        self.last_schedule_state = controller.state
+
+        return self.control, controller.state.steps_completed
 
 
 class IndividualPromptAttack:
@@ -1405,51 +1931,22 @@ class IndividualPromptAttack:
         self.managers = managers
         self.mpa_kwargs = IndividualPromptAttack.filter_mpa_kwargs(**kwargs)
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     def run(
         self,
@@ -1466,6 +1963,7 @@ class IndividualPromptAttack:
         stop_on_success: bool = True,
         verbose: bool = True,
         filter_cand: bool = True,
+        random_seed: int = 42,
     ) -> tuple[str, int]:
         """
         Execute the individual-prompt attack.
@@ -1497,28 +1995,34 @@ class IndividualPromptAttack:
                 Whether to print verbose output (default is True)
             filter_cand (bool, optional):
                 Whether to filter candidates (default is True)
+            random_seed (int, optional):
+                Seed for deterministic random number generation (default is 42)
 
         Returns:
             tuple[str, int]: The final control suffix and configured step count.
         """
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
+        rng_bundle = getattr(self, "_rng_bundle", None)
+        if rng_bundle is None:
+            rng_bundle = RngBundle.from_seed(base_seed=random_seed, workers=self.workers)
 
-            log["params"]["n_steps"] = n_steps
-            log["params"]["test_steps"] = test_steps
-            log["params"]["batch_size"] = batch_size
-            log["params"]["topk"] = topk
-            log["params"]["temp"] = temp
-            log["params"]["allow_non_ascii"] = allow_non_ascii
-            log["params"]["target_weight"] = target_weight
-            log["params"]["control_weight"] = control_weight
-            log["params"]["anneal"] = anneal
-            log["params"]["incr_control"] = incr_control
-            log["params"]["stop_on_success"] = stop_on_success
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
+        _update_attack_log_params(
+            logfile=self.logfile,
+            params={
+                "n_steps": n_steps,
+                "test_steps": test_steps,
+                "batch_size": batch_size,
+                "topk": topk,
+                "temp": temp,
+                "allow_non_ascii": allow_non_ascii,
+                "target_weight": target_weight,
+                "control_weight": control_weight,
+                "anneal": anneal,
+                "incr_control": incr_control,
+                "stop_on_success": stop_on_success,
+                "random_seed": rng_bundle.base_seed,
+                "derived_seeds": rng_bundle.derived_seeds,
+            },
+        )
 
         stop_inner_on_success = stop_on_success
 
@@ -1537,6 +2041,7 @@ class IndividualPromptAttack:
                 self.test_targets,
                 self.test_workers,
             )
+            attack._rng_bundle = rng_bundle
             attack.run(
                 n_steps=n_steps,
                 batch_size=batch_size,
@@ -1553,6 +2058,7 @@ class IndividualPromptAttack:
                 log_first=True,
                 filter_cand=filter_cand,
                 verbose=verbose,
+                random_seed=random_seed,
             )
 
         return self.control, n_steps
@@ -1630,51 +2136,22 @@ class EvaluateAttack:
         if len(self.workers) != 1:
             raise ValueError("EvaluateAttack requires exactly 1 worker")
 
-        if logfile is not None:
-            with open(logfile, "w") as f:
-                json.dump(
-                    {
-                        "params": {
-                            "goals": goals,
-                            "targets": targets,
-                            "test_goals": test_goals,
-                            "test_targets": test_targets,
-                            "control_init": control_init,
-                            "test_prefixes": test_prefixes,
-                            "models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.workers
-                            ],
-                            "test_models": [
-                                {
-                                    "model_path": worker.model.name_or_path,
-                                    "tokenizer_path": worker.tokenizer.name_or_path,
-                                    "chat_template": worker.tokenizer.chat_template,
-                                }
-                                for worker in self.test_workers
-                            ],
-                        },
-                        "controls": [],
-                        "losses": [],
-                        "runtimes": [],
-                        "tests": [],
-                    },
-                    f,
-                    indent=4,
-                )
+        _initialize_attack_log(
+            logfile=logfile,
+            goals=goals,
+            targets=targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+            control_init=control_init,
+            test_prefixes=test_prefixes,
+            workers=self.workers,
+            test_workers=self.test_workers,
+        )
 
     @staticmethod
     def filter_mpa_kwargs(**kwargs: Any) -> dict[str, Any]:
         """Return options whose names use the ``mpa_`` prefix."""
-        mpa_kwargs: dict[str, Any] = {}
-        for key in kwargs:
-            if key.startswith("mpa_"):
-                mpa_kwargs[key[4:]] = kwargs[key]
-        return mpa_kwargs
+        return {key[4:]: value for key, value in kwargs.items() if key.startswith("mpa_")}
 
     @torch.no_grad()  # type: ignore[misc, untyped-decorator, unused-ignore]
     def run(
@@ -1698,17 +2175,14 @@ class EvaluateAttack:
         model, tokenizer = self.workers[0].model, self.workers[0].tokenizer
         tokenizer.padding_side = "left"
 
-        if self.logfile is not None:
-            with open(self.logfile) as f:
-                log = json.load(f)
+        _update_attack_log_params(logfile=self.logfile, params={"num_tests": len(controls)})
 
-            log["params"]["num_tests"] = len(controls)
-
-            with open(self.logfile, "w") as f:
-                json.dump(log, f, indent=4)
-
-        total_jb, total_em, total_outputs = [], [], []
-        test_total_jb, test_total_em, test_total_outputs = [], [], []
+        total_jb: list[list[bool]] = []
+        total_em: list[list[bool]] = []
+        total_outputs: list[list[str]] = []
+        test_total_jb: list[list[bool]] = []
+        test_total_em: list[list[bool]] = []
+        test_total_outputs: list[list[str]] = []
         curr_jb: list[bool] = []
         curr_em: list[bool] = []
         all_outputs: list[str] = []
@@ -1791,6 +2265,7 @@ class ModelWorkerOperation(str, Enum):
 
     GRAD = "grad"
     LOGITS = "logits"
+    LOSS = "loss"
     CONTRAST_LOGITS = "contrast_logits"
     TEST = "test"
     TEST_LOSS = "test_loss"
@@ -1983,6 +2458,24 @@ def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker
     return workers[:num_train_models], workers[num_train_models:]
 
 
+def _read_string_column(*, data: Any, column: str, start: int = 0, end: int | None = None) -> list[str]:
+    """
+    Read a slice of a dataframe column as strings.
+
+    Returns:
+        list[str]: The requested column values.
+
+    Raises:
+        ValueError: If the requested column contains a non-string value.
+    """
+    values: list[str] = []
+    for value in data[column].tolist()[start:end]:
+        if not isinstance(value, str):
+            raise ValueError(f"Column '{column}' must contain only strings, got {type(value).__name__}")
+        values.append(value)
+    return values
+
+
 def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str], list[str]]:
     """
     Load training and held-out goals and targets from parameters or CSV files.
@@ -1994,10 +2487,10 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
     Raises:
         ValueError: If a goal list and its corresponding target list differ in length.
     """
-    train_goals = getattr(params, "goals", [])
-    train_targets = getattr(params, "targets", [])
-    test_goals = getattr(params, "test_goals", [])
-    test_targets = getattr(params, "test_targets", [])
+    train_goals: list[str] = getattr(params, "goals", [])
+    train_targets: list[str] = getattr(params, "targets", [])
+    test_goals: list[str] = getattr(params, "test_goals", [])
+    test_targets: list[str] = getattr(params, "test_targets", [])
 
     if params.train_data:
         train_data = pd.read_csv(params.train_data)
@@ -2005,22 +2498,32 @@ def get_goals_and_targets(params: Any) -> tuple[list[str], list[str], list[str],
         # this line shuffles the rows of train data randomly with a random seed
         train_data = train_data.sample(frac=1, random_state=params.random_seed).reset_index(drop=True)
 
-        train_targets = train_data["target"].tolist()[: params.n_train_data]
+        train_targets = _read_string_column(data=train_data, column="target", end=params.n_train_data)
         if "goal" in train_data.columns:
-            train_goals = train_data["goal"].tolist()[: params.n_train_data]
+            train_goals = _read_string_column(data=train_data, column="goal", end=params.n_train_data)
         else:
             train_goals = [""] * len(train_targets)
         if params.test_data and params.n_test_data > 0:
             test_data = pd.read_csv(params.test_data)
-            test_targets = test_data["target"].tolist()[: params.n_test_data]
+            test_targets = _read_string_column(data=test_data, column="target", end=params.n_test_data)
             if "goal" in test_data.columns:
-                test_goals = test_data["goal"].tolist()[: params.n_test_data]
+                test_goals = _read_string_column(data=test_data, column="goal", end=params.n_test_data)
             else:
                 test_goals = [""] * len(test_targets)
         elif params.n_test_data > 0:
-            test_targets = train_data["target"].tolist()[params.n_train_data : params.n_train_data + params.n_test_data]
+            test_targets = _read_string_column(
+                data=train_data,
+                column="target",
+                start=params.n_train_data,
+                end=params.n_train_data + params.n_test_data,
+            )
             if "goal" in train_data.columns:
-                test_goals = train_data["goal"].tolist()[params.n_train_data : params.n_train_data + params.n_test_data]
+                test_goals = _read_string_column(
+                    data=train_data,
+                    column="goal",
+                    start=params.n_train_data,
+                    end=params.n_train_data + params.n_test_data,
+                )
             else:
                 test_goals = [""] * len(test_targets)
 

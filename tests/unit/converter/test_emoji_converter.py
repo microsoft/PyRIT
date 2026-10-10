@@ -4,6 +4,7 @@
 import pytest
 
 from pyrit.converter import ConverterResult, EmojiConverter
+from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy
 
 
 async def test_emoji_converter_basic():
@@ -43,3 +44,16 @@ async def test_emoji_converter_input_not_supported():
     converter = EmojiConverter()
     with pytest.raises(ValueError):
         await converter.convert_async(prompt="hello", input_type="image_path")
+
+
+async def test_emoji_converter_preserves_word_level_options():
+    strategy = WordProportionSelectionStrategy(proportion=0.5)
+    converter = EmojiConverter(
+        word_selection_strategy=strategy,
+        word_split_separator="|",
+    )
+
+    identifier = converter.get_identifier()
+
+    assert identifier.params["word_selection_strategy"] == "WordProportionSelectionStrategy"
+    assert identifier.params["word_split_separator"] == "|"

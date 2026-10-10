@@ -5,7 +5,7 @@ authors: |
   - Vitaly Neyman https://github.com/vitaly-ps
 groups: |
   - Prompt Security
-source: github.com/prompt-security/ps-fuzz/dynamic_test.py
+source: https://github.com/prompt-security/ps-fuzz/blob/main/ps_fuzz/attacks/dynamic_test.py
 data_type: text
 parameters: |
   - target_system_prompts_summary

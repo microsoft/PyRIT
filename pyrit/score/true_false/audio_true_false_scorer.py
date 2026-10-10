@@ -2,13 +2,14 @@
 # Licensed under the MIT license.
 
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
+from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 
-class AudioTrueFalseScorer(TrueFalseScorer):
+class AudioTrueFalseScorer(MessageTrueFalseScorer):
     """
     A scorer that processes audio files by transcribing them and scoring the transcript.
 
@@ -21,7 +22,7 @@ class AudioTrueFalseScorer(TrueFalseScorer):
     def __init__(
         self,
         *,
-        text_capable_scorer: TrueFalseScorer,
+        text_capable_scorer: MessageTrueFalseScorer,
         validator: ScorerPromptValidator | None = None,
     ) -> None:
         """
@@ -29,11 +30,11 @@ class AudioTrueFalseScorer(TrueFalseScorer):
 
         Args:
             text_capable_scorer: A TrueFalseScorer capable of processing text.
-                This scorer will be used to evaluate the transcribed audio content.
+                It must evaluate the transcript without stored conversation history.
             validator: Validator for the scorer. Defaults to audio_path data type validator.
 
         Raises:
-            ValueError: If text_capable_scorer does not support text data type.
+            ValueError: If text_capable_scorer does not support text or requires stored conversation history.
         """
         super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._audio_helper = AudioTranscriptHelper(
@@ -51,15 +52,30 @@ class AudioTrueFalseScorer(TrueFalseScorer):
             sub_scorers=[self._audio_helper.text_scorer.get_identifier()],
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    def _get_child_scorers(self) -> tuple[Scorer, ...]:
+        """Return the scorer that evaluates the transcript."""
+        return (self._audio_helper.text_scorer,)
+
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score an audio file by transcribing it and scoring the transcript.
 
         Args:
             message_piece: The message piece containing the audio file path.
-            objective: Optional objective description for scoring.
+            expectation: Criteria forwarded to the transcript scorer.
 
         Returns:
             List of scores from evaluating the transcribed audio.
         """
-        return await self._audio_helper._score_audio_async(message_piece=message_piece, objective=objective)
+        scores = await self._audio_helper._score_audio_async(message_piece=message_piece, expectation=expectation)
+        results = []
+        for score in scores:
+            parent = self._create_wrapper_score(score)
+            parent.scorable = None
+            parent.message_piece_id = message_piece.id
+            rationale = score.score_rationale or ""
+            parent.score_rationale = f"{rationale}\nAudio transcript scored: {rationale}"
+            results.append(parent)
+        return results

@@ -116,7 +116,6 @@ class PlaywrightTarget(PromptTarget):
             raise RuntimeError(
                 "Playwright page is not initialized. Please pass a Page object when initializing PlaywrightTarget."
             )
-
         try:
             text = await self._interaction_func(self._page, message)
         except Exception as e:

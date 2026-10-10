@@ -511,13 +511,11 @@ class TestVideoTargetImageToVideo:
                 video_target._async_client.videos, "download_content", new_callable=AsyncMock
             ) as mock_download,
             patch("pyrit.prompt_target.openai.openai_video_target.data_serializer_factory") as mock_factory,
-            patch("pyrit.prompt_target.openai.openai_video_target.DataTypeSerializer.get_mime_type") as mock_mime,
         ):
             # First call returns image serializer, second call returns video serializer
             mock_factory.side_effect = [mock_image_serializer, mock_serializer]
             mock_create.return_value = mock_video
             mock_download.return_value = mock_video_response
-            mock_mime.return_value = "image/png"
 
             response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
@@ -820,12 +818,10 @@ class TestVideoTargetEdgeCases:
                 video_target._async_client.videos, "download_content", new_callable=AsyncMock
             ) as mock_download,
             patch("pyrit.prompt_target.openai.openai_video_target.data_serializer_factory") as mock_factory,
-            patch("pyrit.prompt_target.openai.openai_video_target.DataTypeSerializer.get_mime_type") as mock_mime,
         ):
             mock_factory.side_effect = [mock_image_serializer, mock_serializer]
             mock_create.return_value = mock_video
             mock_download.return_value = mock_video_response
-            mock_mime.return_value = "image/jpeg"
 
             response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
@@ -834,8 +830,8 @@ class TestVideoTargetEdgeCases:
             input_ref = call_kwargs["input_reference"]
             assert input_ref[2] == "image/jpeg"
 
-    async def test_image_to_video_with_webp_uses_guess_type_fallback(self, video_target: OpenAIVideoTarget):
-        """Test image-to-video correctly identifies .webp via guess_type fallback."""
+    async def test_image_to_video_with_webp_uses_explicit_mapping(self, video_target: OpenAIVideoTarget):
+        """Test image-to-video correctly identifies .webp via the explicit mapping."""
         conversation_id = str(uuid.uuid4())
         msg_text = MessagePiece(
             role="user",
@@ -873,20 +869,14 @@ class TestVideoTargetEdgeCases:
                 video_target._async_client.videos, "download_content", new_callable=AsyncMock
             ) as mock_download,
             patch("pyrit.prompt_target.openai.openai_video_target.data_serializer_factory") as mock_factory,
-            patch("pyrit.prompt_target.openai.openai_video_target.DataTypeSerializer.get_mime_type") as mock_mime,
-            patch(
-                "pyrit.prompt_target.openai.openai_video_target.guess_type",
-                return_value=("image/webp", None),
-            ),
         ):
             mock_factory.side_effect = [mock_image_serializer, mock_serializer]
             mock_create.return_value = mock_video
             mock_download.return_value = mock_video_response
-            mock_mime.return_value = None  # strict=True returns None for .webp
 
             response = await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 
-            # Verify webp MIME type is correctly resolved via guess_type fallback
+            # Verify webp MIME type is correctly resolved via the explicit mapping
             call_kwargs = mock_create.call_args.kwargs
             input_ref = call_kwargs["input_reference"]
             assert input_ref[2] == "image/webp"
@@ -913,11 +903,11 @@ class TestVideoTargetEdgeCases:
 
         with (
             patch("pyrit.prompt_target.openai.openai_video_target.data_serializer_factory") as mock_factory,
-            patch("pyrit.prompt_target.openai.openai_video_target.DataTypeSerializer.get_mime_type") as mock_mime,
+            patch("pyrit.prompt_target.openai.openai_video_target.get_mime_type") as mock_mime,
             pytest.raises(ValueError, match="Unsupported image format"),
         ):
             mock_factory.return_value = mock_image_serializer
-            mock_mime.return_value = None  # MIME type cannot be determined
+            mock_mime.return_value = None
 
             await video_target.send_prompt_async(message=Message(message_pieces=[msg_text, msg_image]))
 

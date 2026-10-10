@@ -28,16 +28,29 @@ Inline configs (``seeds=`` / ``seed_groups=``) never touch memory.
 from __future__ import annotations
 
 import random
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
+from pyrit.common import forward_init_parameters
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, Seed, SeedGroup, group_seeds_into_attack_groups
+from pyrit.models import (
+    AllAvailableDatasetSize,
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    IndeterminateDatasetSize,
+    ScenarioDatasetSizeEstimate,
+    Seed,
+    SeedGroup,
+    group_seeds_into_attack_groups,
+    scenario_dataset_size_from_limit,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Sequence
 
     from pyrit.memory import MemoryInterface
 
@@ -48,6 +61,17 @@ INLINE_DATASET_NAME = "inline"
 
 # Internal helper TypeVar for size-capping any homogeneous list.
 _ItemT = TypeVar("_ItemT")
+_AUTO_FETCH_ALLOWED: ContextVar[bool] = ContextVar("dataset_auto_fetch_allowed", default=True)
+
+
+@contextmanager
+def read_only_dataset_resolution() -> Generator[None, None, None]:
+    """Disable dataset auto-fetch persistence within the current async context."""
+    token = _AUTO_FETCH_ALLOWED.set(False)
+    try:
+        yield
+    finally:
+        _AUTO_FETCH_ALLOWED.reset(token)
 
 
 class DatasetSourceKind(Enum):
@@ -392,6 +416,37 @@ class DatasetConfiguration:
         """
         return dict(self._filters)
 
+    def get_size_budget(self) -> ScenarioDatasetSizeEstimate:
+        """Return the configured selection budget without reading or sampling seeds."""
+        return scenario_dataset_size_from_limit(self.max_dataset_size)
+
+    def validate_configuration(self) -> None:
+        """
+        Check parameter constraints without resolving dataset contents.
+
+        Raises:
+            DatasetConstraintError: If the selection cap is not positive.
+        """
+        if self.max_dataset_size is not None and self.max_dataset_size < 1:
+            raise DatasetConstraintError("'max_dataset_size' must be a positive integer (>= 1).")
+
+    def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
+        """
+        Describe configured caps for each named dataset or inline source.
+
+        Returns:
+            dict[str, list[tuple[str, int, Literal]]]: Source name to ordered
+            ``(cap label, count, provenance)`` entries.
+        """
+        if self.max_dataset_size is None:
+            return {}
+        names = self.dataset_names or [INLINE_DATASET_NAME]
+        if len(names) == 1:
+            cap = ("per-dataset cap", self.max_dataset_size, "dataset")
+        else:
+            cap = ("combined configuration cap", self.max_dataset_size, "configuration")
+        return {name: [cap] for name in names}
+
     @property
     def _get_seeds_filters(self) -> dict[str, Any]:
         """
@@ -454,25 +509,28 @@ class DatasetConfiguration:
             DatasetConstraintError: If the dataset yields no seeds even after auto-fetch, or
                 if auto-fetch itself fails (the provider error is chained as the cause).
         """
-        found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
-        if not found and self._auto_fetch:
+        found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
+        auto_fetch_allowed = self._auto_fetch and _AUTO_FETCH_ALLOWED.get()
+        if not found and auto_fetch_allowed:
             try:
                 await self._fetch_dataset_async(dataset_name=dataset_name)
             except Exception as exc:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' could not be loaded: auto-fetch from the registered provider failed."
                 ) from exc
-            found = list(self._memory.get_seeds(dataset_name=dataset_name, **self._get_seeds_filters))
+            found = list(await self._memory.get_seeds_async(dataset_name=dataset_name, **self._get_seeds_filters))
         if not found:
-            if self._filters and self._memory.get_seeds(dataset_name=dataset_name):
+            unfiltered = await self._memory.get_seeds_async(dataset_name=dataset_name) if self._filters else []
+            if unfiltered:
                 raise DatasetConstraintError(
                     f"Dataset '{dataset_name}' has seeds, but none match the configured filters {self._filters}."
                 )
-            hint = (
-                "auto-fetch from the registered provider did not populate it"
-                if self._auto_fetch
-                else "auto_fetch is disabled"
-            )
+            if auto_fetch_allowed:
+                hint = "auto-fetch from the registered provider did not populate it"
+            elif self._auto_fetch:
+                hint = "auto_fetch is disabled for read-only resolution"
+            else:
+                hint = "auto_fetch is disabled"
             raise DatasetConstraintError(
                 f"Dataset '{dataset_name}' could not be loaded: no seeds found in memory and {hint}."
             )
@@ -557,6 +615,18 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     (e.g. synthesizing a per-prompt objective). The default regroups by
     ``prompt_group_id`` via ``group_seeds_into_attack_groups``.
     """
+
+    @forward_init_parameters
+    def __init__(self, *, max_dataset_size: int | None = 5, **kwargs: Any) -> None:
+        """
+        Configure scenario attack groups with a finite default selection cap.
+
+        Args:
+            max_dataset_size (int | None): Maximum selected attack groups. Defaults to 5;
+                explicit None retains the full population.
+            **kwargs (Any): Dataset source, filters, and validation options.
+        """
+        super().__init__(max_dataset_size=max_dataset_size, **kwargs)
 
     def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
         """
@@ -644,6 +714,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
                 dataset fails validation, or no attack groups could be built.
         """
+        self.validate_configuration()
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
         groups = [group for groups in groups_by_dataset.values() for group in groups]
@@ -680,6 +751,7 @@ class DatasetAttackConfiguration(DatasetConfiguration):
             DatasetConstraintError: If a configured dataset yields no seeds, the resolved
                 dataset fails validation, or no attack groups could be built.
         """
+        self.validate_configuration()
         groups_by_dataset, resolved = await self._build_groups_by_dataset_async()
         self.validate(resolved)
         sampled = self._sample_groups_by_dataset(groups_by_dataset) if apply_sampling else groups_by_dataset
@@ -757,7 +829,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         cls,
         *,
         dataset_names: Sequence[str],
-        max_dataset_size: int | None = None,
+        max_dataset_size: int | None = 5,
         auto_fetch: bool = True,
         filters: dict[str, list[str]] | None = None,
         validators: Sequence[Callable[[ResolvedDataset], None]] | None = None,
@@ -771,6 +843,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         Args:
             dataset_names (Sequence[str]): The dataset names; one child is built per name.
             max_dataset_size (int | None): Per-dataset cap applied to each child.
+                Defaults to 5; pass None for unlimited children.
             auto_fetch (bool): Passed to each child (fetch missing datasets into memory).
             filters (dict[str, list[str]] | None): ``get_seeds`` filters applied to each child.
             validators (Sequence[Callable[[ResolvedDataset], None]] | None): Applied to each child.
@@ -823,6 +896,48 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             return DatasetSourceKind.INLINE
         return DatasetSourceKind.MEMORY
 
+    def get_size_budget(self) -> ScenarioDatasetSizeEstimate:
+        """
+        Combine child budgets and apply the optional overall cap without reading seeds.
+
+        Returns:
+            ScenarioDatasetSizeEstimate: A combined upper limit, or all available finite data.
+        """
+        budgets = [child.get_size_budget() for child in self._configurations]
+        for budget in budgets:
+            if isinstance(budget, IndeterminateDatasetSize):
+                return budget
+        if not all(isinstance(budget, BoundedDatasetSize) for budget in budgets):
+            if self.max_dataset_size is not None:
+                return BoundedDatasetSize(value=self.max_dataset_size)
+            return AllAvailableDatasetSize()
+        total = sum(budget.value for budget in budgets if isinstance(budget, BoundedDatasetSize))
+        return BoundedDatasetSize(
+            value=min(total, self.max_dataset_size) if self.max_dataset_size is not None else total
+        )
+
+    def validate_configuration(self) -> None:
+        """Check the compound and every child without resolving dataset contents."""
+        super().validate_configuration()
+        for child in self._configurations:
+            child.validate_configuration()
+
+    def size_caps_by_dataset(self) -> dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]]:
+        """
+        Describe child and combined caps for every contributed dataset.
+
+        Returns:
+            dict[str, list[tuple[str, int, Literal]]]: Ordered cap labels, counts, and provenance by source.
+        """
+        caps: dict[str, list[tuple[str, int, Literal["dataset", "configuration", "compound"]]]] = {}
+        for child in self._configurations:
+            for name, child_caps in child.size_caps_by_dataset().items():
+                caps.setdefault(name, []).extend(child_caps)
+        if self.max_dataset_size is not None:
+            for name in self.dataset_names or [INLINE_DATASET_NAME]:
+                caps.setdefault(name, []).append(("combined compound cap", self.max_dataset_size, "compound"))
+        return caps
+
     def update_filters(self, *, filters: dict[str, list[str]]) -> None:
         """
         Merge filters into the compound and propagate them to every child configuration.
@@ -856,6 +971,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
+        self.validate_configuration()
         groups: list[AttackSeedGroup] = []
         for child in self._configurations:
             groups.extend(await child.get_attack_seed_groups_async(apply_sampling=apply_sampling))
@@ -879,6 +995,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         Raises:
             DatasetConstraintError: If a child yields nothing, or the combined result fails validation.
         """
+        self.validate_configuration()
         merged: dict[str, list[AttackSeedGroup]] = {}
         for child in self._configurations:
             child_groups = await child.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)

@@ -5,8 +5,9 @@
 Tests for the shared registry constructor-argument resolution primitive.
 """
 
+from collections.abc import Callable
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -21,6 +22,7 @@ from pyrit.registry.resolution import (
     _registry_getter_for_component_type,
     derive_parameters,
     display_choices,
+    reject_non_external_params,
     resolve_constructor_args,
 )
 
@@ -260,6 +262,149 @@ class TestResolveConstructorArgs:
             _resolve(_NeedsTarget, {"converter_target": "missing"}, identifier_type=ConverterIdentifier)
 
 
+class _Handle:
+    """A Python object no external caller can supply."""
+
+
+class _Mixed:
+    """Helper whose constructor mixes external inputs with Python-object parameters."""
+
+    def __init__(
+        self,
+        *,
+        count: int = 1,
+        words: list[str] | None = None,
+        key: str | Callable[[], str] | None = None,
+        handle: _Handle | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        self.count = count
+        self.words = words
+        self.key = key
+        self.handle = handle
+        self.options = options
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestExternalInput:
+    """The external path accepts only supported inputs; the in-process path is unchanged."""
+
+    def test_external_accepts_supported_inputs(self) -> None:
+        raw_args: dict[str, object] = {"count": "3", "words": ["a", "b"], "key": "secret"}
+
+        resolved = resolve_constructor_args(cls=_Mixed, raw_args=raw_args, external_input=True)
+
+        assert resolved == {"count": 3, "words": ["a", "b"], "key": "secret"}
+
+    @pytest.mark.parametrize("raw_args", [{"handle": {}}, {"handle": None}, {"options": {"a": 1}}])
+    def test_external_rejects_parameters_that_take_python_objects(self, raw_args: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            resolve_constructor_args(cls=_Mixed, raw_args=raw_args, external_input=True)
+
+    def test_external_still_rejects_unknown_parameters(self) -> None:
+        with pytest.raises(ValueError, match="Unknown parameter 'nope'"):
+            resolve_constructor_args(cls=_Mixed, raw_args={"nope": 1}, external_input=True)
+
+    def test_in_process_callers_keep_passing_python_objects(self) -> None:
+        handle = _Handle()
+        options = {"dtype": object()}
+
+        resolved = _resolve(_Mixed, {"handle": handle, "options": options, "key": print})
+
+        assert resolved["handle"] is handle
+        assert resolved["options"] is options
+        assert resolved["key"] is print
+
+    def test_external_values_of_supported_parameters_reach_the_constructor(self) -> None:
+        assert resolve_constructor_args(cls=_Mixed, raw_args={"words": "a, b"}, external_input=True) == {
+            "words": "a, b"
+        }
+
+    @pytest.mark.parametrize("value", [{"name": "my_target"}, 5, True])
+    def test_external_reference_must_be_a_name(self, target_registry: TargetRegistry, value: object) -> None:
+        with pytest.raises(ValueError, match="expected a registry name"):
+            resolve_constructor_args(
+                cls=_NeedsTarget,
+                raw_args={"converter_target": value},
+                identifier_type=ConverterIdentifier,
+                external_input=True,
+            )
+
+    def test_external_list_reference_must_be_names(self, target_registry: TargetRegistry) -> None:
+        with pytest.raises(ValueError, match="expected a registry name"):
+            resolve_constructor_args(
+                cls=_NeedsTargets,
+                raw_args={"targets": ["my_target", {"name": "x"}]},
+                identifier_type=TargetIdentifier,
+                external_input=True,
+            )
+
+        resolved = resolve_constructor_args(
+            cls=_NeedsTargets,
+            raw_args={"targets": ["my_target"]},
+            identifier_type=TargetIdentifier,
+            external_input=True,
+        )
+        assert resolved["targets"] == [target_registry.instances.get("my_target")]
+
+    def test_external_reference_resolves_name(self, target_registry: TargetRegistry) -> None:
+        resolved = resolve_constructor_args(
+            cls=_NeedsTarget,
+            raw_args={"converter_target": "my_target"},
+            identifier_type=ConverterIdentifier,
+            external_input=True,
+        )
+
+        assert resolved["converter_target"] is target_registry.instances.get("my_target")
+
+    def test_reject_non_external_params_checks_names_and_references(self) -> None:
+        declared = derive_parameters(cls=_Mixed)
+        reference = derive_parameters(cls=_NeedsTarget, identifier_type=ConverterIdentifier)
+
+        reject_non_external_params(params={"count": 1, "key": "k"}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="'handle' of 'demo' cannot be set through the API"):
+            reject_non_external_params(params={"handle": None}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="Unknown parameter 'unknown' for 'demo'"):
+            reject_non_external_params(params={"unknown": None}, declared=declared, owner="demo")
+        with pytest.raises(ValueError, match="demo.converter_target: expected a registry name"):
+            reject_non_external_params(params={"converter_target": {"name": "x"}}, declared=reference, owner="demo")
+
+    @pytest.mark.parametrize(
+        ("registry_type", "identifier_type", "type_name", "raw_args"),
+        [
+            (TargetRegistry, TargetIdentifier, "TextTarget", {"custom_configuration": {}}),
+            (TargetRegistry, TargetIdentifier, "OpenAIChatTarget", {"httpx_client_kwargs": {"timeout": 5}}),
+            (ConverterRegistry, ConverterIdentifier, "TextJailbreakConverter", {"jailbreak_template": "x"}),
+            (ConverterRegistry, ConverterIdentifier, "PDFConverter", {"font_color": [1, 2, 3]}),
+        ],
+    )
+    def test_registered_components_reject_object_parameters_from_external_input(
+        self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
+    ) -> None:
+        cls = registry_type.get_registry_singleton().get_class(type_name)
+
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type, external_input=True)
+
+    @pytest.mark.parametrize(
+        ("registry_type", "identifier_type", "type_name", "raw_args"),
+        [
+            (TargetRegistry, TargetIdentifier, "OpenAIChatTarget", {"api_key": "key", "temperature": 0.5}),
+            (ConverterRegistry, ConverterIdentifier, "SearchReplaceConverter", {"pattern": "a", "replace": "b"}),
+        ],
+    )
+    def test_registered_components_accept_string_inputs_from_external_input(
+        self, registry_type: type, identifier_type: type, type_name: str, raw_args: dict[str, object]
+    ) -> None:
+        cls = registry_type.get_registry_singleton().get_class(type_name)
+
+        resolved = resolve_constructor_args(
+            cls=cls, raw_args=raw_args, identifier_type=identifier_type, external_input=True
+        )
+
+        assert resolved == raw_args
+
+
 class TestDeriveParameters:
     """Tests for deriving the Parameter contract from a constructor signature."""
 
@@ -269,9 +414,10 @@ class TestDeriveParameters:
         assert params["ratio"].default == 0.5
         assert params["count"].param_type is int
 
-    def test_optional_unwrapped(self) -> None:
+    def test_optional_annotation_preserved(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
-        assert params["note"].param_type is str
+        assert params["note"].param_type == str | None
+        assert params["note"].type_name == "str"
 
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}

@@ -12,11 +12,17 @@ from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    ComponentIdentifier,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import BaselineAttackPolicy
+from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.scenario.core import BaselineAttackPolicy, DatasetAttackConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.scenarios.airt.jailbreak import (
     _DEFAULT_NUM_JAILBREAKS,
@@ -41,13 +47,7 @@ def _technique_class():
 
 @pytest.fixture(autouse=True)
 def reset_technique_registry():
-    """Populate the attack-technique registry so the dynamic technique class can be built.
-
-    Mirrors the RapidResponse test setup: reset the registries, register a mock adversarial
-    target (so factory construction does not fall back to a real target), and register the core
-    technique factories. The build cache is cleared around each test so the class reflects the
-    freshly-registered factories.
-    """
+    """Populate the attack-technique registry used by the shared matrix factory resolver."""
     AttackTechniqueRegistry.reset_registry_singleton()
     TargetRegistry.reset_registry_singleton()
     _build_jailbreak_technique.cache_clear()
@@ -182,6 +182,13 @@ class TestJailbreakInitialization:
         assert names == {"num_jailbreaks", "num_jailbreak_attempts", "jailbreak_names"}
         assert set(names).issubset({p.name for p in Jailbreak.supported_parameters()})
 
+    @pytest.mark.parametrize("num_attempts", [0, -1])
+    def test_rejects_non_positive_num_jailbreak_attempts(self, mock_objective_scorer, num_attempts: int) -> None:
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+
+        with pytest.raises(ValueError, match="num_jailbreak_attempts must be at least 1"):
+            scenario.set_params_from_args(args={"num_jailbreak_attempts": num_attempts})
+
     async def test_default_draws_random_template_sample(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
@@ -201,6 +208,111 @@ class TestJailbreakInitialization:
             scenario.set_params_from_args(args=_default_args(mock_objective_target, num_jailbreaks=3))
             await scenario.initialize_async()
             assert len(scenario._resolved_jailbreaks) == 3
+
+    async def test_run_size_prompt_sending_two_templates_four_groups_is_eight(
+        self, mock_objective_target, mock_objective_scorer
+    ) -> None:
+        """The launch-aligned GUI selection has exactly eight persisted outer units."""
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective {index}")]) for index in range(4)]
+        technique_class = _build_jailbreak_technique()
+        with _patch_seed_groups(seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [technique_class(_PROMPT_SENDING)],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                    "num_jailbreak_attempts": 1,
+                }
+            )
+
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+        assert estimate.estimated_attack_count == 8
+        assert [component.label for component in estimate.components] == ["Inline jailbreak delivery"]
+        assert estimate.datasets[0].logical_seed_group_count is None
+        assert estimate.datasets[0].selected_seed_group_count is None
+        assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [("per-dataset cap", 4)]
+
+    async def test_run_size_is_conditional_when_system_delivery_target_is_not_selected(
+        self, mock_objective_scorer
+    ) -> None:
+        """The default system-prompt axis does not claim a total before target capability is known."""
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+        technique_class = _build_jailbreak_technique()
+        with _patch_seed_groups(seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "scenario_techniques": [technique_class("default")],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
+        assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count == 16
+        assert [component.label for component in estimate.components] == [
+            "Inline jailbreak delivery",
+            "Native system-prompt jailbreak delivery",
+        ]
+        assert "native system-prompt delivery is supported" in (estimate.note or "")
+
+    async def test_system_only_run_size_excludes_incompatible_target_outcome(self, mock_objective_scorer) -> None:
+        """The targetless upper bound does not imply that the dataset fills its cap."""
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+        technique_class = _build_jailbreak_technique()
+        with _patch_seed_groups(seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "scenario_techniques": [technique_class(_JAILBREAK_SYSTEM_PROMPT)],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
+
+        assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count == 8
+        assert "incompatible targets cannot run it" in (estimate.note or "")
+
+    @pytest.mark.parametrize("supports_system", [False, True])
+    async def test_conditional_estimate_does_not_use_cap_as_minimum_async(
+        self,
+        *,
+        mock_objective_scorer: TrueFalseInverterScorer,
+        mock_objective_target: PromptTarget,
+        supports_system: bool,
+    ) -> None:
+        scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+        args = {
+            "scenario_techniques": [_technique_class()("default")],
+            "include_baseline": False,
+            "num_jailbreaks": 1,
+            "dataset_config": DatasetAttackConfiguration(
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="one objective")])],
+                max_dataset_size=5,
+            ),
+        }
+        scenario.set_params_from_args(args=args)
+        estimate = await scenario.get_run_size_estimate_async()
+        assert estimate.estimated_attack_count is None
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count == 10
+        assert [component.count for component in estimate.components] == [5, 5]
+
+        mock_objective_target.configuration.includes.return_value = supports_system
+        scenario.set_params_from_args(args={**args, "objective_target": mock_objective_target})
+        await scenario.initialize_async()
+        plan = scenario._build_run_plan()
+        actual_count = sum(len(group.seed_group_ids) for group in plan.atomic_groups)
+        assert actual_count == (2 if supports_system else 1)
+        assert actual_count <= estimate.maximum_attack_count
 
     async def test_mutually_exclusive_selectors_raise(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
@@ -309,9 +421,8 @@ class TestJailbreakAttackGeneration:
         """The crux: the jailbreak template reaches the target as a ``TextJailbreakConverter`` on
         the technique's outgoing requests (not as prepended framing on the seed group).
 
-        Delivery via ``factory.create(extra_request_converters=...)`` is what keeps the scenario
-        target-agnostic and composable with every technique. Also assert the seed groups carry no
-        prepended jailbreak framing.
+        Delivery via ``factory.create(extra_request_converters=...)`` keeps the prompt-sending path
+        target-agnostic. Also assert the seed groups carry no prepended jailbreak framing.
         """
         captured: list[Any] = []
         original_create = AttackTechniqueFactory.create
@@ -328,9 +439,7 @@ class TestJailbreakAttackGeneration:
 
             assert captured, "Expected factory.create to be called"
             converters = [c for extra in captured if extra for cc in extra for c in cc.converters]
-            assert any(isinstance(c, TextJailbreakConverter) for c in converters), (
-                "Expected a TextJailbreakConverter to be threaded to factory.create"
-            )
+            assert sum(isinstance(c, TextJailbreakConverter) for c in converters) == 1
 
             # The objective seed groups themselves carry no jailbreak framing (converter delivery only).
             for attack in scenario._atomic_attacks:
@@ -376,49 +485,25 @@ class TestJailbreakAttackGeneration:
                 "Jailbreak converter must be applied before caller-supplied converters"
             )
 
-    async def test_simulated_conversation_techniques_produce_attacks_with_jailbreak(
+    async def test_stale_incompatible_technique_is_rejected(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
     ):
-        """Regression: simulated-conversation techniques (``role_play_*``, ``crescendo_*``) must still
-        produce atomic attacks when crossed with a jailbreak template, and each must receive the
-        jailbreak converter.
-
-        Converter delivery leaves the objective seed group unframed, so it stays compatible with the
-        simulated-conversation seed technique. (Delivering the jailbreak as a system-role framing seed
-        instead collided with that technique's seed range and silently produced zero attacks.)
-        """
-        technique_class = _build_jailbreak_technique()
-        techniques = [
-            technique_class("role_play_movie_script"),
-            technique_class("crescendo_simulated"),
-        ]
-        captured: list[Any] = []
-        original_create = AttackTechniqueFactory.create
-
-        def _spy_create(self, **kwargs):
-            captured.append(kwargs.get("extra_request_converters"))
-            return original_create(self, **kwargs)
-
+        registry_factories = list(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise().values())
+        legacy_class = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="LegacyJailbreakTechnique",
+            factories=registry_factories,
+        )
         with _patch_seed_groups(mock_memory_seed_groups):
-            with patch.object(AttackTechniqueFactory, "create", _spy_create):
-                scenario = Jailbreak(objective_scorer=mock_objective_scorer)
-                scenario.set_params_from_args(
-                    args=_default_args(
-                        mock_objective_target, scenario_techniques=techniques, jailbreak_names=["aim.yaml"]
-                    )
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_objective_target,
+                    scenario_techniques=[legacy_class("tap")],
+                    jailbreak_names=["aim.yaml"],
                 )
+            )
+            with pytest.raises(ValueError, match="stale or incompatible"):
                 await scenario.initialize_async()
-            names = {a.atomic_attack_name for a in scenario._atomic_attacks}
-            assert "role_play_movie_script_aim_harmbench" in names
-            assert "crescendo_simulated_aim_harmbench" in names
-            # Every build of a simulated-conversation technique must still carry the jailbreak
-            # converter. Assert both techniques captured a non-empty converter stack (so the check
-            # can't pass vacuously on a dropped/None stack) and each contains the jailbreak converter.
-            populated = [extra for extra in captured if extra]
-            assert len(populated) == 2, "Expected both simulated-conversation techniques to receive converters"
-            assert all(
-                any(isinstance(c, TextJailbreakConverter) for cc in extra for c in cc.converters) for extra in populated
-            ), "Each simulated-conversation technique must receive the jailbreak converter"
 
     async def test_all_templates_produce_attacks(
         self, mock_objective_target, mock_objective_scorer, mock_memory_seed_groups
@@ -617,7 +702,7 @@ class TestJailbreakSystemPromptDelivery:
             await scenario.initialize_async()
             await scenario._atomic_attacks[0].run_async()
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces()
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async()
         system_values = [p.converted_value for p in pieces if p.role == "system"]
         user_values = [p.converted_value for p in pieces if p.role == "user"]
         objectives = {g.objective.value for g in mock_memory_seed_groups}
@@ -662,7 +747,7 @@ class TestJailbreakSystemPromptDelivery:
             # Must not raise a same-sequence role collision.
             await scenario._atomic_attacks[0].run_async()
 
-        pieces = CentralMemory.get_memory_instance().get_message_pieces()
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async()
         system_values = [p.converted_value for p in pieces if p.role == "system"]
         user_values = [p.converted_value for p in pieces if p.role == "user"]
         assert any("Niccolo" in v for v in system_values), "jailbreak framing not delivered as a system prompt"
@@ -694,8 +779,8 @@ class TestJailbreakResumePersistence:
             persisted = ["persisted_a.yaml", "persisted_b.yaml"]
             stored = MagicMock()
             stored.metadata = {_JAILBREAK_TEMPLATES_METADATA_KEY: persisted}
-            with patch.object(scenario._memory, "get_scenario_results", return_value=[stored]):
-                assert scenario._resolve_templates() == persisted
+            with patch.object(scenario._memory, "get_scenario_results_async", return_value=[stored]):
+                assert (await scenario._resolve_templates_async()) == persisted
 
 
 @pytest.mark.usefixtures(*FIXTURES)
@@ -708,15 +793,17 @@ class TestJailbreakTechniqueModel:
         assert default_values == set(_DEFAULT_TECHNIQUES)
         assert default_values == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
 
-    def test_registry_techniques_are_available(self):
+    def test_only_scenario_delivery_techniques_are_available(self):
         technique_class = _technique_class()
         available = {t.value for t in technique_class.get_all_techniques()}
-        assert {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}.issubset(available)
-        # The "normal ones available like from rapid response" are exposed as opt-in techniques.
-        assert {"role_play_movie_script", "many_shot", "tap"}.issubset(available)
+        assert available == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
 
-    def test_scenario_version_is_three(self):
-        assert Jailbreak.VERSION == 3
+    def test_registry_metadata_lists_only_scenario_deliveries(self):
+        metadata = ScenarioRegistry()._build_metadata("airt.jailbreak", Jailbreak)
+        assert set(metadata.all_techniques) == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
+
+    def test_scenario_version_is_four(self):
+        assert Jailbreak.VERSION == 4
 
     def test_default_dataset_is_harmbench(self):
         assert Jailbreak.required_datasets() == ["harmbench"]

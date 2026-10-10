@@ -71,11 +71,11 @@ class TestCapabilityHandlingPolicy:
     def test_capability_handling_policy_rejects_capability_without_policy(self):
         policy = CapabilityHandlingPolicy()
 
-        with pytest.raises(KeyError, match="No policy for capability 'supports_editable_history'"):
-            policy.get_behavior(capability=CapabilityName.EDITABLE_HISTORY)
+        with pytest.raises(KeyError, match="No policy for capability 'supports_multi_message_pieces'"):
+            policy.get_behavior(capability=CapabilityName.MULTI_MESSAGE_PIECES)
 
-        with pytest.raises(AttributeError, match="supports_editable_history"):
-            _ = policy.supports_editable_history
+        with pytest.raises(AttributeError, match="supports_multi_message_pieces"):
+            _ = policy.supports_multi_message_pieces
 
     def test_capability_handling_policy_rejects_unknown_attribute(self):
         policy = CapabilityHandlingPolicy()
@@ -88,6 +88,7 @@ class TestCapabilityHandlingPolicy:
             frozenset(
                 {
                     CapabilityName.MULTI_TURN,
+                    CapabilityName.EDITABLE_HISTORY,
                     CapabilityName.SYSTEM_PROMPT,
                     CapabilityName.JSON_SCHEMA,
                 }
@@ -515,7 +516,16 @@ class TestGetDefaultConfiguration:
         cls = self._make_target_class(default_config=custom_config)
         result = cls.get_default_configuration("gpt-4o")
         expected = get_known_capabilities("gpt-4o")
-        assert result.capabilities == expected
+        assert expected is not None
+        assert result.capabilities == expected.model_copy(
+            update={
+                "input_modalities": frozenset(
+                    combo
+                    for combo in expected.input_modalities
+                    if not combo & {"function_call", "function_call_output"}
+                )
+            }
+        )
 
     def test_returns_class_default_and_warns_when_model_is_unrecognized(self):
         custom_config = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))

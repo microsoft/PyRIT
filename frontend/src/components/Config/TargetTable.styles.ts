@@ -1,10 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import {
-  TOUCH_INPUT_QUERY,
-  MINIMUM_TOUCH_TARGET_SIZE,
-  mobileTouchTarget,
-  mobileTouchTargetHeight,
-} from '../../styles/touchTargets'
+import { mobileTouchTarget } from '../../styles/touchTargets'
 
 export const useTargetTableStyles = makeStyles({
   tableContainer: {
@@ -23,8 +18,39 @@ export const useTargetTableStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     zIndex: 1,
   },
-  activeRow: {
+  defaultRow: {
     backgroundColor: tokens.colorBrandBackground2,
+  },
+  defaultsSummary: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+    width: '100%',
+    maxWidth: '32rem',
+    minWidth: 0,
+  },
+  defaultsDivider: {
+    marginTop: tokens.spacingVerticalXL,
+    marginBottom: tokens.spacingVerticalXL,
+  },
+  defaultIndicators: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalXS,
+    marginTop: tokens.spacingVerticalXXS,
+  },
+  registryNameCell: {
+    minWidth: 0,
+  },
+  registryNameText: {
+    display: 'block',
+    maxWidth: '100%',
+    whiteSpace: 'normal',
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  },
+  hiddenRow: {
+    backgroundColor: tokens.colorNeutralBackground2,
   },
   endpointCell: {
     overflowWrap: 'break-word',
@@ -80,24 +106,20 @@ export const useTargetTableStyles = makeStyles({
   helpHeader: {
     cursor: 'help',
   },
-  filterRow: {
-    display: 'flex',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    minWidth: 0,
+  visibilityControls: {
     marginBottom: tokens.spacingVerticalS,
-    gap: tokens.spacingHorizontalS,
   },
-  filterSelect: {
-    flex: '1 1 12.5rem',
-    minWidth: 0,
-    maxWidth: '20rem',
-    ...mobileTouchTargetHeight,
-    '& > select': {
-      [TOUCH_INPUT_QUERY]: {
-        minHeight: MINIMUM_TOUCH_TARGET_SIZE,
-      },
-    },
+  noMatchState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: tokens.spacingVerticalM,
+    padding: tokens.spacingVerticalXXXL,
+    textAlign: 'center',
+    color: tokens.colorNeutralForeground3,
+  },
+  actionCell: {
+    width: '100px',
   },
   rowAction: {
     ...mobileTouchTarget,

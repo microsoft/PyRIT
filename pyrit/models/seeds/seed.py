@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
 from jinja2 import StrictUndefined, Undefined
@@ -20,6 +20,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,7 +49,7 @@ def _ensure_aware_utc(value: Any) -> Any:
         except ValueError:
             return value
     if isinstance(value, datetime) and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+        return value.replace(tzinfo=UTC)
     return value
 
 
@@ -121,6 +122,8 @@ class Seed(BaseModel):
     # Name of the dataset this prompt belongs to
     dataset_name: str | None = None
 
+    origin: SeedOrigin = SeedOrigin.UNKNOWN
+
     # Categories of harm associated with this prompt
     harm_categories: list[str] | None = Field(default_factory=list)
 
@@ -137,7 +140,7 @@ class Seed(BaseModel):
     source: str | None = None
 
     # Date when the prompt was added to the dataset
-    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    date_added: AwareDatetimeUTC | None = Field(default_factory=lambda: datetime.now(tz=UTC))
 
     # User who added the prompt to the dataset
     added_by: str | None = None

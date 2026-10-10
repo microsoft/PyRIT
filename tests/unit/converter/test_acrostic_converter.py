@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 
+import pytest
+
 from pyrit.converter import AcrosticConverter, ConverterResult
 
 
@@ -37,18 +39,53 @@ async def test_acrostic_round_trip():
     assert decoded.lower() == message.lower()
 
 
-async def test_acrostic_ignores_non_alpha_except_space():
+@pytest.mark.parametrize("message", ["a1 b!", "—␠", "a\tb\nc\u2003", "café", "Straße", "ﬃ", "ⅰⓐ"])
+async def test_acrostic_round_trip_preserves_mixed_characters(message: str):
     converter = AcrosticConverter()
-    result = await converter.convert_async(prompt="a1 b!", input_type="text")
-    # Only 'a', space, 'b' are encoded; digits/punctuation are dropped.
+    result = await converter.convert_async(prompt=message, input_type="text")
     decoded = AcrosticConverter.decode(result.output_text)
-    assert decoded.lower() == "a b"
+    expected = "".join(ch.upper() if ch.isalpha() else ch for ch in message)
+    assert decoded == expected
+
+
+async def test_acrostic_round_trip_preserves_unicode_uppercase_expansions():
+    converter = AcrosticConverter()
+    for codepoint in range(0x110000):
+        message = chr(codepoint)
+        if 0xD800 <= codepoint <= 0xDFFF or not message.isalpha() or len(message.upper()) == 1:
+            continue
+        result = await converter.convert_async(prompt=message, input_type="text")
+        decoded = AcrosticConverter.decode(result.output_text)
+        assert decoded == message.upper(), f"Failed to round-trip U+{codepoint:04X}"
+
+
+async def test_acrostic_round_trip_preserves_non_alpha_uppercase_mappings():
+    converter = AcrosticConverter()
+    for codepoint in range(0x110000):
+        message = chr(codepoint)
+        if 0xD800 <= codepoint <= 0xDFFF or message.isalpha() or message.upper() == message:
+            continue
+        result = await converter.convert_async(prompt=message, input_type="text")
+        decoded = AcrosticConverter.decode(result.output_text)
+        assert decoded == message, f"Failed to preserve U+{codepoint:04X}"
+
+
+async def test_acrostic_round_trip_empty_prompt():
+    converter = AcrosticConverter()
+    result = await converter.convert_async(prompt="", input_type="text")
+    assert AcrosticConverter.decode(result.output_text) == ""
 
 
 async def test_acrostic_custom_instruction():
     converter = AcrosticConverter(instruction="CUSTOM HEADER")
     result = await converter.convert_async(prompt="hi", input_type="text")
     assert result.output_text.startswith("CUSTOM HEADER")
+
+
+async def test_acrostic_round_trip_with_multi_paragraph_instruction():
+    converter = AcrosticConverter(instruction="CUSTOM HEADER\n\nSECOND PARAGRAPH")
+    result = await converter.convert_async(prompt="hi", input_type="text")
+    assert AcrosticConverter.decode(result.output_text) == "HI"
 
 
 async def test_acrostic_custom_word_bank():

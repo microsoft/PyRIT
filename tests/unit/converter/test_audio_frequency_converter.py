@@ -2,14 +2,40 @@
 # Licensed under the MIT license.
 
 
+import asyncio
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_frequency_converter import AudioFrequencyConverter
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("stereo", [False, True])
+@pytest.mark.parametrize("shift_value", [0, 2000])
+async def test_frequency_preserves_float_waveform_async(
+    tmp_path: Path, dtype: type[np.floating], stereo: bool, shift_value: int
+) -> None:
+    """A floating-point WAV must keep its amplitude instead of truncating to silence."""
+    samples = np.array([0.5, 0.25, -0.5, -0.25], dtype=dtype)
+    expected = samples if shift_value == 0 else np.array([0.5, 0.0, 0.5, 0.0], dtype=dtype)
+    if stereo:
+        samples = np.column_stack((samples, -samples))
+        expected = np.column_stack((expected, -expected))
+    source = tmp_path / "float.wav"
+    await asyncio.to_thread(wavfile.write, source, 8000, samples)
+
+    result = await AudioFrequencyConverter(shift_value=shift_value).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    assert rate == 8000
+    assert output.dtype == samples.dtype
+    np.testing.assert_allclose(output, expected, atol=1e-7)
 
 
 async def test_convert_async_success(sqlite_instance):

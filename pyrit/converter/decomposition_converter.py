@@ -73,7 +73,8 @@ def _tokens(text: str) -> list[str]:
     Returns:
         list[str]: The lowercase word tokens.
     """
-    return re.findall(r"\w+", text.lower(), flags=re.UNICODE)
+    tokens: list[str] = re.findall(r"\w+", text.lower(), flags=re.UNICODE)
+    return tokens
 
 
 def _token_recall(source: list[str], got: list[str]) -> float:
@@ -231,9 +232,10 @@ class DecompositionConverter(Converter):
             InvalidJsonException: If the response is missing, unparseable, or fails validation.
         """
         conversation_id = str(uuid.uuid4())
-        self._converter_target.set_system_prompt(
-            system_prompt=self._decomposition_prompt.render_template_value(),
-            conversation_id=conversation_id,
+        (
+            await self._converter_target.set_system_prompt_async(
+                system_prompt=self._decomposition_prompt.render_template_value(), conversation_id=conversation_id
+            )
         )
 
         prompt_metadata = JsonResponseConfig(
@@ -291,6 +293,7 @@ class DecompositionConverter(Converter):
         if not isinstance(words, list) or not isinstance(types, list) or not words or len(words) != len(types):
             raise InvalidJsonException(message="response must contain equal-length non-empty 'words' and 'types' lists")
         words = [str(w) for w in words]
+        types = [str(t) for t in types]
         if any(not w.strip() for w in words):
             raise InvalidJsonException(message="every phrase must be non-empty")
         if any(t not in _VALID_TAGS for t in types):

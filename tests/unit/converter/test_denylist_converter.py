@@ -7,6 +7,7 @@ from unit.mocks import MockPromptTarget, get_mock_target_identifier
 
 from pyrit.converter import DenylistConverter
 from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def mock_template():
 
 @pytest.fixture
 def mock_target() -> MockPromptTarget:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[
             MessagePiece(
@@ -44,6 +45,7 @@ def test_prompt_denylist_init_template_provided(sqlite_instance, mock_template) 
     assert converter._system_prompt_template == mock_template
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_denylist_not_provided() -> None:
     converter = DenylistConverter(converter_target=MockPromptTarget(), system_prompt_template=None)
     output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")
@@ -51,6 +53,7 @@ async def test_denylist_not_provided() -> None:
     assert output.output_type == "text"
 
 
+@pytest.mark.usefixtures("patch_central_database")
 async def test_denylist_no_match() -> None:
     converter = DenylistConverter(converter_target=MockPromptTarget(), system_prompt_template=None, denylist=["branch"])
     output = await converter.convert_async(prompt="how to cut down a tree?", input_type="text")

@@ -1,26 +1,40 @@
 import type { RegisteredInitializer } from '@/types'
 
 /**
+ * Lifecycle of the registered-initializer catalog request.
+ *
+ * `loading` — the initial fetch has not settled yet.
+ * `loaded` — the catalog is the current source of truth; lookups that miss
+ *   genuinely mean "no longer registered".
+ * `error` — the catalog fetch (or latest refresh) failed; entries may be
+ *   stale, so catalog-derived metadata must not be rendered and controls
+ *   that depend on the catalog stay disabled.
+ */
+export type CatalogStatus = 'loading' | 'loaded' | 'error'
+
+/**
  * Resolve a settings entry's `initializer_name` to its catalog definition.
  *
- * Settings reference an initializer by name; the catalog (from `listRegistered`)
- * is the single source of truth for display metadata. When a persisted name is no
- * longer registered, return a placeholder so the row still renders.
+ * Returns `undefined` when the name is not in the catalog; callers branch on
+ * the catalog status to decide whether that means "no longer registered"
+ * (`loaded`) or "metadata unavailable" (`error`/`loading`) instead of
+ * rendering synthetic placeholder entries.
  */
-export function resolveRegisteredInitializer(
+export function findRegisteredInitializer(
   initializerName: string,
   registeredInitializers: RegisteredInitializer[],
-): RegisteredInitializer {
-  const match = registeredInitializers.find((item) => item.initializer_name === initializerName)
-  if (match) {
-    return match
-  }
+): RegisteredInitializer | undefined {
+  return registeredInitializers.find((item) => item.initializer_name === initializerName)
+}
 
-  return {
-    initializer_name: initializerName,
-    initializer_type: 'UnknownInitializer',
-    description: 'Initializer is no longer registered.',
-    required_env_vars: [],
-    supported_parameters: [],
-  }
+/**
+ * Description shown for a row whose initializer has no catalog entry.
+ *
+ * Only a settled, successful catalog load can claim "no longer registered";
+ * any other status means the metadata is simply not known yet.
+ */
+export function initializerFallbackDescription(catalogStatus: CatalogStatus): string {
+  return catalogStatus === 'loaded'
+    ? 'Initializer is no longer registered.'
+    : 'Catalog metadata temporarily unavailable.'
 }

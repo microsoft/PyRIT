@@ -30,7 +30,11 @@ When in doubt: if the row reads as "an instruction the red-teamer wants the mode
 Concrete loader classes are private (leading underscore, e.g. `_HarmBenchDataset`) and must implement:
 
 - a `dataset_name` property returning the short snake_case name used by `CentralMemory`,
-- `async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset`.
+- `async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset`.
+
+Return the dataset without setting origin. The base class's public `fetch_dataset_async`
+assigns `SeedOrigin.REMOTE` to every seed, including when reading an explicit source file
+or a cached download. Do not override that public method.
 
 Use the inherited helpers — do not re-implement them:
 
@@ -38,7 +42,9 @@ Use the inherited helpers — do not re-implement them:
 - `await self._fetch_from_huggingface(dataset_name=..., split=..., cache=..., token=...)` for HF Hub,
 - `self._validate_enum(value, EnumCls, "label")` / `self._validate_enums(values, EnumCls, "label")` for enum filter validation.
 
-Local YAML-backed datasets subclass `_LocalDatasetLoader` instead; the conventions below about metadata, enums, and tests still apply.
+Local YAML-backed datasets subclass `_LocalDatasetLoader` instead; shared YAML loading
+assigns `SeedOrigin.LOCAL` when origin is omitted and rejects an explicit conflicting origin.
+The conventions below about metadata, enums, and tests still apply.
 
 ## Document HuggingFace gating and accept a `token`
 
@@ -73,7 +79,7 @@ class _MyDataset(_RemoteDatasetLoader):
     HF_DATASET_NAME: str = "owner/my-dataset"
     harm_categories: list[str] = ["harassment", "violence"]
     modalities: list[str] = ["text"]
-    size: str = "medium"   # tiny <10, small 10-99, medium 100-499, large 500-4999, huge 5000+
+    size: str = "medium"  # tiny <10, small 10-99, medium 100-499, large 500-4999, huge 5000+
     tags: set[str] = {"default", "safety"}
 ```
 

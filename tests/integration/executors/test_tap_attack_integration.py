@@ -14,7 +14,6 @@ from pyrit.prompt_target import OpenAIChatTarget, OpenAIImageTarget
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_tap_attack_text_target(patch_central_database):
     """Test TAP attack against a text generation target."""
     adversarial_chat = OpenAIChatTarget(temperature=1.1)
@@ -34,7 +33,6 @@ async def test_tap_attack_text_target(patch_central_database):
 
 
 @pytest.mark.run_only_if_all_tests
-@pytest.mark.asyncio
 async def test_tap_attack_image_target(patch_central_database):
     """Test TAP attack against an image generation target using image-specific system prompt."""
     adversarial_chat = OpenAIChatTarget(temperature=1.1)

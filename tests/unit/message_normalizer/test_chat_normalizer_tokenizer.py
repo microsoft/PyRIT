@@ -43,6 +43,18 @@ class TestTokenizerTemplateNormalizerInit:
         assert "qwen" in aliases
         assert "llama3" in aliases
 
+    def test_identifier_includes_behavior_changing_configuration(self):
+        tokenizer = MagicMock()
+        tokenizer.name_or_path = "example/tokenizer"
+        tokenizer.chat_template = "{{ messages }}"
+        tokenizer.special_tokens_map = {"bos_token": "<s>"}
+
+        keep = TokenizerTemplateNormalizer(tokenizer=tokenizer, system_message_behavior="keep")
+        ignore = TokenizerTemplateNormalizer(tokenizer=tokenizer, system_message_behavior="ignore")
+
+        assert keep.get_identifier().hash != ignore.get_identifier().hash
+        assert keep.get_identifier().params["chat_template"] == '"{{ messages }}"'
+
 
 class TestFromModel:
     """Tests for the from_model factory method."""

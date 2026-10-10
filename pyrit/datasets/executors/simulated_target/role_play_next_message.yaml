@@ -7,8 +7,6 @@ description: |
   delivers the same objective as the next in-world beat, and never breaks character or
   references real life. This avoids the common failure where the final turn drops the
   role play and asks for the raw objective, which the target then refuses.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 source: AI Red Team

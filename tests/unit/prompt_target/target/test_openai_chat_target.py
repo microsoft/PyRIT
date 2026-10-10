@@ -7,6 +7,7 @@ import logging
 import os
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -53,6 +54,17 @@ def create_mock_completion(content: str = "hi", finish_reason: str = "stop"):
         {"choices": [{"finish_reason": finish_reason, "message": {"content": content}}]}
     )
     return mock_completion
+
+
+def _mock_usage(*, prompt_tokens: int, completion_tokens: int, total_tokens: int) -> SimpleNamespace:
+    """Build a Chat Completions ``usage`` stand-in with no nested detail breakdowns."""
+    return SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        prompt_tokens_details=None,
+        completion_tokens_details=None,
+    )
 
 
 @pytest.fixture
@@ -274,9 +286,9 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
             )
         ),
     )
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     target._memory = mock_memory
 
@@ -314,7 +326,7 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation_messages.return_value = []
+        target._memory.get_conversation_messages_async = AsyncMock(return_value=[])
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -323,9 +335,9 @@ async def test_send_prompt_async_empty_response_adds_to_memory(openai_response_j
 async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
     target: OpenAIChatTarget,
 ):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     target._memory = mock_memory
 
@@ -344,9 +356,9 @@ async def test_send_prompt_async_rate_limit_exception_adds_to_memory(
 
 
 async def test_send_prompt_async_bad_request_error_adds_to_memory(target: OpenAIChatTarget):
-    mock_memory = MagicMock()
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
 
     target._memory = mock_memory
 
@@ -477,7 +489,7 @@ async def test_send_prompt_async_empty_response_retries(openai_response_json: di
             return_value=mock_completion
         )
         target._memory = MagicMock(MemoryInterface)
-        target._memory.get_conversation_messages.return_value = []
+        target._memory.get_conversation_messages_async = AsyncMock(return_value=[])
 
         with pytest.raises(EmptyResponseException):
             await target.send_prompt_async(message=message)
@@ -539,6 +551,71 @@ async def test_send_prompt_async_content_filter_200(target: OpenAIChatTarget):
     assert response[0].message_pieces[0].response_error == "blocked"
     assert response[0].message_pieces[0].converted_value_data_type == "error"
     assert response[0].message_pieces[0].structured_refusal is None
+
+
+async def test_send_prompt_async_captures_finish_reason(target: OpenAIChatTarget):
+    message = Message(message_pieces=[MessagePiece(role="user", conversation_id="c", original_value="hi")])
+    mock_completion = create_mock_completion(content="hello", finish_reason="stop")
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=mock_completion
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    assert response[0].message_pieces[0].prompt_metadata["finish_reason"] == "stop"
+
+
+async def test_content_filter_200_captures_token_usage_and_finish_reason(target: OpenAIChatTarget):
+    """A blocked response still reports what it consumed, which is exactly where it matters most."""
+    message = Message(message_pieces=[MessagePiece(role="user", conversation_id="c", original_value="harmful")])
+    mock_completion = create_mock_completion(content="partial", finish_reason="content_filter")
+    mock_completion.usage = _mock_usage(prompt_tokens=12, completion_tokens=5, total_tokens=17)
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=mock_completion
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    piece = response[0].message_pieces[0]
+    assert piece.response_error == "blocked"
+    assert piece.prompt_metadata["finish_reason"] == "content_filter"
+    assert piece.prompt_metadata["token_usage_input_tokens"] == 12
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 5
+    assert piece.prompt_metadata["token_usage_total_tokens"] == 17
+
+
+async def test_truncated_empty_response_captures_finish_reason(target: OpenAIChatTarget):
+    """The graceful empty-truncated fallback must carry metadata too."""
+    message = Message(message_pieces=[MessagePiece(role="user", conversation_id="c", original_value="hi")])
+    mock_completion = create_mock_completion(content=None, finish_reason="length")
+    mock_completion.usage = _mock_usage(prompt_tokens=9, completion_tokens=100, total_tokens=109)
+    target._async_client.chat.completions.create = AsyncMock(  # type: ignore[method-assign]
+        return_value=mock_completion
+    )
+
+    response = await target.send_prompt_async(message=message)
+
+    piece = response[0].message_pieces[0]
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 100
+
+
+async def test_sdk_content_filter_error_omits_finish_reason(
+    target: OpenAIChatTarget, sample_conversations: MutableSequence[MessagePiece]
+):
+    """The SDK-raised path has no response object to read, so no metadata is invented."""
+    message_piece = sample_conversations[0]
+    message_piece.conversation_id = "test-conv-id"
+    request = Message(message_pieces=[message_piece])
+
+    with patch.object(target._async_client.chat.completions, "create", new_callable=AsyncMock) as mock_create:
+        mock_create.side_effect = ContentFilterFinishReasonError()
+        response = await target.send_prompt_async(message=request)
+
+    piece = response[0].message_pieces[0]
+    assert piece.response_error == "blocked"
+    assert "finish_reason" not in piece.prompt_metadata
 
 
 async def test_send_prompt_async_structured_refusal(target: OpenAIChatTarget):
@@ -609,6 +686,7 @@ def test_inheritance_from_prompt_target(target: OpenAIChatTarget):
     assert target.capabilities.supports_editable_history is True
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_inheritance_from_prompt_target_base():
     """OpenAIChatTarget (via OpenAIChatTargetBase) inherits from PromptTarget."""
     target = OpenAIChatTarget(model_name="test-model", endpoint="https://test.com", api_key="test-key")
@@ -668,8 +746,8 @@ def test_is_response_format_json_no_metadata(target: OpenAIChatTarget):
 
 async def test_send_prompt_async_content_filter_400(target: OpenAIChatTarget):
     mock_memory = MagicMock(spec=MemoryInterface)
-    mock_memory.get_conversation_messages.return_value = []
-    mock_memory.add_message_to_memory = AsyncMock()
+    mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    mock_memory.add_message_to_memory_async = AsyncMock()
     target._memory = mock_memory
 
     with (
@@ -720,8 +798,8 @@ async def test_send_prompt_async_other_http_error(patch_central_database):
         converted_value_data_type="text",
     )
     message = Message(message_pieces=[message_piece])
-    target._memory = MagicMock()
-    target._memory.get_conversation_messages.return_value = []
+    target._memory = MagicMock(spec=MemoryInterface)
+    target._memory.get_conversation_messages_async = AsyncMock(return_value=[])
 
     # Create proper mock request and response for APIStatusError
     mock_request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")

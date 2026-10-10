@@ -95,6 +95,22 @@ explanation, or additional text. Output only the word "test" and nothing else.
     raise AssertionError(f"LLM did not return exactly 'test' after {max_retries} attempts.")
 
 
+async def _send_realtime_text_async(
+    *,
+    target: RealtimeTarget,
+    conversation_id: str,
+    text: str,
+) -> str:
+    """Send one text turn through a RealtimeTarget and return its transcript."""
+    message = MessagePiece(
+        role="user",
+        original_value=text,
+        conversation_id=conversation_id,
+    ).to_message()
+    response = await target.send_prompt_async(message=message)
+    return str(response[0].get_value())
+
+
 async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
     """Helper function to test video generation targets."""
     video_prompt = "A raccoon sailing a pirate ship"
@@ -521,6 +537,58 @@ async def test_realtime_target_multi_objective(
         assert result.last_response is not None
         assert result.last_response.converted_value
         assert len(result.last_response.converted_value) > 0
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "api_key_env_var", "model_name"),
+    [
+        pytest.param(
+            "PLATFORM_OPENAI_REALTIME_ENDPOINT",
+            "PLATFORM_OPENAI_REALTIME_KEY",
+            "PLATFORM_OPENAI_REALTIME_MODEL",
+            id="platform-api-key",
+        ),
+        pytest.param(
+            "AZURE_OPENAI_REALTIME_ENDPOINT",
+            None,
+            "AZURE_OPENAI_REALTIME_MODEL",
+            id="azure-entra",
+        ),
+    ],
+)
+@pytest.mark.run_only_if_all_tests
+async def test_realtime_target_same_conversation_multi_turn(
+    sqlite_instance: SQLiteMemory,
+    endpoint: str,
+    api_key_env_var: str | None,
+    model_name: str,
+) -> None:
+    """Test that a RealtimeTarget preserves context across turns on one connection."""
+    endpoint_value = _get_required_env_var(endpoint)
+    target = RealtimeTarget(
+        endpoint=endpoint_value,
+        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
+        model_name=_get_required_env_var(model_name),
+    )
+    conversation_id = str(uuid.uuid4())
+
+    try:
+        first_response = await _send_realtime_text_async(
+            target=target,
+            conversation_id=conversation_id,
+            text="What is the capital of France?",
+        )
+        second_response = await _send_realtime_text_async(
+            target=target,
+            conversation_id=conversation_id,
+            text="What country is the city from your previous answer in?",
+        )
+
+        assert "paris" in first_response.lower()
+        assert "france" in second_response.lower()
+        assert set(target._existing_conversation) == {conversation_id}
+    finally:
+        await target.cleanup_target_async()
 
 
 @pytest.mark.parametrize(

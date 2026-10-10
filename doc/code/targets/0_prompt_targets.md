@@ -9,15 +9,53 @@ Prompt Targets are endpoints for where to send prompts. For example, a target co
 Prompt targets are found [here](https://github.com/microsoft/PyRIT/tree/main/pyrit/prompt_target/) in code.
 
 
-## Send_Prompt_Async
+## `send_prompt_async`
 
-The main entry method follow the following signature:
+The main entry method has the following signature:
 
+```python
+async def send_prompt_async(
+    self,
+    *,
+    message: Message,
+    send_context: TargetSendContext | None = None,
+) -> list[Message]:
 ```
-async def send_prompt_async(self, *, message: Message) -> Message:
-```
 
-A `Message` object is a normalized object with all the information a target will need to send a prompt, including a way to get a history for that prompt (in the cases that also needs to be sent). This is discussed in more depth [here](../memory/3_memory_data_types.md).
+A `Message` object contains the current request and the identifiers needed to load its conversation
+history. This is discussed in more depth [here](../memory/3_memory_data_types.md).
+
+`send_context` is an internal protocol that lets caller-owned execution state select persisted history
+and observe when target-specific execution begins. Attacks with prepended history own the concrete
+`PrependedHistorySendContext`; targets do not construct it, clone it, or decide whether its seed should
+be replayed. Before target-specific execution, `PromptTarget` loads memory history, asks the protocol for the
+caller-approved target view, and then runs the target's capability-normalization pipeline. Request
+converters have already run by this point, so role-specific converter choices remain intact even when
+the target must receive one flattened request. The context is ephemeral and does not replace the
+structured messages stored in memory.
+
+Prepended request converters apply only to `user` messages by default. Every other role, including
+`system`, `developer`, `tool`, and `assistant` / `simulated_assistant`, requires explicit opt-in.
+
+For a stateful target without editable history, the initial bootstrap is flattened once. Later sends
+retain replayable memory history in the normalized view so a target such as `WebsocketTarget` can
+restore a replaced provider session, while the existing provider session still receives only the
+current request. A stateful TAP clone bootstraps its new provider session with the complete replayable
+duplicated branch, even when the attack started without an explicit prepended seed. Stateless targets
+continue to receive only the explicit prepended seed plus each current request, never prior live branch
+turns. A stateful TAP target without editable history can flatten only text converter output when
+branching; non-text converter output requires an editable-history target, a stateless target, or
+`branching_factor=1` so copied media is never replayed under a different role.
+
+`PromptTarget` records one target invocation immediately before calling
+`_send_prompt_to_target_async`. This framework-owned boundary is not a target capability or a
+subclass-managed flag. A stateful target consumes one-time bootstrap history only after that call
+returns successfully; normalization failures, target errors, and cancellation retain it for retry.
+Target-side rate limiting remains independent and continues to use `limit_requests_per_minute`.
+
+`send_prompt_async` is the final public orchestration method. Custom target subclasses implement
+`_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
+overriding `send_prompt_async`.
 
 ## Chat-style targets vs general targets
 
@@ -35,7 +73,99 @@ Here are some examples:
 | **OpenAIChatTarget** (e.g., GPT-4)  | **Yes** (multi-turn + editable history)           | Designed for conversational prompts (system messages, conversation history, etc.).               |
 | **OpenAIImageTarget**               | **No**                                            | Used for image generation; does not manage conversation history.                                 |
 | **HTTPTarget**                      | **No**                                            | Generic HTTP target. Some apps might allow conversation history, but this target doesn't handle it. |
+| **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
+
+## A2A agents
+
+Install the optional client with `pip install "pyrit[a2a]"` (also included in
+`pyrit[all]`). `A2ATarget` uses the official `a2a-sdk` 1.x client for JSON-RPC.
+Set `protocol_version="0.3"` (the default) or `"1.0"` for a known endpoint.
+Set `"auto"` to discover the agent card. Discovery errors are not hidden by
+a fallback to another protocol. Use `agent_card_path` for a non-standard
+relative card path.
+
+The adapter sends one text piece per turn. The agent owns its context and
+history. The target cannot edit or replay that history, send system-role
+messages, enforce native JSON output, or send audio, images, or files.
+Custom capabilities cannot enable these unsupported features or disable
+multi-turn support. Disabling it would squash local history while the agent
+retains the same history. To restore an
+existing upstream context on a new target instance, use
+`set_conversation_context`. A local history without an upstream context ID
+is rejected. `reset_conversation_async` forgets the local mapping; it does
+not delete remote state. Sends and resets for the same conversation are
+serialized. Different conversations can run concurrently.
+`set_conversation_context` raises an error if that conversation is in use.
+
+The target retries submission only after an explicit HTTP 429. Retries use
+the same A2A message ID. Rate-limit errors during polling retry only the poll.
+Polling honors `Retry-After` (seconds or HTTP date), with exponential backoff
+when that header is absent or invalid. The polling deadline bounds these waits.
+`max_requests_per_minute` applies to submission attempts and task polls, not
+agent-card discovery.
+Empty results, task failures, and agent errors that mention a downstream
+rate limit do not cause automatic resubmission. A polling timeout does not
+cancel the remote task. Do not blindly resubmit an action after a timeout.
+`request_timeout_seconds` sets the HTTPX connect, read, write, and pool
+timeouts and defaults to `task_timeout_seconds`. These are per-phase
+timeouts, not a total turn deadline. Instead, pass HTTPX `timeout` for
+per-phase settings or `timeout=None` to disable HTTP timeouts. Do not pass
+both timeout options. Timeouts must be finite and positive.
+`task_timeout_seconds` is a separate deadline that starts after submission
+returns a pending task. It bounds polling, rate-limit waits, and in-flight
+poll requests, even with `timeout=None`. `poll_interval_seconds` must be
+finite and non-negative.
+
+Identifiers include the endpoint, requested protocol, card path, and optional
+`routing_identifier`. Set this non-secret deployment label when HTTP headers
+select a different agent at the same endpoint. Do not put tokens in the URL,
+card path, or routing label. Credentials, HTTP headers, and timeout settings
+are not copied into identifier parameters.
+
+`auth_token` accepts a static token or an async callable that returns a token.
+The callable runs before each HTTP request, including discovery, submission
+retries, and polls. Use a provider that caches tokens and refreshes them
+before expiry. Do not combine `auth_token` with HTTPX `auth` or an
+`Authorization` header. Custom HTTPX authentication is supported when
+`auth_token` is not set.
+
+For Foundry, keep the credential open for the full target operation:
+
+```python
+from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+from pyrit.prompt_target import A2ATarget
+
+async with DefaultAzureCredential() as credential:
+    token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
+    target = A2ATarget(
+        endpoint=agent_endpoint,
+        protocol_version="auto",
+        agent_card_path="agentCard/v1.0",
+        auth_token=token_provider,
+    )
+    responses = await target.send_prompt_async(message=message)
+```
+
+### A2A integration tests
+
+The local tests run an official SDK server on an ephemeral loopback port.
+They cover 0.3 and 1.0, discovery, persisted multi-turn history, task
+continuation, failure, and prevention of duplicate submissions. From a
+development environment with the `all` extra, set `RUN_ALL_TESTS=true` and run:
+
+```text
+uv run pytest tests/integration/targets/test_a2a_target_integration.py -k "not foundry"
+```
+
+The separate Foundry test also requires `RUN_ALL_TESTS=true` and
+`A2A_FOUNDRY_ENDPOINT`. It uses `A2A_FOUNDRY_AUTH_TOKEN` if supplied; otherwise,
+it uses a refreshable Entra token provider through `DefaultAzureCredential` for
+`https://ai.azure.com/.default`. The identity must have access to the agent
+(for example, the Agent Consumer role). `A2A_FOUNDRY_CARD_PATH`
+defaults to `agentCard/v1.0`; set it to
+`agentCard/v0.3` for a preview endpoint. The test requires a successful text
+response, not just a non-empty error. It does not create Azure resources.
 
 ## Target Capabilities
 
@@ -65,6 +195,10 @@ A `TargetConfiguration` composes three concerns:
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
+
+Tool-call history uses the existing `function_call` and `function_call_output` input
+modalities. These describe acceptance of prior calls and results, not tool execution.
+See [Target Capabilities](./6_1_target_capabilities.ipynb) for examples.
 
 ### How consumers use capabilities
 

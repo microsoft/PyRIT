@@ -1,22 +1,69 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.common.utils import combine_list, to_sha256
+import pytest
+
+from pyrit.common.utils import combine_list, is_numeric_value, to_sha256
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(True, True), (False, True), (0, True), (1.5, True), ("1.5", False), (None, False), ([], False)],
+)
+def test_is_numeric_value_does_not_coerce_untrusted_values(value, expected):
+    assert is_numeric_value(value) is expected
 
 
 def test_combine_list_two_lists():
     result = combine_list(["a", "b"], ["b", "c"])
-    assert set(result) == {"a", "b", "c"}
+    assert result == ["a", "b", "c"]
 
 
 def test_combine_list_strings():
     result = combine_list("x", "y")
-    assert set(result) == {"x", "y"}
+    assert result == ["x", "y"]
 
 
 def test_combine_list_mixed():
     result = combine_list("a", ["a", "b"])
-    assert set(result) == {"a", "b"}
+    assert result == ["a", "b"]
+
+
+def test_combine_list_preserves_first_occurrence_order():
+    """Order must be stable, not whatever set() iteration happens to produce."""
+    left = ["harmful", "violence", "illegal"]
+    right = ["bias", "violence", "pii"]
+    assert combine_list(left, right) == ["harmful", "violence", "illegal", "bias", "pii"]
+    # Deterministic across repeated calls within a process too.
+    assert combine_list(left, right) == combine_list(left, right)
+
+
+def test_combine_list_treats_none_as_empty():
+    assert combine_list(None, ["a"]) == ["a"]
+    assert combine_list(["a"], None) == ["a"]
+    assert combine_list(None, None) == []
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("", [], [""]),
+        ([], "", [""]),
+        ("", "", [""]),
+        ("", None, [""]),
+        (None, "", [""]),
+        ([""], [], [""]),
+        ([], [""], [""]),
+        ("", [""], [""]),
+        ([""], "", [""]),
+        ("", ["a", ""], ["", "a"]),
+        (["a"], "", ["a", ""]),
+    ],
+)
+def test_combine_list_preserves_empty_strings(
+    *, left: str | list[str] | None, right: str | list[str] | None, expected: list[str]
+) -> None:
+    assert combine_list(left, right) == expected
 
 
 def test_combine_list_duplicates_removed():

@@ -5,7 +5,7 @@ import os
 import tempfile
 import uuid
 from collections.abc import MutableSequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -14,9 +14,11 @@ from unit.mocks import get_sample_conversations
 from pyrit.converter import Base64Converter
 from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
+    ChatMessageRole,
     ComponentIdentifier,
     Message,
     MessagePiece,
+    RequestTraceContext,
     Score,
     construct_response_from_request,
     flatten_to_message_pieces,
@@ -24,6 +26,27 @@ from pyrit.models import (
     group_message_pieces_into_conversations,
     sort_message_pieces,
 )
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_role", "api_role"),
+    [("assistant", "simulated_assistant", "assistant"), ("tool", "simulated_tool", "tool"), ("user", "user", "user")],
+)
+def test_simulated_history_provenance(
+    *, role: ChatMessageRole, expected_role: ChatMessageRole, api_role: ChatMessageRole
+) -> None:
+    piece = MessagePiece(role=role, original_value="history")
+    piece.prompt_metadata.update(RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata())
+    piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
+    piece.set_simulated_role()
+    piece.set_simulated_role()
+    restored = MessagePiece.model_validate_json(piece.model_dump_json())
+    assert restored.role == expected_role
+    assert restored.api_role == api_role
+    assert restored.is_simulated is (role != "user")
+    assert restored.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] is True
+    assert RequestTraceContext.from_metadata(restored.prompt_metadata) is None
+    assert RequestTraceContext.REQUEST_METADATA_KEY not in restored.prompt_metadata
 
 
 @pytest.fixture
@@ -40,8 +63,27 @@ def test_id_set():
     assert entry.id is not None
 
 
+@pytest.mark.parametrize(
+    ("converted_fields", "expected_value"),
+    [
+        ({}, "Original source"),
+        ({"converted_value": None}, "Original source"),
+        ({"converted_value": ""}, ""),
+        ({"converted_value": "Converted"}, "Converted"),
+    ],
+)
+def test_converted_value_defaults_only_when_missing_or_null(
+    *, converted_fields: dict[str, str | None], expected_value: str
+) -> None:
+    piece = MessagePiece.model_validate({"role": "user", "original_value": "Original source", **converted_fields})
+
+    assert piece.original_value == "Original source"
+    assert piece.converted_value == expected_value
+    assert MessagePiece.model_validate(piece.model_dump()).converted_value == expected_value
+
+
 def test_datetime_set():
-    fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    fake_now = datetime(2099, 1, 1, 12, 0, 0, tzinfo=UTC)
     with patch("pyrit.models.messages.message_piece.datetime") as mock_datetime:
         mock_datetime.now.return_value = fake_now
         entry = MessagePiece(
@@ -50,7 +92,7 @@ def test_datetime_set():
             converted_value="Hello",
         )
     assert entry.timestamp == fake_now
-    mock_datetime.now.assert_called_once_with(tz=timezone.utc)
+    mock_datetime.now.assert_called_once_with(tz=UTC)
 
 
 def test_converters_serialize():
@@ -375,7 +417,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id=id1,
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=2,
         ),
         MessagePiece(
@@ -383,7 +425,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id=id2,
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=1,
         ),
         MessagePiece(
@@ -391,7 +433,7 @@ def test_order_message_pieces_by_conversation_single_conversation():
             id=id3,
             original_value="Hello 3",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc),
+            timestamp=datetime.now(tz=UTC),
             sequence=3,
         ),
     ]
@@ -434,7 +476,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 4",
             conversation_id="conv2",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=5),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=5),
             sequence=2,
             id=id4,
         ),
@@ -442,7 +484,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=15),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=15),
             sequence=1,
             id=id1,
         ),
@@ -450,7 +492,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 3",
             conversation_id="conv2",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=1,
             id=id3,
         ),
@@ -458,7 +500,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
             role="user",
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc) - timedelta(seconds=10),
+            timestamp=datetime.now(tz=UTC) - timedelta(seconds=10),
             sequence=2,
             id=id2,
         ),
@@ -503,7 +545,7 @@ def test_order_message_pieces_by_conversation_multiple_conversations():
 
 
 def test_order_message_pieces_by_conversation_same_timestamp():
-    timestamp = datetime.now(tz=timezone.utc)
+    timestamp = datetime.now(tz=UTC)
     id1, id2, id3, id4 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
 
     pieces = [
@@ -609,7 +651,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             role="user",
             original_value="Hello 2",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc),
+            timestamp=datetime.now(tz=UTC),
             sequence=2,
             id=id2,
         ),
@@ -617,7 +659,7 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
             role="user",
             original_value="Hello 1",
             conversation_id="conv1",
-            timestamp=datetime.now(tz=timezone.utc),
+            timestamp=datetime.now(tz=UTC),
             sequence=1,
             id=id1,
         ),
@@ -644,6 +686,25 @@ def test_order_message_pieces_by_conversation_same_timestamp_different_sequences
     assert sort_message_pieces(pieces) == expected
 
 
+def test_order_message_pieces_with_same_sequence_by_timestamp():
+    earlier_piece = MessagePiece(
+        role="user",
+        original_value="first",
+        conversation_id="conv1",
+        timestamp=datetime.now(tz=UTC) - timedelta(seconds=1),
+        sequence=1,
+    )
+    later_piece = MessagePiece(
+        role="user",
+        original_value="second",
+        conversation_id="conv1",
+        timestamp=datetime.now(tz=UTC),
+        sequence=1,
+    )
+
+    assert sort_message_pieces([later_piece, earlier_piece]) == [earlier_piece, later_piece]
+
+
 def test_message_piece_to_dict():
     entry = MessagePiece(
         role="user",
@@ -663,7 +724,7 @@ def test_message_piece_to_dict():
         converted_value_data_type="text",
         response_error="none",
         original_prompt_id=uuid.uuid4(),
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
     )
 
     result = entry.model_dump(mode="json")
@@ -932,7 +993,7 @@ def test_set_piece_not_in_memory_sets_flag():
 
 
 def test_to_dict_from_dict_roundtrip():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     scorer_id = ComponentIdentifier(
         class_name="SelfAskTrueFalseScorer",
@@ -958,7 +1019,7 @@ def test_to_dict_from_dict_roundtrip():
         score_rationale="clearly met",
         scorer_class_identifier=scorer_id,
         message_piece_id="mp-score-ref",
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
     )
     original = MessagePiece(
         id="12345678-aaaa-bbbb-cccc-000000000001",
@@ -969,7 +1030,7 @@ def test_to_dict_from_dict_roundtrip():
         converted_value_sha256="def456",
         conversation_id="conv-1",
         sequence=2,
-        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC),
         prompt_metadata={"doc_type": "text"},
         converter_identifiers=[converter_id],
         original_value_data_type="text",
@@ -1062,7 +1123,7 @@ class TestPhase3PydanticMigration:
     """Phase 3 §F.2 sanity tests for the MessagePiece Pydantic migration."""
 
     def test_to_dict_golden_shape(self) -> None:
-        ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        ts = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
         piece_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
         conv_id = "conv-123"
         piece = MessagePiece(

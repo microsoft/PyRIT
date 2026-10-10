@@ -84,14 +84,21 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
     """
 
     _tags: set[str]
+    _description: str | None
 
-    def __new__(cls, value: str, tags: set[str] | None = None) -> ScenarioTechnique:
+    def __new__(
+        cls,
+        value: str,
+        tags: set[str] | None = None,
+        description: str | None = None,
+    ) -> ScenarioTechnique:
         """
         Create a new ScenarioTechnique with value and tags.
 
         Args:
             value: The technique value/name.
             tags: Optional set of tags for categorization.
+            description: Optional human-readable technique summary.
 
         Returns:
             ScenarioTechnique: The new enum member.
@@ -99,6 +106,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         obj = object.__new__(cls)
         obj._value_ = value
         obj._tags = tags or set()
+        obj._description = description
         return obj
 
     @property
@@ -113,6 +121,11 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
             set[str]: The tags (e.g., {"easy", "converter", "encoding"}).
         """
         return self._tags
+
+    @property
+    def description(self) -> str | None:
+        """The human-readable technique summary."""
+        return self._description
 
     @classmethod
     def default(cls: type[T]) -> T:
@@ -243,8 +256,8 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         Resolve technique inputs into a concrete, ordered, deduplicated list.
 
         Handles None (returns expanded default), plain techniques, and aggregate techniques.
-        Non-cls items (e.g., FoundryComposite) are silently skipped for
-        backward compatibility.
+        Callers that accept other technique shapes, such as ``FoundryComposite``, must
+        translate them before they reach this method.
 
         Args:
             techniques (Sequence[Any] | None): Techniques to resolve. If None or empty,
@@ -253,16 +266,26 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
 
         Returns:
             list[T]: Ordered, deduplicated list of concrete techniques.
+
+        Raises:
+            ValueError: If an item is not a member of this technique catalog. Dropping it
+                silently would run the default selection instead of the requested one.
         """
         if not techniques:
             return cls.expand({default})
+
+        unknown = [item for item in techniques if not isinstance(item, cls)]
+        if unknown:
+            names = [getattr(item, "value", repr(item)) for item in unknown]
+            supported = [technique.value for technique in cls]
+            raise ValueError(
+                f"{cls.__name__} received unsupported techniques {names}. Supported values are {supported}."
+            )
 
         result: list[T] = []
         seen: set[T] = set()
         aggregate_tags = cls.get_aggregate_tags()
         for item in techniques:
-            if not isinstance(item, cls):
-                continue
             if item.value in aggregate_tags:
                 for s in cls.expand({item}):  # type: ignore[ty:invalid-argument-type]
                     if s not in seen:

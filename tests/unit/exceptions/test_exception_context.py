@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+
 import pytest
 
 from pyrit.exceptions import (
@@ -9,6 +11,7 @@ from pyrit.exceptions import (
     ExecutionContextManager,
     clear_execution_context,
     execution_context,
+    get_exception_execution_context,
     get_execution_context,
     set_execution_context,
 )
@@ -246,6 +249,57 @@ class TestExecutionContextManager:
 
         # After outer exits, should be None
         assert get_execution_context() is None
+
+    @pytest.mark.parametrize("wrap_error", [False, True])
+    async def test_child_task_failure_preserves_innermost_context_async(self, *, wrap_error: bool) -> None:
+        original = ValueError("scoring target failed")
+        target_context = ExecutionContext(component_role=ComponentRole.OBJECTIVE_SCORER_TARGET)
+        caller_context = ExecutionContext(component_role=ComponentRole.UNKNOWN)
+
+        async def fail_async() -> None:
+            with execution_context(component_role=ComponentRole.OBJECTIVE_SCORER):
+                try:
+                    with ExecutionContextManager(context=target_context):
+                        raise original
+                except ValueError as error:
+                    if wrap_error:
+                        raise RuntimeError("scorer failed") from error
+                    raise
+
+        with ExecutionContextManager(context=caller_context):
+            with pytest.raises((ValueError, RuntimeError)) as raised:
+                await asyncio.gather(fail_async())
+            assert get_execution_context() is caller_context
+            assert get_exception_execution_context(raised.value) is target_context
+
+        assert (raised.value.__cause__ if wrap_error else raised.value) is original
+        assert get_execution_context() is None
+
+    async def test_concurrent_failures_keep_separate_contexts_async(self) -> None:
+        contexts = [
+            ExecutionContext(component_role=ComponentRole.OBJECTIVE_SCORER),
+            ExecutionContext(component_role=ComponentRole.AUXILIARY_SCORER),
+        ]
+        barrier = asyncio.Barrier(len(contexts))
+
+        async def fail_async(context: ExecutionContext) -> None:
+            with ExecutionContextManager(context=context):
+                await barrier.wait()
+                raise ValueError("scoring failed")
+
+        errors = await asyncio.gather(*(fail_async(context) for context in contexts), return_exceptions=True)
+        for error, context in zip(errors, contexts, strict=True):
+            assert isinstance(error, ValueError)
+            assert get_exception_execution_context(error) is context
+        assert get_execution_context() is None
+
+
+def test_exception_context_lookup_handles_missing_context_and_cycles() -> None:
+    first, second = ValueError("first"), RuntimeError("second")
+    assert get_exception_execution_context(first) is None
+    first.__cause__ = second
+    second.__cause__ = first
+    assert get_exception_execution_context(first) is None
 
 
 class TestExecutionContextFactory:

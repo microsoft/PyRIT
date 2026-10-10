@@ -27,7 +27,11 @@ Most tests should be unit tests. Integration and end-to-end tests are for testin
 - Group tests in classes prefixed with `Test`
 - Use `@pytest.mark.usefixtures("patch_central_database")` on classes touching Central Memory
 - Reuse `tests/unit/mocks.py` helpers: `MockPromptTarget`, `get_sample_conversations`, `get_mock_target_identifier`, `openai_chat_response_json_dict`
-- Key fixtures from `tests/unit/conftest.py`: `patch_central_database`, `sqlite_instance`
+- Key memory fixtures from `tests/unit/conftest.py`:
+  - Use `patch_central_database` for tests that access `CentralMemory` or construct targets, scorers, or attacks. Declare it explicitly even in constructor, validation, or identifier tests that do not directly query memory.
+  - Use `sqlite_instance` when the test needs to interact with the real isolated SQLite backend.
+  - Do not rely on memory or singleton state left behind by another test. Each test must declare its own memory dependency.
+- When changing shared memory fixtures, install all optional dependencies with `uv sync --extra all` and run `make unit-test`. Optional component tests must also exercise fixture isolation.
 - No network calls should ever happen in unit tests, but file access is okay
 - Unit tests should be fast and can be run in parallel.
 
@@ -62,6 +66,10 @@ For every mapper / serializer / DTO conversion:
 - Include **at least one test that exercises the mapper with real domain instances** (real Pydantic models, real ORM rows, etc.) instead of `MagicMock`. Use the `sqlite_instance` fixture (with `@pytest.mark.usefixtures("patch_central_database")`) when persistence is part of the round-trip.
 - It is fine to keep mock-based tests for fast coverage of branching logic. The real-object tests are a backstop against field-shape drift, not a replacement for the mock-based suite.
 - When `MagicMock` is unavoidable for a mapper test, pass `spec=RealModelClass` so attempted access to a removed field raises `AttributeError` immediately.
+
+## Scorer Contract Tests
+
+For provider-response and metadata regressions, exercise the scorer's public entry point with realistic responses, real `Score` / `UnvalidatedScore` conversion, and `sqlite_instance`. Mock only external I/O, not parsing, validation, aggregation, or persistence. Read persisted scores using explicit score IDs or filters (`get_scores_async()` without filters deliberately returns no scores). Assert verdict/value, category, rationale, and metadata, including after wrapper forwarding or metadata mutation. Parser-only tests and generic model-construction tests do not cover this boundary.
 
 ## Test Structure Preferences
 

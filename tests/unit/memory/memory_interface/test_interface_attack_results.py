@@ -4,27 +4,36 @@
 
 import uuid
 from dataclasses import FrozenInstanceError
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import delete, select
+from sqlalchemy.dialects import mssql
+from unit.mocks import get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultsKeysetCursor, MemoryInterface
+from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
+from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
     IdentifierFilter,
     IdentifierType,
     MessagePiece,
+    ScenarioRunState,
     Score,
+    TargetIdentifier,
 )
 
 if TYPE_CHECKING:
@@ -37,6 +46,8 @@ def create_attack_result(
     outcome: AttackOutcome = AttackOutcome.SUCCESS,
     labels: dict[str, str] | None = None,
     targeted_harm_categories: list[str] | None = None,
+    operator: str | None = None,
+    operation: str | None = None,
 ):
     """Helper function to create AttackResult."""
     return AttackResult(
@@ -44,11 +55,13 @@ def create_attack_result(
         objective=f"Objective {objective_num}",
         outcome=outcome,
         labels=labels or {},
+        operator=operator,
+        operation=operation,
         targeted_harm_categories=targeted_harm_categories or [],
     )
 
 
-_BASE_TS = datetime(2024, 6, 1, tzinfo=timezone.utc)
+_BASE_TS = datetime(2024, 6, 1, tzinfo=UTC)
 
 
 def _make_attack_result(
@@ -85,17 +98,17 @@ def _make_attack_result(
     return AttackResult(**kwargs)
 
 
-def _after(page: "Sequence[AttackResult]") -> AttackResultsKeysetCursor:
+def _after(page: "Sequence[AttackResult]") -> AttackResultKeysetCursor:
     """Build the keyset anchor for the next page from the last row of ``page``."""
-    return AttackResultsKeysetCursor.from_attack_result(page[-1])
+    return AttackResultKeysetCursor.from_attack_result(page[-1])
 
 
-def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list[AttackResult]:
+async def _drain_keyset_async(memory: MemoryInterface, *, page_size: int, **filters) -> list[AttackResult]:
     """Page through get_attack_results with the keyset cursor until exhausted."""
     drained: list[AttackResult] = []
-    after: AttackResultsKeysetCursor | None = None
+    after: AttackResultKeysetCursor | None = None
     while True:
-        page = list(memory.get_attack_results(limit=page_size, after=after, **filters))
+        page = list(await memory.get_attack_results_async(limit=page_size, after=after, **filters))
         drained.extend(page)
         if len(page) < page_size:
             break
@@ -106,14 +119,18 @@ def _drain_keyset(memory: MemoryInterface, *, page_size: int, **filters) -> list
 def test_attack_result_query_snapshots_mutable_inputs():
     """The internal query remains stable when caller-owned containers change."""
     attack_classes = ["CrescendoAttack"]
-    labels = {"operator": ["alice"]}
-    query = _AttackResultQuery(attack_classes=attack_classes, labels=labels)
+    operators = ["alice"]
+    labels = {"team": ["red"]}
+    query = _AttackResultQuery(attack_classes=attack_classes, operator=operators, labels=labels)
 
     attack_classes.append("ManualAttack")
-    labels["operator"].append("bob")
+    operators.append("bob")
+    labels["team"].append("blue")
 
     assert query.attack_classes == ("CrescendoAttack",)
-    assert query.labels == {"operator": ("alice",)}
+    assert query.operator == ("alice",)
+    assert query.labels == {"team": ("red",)}
+    assert query.result_selection is AttackResultSelection.LATEST_PER_CONVERSATION
     field_name = "limit"
     with pytest.raises(FrozenInstanceError):
         setattr(query, field_name, 10)
@@ -122,12 +139,12 @@ def test_attack_result_query_snapshots_mutable_inputs():
 def test_attack_result_query_requires_keyword_arguments():
     """The internal query does not expose field ordering as a positional API."""
     with pytest.raises(TypeError):
-        _AttackResultQuery(["id"])  # type: ignore[misc]
+        _AttackResultQuery(["id"])  # ty: ignore[too-many-positional-arguments]
 
 
-def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: MemoryInterface):
     """The compatibility API maps every parameter onto the internal query."""
-    cursor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    cursor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     identifier_filter = IdentifierFilter(
         identifier_type=IdentifierType.ATTACK,
         property_path="$.hash",
@@ -135,7 +152,7 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     )
 
     with patch.object(sqlite_instance, "_query_attack_results", return_value=[]) as query_mock:
-        sqlite_instance.get_attack_results(
+        await sqlite_instance.get_attack_results_async(
             attack_result_ids=["id"],
             conversation_id="conversation",
             objective="objective",
@@ -146,10 +163,14 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
             converter_classes=["Converter"],
             converter_classes_match="any",
             has_converters=True,
-            labels={"operator": ["alice"]},
+            include_scenario_attacks=False,
+            operator=["alice"],
+            operation=["nightly"],
+            labels={"team": ["red"]},
             targeted_harm_categories=["violence"],
             identifier_filters=[identifier_filter],
             scenario_result_id=str(uuid.uuid4()),
+            result_selection=AttackResultSelection.ALL_RESULTS,
             min_turns=1,
             max_turns=5,
             limit=10,
@@ -168,29 +189,35 @@ def test_get_attack_results_forwards_all_parameters_to_query(sqlite_instance: Me
     assert query.converter_classes == ("Converter",)
     assert query.converter_classes_match == "any"
     assert query.has_converters is True
-    assert query.labels == {"operator": ("alice",)}
+    assert query.include_scenario_attacks is False
+    assert query.operator == ("alice",)
+    assert query.operation == ("nightly",)
+    assert query.labels == {"team": ("red",)}
     assert query.targeted_harm_categories == ("violence",)
     assert query.identifier_filters == (identifier_filter,)
     assert query.scenario_result_id is not None
+    assert query.result_selection is AttackResultSelection.ALL_RESULTS
     assert query.min_turns == 1
     assert query.max_turns == 5
     assert query.limit == 10
     assert query.after == cursor
 
 
-def test_query_attack_results_matches_compatibility_api(sqlite_instance: MemoryInterface):
+async def test_query_attack_results_matches_compatibility_api(sqlite_instance: MemoryInterface):
     """The internal query executor and compatibility API return the same page."""
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            _make_attack_result("conv-1", executed_turns=2, outcome=AttackOutcome.SUCCESS, ts_offset=1),
-            _make_attack_result("conv-2", executed_turns=5, outcome=AttackOutcome.SUCCESS, ts_offset=2),
-            _make_attack_result("conv-3", executed_turns=7, outcome=AttackOutcome.FAILURE, ts_offset=3),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                _make_attack_result("conv-1", executed_turns=2, outcome=AttackOutcome.SUCCESS, ts_offset=1),
+                _make_attack_result("conv-2", executed_turns=5, outcome=AttackOutcome.SUCCESS, ts_offset=2),
+                _make_attack_result("conv-3", executed_turns=7, outcome=AttackOutcome.FAILURE, ts_offset=3),
+            ]
+        )
     )
 
     query = _AttackResultQuery(outcome=AttackOutcome.SUCCESS.value, min_turns=3, limit=1)
     direct = sqlite_instance._query_attack_results(query=query)
-    compatibility = sqlite_instance.get_attack_results(
+    compatibility = await sqlite_instance.get_attack_results_async(
         outcome=AttackOutcome.SUCCESS.value,
         min_turns=3,
         limit=1,
@@ -199,7 +226,7 @@ def test_query_attack_results_matches_compatibility_api(sqlite_instance: MemoryI
     assert [result.attack_result_id for result in direct] == [result.attack_result_id for result in compatibility]
 
 
-def test_add_attack_results_to_memory(sqlite_instance: MemoryInterface):
+async def test_add_attack_results_to_memory(sqlite_instance: MemoryInterface):
     """Test adding attack results to memory."""
     # Create sample attack results
     attack_result1 = AttackResult(
@@ -223,7 +250,7 @@ def test_add_attack_results_to_memory(sqlite_instance: MemoryInterface):
     )
 
     # Add attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
     # Verify they were added by querying all attack results
     all_attack_results: Sequence[AttackResultEntry] = sqlite_instance._query_entries(AttackResultEntry)
@@ -235,7 +262,7 @@ def test_add_attack_results_to_memory(sqlite_instance: MemoryInterface):
     assert conversation_ids == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_by_ids(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_ids(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by their IDs."""
     # Create and add attack results
     attack_result1 = AttackResult(
@@ -263,7 +290,11 @@ def test_get_attack_results_by_ids(sqlite_instance: MemoryInterface):
     )
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Get all attack result entries to get their IDs
     all_entries: Sequence[AttackResultEntry] = sqlite_instance._query_entries(AttackResultEntry)
@@ -273,7 +304,7 @@ def test_get_attack_results_by_ids(sqlite_instance: MemoryInterface):
     attack_result_ids = [str(entry.id) for entry in all_entries[:2]]
 
     # Retrieve attack results by IDs
-    retrieved_results = sqlite_instance.get_attack_results(attack_result_ids=attack_result_ids)
+    retrieved_results = await sqlite_instance.get_attack_results_async(attack_result_ids=attack_result_ids)
 
     # Verify correct results were retrieved
     assert len(retrieved_results) == 2
@@ -281,7 +312,7 @@ def test_get_attack_results_by_ids(sqlite_instance: MemoryInterface):
     assert retrieved_conversation_ids == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by conversation ID.
 
     When duplicate rows exist for the same conversation_id (legacy bug),
@@ -313,16 +344,20 @@ def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInterface)
     )
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Retrieve attack results by conversation ID — deduplication keeps only the newest
-    retrieved_results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    retrieved_results = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
 
     assert len(retrieved_results) == 1
     assert retrieved_results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by objective substring."""
     # Create and add attack results
     attack_result1 = AttackResult(
@@ -350,10 +385,14 @@ def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
     )
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Retrieve attack results by objective substring
-    retrieved_results = sqlite_instance.get_attack_results(objective="objective for")
+    retrieved_results = await sqlite_instance.get_attack_results_async(objective="objective for")
 
     # Verify correct results were retrieved (should match first two)
     assert len(retrieved_results) == 2
@@ -362,7 +401,7 @@ def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
     assert "Another objective for failure" in objectives
 
 
-def test_get_attack_results_by_outcome(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_outcome(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by outcome."""
     # Create and add attack results
     attack_result1 = AttackResult(
@@ -390,10 +429,14 @@ def test_get_attack_results_by_outcome(sqlite_instance: MemoryInterface):
     )
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Retrieve attack results by outcome
-    retrieved_results = sqlite_instance.get_attack_results(outcome="success")
+    retrieved_results = await sqlite_instance.get_attack_results_async(outcome="success")
 
     # Verify correct results were retrieved
     assert len(retrieved_results) == 2
@@ -401,7 +444,7 @@ def test_get_attack_results_by_outcome(sqlite_instance: MemoryInterface):
         assert result.outcome == AttackOutcome.SUCCESS
 
 
-def test_get_attack_results_by_objective_sha256(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_objective_sha256(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by objective SHA256."""
 
     # Create objectives with known SHA256 hashes
@@ -437,10 +480,16 @@ def test_get_attack_results_by_objective_sha256(sqlite_instance: MemoryInterface
     )
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Retrieve attack results by objective SHA256
-    retrieved_results = sqlite_instance.get_attack_results(objective_sha256=[objective1_sha256, objective2_sha256])
+    retrieved_results = await sqlite_instance.get_attack_results_async(
+        objective_sha256=[objective1_sha256, objective2_sha256]
+    )
 
     # Verify correct results were retrieved
     assert len(retrieved_results) == 2
@@ -449,7 +498,7 @@ def test_get_attack_results_by_objective_sha256(sqlite_instance: MemoryInterface
     assert objective2 in retrieved_objectives
 
 
-def test_get_attack_results_multiple_filters(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_multiple_filters(sqlite_instance: MemoryInterface):
     """Test retrieving attack results with multiple filters."""
     # Create and add attack results
     attack_result1 = AttackResult(
@@ -477,10 +526,14 @@ def test_get_attack_results_multiple_filters(sqlite_instance: MemoryInterface):
     )
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Retrieve attack results with multiple filters
-    retrieved_results = sqlite_instance.get_attack_results(
+    retrieved_results = await sqlite_instance.get_attack_results_async(
         conversation_id="conv_1", objective="objective for", outcome="success"
     )
 
@@ -491,7 +544,7 @@ def test_get_attack_results_multiple_filters(sqlite_instance: MemoryInterface):
     assert "objective for" in retrieved_results[0].objective
 
 
-def test_get_attack_results_no_filters(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_no_filters(sqlite_instance: MemoryInterface):
     """Test retrieving all attack results when no filters are provided."""
     # Create and add attack results
     attack_result1 = AttackResult(
@@ -511,16 +564,16 @@ def test_get_attack_results_no_filters(sqlite_instance: MemoryInterface):
     )
 
     # Add attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
     # Retrieve all attack results (no filters)
-    retrieved_results = sqlite_instance.get_attack_results()
+    retrieved_results = await sqlite_instance.get_attack_results_async()
 
     # Should return all results
     assert len(retrieved_results) == 2
 
 
-def test_get_attack_results_empty_list(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_empty_list(sqlite_instance: MemoryInterface):
     """Test retrieving attack results with empty ID list."""
     # Create and add an attack result
     attack_result = AttackResult(
@@ -531,14 +584,14 @@ def test_get_attack_results_empty_list(sqlite_instance: MemoryInterface):
         outcome=AttackOutcome.SUCCESS,
     )
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Try to retrieve with empty list
-    retrieved_results = sqlite_instance.get_attack_results(attack_result_ids=[])
+    retrieved_results = await sqlite_instance.get_attack_results_async(attack_result_ids=[])
     assert len(retrieved_results) == 0
 
 
-def test_get_attack_results_nonexistent_ids(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_nonexistent_ids(sqlite_instance: MemoryInterface):
     """Test retrieving attack results with non-existent IDs."""
     # Create and add an attack result
     attack_result = AttackResult(
@@ -549,16 +602,16 @@ def test_get_attack_results_nonexistent_ids(sqlite_instance: MemoryInterface):
         outcome=AttackOutcome.SUCCESS,
     )
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Try to retrieve with non-existent IDs
     nonexistent_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
-    retrieved_results = sqlite_instance.get_attack_results(attack_result_ids=nonexistent_ids)
+    retrieved_results = await sqlite_instance.get_attack_results_async(attack_result_ids=nonexistent_ids)
     assert len(retrieved_results) == 0
 
 
-def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInterface):
-    """Test attack result with last_response and last_score relationships."""
+async def test_attack_result_with_last_response_and_scores(sqlite_instance: MemoryInterface):
+    """Test attack result response and score relationships."""
     # Create a message piece first
     message_piece = MessagePiece(
         role="user",
@@ -582,36 +635,48 @@ def test_attack_result_with_last_response_and_score(sqlite_instance: MemoryInter
         score_rationale="Test score rationale",
         score_metadata={"test": "metadata"},
     )
+    human_score = score.model_copy(
+        update={
+            "id": uuid.uuid4(),
+            "score_value": "0.5",
+            "score_rationale": "Human score rationale",
+        }
+    )
 
     # Add message piece and score to memory
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[message_piece]))
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score, human_score]))
 
-    # Create attack result with last_response and last_score
+    # Create attack result with both score sources
     attack_result = AttackResult(
         conversation_id="conv_1",
         objective="Test objective with relationships",
         last_response=message_piece,
-        last_score=score,
+        automated_score=score,
+        human_score=human_score,
         executed_turns=5,
         execution_time_ms=1000,
         outcome=AttackOutcome.SUCCESS,
     )
 
     # Add attack result to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Retrieve and verify relationships
-    all_entries: Sequence[AttackResult] = sqlite_instance.get_attack_results()
+    all_entries: Sequence[AttackResult] = await sqlite_instance.get_attack_results_async()
     assert len(all_entries) == 1
     assert all_entries[0].conversation_id == "conv_1"
     assert all_entries[0].last_response is not None
     assert all_entries[0].last_response.id == message_piece.id
+    assert all_entries[0].automated_score is not None
+    assert all_entries[0].automated_score.id == score.id
+    assert all_entries[0].human_score is not None
+    assert all_entries[0].human_score.id == human_score.id
     assert all_entries[0].last_score is not None
-    assert all_entries[0].last_score.id == score.id
+    assert all_entries[0].last_score.id == human_score.id
 
 
-def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
+async def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
     """Test attack results with all possible outcomes."""
     outcomes = [AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.UNDETERMINED]
     attack_results = []
@@ -631,7 +696,7 @@ def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
         attack_results.append(attack_result)
 
     # Add all attack results to memory
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
     # Verify all were added
     all_entries: Sequence[AttackResultEntry] = sqlite_instance._query_entries(AttackResultEntry)
@@ -643,7 +708,7 @@ def test_attack_result_all_outcomes(sqlite_instance: MemoryInterface):
     assert stored_outcomes == set(outcomes)
 
 
-def test_attack_result_metadata_handling(sqlite_instance: MemoryInterface):
+async def test_attack_result_metadata_handling(sqlite_instance: MemoryInterface):
     """Test that attack result metadata is properly stored and retrieved."""
     # Create attack result with various metadata types
     metadata = {
@@ -664,7 +729,7 @@ def test_attack_result_metadata_handling(sqlite_instance: MemoryInterface):
         metadata=metadata,
     )
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Retrieve and verify metadata
     all_entries: Sequence[AttackResultEntry] = sqlite_instance._query_entries(AttackResultEntry)
@@ -674,7 +739,7 @@ def test_attack_result_metadata_handling(sqlite_instance: MemoryInterface):
     assert retrieved_result.metadata == metadata
 
 
-def test_attack_result_objective_sha256_auto_generation(sqlite_instance: MemoryInterface):
+async def test_attack_result_objective_sha256_auto_generation(sqlite_instance: MemoryInterface):
     """Test that objective SHA256 is always calculated."""
 
     objective = "Test objective without SHA256"
@@ -687,7 +752,7 @@ def test_attack_result_objective_sha256_auto_generation(sqlite_instance: MemoryI
     )
     expected_sha256 = to_sha256(attack_result.objective)
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Retrieve and verify that objective_sha256 is calculated
     all_entries: Sequence[AttackResultEntry] = sqlite_instance._query_entries(AttackResultEntry)
@@ -697,16 +762,21 @@ def test_attack_result_objective_sha256_auto_generation(sqlite_instance: MemoryI
     assert all_entries[0].objective_sha256 == expected_sha256
 
 
-def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
-    """Test attack result with related_conversations (PRUNED / ADVERSARIAL)."""
+async def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
+    """Test attack result with persisted related conversations."""
     pruned_ids = {"pruned_conv_1", "pruned_conv_2"}
     adversarial_ids = {"adv_conv_1", "adv_conv_2", "adv_conv_3"}
+    preparation_ids = {"prep_conv_1", "prep_conv_2"}
 
     related_conversations: set[ConversationReference] = {
         *(ConversationReference(conversation_id=cid, conversation_type=ConversationType.PRUNED) for cid in pruned_ids),
         *(
             ConversationReference(conversation_id=cid, conversation_type=ConversationType.ADVERSARIAL)
             for cid in adversarial_ids
+        ),
+        *(
+            ConversationReference(conversation_id=cid, conversation_type=ConversationType.PREPARATION)
+            for cid in preparation_ids
         ),
     }
 
@@ -719,12 +789,13 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
         related_conversations=related_conversations,
     )
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     entry: AttackResultEntry = sqlite_instance._query_entries(AttackResultEntry)[0]
 
     assert set(entry.pruned_conversation_ids) == pruned_ids  # type: ignore[arg-type]
     assert set(entry.adversarial_chat_conversation_ids) == adversarial_ids  # type: ignore[arg-type]
+    assert set(entry.preparation_conversation_ids) == preparation_ids  # type: ignore[arg-type]
 
     retrieved_result = entry.get_attack_result()
     assert {
@@ -733,9 +804,12 @@ def test_attack_result_with_attack_generation_conversation_ids(sqlite_instance: 
     assert {
         r.conversation_id for r in retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
     } == adversarial_ids
+    assert {
+        r.conversation_id for r in retrieved_result.get_conversations_by_type(ConversationType.PREPARATION)
+    } == preparation_ids
 
 
-def test_attack_result_without_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
+async def test_attack_result_without_attack_generation_conversation_ids(sqlite_instance: MemoryInterface):
     """Test attack result without related_conversations."""
     attack_result = AttackResult(
         conversation_id="conv_1",
@@ -745,18 +819,20 @@ def test_attack_result_without_attack_generation_conversation_ids(sqlite_instanc
         outcome=AttackOutcome.SUCCESS,
     )
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     entry: AttackResultEntry = sqlite_instance._query_entries(AttackResultEntry)[0]
     assert not entry.pruned_conversation_ids
     assert not entry.adversarial_chat_conversation_ids
+    assert not entry.preparation_conversation_ids
 
     retrieved_result = entry.get_attack_result()
     assert not retrieved_result.get_conversations_by_type(ConversationType.PRUNED)
     assert not retrieved_result.get_conversations_by_type(ConversationType.ADVERSARIAL)
+    assert not retrieved_result.get_conversations_by_type(ConversationType.PREPARATION)
 
 
-def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlite_instance: MemoryInterface):
+async def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlite_instance: MemoryInterface):
     """Test that updating adversarial_chat_conversation_ids is reflected when reading back.
 
     This catches a regression where the conversation count in the attack history
@@ -769,30 +845,34 @@ def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlit
         outcome=AttackOutcome.UNDETERMINED,
         metadata={"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-01T00:00:00"},
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Verify initial state: no related conversations
-    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    results = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(results) == 1
     assert len(results[0].related_conversations) == 0
 
     # Add first related conversation
-    sqlite_instance.update_attack_result(
-        conversation_id="conv_1",
-        update_fields={"adversarial_chat_conversation_ids": ["branch-1"]},
+    (
+        await sqlite_instance.update_attack_result_async(
+            conversation_id="conv_1",
+            update_fields={"adversarial_chat_conversation_ids": ["branch-1"]},
+        )
     )
 
-    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    results = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(results[0].related_conversations) == 1
     assert {r.conversation_id for r in results[0].related_conversations} == {"branch-1"}
 
     # Add second related conversation (preserving the first)
-    sqlite_instance.update_attack_result(
-        conversation_id="conv_1",
-        update_fields={"adversarial_chat_conversation_ids": ["branch-1", "branch-2"]},
+    (
+        await sqlite_instance.update_attack_result_async(
+            conversation_id="conv_1",
+            update_fields={"adversarial_chat_conversation_ids": ["branch-1", "branch-2"]},
+        )
     )
 
-    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    results = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(results[0].related_conversations) == 2
     assert {r.conversation_id for r in results[0].related_conversations} == {"branch-1", "branch-2"}
 
@@ -801,7 +881,7 @@ def test_update_attack_result_adversarial_chat_conversation_ids_round_trip(sqlit
         assert ref.conversation_type == ConversationType.ADVERSARIAL
 
 
-def test_update_attack_result_metadata_does_not_clobber_conversation_ids(sqlite_instance: MemoryInterface):
+async def test_update_attack_result_metadata_does_not_clobber_conversation_ids(sqlite_instance: MemoryInterface):
     """Regression test: updating only attack_metadata must not erase adversarial_chat_conversation_ids.
 
     This was the root cause of the conversation-count bug. The old _update_entries
@@ -814,29 +894,35 @@ def test_update_attack_result_metadata_does_not_clobber_conversation_ids(sqlite_
         outcome=AttackOutcome.UNDETERMINED,
         metadata={"created_at": "2026-01-01T00:00:00"},
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Step 1: add related conversations
-    sqlite_instance.update_attack_result(
-        conversation_id="conv_1",
-        update_fields={"adversarial_chat_conversation_ids": ["branch-1", "branch-2"]},
+    (
+        await sqlite_instance.update_attack_result_async(
+            conversation_id="conv_1",
+            update_fields={"adversarial_chat_conversation_ids": ["branch-1", "branch-2"]},
+        )
     )
 
     # Step 2: update ONLY metadata (this is what add_message_async does)
-    sqlite_instance.update_attack_result(
-        conversation_id="conv_1",
-        update_fields={"attack_metadata": {"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-02T00:00:00"}},
+    (
+        await sqlite_instance.update_attack_result_async(
+            conversation_id="conv_1",
+            update_fields={
+                "attack_metadata": {"created_at": "2026-01-01T00:00:00", "updated_at": "2026-01-02T00:00:00"}
+            },
+        )
     )
 
     # Verify conversation ids are still present
-    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    results = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(results[0].related_conversations) == 2, (
         "Updating attack_metadata must not erase adversarial_chat_conversation_ids"
     )
     assert {r.conversation_id for r in results[0].related_conversations} == {"branch-1", "branch-2"}
 
 
-def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instance: MemoryInterface):
+async def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instance: MemoryInterface):
     """Regression test: merging a stale entry must not overwrite concurrent updates.
 
     Simulates the race condition where entry is loaded, then another update modifies
@@ -850,7 +936,7 @@ def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instance: Me
         outcome=AttackOutcome.UNDETERMINED,
         metadata={"created_at": "2026-01-01T00:00:00"},
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Load entry (will become stale)
     stale_entries = sqlite_instance._query_entries(
@@ -859,9 +945,11 @@ def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instance: Me
     assert stale_entries[0].adversarial_chat_conversation_ids is None
 
     # Concurrent update adds conversation ids
-    sqlite_instance.update_attack_result(
-        conversation_id="conv_1",
-        update_fields={"adversarial_chat_conversation_ids": ["branch-1"]},
+    (
+        await sqlite_instance.update_attack_result_async(
+            conversation_id="conv_1",
+            update_fields={"adversarial_chat_conversation_ids": ["branch-1"]},
+        )
     )
 
     # Now update with the stale entry (only metadata)
@@ -871,14 +959,140 @@ def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instance: Me
     )
 
     # Verify the concurrent update was NOT lost
-    results = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    results = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(results[0].related_conversations) == 1, (
         "Stale entry merge must not overwrite concurrent adversarial_chat_conversation_ids update"
     )
     assert results[0].related_conversations.pop().conversation_id == "branch-1"
 
 
-def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterface):
+@pytest.mark.parametrize("by_id", [False, True], ids=["conversation", "result_id"])
+def test_sync_update_attack_result_identifier_refreshes_normalized_reference(
+    sqlite_instance: MemoryInterface, by_id: bool
+) -> None:
+    original_target = TargetIdentifier(
+        class_name="MockTarget", class_module="tests", underlying_model_name="model", temperature=0.1
+    )
+    replacement_target = TargetIdentifier(
+        class_name="MockTarget", class_module="tests", underlying_model_name="model", temperature=0.8
+    )
+    result = AttackResult(
+        conversation_id="sync-conversation",
+        objective="Sync update",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="ProbeAttack", class_module="tests", objective_target=original_target
+            )
+        ),
+    )
+    replacement = AtomicAttackIdentifier.build(
+        attack_identifier=AttackIdentifier(
+            class_name="ProbeAttack", class_module="tests", objective_target=replacement_target
+        )
+    )
+    with pytest.warns(DeprecationWarning):
+        sqlite_instance.add_attack_results_to_memory(attack_results=[result])
+
+    update_fields = {"atomic_attack_identifier": replacement.model_dump()}
+    with pytest.warns(DeprecationWarning):
+        if by_id:
+            updated = sqlite_instance.update_attack_result_by_id(
+                attack_result_id=result.attack_result_id, update_fields=update_fields
+            )
+        else:
+            updated = sqlite_instance.update_attack_result(
+                conversation_id=result.conversation_id, update_fields=update_fields
+            )
+    assert updated
+    entry = sqlite_instance._query_entries(
+        AttackResultEntry, conditions=AttackResultEntry.id == uuid.UUID(result.attack_result_id)
+    )[0]
+    assert entry.atomic_attack_identifier_hash == replacement.hash
+    assert entry.objective_target_eval_hash_v1 == ObjectiveTargetAnalyticsIdentityV1.hash(identifier=replacement_target)
+    assert entry.atomic_attack_identifier is not None
+    assert entry.atomic_attack_identifier["eval_hash"] == AtomicAttackEvaluationIdentifier(replacement).eval_hash
+    graph = sqlite_instance._query_entries(
+        AtomicAttackIdentifierEntry, conditions=AtomicAttackIdentifierEntry.hash == replacement.hash
+    )
+    assert len(graph) == 1
+    assert replacement.attack_technique is not None
+    assert graph[0].attack_technique_identifier_hash == replacement.attack_technique.hash
+
+    with pytest.warns(DeprecationWarning):
+        if by_id:
+            cleared = sqlite_instance.update_attack_result_by_id(
+                attack_result_id=result.attack_result_id, update_fields={"atomic_attack_identifier": None}
+            )
+        else:
+            cleared = sqlite_instance.update_attack_result(
+                conversation_id=result.conversation_id, update_fields={"atomic_attack_identifier": None}
+            )
+    assert cleared
+    cleared_entry = sqlite_instance._query_entries(
+        AttackResultEntry, conditions=AttackResultEntry.id == uuid.UUID(result.attack_result_id)
+    )[0]
+    assert cleared_entry.atomic_attack_identifier is None
+    assert cleared_entry.atomic_attack_identifier_hash is None
+    assert cleared_entry.objective_target_eval_hash_v1 is None
+
+
+@pytest.mark.parametrize("derived_field", ["atomic_attack_identifier_hash", "objective_target_eval_hash_v1"])
+async def test_update_attack_result_rejects_direct_derived_identifier_fields(
+    sqlite_instance: MemoryInterface, derived_field: str
+) -> None:
+    result = AttackResult(conversation_id="derived-field", objective="Do not overwrite derived keys")
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
+    with pytest.raises(ValueError, match="cannot be updated directly"):
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=result.attack_result_id,
+            update_fields={derived_field: "0" * 64},
+        )
+    async with await sqlite_instance.get_session_async() as session:
+        entry = await session.get(AttackResultEntry, uuid.UUID(result.attack_result_id))
+        assert entry is not None
+        assert entry.atomic_attack_identifier_hash is None
+        assert entry.objective_target_eval_hash_v1 is None
+
+
+async def test_update_attack_result_identifier_graph_and_row_roll_back_together(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    old_target = TargetIdentifier(class_name="MockTarget", class_module="tests", temperature=0.1)
+    new_target = TargetIdentifier(class_name="MockTarget", class_module="tests", temperature=0.8)
+    result = AttackResult(
+        conversation_id="rollback-conversation",
+        objective="Test atomic replacement",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="ProbeAttack", class_module="tests", objective_target=old_target
+            )
+        ),
+    )
+    replacement = AtomicAttackIdentifier.build(
+        attack_identifier=AttackIdentifier(class_name="ProbeAttack", class_module="tests", objective_target=new_target)
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[result])
+
+    with (
+        patch.object(AttackResultEntry, "_set_atomic_attack_identifier", side_effect=ValueError("update failed")),
+        pytest.raises(ValueError, match="update failed"),
+    ):
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=result.attack_result_id,
+            update_fields={"atomic_attack_identifier": replacement.model_dump()},
+        )
+
+    async with await sqlite_instance.get_session_async() as session:
+        saved = await session.get(AttackResultEntry, uuid.UUID(result.attack_result_id))
+        assert saved is not None
+        assert result.atomic_attack_identifier is not None
+        assert saved.atomic_attack_identifier_hash == result.atomic_attack_identifier.hash
+        assert saved.objective_target_eval_hash_v1 == ObjectiveTargetAnalyticsIdentityV1.hash(identifier=old_target)
+        assert await session.get(AtomicAttackIdentifierEntry, replacement.hash) is None
+        assert await session.get(TargetIdentifierEntry, new_target.hash) is None
+
+
+async def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterface):
     """Test filtering attack results by single label."""
 
     # Create attack results with labels
@@ -890,20 +1104,24 @@ def test_get_attack_results_by_labels_single(sqlite_instance: MemoryInterface):
         "conv_3", 3, AttackOutcome.SUCCESS, labels={"operation": "other_op", "operator": "roakey"}
     )
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2, attack_result3])
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[attack_result1, attack_result2, attack_result3]
+        )
+    )
 
     # Test filtering by labels
-    test_op_results = sqlite_instance.get_attack_results(labels={"operation": "test_op"})
+    test_op_results = await sqlite_instance.get_attack_results_async(labels={"operation": "test_op"})
     assert len(test_op_results) == 2
     conversation_ids = {result.conversation_id for result in test_op_results}
     assert conversation_ids == {"conv_1", "conv_2"}
-    roakey_results = sqlite_instance.get_attack_results(labels={"operator": "roakey"})
+    roakey_results = await sqlite_instance.get_attack_results_async(labels={"operator": "roakey"})
     assert len(roakey_results) == 2
     conversation_ids = {result.conversation_id for result in roakey_results}
     assert conversation_ids == {"conv_1", "conv_3"}
 
 
-def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlite_instance: MemoryInterface):
     """An empty sequence for a label key is skipped (no filter applied for that key).
 
     Includes an attack with empty labels and another with no ``operator`` key to guard
@@ -913,16 +1131,16 @@ def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlite_inst
     ar2 = create_attack_result("conv_2", 2, AttackOutcome.SUCCESS, labels={"operator": "alice"})
     ar3 = create_attack_result("conv_3", 3, AttackOutcome.SUCCESS, labels={"phase": "initial"})
     ar4 = create_attack_result("conv_4", 4, AttackOutcome.SUCCESS, labels={})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3, ar4]))
 
     # Empty sequence for "operator" → filter is ignored entirely, all attacks match
     # (including conv_3 which has no "operator" key and conv_4 which has no labels).
-    results = sqlite_instance.get_attack_results(labels={"operator": []})
+    results = await sqlite_instance.get_attack_results_async(labels={"operator": []})
     assert {r.conversation_id for r in results} == {"conv_1", "conv_2", "conv_3", "conv_4"}
 
     # Mixed: one key with empty-sequence (ignored) + one real filter should behave
     # exactly like the real filter alone.
-    mixed = sqlite_instance.get_attack_results(labels={"operator": [], "phase": "initial"})
+    mixed = await sqlite_instance.get_attack_results_async(labels={"operator": [], "phase": "initial"})
     assert {r.conversation_id for r in mixed} == {"conv_3"}
 
 
@@ -935,16 +1153,16 @@ def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlite_inst
         "",
     ],
 )
-def test_get_attack_results_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, bad_key: str):
+async def test_get_attack_results_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, bad_key: str):
     """Label keys are interpolated into JSON path expressions by the per-backend
     helpers, so keys outside the ``[A-Za-z0-9_.-]+`` allowlist must be rejected
     before reaching the SQL layer (defense against JSON-path / SQL injection).
     """
     with pytest.raises(ValueError, match="Invalid label key"):
-        sqlite_instance.get_attack_results(labels={bad_key: "value"})
+        (await sqlite_instance.get_attack_results_async(labels={bad_key: "value"}))
 
 
-def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):
     """Test filtering attack results by multiple labels (AND logic)."""
 
     # Create attack results with multiple labels
@@ -969,82 +1187,92 @@ def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface)
         ),
     ]
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
     # Test filtering by multiple labels (AND logic)
-    roakey_initial_results = sqlite_instance.get_attack_results(labels={"operator": "roakey", "phase": "initial"})
+    roakey_initial_results = await sqlite_instance.get_attack_results_async(
+        labels={"operator": "roakey", "phase": "initial"}
+    )
     assert len(roakey_initial_results) == 1
     assert roakey_initial_results[0].conversation_id == "conv_1"
 
-    test_op_roakey_results = sqlite_instance.get_attack_results(labels={"operation": "test_op", "operator": "roakey"})
+    test_op_roakey_results = await sqlite_instance.get_attack_results_async(
+        labels={"operation": "test_op", "operator": "roakey"}
+    )
     assert len(test_op_roakey_results) == 2
     conversation_ids = {result.conversation_id for result in test_op_roakey_results}
     assert conversation_ids == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_by_labels_or_within_key(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_labels_or_within_key(sqlite_instance: MemoryInterface):
     """Test that a sequence value for a label key matches any of the values (OR-within-key)."""
 
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            create_attack_result("conv_1", 1, labels={"operator": "alice"}),
-            create_attack_result("conv_2", 2, labels={"operator": "bob"}),
-            create_attack_result("conv_3", 3, labels={"operator": "charlie"}),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                create_attack_result("conv_1", 1, labels={"operator": "alice"}),
+                create_attack_result("conv_2", 2, labels={"operator": "bob"}),
+                create_attack_result("conv_3", 3, labels={"operator": "charlie"}),
+            ]
+        )
     )
 
-    results = sqlite_instance.get_attack_results(labels={"operator": ["alice", "bob"]})
+    results = await sqlite_instance.get_attack_results_async(labels={"operator": ["alice", "bob"]})
     assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_by_labels_or_within_key_and_across_keys(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_labels_or_within_key_and_across_keys(sqlite_instance: MemoryInterface):
     """Test that OR-within-key composes with AND-across-keys."""
 
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            create_attack_result("conv_1", 1, labels={"operator": "alice", "operation": "red"}),
-            create_attack_result("conv_2", 2, labels={"operator": "bob", "operation": "red"}),
-            create_attack_result("conv_3", 3, labels={"operator": "charlie", "operation": "red"}),
-            create_attack_result("conv_4", 4, labels={"operator": "alice", "operation": "blue"}),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                create_attack_result("conv_1", 1, labels={"operator": "alice", "operation": "red"}),
+                create_attack_result("conv_2", 2, labels={"operator": "bob", "operation": "red"}),
+                create_attack_result("conv_3", 3, labels={"operator": "charlie", "operation": "red"}),
+                create_attack_result("conv_4", 4, labels={"operator": "alice", "operation": "blue"}),
+            ]
+        )
     )
 
-    results = sqlite_instance.get_attack_results(labels={"operator": ["alice", "bob"], "operation": ["red"]})
+    results = await sqlite_instance.get_attack_results_async(
+        labels={"operator": ["alice", "bob"], "operation": ["red"]}
+    )
     assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_labels_no_matches(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_labels_no_matches(sqlite_instance: MemoryInterface):
     """Test filtering by labels that don't exist."""
 
     # Create attack result with labels that don't match the search
     attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS, labels={"operation": "test_op"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
     # Search for non-existent labels
-    results = sqlite_instance.get_attack_results(labels={"nonexistent": "value"})
+    results = await sqlite_instance.get_attack_results_async(labels={"nonexistent": "value"})
     assert len(results) == 0
 
 
-def test_get_attack_results_labels_query_on_empty_labels(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_labels_query_on_empty_labels(sqlite_instance: MemoryInterface):
     """Test querying for labels when records have no labels at all"""
 
     # Create attack results with NO labels
     attack_result1 = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS)
     attack_result2 = create_attack_result("conv_2", 2, AttackOutcome.FAILURE)
 
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result1, attack_result2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result1, attack_result2]))
 
-    results = sqlite_instance.get_attack_results(labels={"operation": "test"})
+    results = await sqlite_instance.get_attack_results_async(labels={"operation": "test"})
     assert len(results) == 0
 
-    results = sqlite_instance.get_attack_results(labels={"researcher": "roakey"})
+    results = await sqlite_instance.get_attack_results_async(labels={"researcher": "roakey"})
     assert len(results) == 0
 
-    results = sqlite_instance.get_attack_results(labels={"non_existing_key": "no_value"})
+    results = await sqlite_instance.get_attack_results_async(labels={"non_existing_key": "no_value"})
     assert len(results) == 0
 
 
-def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: MemoryInterface):
     """Test querying for labels where the key exists but the value doesn't match."""
 
     # Create attack results with specific label values
@@ -1057,43 +1285,45 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
         ),
         create_attack_result("conv_3", 3, AttackOutcome.FAILURE, labels={"operation": "test_op"}),
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
     # Query for key that exists but with wrong value
-    results = sqlite_instance.get_attack_results(labels={"operation": "op_doesnotexist"})
+    results = await sqlite_instance.get_attack_results_async(labels={"operation": "op_doesnotexist"})
     assert len(results) == 0
 
     # Query for existing key with correct value
-    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists"})
+    results = await sqlite_instance.get_attack_results_async(labels={"operation": "op_exists"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
     # Another key exists but wrong value
-    results = sqlite_instance.get_attack_results(labels={"researcher": "not_roakey"})
+    results = await sqlite_instance.get_attack_results_async(labels={"researcher": "not_roakey"})
     assert len(results) == 0
 
     # Correct key and value
-    results = sqlite_instance.get_attack_results(labels={"researcher": "roakey"})
+    results = await sqlite_instance.get_attack_results_async(labels={"researcher": "roakey"})
     assert len(results) == 2
     assert results[0].conversation_id == "conv_1"
 
     # Key exists in some records but not others, and we query for wrong value
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         labels={"operation": "wrong_value"}
     )  # operation exists in conv_3 but with "test_op"
     assert len(results) == 0
 
     # Correct key and value for the third record
-    results = sqlite_instance.get_attack_results(labels={"operation": "test_op"})
+    results = await sqlite_instance.get_attack_results_async(labels={"operation": "test_op"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_3"
 
     # Test multiple keys where one matches and one doesn't
-    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists", "researcher": "not_roakey"})
+    results = await sqlite_instance.get_attack_results_async(
+        labels={"operation": "op_exists", "researcher": "not_roakey"}
+    )
     assert len(results) == 0
 
     # Test multiple keys where both match
-    results = sqlite_instance.get_attack_results(labels={"operation": "op_exists", "researcher": "roakey"})
+    results = await sqlite_instance.get_attack_results_async(labels={"operation": "op_exists", "researcher": "roakey"})
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
@@ -1103,29 +1333,29 @@ def test_get_attack_results_labels_key_exists_value_mismatch(sqlite_instance: Me
 # ---------------------------------------------------------------------------
 
 
-def test_attack_result_targeted_harm_categories_round_trip(sqlite_instance: MemoryInterface):
+async def test_attack_result_targeted_harm_categories_round_trip(sqlite_instance: MemoryInterface):
     """targeted_harm_categories persists onto AttackResultEntry and round-trips back."""
     attack_result = create_attack_result(
         "conv_1", 1, AttackOutcome.SUCCESS, targeted_harm_categories=["violence", "hate"]
     )
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
-    stored = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    stored = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(stored) == 1
     assert sorted(stored[0].targeted_harm_categories) == ["hate", "violence"]
 
 
-def test_attack_result_targeted_harm_categories_defaults_empty(sqlite_instance: MemoryInterface):
+async def test_attack_result_targeted_harm_categories_defaults_empty(sqlite_instance: MemoryInterface):
     """An AttackResult with no harm categories round-trips to an empty list."""
     attack_result = create_attack_result("conv_1", 1, AttackOutcome.SUCCESS)
-    sqlite_instance.add_attack_results_to_memory(attack_results=[attack_result])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack_result]))
 
-    stored = sqlite_instance.get_attack_results(conversation_id="conv_1")
+    stored = await sqlite_instance.get_attack_results_async(conversation_id="conv_1")
     assert len(stored) == 1
     assert stored[0].targeted_harm_categories == []
 
 
-def test_get_attack_results_by_targeted_harm_categories(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_targeted_harm_categories(sqlite_instance: MemoryInterface):
     """Filtering by targeted_harm_categories matches attacks targeting ANY listed category."""
     attack_results = [
         create_attack_result("conv_1", 1, AttackOutcome.SUCCESS, targeted_harm_categories=["violence"]),
@@ -1133,24 +1363,24 @@ def test_get_attack_results_by_targeted_harm_categories(sqlite_instance: MemoryI
         create_attack_result("conv_3", 3, AttackOutcome.SUCCESS, targeted_harm_categories=["self_harm"]),
         create_attack_result("conv_4", 4, AttackOutcome.SUCCESS),
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
-    violence = sqlite_instance.get_attack_results(targeted_harm_categories=["violence"])
+    violence = await sqlite_instance.get_attack_results_async(targeted_harm_categories=["violence"])
     assert {r.conversation_id for r in violence} == {"conv_1", "conv_2"}
 
     # OR across multiple requested categories.
-    multi = sqlite_instance.get_attack_results(targeted_harm_categories=["self_harm", "hate"])
+    multi = await sqlite_instance.get_attack_results_async(targeted_harm_categories=["self_harm", "hate"])
     assert {r.conversation_id for r in multi} == {"conv_2", "conv_3"}
 
     # Case-insensitive match.
-    case = sqlite_instance.get_attack_results(targeted_harm_categories=["VIOLENCE"])
+    case = await sqlite_instance.get_attack_results_async(targeted_harm_categories=["VIOLENCE"])
     assert {r.conversation_id for r in case} == {"conv_1", "conv_2"}
 
     # No match.
-    assert sqlite_instance.get_attack_results(targeted_harm_categories=["nonexistent"]) == []
+    assert (await sqlite_instance.get_attack_results_async(targeted_harm_categories=["nonexistent"])) == []
 
     # Empty sequence applies no filter.
-    none_filter = sqlite_instance.get_attack_results(targeted_harm_categories=[])
+    none_filter = await sqlite_instance.get_attack_results_async(targeted_harm_categories=[])
     assert {r.conversation_id for r in none_filter} == {"conv_1", "conv_2", "conv_3", "conv_4"}
 
 
@@ -1159,111 +1389,196 @@ def test_get_attack_results_by_targeted_harm_categories(sqlite_instance: MemoryI
 # ---------------------------------------------------------------------------
 
 
-def test_get_unique_attack_labels_empty(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_empty(sqlite_instance: MemoryInterface):
     """Returns empty dict when there are no attack results."""
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {}
 
 
-def test_get_unique_attack_labels_single(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_single(sqlite_instance: MemoryInterface):
     """Returns labels from a single attack result."""
     ar = create_attack_result("conv_1", 1, labels={"env": "prod", "team": "red"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {"env": ["prod"], "team": ["red"]}
 
 
-def test_get_unique_attack_labels_multiple_attacks_merges_values(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_multiple_attacks_merges_values(sqlite_instance: MemoryInterface):
     """Values from different attacks are merged and sorted."""
     ar1 = create_attack_result("conv_1", 1, labels={"env": "prod", "team": "red"})
     ar2 = create_attack_result("conv_2", 2, labels={"env": "staging", "team": "red"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {"env": ["prod", "staging"], "team": ["red"]}
 
 
-def test_get_unique_attack_labels_no_labels(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_no_labels(sqlite_instance: MemoryInterface):
     """Attack results without labels return an empty dict."""
     ar = create_attack_result("conv_1", 1)
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {}
 
 
-def test_get_unique_attack_labels_non_string_values_skipped(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_non_string_values_skipped(sqlite_instance: MemoryInterface):
     """Non-string label values are ignored."""
-    from contextlib import closing
-
     from sqlalchemy import text
 
     ar = create_attack_result("conv_1", 1, labels={"env": "prod"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
-    with closing(sqlite_instance.get_session()) as session:
-        session.execute(
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
             text('UPDATE "AttackResultEntries" SET labels = :labels'),
             {"labels": '{"env":"prod","count":42}'},
         )
-        session.commit()
+        await session.commit()
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {"env": ["prod"]}
 
 
-def test_get_unique_attack_labels_keys_sorted(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_keys_sorted(sqlite_instance: MemoryInterface):
     """Returned keys and values are sorted alphabetically."""
     ar1 = create_attack_result("conv_1", 1, labels={"zoo": "z_val", "alpha": "a"})
     ar2 = create_attack_result("conv_2", 2, labels={"alpha": "b"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert list(result.keys()) == ["alpha", "zoo"]
     assert result["alpha"] == ["a", "b"]
     assert result["zoo"] == ["z_val"]
 
 
-def test_get_unique_attack_labels_non_dict_labels_skipped(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_non_dict_labels_skipped(sqlite_instance: MemoryInterface):
     """Labels stored as a non-dict JSON value (e.g. a string) are skipped."""
-    from contextlib import closing
-
     from sqlalchemy import text
 
     ar1 = create_attack_result("conv_1", 1, labels={"env": "prod"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
     ar2 = create_attack_result("conv_2", 2, labels={"placeholder": "x"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar2])
-    with closing(sqlite_instance.get_session()) as session:
-        session.execute(
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar2]))
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
             text('UPDATE "AttackResultEntries" SET labels = :labels WHERE conversation_id = :cid'),
             {"labels": '"just_a_string"', "cid": "conv_2"},
         )
-        session.commit()
+        await session.commit()
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     # Only the dict labels from conv_1 should appear
     assert result == {"env": ["prod"]}
 
 
-def test_get_unique_attack_labels_from_attack_result_entry(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_from_attack_result_entry(sqlite_instance: MemoryInterface):
     """Labels stored directly on AttackResultEntry are included."""
     ar = create_attack_result("conv_1", 1, labels={"source": "are_only"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar]))
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {"source": ["are_only"]}
 
 
-def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_labels_deduplicates_across_attacks(sqlite_instance: MemoryInterface):
     """Identical key-value pairs from different attacks are not duplicated."""
     ar1 = create_attack_result("conv_1", 1, labels={"env": "prod"})
     ar2 = create_attack_result("conv_2", 2, labels={"env": "prod"})
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    result = sqlite_instance.get_unique_attack_labels()
+    result = await sqlite_instance.get_unique_attack_labels_async()
     assert result == {"env": ["prod"]}
+
+
+async def test_get_unique_attack_labels_narrows_by_attribution_and_labels(sqlite_instance: MemoryInterface):
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                create_attack_result(
+                    "conv_1",
+                    1,
+                    operator="alice",
+                    operation="nightly",
+                    labels={"team": "red", "env": "prod"},
+                ),
+                create_attack_result(
+                    "conv_2",
+                    2,
+                    operator="alice",
+                    operation="daytime",
+                    labels={"team": "blue", "env": "test"},
+                ),
+                create_attack_result(
+                    "conv_3",
+                    3,
+                    operator="bob",
+                    operation="nightly",
+                    labels={"team": "red", "env": "dev"},
+                ),
+            ]
+        )
+    )
+
+    result = await sqlite_instance.get_unique_attack_labels_async(
+        operator=["alice"],
+        operation=["nightly"],
+        labels={"team": ["red"]},
+    )
+
+    assert result == {"env": ["prod"], "team": ["red"]}
+
+
+async def test_get_attack_results_filters_dedicated_attribution_columns(sqlite_instance: MemoryInterface):
+    attack_results = [
+        create_attack_result("conv_1", 1, operator="alice", operation="nightly"),
+        create_attack_result("conv_2", 2, operator="bob", operation="nightly"),
+        create_attack_result("conv_3", 3, operator="alice", operation="daytime"),
+    ]
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
+
+    results = await sqlite_instance.get_attack_results_async(operator=["alice"], operation="nightly")
+
+    assert [result.conversation_id for result in results] == ["conv_1"]
+
+
+async def test_get_attack_results_legacy_attribution_filter_warns_and_normalizes(sqlite_instance: MemoryInterface):
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[create_attack_result("conv_1", 1, operator="alice")]
+        )
+    )
+
+    with pytest.warns(DeprecationWarning, match="removed in 1.4.0"):
+        results = await sqlite_instance.get_attack_results_async(labels={"operator": "alice"})
+
+    assert [result.conversation_id for result in results] == ["conv_1"]
+
+
+async def test_get_attack_results_rejects_conflicting_attribution_filters(sqlite_instance: MemoryInterface):
+    with pytest.raises(ValueError, match="operator conflicts"):
+        (await sqlite_instance.get_attack_results_async(operator="alice", labels={"operator": "bob"}))
+
+
+async def test_unique_attack_attribution_uses_dedicated_columns(sqlite_instance: MemoryInterface):
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                create_attack_result("conv_1", 1, operator="bob", operation="nightly", labels={"team": "red"}),
+                create_attack_result("conv_2", 2, operator="alice", operation="nightly", labels={"team": "blue"}),
+                create_attack_result("conv_3", 3),
+                create_attack_result("conv_4", 4, operator="alice"),
+                create_attack_result("conv_5", 5, operation="nightly"),
+            ]
+        )
+    )
+
+    assert (await sqlite_instance.get_unique_attack_attribution_async()) == {
+        "operators": ["alice", "bob"],
+        "operations": ["nightly"],
+    }
+    assert (await sqlite_instance.get_unique_attack_labels_async()) == {"team": ["blue", "red"]}
 
 
 # ============================================================================
@@ -1300,67 +1615,67 @@ def _make_attack_result_with_identifier(
     )
 
 
-def test_get_attack_results_by_attack_classes(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_classes(sqlite_instance: MemoryInterface):
     """Test filtering attack results by attack_classes matches class_name in JSON."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"])
+    results = await sqlite_instance.get_attack_results_async(attack_classes=["CrescendoAttack"])
     assert len(results) == 2
     assert {r.conversation_id for r in results} == {"conv_1", "conv_3"}
 
 
-def test_get_attack_results_by_attack_classes_no_match(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_classes_no_match(sqlite_instance: MemoryInterface):
     """Test that attack_classes filter returns empty when nothing matches."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=["NonExistentAttack"])
+    results = await sqlite_instance.get_attack_results_async(attack_classes=["NonExistentAttack"])
     assert len(results) == 0
 
 
-def test_get_attack_results_by_attack_classes_case_insensitive(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_classes_case_insensitive(sqlite_instance: MemoryInterface):
     """attack_classes is case-insensitive (mirrors converter_classes; forgives REST/CLI casing)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
     # Lowercase, uppercase, and mixed-case all match.
-    assert len(sqlite_instance.get_attack_results(attack_classes=["crescendoattack"])) == 1
-    assert len(sqlite_instance.get_attack_results(attack_classes=["CRESCENDOATTACK"])) == 1
-    assert len(sqlite_instance.get_attack_results(attack_classes=["CresCendoATtack"])) == 1
+    assert len(await sqlite_instance.get_attack_results_async(attack_classes=["crescendoattack"])) == 1
+    assert len(await sqlite_instance.get_attack_results_async(attack_classes=["CRESCENDOATTACK"])) == 1
+    assert len(await sqlite_instance.get_attack_results_async(attack_classes=["CresCendoATtack"])) == 1
 
 
-def test_get_attack_results_by_attack_classes_no_identifier(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_classes_no_identifier(sqlite_instance: MemoryInterface):
     """Test that attacks with no attack_identifier (empty JSON) are excluded by attack_classes filter."""
     ar1 = create_attack_result("conv_1", 1)  # No attack_identifier → stored as {}
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"])
+    results = await sqlite_instance.get_attack_results_async(attack_classes=["CrescendoAttack"])
     assert len(results) == 1
     assert results[0].conversation_id == "conv_2"
 
 
-def test_get_attack_results_by_attack_classes_multi(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_classes_multi(sqlite_instance: MemoryInterface):
     """Test that multiple attack_classes use OR logic — matches any of the listed class names."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
     ar3 = _make_attack_result_with_identifier("conv_3", "TreeOfAttacksAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack", "ManualAttack"])
+    results = await sqlite_instance.get_attack_results_async(attack_classes=["CrescendoAttack", "ManualAttack"])
     assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instance: MemoryInterface):
     """Test that attack_classes=[] behaves like None (no filter applied)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=[])
+    results = await sqlite_instance.get_attack_results_async(attack_classes=[])
     assert len(results) == 2
 
 
@@ -1377,111 +1692,113 @@ def _eval_hash_for(class_name: str) -> str:
     ).eval_hash
 
 
-def test_get_attack_results_by_atomic_attack_eval_hashes_single(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_atomic_attack_eval_hashes_single(sqlite_instance: MemoryInterface):
     """Filter by a single eval_hash; only matching rows are returned."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
     target_hash = _eval_hash_for("CrescendoAttack")
-    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=[target_hash])
+    results = await sqlite_instance.get_attack_results_async(atomic_attack_eval_hashes=[target_hash])
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_by_atomic_attack_eval_hashes_multi_uses_or(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_atomic_attack_eval_hashes_multi_uses_or(sqlite_instance: MemoryInterface):
     """Multiple eval_hashes OR-combine — matches any of the listed hashes."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
     ar3 = _make_attack_result_with_identifier("conv_3", "TreeOfAttacksAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
     hashes = [_eval_hash_for("CrescendoAttack"), _eval_hash_for("ManualAttack")]
-    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=hashes)
+    results = await sqlite_instance.get_attack_results_async(atomic_attack_eval_hashes=hashes)
     assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_atomic_attack_eval_hashes_empty_returns_all(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_atomic_attack_eval_hashes_empty_returns_all(sqlite_instance: MemoryInterface):
     """atomic_attack_eval_hashes=[] behaves like None (no filter applied)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=[])
+    results = await sqlite_instance.get_attack_results_async(atomic_attack_eval_hashes=[])
     assert len(results) == 2
 
 
-def test_get_attack_results_atomic_attack_eval_hashes_no_match(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_atomic_attack_eval_hashes_no_match(sqlite_instance: MemoryInterface):
     """A non-matching eval_hash returns no rows."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
-    results = sqlite_instance.get_attack_results(atomic_attack_eval_hashes=["deadbeef" * 8])
+    results = await sqlite_instance.get_attack_results_async(atomic_attack_eval_hashes=["deadbeef" * 8])
     assert len(results) == 0
 
 
-def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_none_returns_all(sqlite_instance: MemoryInterface):
     """Test that converter_classes=None (omitted) returns all attacks unfiltered."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack")  # No converters (None)
     ar3 = create_attack_result("conv_3", 3)  # No identifier at all
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    results = sqlite_instance.get_attack_results(converter_classes=None)
+    results = await sqlite_instance.get_attack_results_async(converter_classes=None)
     assert len(results) == 3
 
 
-def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_empty_matches_no_converters(sqlite_instance: MemoryInterface):
     """Test that converter_classes=[] returns only attacks with no converters (back-compat)."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")  # converter_ids=None
     ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])  # converter_ids=[]
     ar_no_identifier = create_attack_result("conv_4", 4)  # No identifier → stored as {}
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+        )
     )
 
-    results = sqlite_instance.get_attack_results(converter_classes=[])
+    results = await sqlite_instance.get_attack_results_async(converter_classes=[])
     conv_ids = {r.conversation_id for r in results}
     assert conv_ids == {"conv_2", "conv_3", "conv_4"}
 
 
-def test_get_attack_results_converter_classes_single_match(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_single_match(sqlite_instance: MemoryInterface):
     """Test that converter_types with one type returns attacks using that converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    results = sqlite_instance.get_attack_results(converter_classes=["Base64Converter"])
+    results = await sqlite_instance.get_attack_results_async(converter_classes=["Base64Converter"])
     conv_ids = {r.conversation_id for r in results}
     assert conv_ids == {"conv_1", "conv_3"}
 
 
-def test_get_attack_results_converter_classes_and_logic(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_and_logic(sqlite_instance: MemoryInterface):
     """Test that multiple converter_types use AND logic — all must be present."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
     ar4 = _make_attack_result_with_identifier("conv_4", "Attack", ["Base64Converter", "ROT13Converter", "UrlConverter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3, ar4]))
 
-    results = sqlite_instance.get_attack_results(converter_classes=["Base64Converter", "ROT13Converter"])
+    results = await sqlite_instance.get_attack_results_async(converter_classes=["Base64Converter", "ROT13Converter"])
     conv_ids = {r.conversation_id for r in results}
     # conv_3 and conv_4 have both; conv_1 and conv_2 have only one
     assert conv_ids == {"conv_3", "conv_4"}
 
 
-def test_get_attack_results_converter_classes_any_logic(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_any_logic(sqlite_instance: MemoryInterface):
     """converter_classes_match='any' returns rows that match at least one listed converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "Attack", ["Base64Converter", "ROT13Converter"])
     ar4 = _make_attack_result_with_identifier("conv_4", "Attack", ["UrlConverter"])
     ar5 = _make_attack_result_with_identifier("conv_5", "Attack")  # No converters
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4, ar5])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3, ar4, ar5]))
 
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         converter_classes=["Base64Converter", "ROT13Converter"],
         converter_classes_match="any",
     )
@@ -1490,141 +1807,170 @@ def test_get_attack_results_converter_classes_any_logic(sqlite_instance: MemoryI
     assert conv_ids == {"conv_1", "conv_2", "conv_3"}
 
 
-def test_get_attack_results_converter_classes_any_logic_case_insensitive(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_any_logic_case_insensitive(sqlite_instance: MemoryInterface):
     """converter_classes_match='any' preserves case-insensitive matching (parity with 'all' mode)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         converter_classes=["base64converter", "ROT13CONVERTER"],
         converter_classes_match="any",
     )
     assert {r.conversation_id for r in results} == {"conv_1", "conv_2"}
 
 
-def test_get_attack_results_converter_classes_any_logic_single_entry_degenerate(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_any_logic_single_entry_degenerate(sqlite_instance: MemoryInterface):
     """converter_classes_match='any' with a single entry is equivalent to 'all' with that entry."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["ROT13Converter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    results_any = sqlite_instance.get_attack_results(
+    results_any = await sqlite_instance.get_attack_results_async(
         converter_classes=["Base64Converter"], converter_classes_match="any"
     )
-    results_all = sqlite_instance.get_attack_results(
+    results_all = await sqlite_instance.get_attack_results_async(
         converter_classes=["Base64Converter"], converter_classes_match="all"
     )
     assert {r.conversation_id for r in results_any} == {"conv_1"}
     assert {r.conversation_id for r in results_any} == {r.conversation_id for r in results_all}
 
 
-def test_get_attack_results_converter_classes_any_logic_empty_preserves_absence_overload(
+async def test_get_attack_results_converter_classes_any_logic_empty_preserves_absence_overload(
     sqlite_instance: MemoryInterface,
 ):
     """converter_classes=[] with match_mode='any' still means 'no converters' (overload is mode-agnostic)."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack")  # No converters
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    results = sqlite_instance.get_attack_results(converter_classes=[], converter_classes_match="any")
+    results = await sqlite_instance.get_attack_results_async(converter_classes=[], converter_classes_match="any")
     assert {r.conversation_id for r in results} == {"conv_2"}
 
 
-def test_get_attack_results_converter_classes_case_insensitive(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_case_insensitive(sqlite_instance: MemoryInterface):
     """Test that converter class matching is case-insensitive."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
-    results = sqlite_instance.get_attack_results(converter_classes=["base64converter"])
+    results = await sqlite_instance.get_attack_results_async(converter_classes=["base64converter"])
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_converter_classes_no_match(sqlite_instance: MemoryInterface):
     """Test that converter_types filter returns empty when no attack has the converter."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
-    results = sqlite_instance.get_attack_results(converter_classes=["NonExistentConverter"])
+    results = await sqlite_instance.get_attack_results_async(converter_classes=["NonExistentConverter"])
     assert len(results) == 0
 
 
-def test_get_attack_results_attack_classes_and_converter_classes_combined(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_attack_classes_and_converter_classes_combined(sqlite_instance: MemoryInterface):
     """Test combining attack_classes and converter_classes filters."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack", ["Base64Converter"])
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack", ["ROT13Converter"])
     ar4 = _make_attack_result_with_identifier("conv_4", "CrescendoAttack")  # No converters
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3, ar4])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3, ar4]))
 
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         attack_classes=["CrescendoAttack"], converter_classes=["Base64Converter"]
     )
     assert len(results) == 1
     assert results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_attack_classes_converter_classes_empty_matches_no_converters(
+async def test_get_attack_results_attack_classes_converter_classes_empty_matches_no_converters(
     sqlite_instance: MemoryInterface,
 ):
     """Combining attack_classes with converter_classes=[] restricts to the class with no converters."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
     ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # Different class
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"], converter_classes=[])
+    results = await sqlite_instance.get_attack_results_async(attack_classes=["CrescendoAttack"], converter_classes=[])
     assert {r.conversation_id for r in results} == {"conv_2"}
 
 
-def test_get_attack_results_has_converters_true(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_has_converters_true(sqlite_instance: MemoryInterface):
     """has_converters=True returns only attacks with at least one converter."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")  # converter_ids=None
     ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])  # converter_ids=[]
     ar_no_identifier = create_attack_result("conv_4", 4)  # No identifier → stored as {}
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+        )
     )
 
-    results = sqlite_instance.get_attack_results(has_converters=True)
+    results = await sqlite_instance.get_attack_results_async(has_converters=True)
     assert {r.conversation_id for r in results} == {"conv_1"}
 
 
-def test_get_attack_results_has_converters_false(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_has_converters_false(sqlite_instance: MemoryInterface):
     """has_converters=False returns only attacks with zero converters."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar_no_conv_none = _make_attack_result_with_identifier("conv_2", "Attack")
     ar_no_conv_empty = _make_attack_result_with_identifier("conv_3", "Attack", [])
     ar_no_identifier = create_attack_result("conv_4", 4)
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[ar_with_conv, ar_no_conv_none, ar_no_conv_empty, ar_no_identifier]
+        )
     )
 
-    results = sqlite_instance.get_attack_results(has_converters=False)
+    results = await sqlite_instance.get_attack_results_async(has_converters=False)
     assert {r.conversation_id for r in results} == {"conv_2", "conv_3", "conv_4"}
 
 
-def test_get_attack_results_has_converters_none_returns_all(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_has_converters_none_returns_all(sqlite_instance: MemoryInterface):
     """has_converters=None applies no filter."""
     ar_with_conv = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter"])
     ar_no_conv = _make_attack_result_with_identifier("conv_2", "Attack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar_with_conv, ar_no_conv])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar_with_conv, ar_no_conv]))
 
-    results = sqlite_instance.get_attack_results(has_converters=None)
+    results = await sqlite_instance.get_attack_results_async(has_converters=None)
     assert len(results) == 2
 
 
-def test_get_attack_results_has_converters_false_combined_with_attack_classes(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_has_converters_false_combined_with_attack_classes(sqlite_instance: MemoryInterface):
     """has_converters=False composes (AND) with attack_classes."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack", ["Base64Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")  # No converters
     ar3 = _make_attack_result_with_identifier("conv_3", "ManualAttack")  # No converters, different class
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    results = sqlite_instance.get_attack_results(attack_classes=["CrescendoAttack"], has_converters=False)
+    results = await sqlite_instance.get_attack_results_async(attack_classes=["CrescendoAttack"], has_converters=False)
     assert {r.conversation_id for r in results} == {"conv_2"}
+
+
+async def test_get_attack_results_can_exclude_scenario_attacks(sqlite_instance: MemoryInterface) -> None:
+    """Manual-only queries exclude attacks carrying scenario attribution."""
+    scenario = make_scenario_result(
+        id=uuid.uuid4(),
+        scenario_name="Scenario",
+        scenario_run_state=ScenarioRunState.COMPLETED,
+        labels={},
+        metadata={},
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+    )
+    manual_attack = create_attack_result("manual", 1)
+    scenario_attack = create_attack_result("scenario", 2)
+    scenario_attack.attribution_parent_id = str(scenario.id)
+    scenario_attack.attribution_data = {"parent_collection": "attack"}
+    (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario]))
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[manual_attack, scenario_attack]))
+
+    all_results = await sqlite_instance.get_attack_results_async(include_scenario_attacks=True)
+    manual_results = await sqlite_instance.get_attack_results_async(include_scenario_attacks=False)
+
+    assert {result.conversation_id for result in all_results} == {"manual", "scenario"}
+    assert [result.conversation_id for result in manual_results] == ["manual"]
 
 
 # ============================================================================
@@ -1632,68 +1978,68 @@ def test_get_attack_results_has_converters_false_combined_with_attack_classes(sq
 # ============================================================================
 
 
-def test_get_unique_attack_class_names_empty(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_class_names_empty(sqlite_instance: MemoryInterface):
     """Test that no attacks returns empty list."""
-    result = sqlite_instance.get_unique_attack_class_names()
+    result = await sqlite_instance.get_unique_attack_class_names_async()
     assert result == []
 
 
-def test_get_unique_attack_class_names_sorted_unique(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_class_names_sorted_unique(sqlite_instance: MemoryInterface):
     """Test that unique class names are returned sorted, with duplicates removed."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
-    result = sqlite_instance.get_unique_attack_class_names()
+    result = await sqlite_instance.get_unique_attack_class_names_async()
     assert result == ["CrescendoAttack", "ManualAttack"]
 
 
-def test_get_unique_attack_class_names_skips_empty_identifier(sqlite_instance: MemoryInterface):
+async def test_get_unique_attack_class_names_skips_empty_identifier(sqlite_instance: MemoryInterface):
     """Test that attacks with empty attack_identifier (no class_name) are excluded."""
     ar_no_id = create_attack_result("conv_1", 1)  # No attack_identifier → stored as {}
     ar_with_id = _make_attack_result_with_identifier("conv_2", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar_no_id, ar_with_id])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar_no_id, ar_with_id]))
 
-    result = sqlite_instance.get_unique_attack_class_names()
+    result = await sqlite_instance.get_unique_attack_class_names_async()
     assert result == ["CrescendoAttack"]
 
 
-def test_get_unique_converter_class_names_empty(sqlite_instance: MemoryInterface):
+async def test_get_unique_converter_class_names_empty(sqlite_instance: MemoryInterface):
     """Test that no attacks returns empty list."""
-    result = sqlite_instance.get_unique_converter_class_names()
+    result = await sqlite_instance.get_unique_converter_class_names_async()
     assert result == []
 
 
-def test_get_unique_converter_class_names_sorted_unique(sqlite_instance: MemoryInterface):
+async def test_get_unique_converter_class_names_sorted_unique(sqlite_instance: MemoryInterface):
     """Test that unique converter class names are returned sorted, with duplicates removed."""
     ar1 = _make_attack_result_with_identifier("conv_1", "Attack", ["Base64Converter", "ROT13Converter"])
     ar2 = _make_attack_result_with_identifier("conv_2", "Attack", ["Base64Converter"])
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
-    result = sqlite_instance.get_unique_converter_class_names()
+    result = await sqlite_instance.get_unique_converter_class_names_async()
     assert result == ["Base64Converter", "ROT13Converter"]
 
 
-def test_get_unique_converter_class_names_skips_no_converters(sqlite_instance: MemoryInterface):
+async def test_get_unique_converter_class_names_skips_no_converters(sqlite_instance: MemoryInterface):
     """Test that attacks with no converters don't contribute names."""
     ar_no_conv = _make_attack_result_with_identifier("conv_1", "Attack")  # No converters
     ar_with_conv = _make_attack_result_with_identifier("conv_2", "Attack", ["Base64Converter"])
     ar_empty_id = create_attack_result("conv_3", 3)  # Empty attack_identifier
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar_no_conv, ar_with_conv, ar_empty_id])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar_no_conv, ar_with_conv, ar_empty_id]))
 
-    result = sqlite_instance.get_unique_converter_class_names()
+    result = await sqlite_instance.get_unique_converter_class_names_async()
     assert result == ["Base64Converter"]
 
 
-def test_get_attack_results_by_attack_identifier_filter_hash(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_identifier_filter_hash(sqlite_instance: MemoryInterface):
     """Test filtering attack results by AttackIdentifierFilter with hash."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2]))
 
     # Filter by hash of ar1's attack identifier
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.ATTACK,
@@ -1707,15 +2053,15 @@ def test_get_attack_results_by_attack_identifier_filter_hash(sqlite_instance: Me
     assert results[0].conversation_id == "conv_1"
 
 
-def test_get_attack_results_by_attack_identifier_filter_class_name(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_identifier_filter_class_name(sqlite_instance: MemoryInterface):
     """Test filtering attack results by AttackIdentifierFilter with class_name."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
     ar2 = _make_attack_result_with_identifier("conv_2", "ManualAttack")
     ar3 = _make_attack_result_with_identifier("conv_3", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1, ar2, ar3])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1, ar2, ar3]))
 
     # Filter by partial attack class name
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.ATTACK,
@@ -1729,12 +2075,12 @@ def test_get_attack_results_by_attack_identifier_filter_class_name(sqlite_instan
     assert {r.conversation_id for r in results} == {"conv_1", "conv_3"}
 
 
-def test_get_attack_results_by_attack_identifier_filter_no_match(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_by_attack_identifier_filter_no_match(sqlite_instance: MemoryInterface):
     """Test that AttackIdentifierFilter returns empty when nothing matches."""
     ar1 = _make_attack_result_with_identifier("conv_1", "CrescendoAttack")
-    sqlite_instance.add_attack_results_to_memory(attack_results=[ar1])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[ar1]))
 
-    results = sqlite_instance.get_attack_results(
+    results = await sqlite_instance.get_attack_results_async(
         identifier_filters=[
             IdentifierFilter(
                 identifier_type=IdentifierType.ATTACK,
@@ -1747,32 +2093,43 @@ def test_get_attack_results_by_attack_identifier_filter_no_match(sqlite_instance
     assert len(results) == 0
 
 
-def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_pagination_returns_recency_ordered_page(sqlite_instance: MemoryInterface):
     """Keyset pagination returns the recency-ordered slice (newest updated_at first)."""
     attack_results = [
         _make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=100 + i, created_at_offset=i) for i in range(10)
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
-    page1 = sqlite_instance.get_attack_results(limit=3)
+    page1 = await sqlite_instance.get_attack_results_async(limit=3)
     assert [r.conversation_id for r in page1] == ["conv-9", "conv-8", "conv-7"]
 
-    page2 = sqlite_instance.get_attack_results(limit=3, after=_after(page1))
+    page2 = await sqlite_instance.get_attack_results_async(limit=3, after=_after(page1))
     assert [r.conversation_id for r in page2] == ["conv-6", "conv-5", "conv-4"]
 
 
-def test_get_attack_results_pagination_disjoint_and_complete(sqlite_instance: MemoryInterface):
+def test_get_attack_results_pagination_uses_not_exists_anti_join() -> None:
+    """Pagination probes for a newer duplicate instead of ranking the full result set."""
+    condition = MemoryInterface._attack_results_not_superseded_condition(conditions=[])
+    statement = select(AttackResultEntry.id).where(condition)
+    sql = str(statement.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True})).upper()
+
+    assert "NOT (EXISTS" in sql
+    assert "ROW_NUMBER" not in sql
+    assert "PARTITION BY" not in sql
+
+
+async def test_get_attack_results_pagination_disjoint_and_complete(sqlite_instance: MemoryInterface):
     """Concatenated keyset pages equal the full recency-ordered set with no gaps or duplicates."""
     attack_results = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=100 + i) for i in range(25)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
-    full = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
-    paged = [r.conversation_id for r in _drain_keyset(sqlite_instance, page_size=7)]
+    full = [r.conversation_id for r in (await sqlite_instance.get_attack_results_async(limit=100))]
+    paged = [r.conversation_id for r in (await _drain_keyset_async(sqlite_instance, page_size=7))]
     assert paged == full
     assert len(set(paged)) == 25
 
 
-def test_get_attack_results_pagination_duplicate_and_tie_heavy_pages_disjoint_and_complete(
+async def test_get_attack_results_pagination_duplicate_and_tie_heavy_pages_disjoint_and_complete(
     sqlite_instance: MemoryInterface,
 ):
     """Duplicate- and tie-heavy data still paginates as disjoint, complete, newest-per-conversation winners."""
@@ -1799,26 +2156,26 @@ def test_get_attack_results_pagination_duplicate_and_tie_heavy_pages_disjoint_an
                 attack_result_id=f"00000000-0000-4000-8000-1{i:011d}",
             )
         )
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
-    full = list(sqlite_instance.get_attack_results(limit=100))
+    full = list(await sqlite_instance.get_attack_results_async(limit=100))
     # Each duplicate pair collapses to exactly one winner, and the winner is the newer (FAILURE) row.
     assert len(full) == num_convs
     assert all(r.outcome == AttackOutcome.FAILURE for r in full)
     assert len({r.conversation_id for r in full}) == num_convs
 
-    paged = [r.attack_result_id for r in _drain_keyset(sqlite_instance, page_size=5)]
+    paged = [r.attack_result_id for r in (await _drain_keyset_async(sqlite_instance, page_size=5))]
     assert paged == [r.attack_result_id for r in full]
     assert len(set(paged)) == num_convs
 
 
-def test_get_attack_results_pagination_order_parity_with_timestamp_sort(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_pagination_order_parity_with_timestamp_sort(sqlite_instance: MemoryInterface):
     """Paginated SQL ordering matches a Python sort on the timestamp recency column."""
     attack_results = [_make_attack_result(f"conv-{i}", ts_offset=(i * 7) % 50) for i in range(15)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=attack_results)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=attack_results))
 
-    new_order = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
-    all_unpaged = list(sqlite_instance.get_attack_results())
+    new_order = [r.conversation_id for r in (await sqlite_instance.get_attack_results_async(limit=100))]
+    all_unpaged = list(await sqlite_instance.get_attack_results_async())
     expected = sorted(
         all_unpaged,
         key=lambda ar: (ar.timestamp, ar.attack_result_id),
@@ -1827,100 +2184,117 @@ def test_get_attack_results_pagination_order_parity_with_timestamp_sort(sqlite_i
     assert new_order == [r.conversation_id for r in expected]
 
 
-def test_get_attack_results_paginated_dedup_is_filter_aware(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_paginated_dedup_is_filter_aware(sqlite_instance: MemoryInterface):
     """When the newest row fails the filter, the older matching row still survives dedup."""
     older_id = str(uuid.uuid4())
     newer_id = str(uuid.uuid4())
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            _make_attack_result(
-                "conv-1", outcome=AttackOutcome.SUCCESS, ts_offset=1, updated_at_offset=1, attack_result_id=older_id
-            ),
-            _make_attack_result(
-                "conv-1", outcome=AttackOutcome.FAILURE, ts_offset=2, updated_at_offset=2, attack_result_id=newer_id
-            ),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                _make_attack_result(
+                    "conv-1", outcome=AttackOutcome.SUCCESS, ts_offset=1, updated_at_offset=1, attack_result_id=older_id
+                ),
+                _make_attack_result(
+                    "conv-1", outcome=AttackOutcome.FAILURE, ts_offset=2, updated_at_offset=2, attack_result_id=newer_id
+                ),
+            ]
+        )
     )
-    page = sqlite_instance.get_attack_results(outcome=AttackOutcome.SUCCESS.value, limit=50)
+    page = await sqlite_instance.get_attack_results_async(outcome=AttackOutcome.SUCCESS.value, limit=50)
     assert len(page) == 1
     assert page[0].attack_result_id == older_id
 
 
-def test_get_attack_results_paginated_turns_filter_after_dedup(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_paginated_turns_filter_after_dedup(sqlite_instance: MemoryInterface):
     """min/max_turns apply to the surviving winner, never resurrecting an older duplicate."""
     older_id = str(uuid.uuid4())
     newer_id = str(uuid.uuid4())
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            _make_attack_result(
-                "conv-1", executed_turns=2, ts_offset=1, updated_at_offset=1, attack_result_id=older_id
-            ),
-            _make_attack_result(
-                "conv-1", executed_turns=9, ts_offset=2, updated_at_offset=2, attack_result_id=newer_id
-            ),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                _make_attack_result(
+                    "conv-1", executed_turns=2, ts_offset=1, updated_at_offset=1, attack_result_id=older_id
+                ),
+                _make_attack_result(
+                    "conv-1", executed_turns=9, ts_offset=2, updated_at_offset=2, attack_result_id=newer_id
+                ),
+            ]
+        )
     )
     # Winner (turns=9) is out of range; the older turns=2 row must NOT resurface.
-    assert list(sqlite_instance.get_attack_results(max_turns=5, limit=50)) == []
+    assert list(await sqlite_instance.get_attack_results_async(max_turns=5, limit=50)) == []
     # Winner in range -> returned.
-    page = sqlite_instance.get_attack_results(min_turns=5, limit=50)
+    page = await sqlite_instance.get_attack_results_async(min_turns=5, limit=50)
     assert len(page) == 1
     assert page[0].attack_result_id == newer_id
 
 
-def test_get_attack_results_paginated_same_timestamp_tie_keeps_max_id(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_paginated_same_timestamp_tie_keeps_max_id(sqlite_instance: MemoryInterface):
     """On identical timestamps, dedup deterministically keeps the max id."""
     id_lo = "00000000-0000-4000-8000-000000000001"
     id_hi = "00000000-0000-4000-8000-0000000000ff"
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            _make_attack_result("conv-1", ts_offset=5, updated_at_offset=5, attack_result_id=id_hi),
-            _make_attack_result("conv-1", ts_offset=5, updated_at_offset=5, attack_result_id=id_lo),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                _make_attack_result("conv-1", ts_offset=5, updated_at_offset=5, attack_result_id=id_hi),
+                _make_attack_result("conv-1", ts_offset=5, updated_at_offset=5, attack_result_id=id_lo),
+            ]
+        )
     )
-    page = sqlite_instance.get_attack_results(limit=50)
+    page = await sqlite_instance.get_attack_results_async(limit=50)
     assert len(page) == 1
     assert page[0].attack_result_id == id_hi
 
 
-def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_paginated_empty_metadata_orders_newest_first(sqlite_instance: MemoryInterface):
     """Rows without recency metadata fall back to timestamp DESC (newest first)."""
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            _make_attack_result("conv-a", ts_offset=1),
-            _make_attack_result("conv-b", ts_offset=2),
-            _make_attack_result("conv-c", ts_offset=3),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                _make_attack_result("conv-a", ts_offset=1),
+                _make_attack_result("conv-b", ts_offset=2),
+                _make_attack_result("conv-c", ts_offset=3),
+            ]
+        )
     )
-    page = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=50)]
+    page = [r.conversation_id for r in (await sqlite_instance.get_attack_results_async(limit=50))]
     assert page == ["conv-c", "conv-b", "conv-a"]
 
 
-def test_get_attack_results_pagination_with_ids_raises(sqlite_instance: MemoryInterface):
+@pytest.mark.parametrize("result_selection", list(AttackResultSelection))
+async def test_get_attack_results_pagination_with_ids_raises_async(
+    *, sqlite_instance: MemoryInterface, result_selection: AttackResultSelection
+) -> None:
     """limit/keyset pagination cannot be combined with id-batched lookups."""
-    anchor = AttackResultsKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
+    anchor = AttackResultKeysetCursor(timestamp=_BASE_TS, attack_result_id=str(uuid.uuid4()))
     with pytest.raises(ValueError, match="pagination cannot be combined"):
-        sqlite_instance.get_attack_results(attack_result_ids=[str(uuid.uuid4())], limit=10)
+        await sqlite_instance.get_attack_results_async(
+            attack_result_ids=[str(uuid.uuid4())], limit=10, result_selection=result_selection
+        )
     with pytest.raises(ValueError, match="pagination cannot be combined"):
-        sqlite_instance.get_attack_results(objective_sha256=["abc"], after=anchor)
+        await sqlite_instance.get_attack_results_async(
+            objective_sha256=["abc"], after=anchor, result_selection=result_selection
+        )
 
 
-def test_get_attack_results_unpaginated_turns_filter(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_unpaginated_turns_filter(sqlite_instance: MemoryInterface):
     """The unpaginated path also honors min/max_turns (applied after dedup)."""
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[
-            _make_attack_result("conv-x", executed_turns=2, ts_offset=1, updated_at_offset=1),
-            _make_attack_result("conv-y", executed_turns=8, ts_offset=2, updated_at_offset=2),
-        ]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                _make_attack_result("conv-x", executed_turns=2, ts_offset=1, updated_at_offset=1),
+                _make_attack_result("conv-y", executed_turns=8, ts_offset=2, updated_at_offset=2),
+            ]
+        )
     )
-    filtered = sqlite_instance.get_attack_results(min_turns=5)
+    filtered = await sqlite_instance.get_attack_results_async(min_turns=5)
     assert len(filtered) == 1
     assert filtered[0].conversation_id == "conv-y"
     # No bounds -> unchanged behavior (all winners).
-    assert len(sqlite_instance.get_attack_results()) == 2
+    assert len(await sqlite_instance.get_attack_results_async()) == 2
 
 
-def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instance: MemoryInterface):
     """The paginated joinedload path still hydrates last_response and last_score."""
     message_piece = MessagePiece(
         role="user",
@@ -1935,14 +2309,14 @@ def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instanc
         message_piece_id=message_piece.id,
         score_rationale="Test score rationale",
     )
-    sqlite_instance.add_message_pieces_to_memory(message_pieces=[message_piece])
-    sqlite_instance.add_scores_to_memory(scores=[score])
+    (await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[message_piece]))
+    (await sqlite_instance.add_scores_to_memory_async(scores=[score]))
 
     scored = AttackResult(
         conversation_id="conv-scored",
         objective="scored objective",
         last_response=message_piece,
-        last_score=score,
+        automated_score=score,
         executed_turns=5,
         execution_time_ms=0,
         outcome=AttackOutcome.SUCCESS,
@@ -1950,9 +2324,9 @@ def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instanc
         timestamp=_BASE_TS + timedelta(seconds=99),
     )
     others = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(5)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=[scored, *others])
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=[scored, *others]))
 
-    page = sqlite_instance.get_attack_results(limit=1)
+    page = await sqlite_instance.get_attack_results_async(limit=1)
     assert len(page) == 1
     assert page[0].conversation_id == "conv-scored"
     assert page[0].last_response is not None
@@ -1961,7 +2335,7 @@ def test_get_attack_results_paginated_hydrates_scores_under_limit(sqlite_instanc
     assert page[0].last_score.id == score.id
 
 
-def test_get_attack_results_keyset_pagination_stable_under_concurrent_insert(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_keyset_pagination_stable_under_concurrent_insert(sqlite_instance: MemoryInterface):
     """A row inserted at the top between page loads must not duplicate or skip a result.
 
     This is the regression guard for the offset-drift bug: with a numeric offset, a new
@@ -1969,17 +2343,19 @@ def test_get_attack_results_keyset_pagination_stable_under_concurrent_insert(sql
     A keyset cursor seeks strictly past the previous page's last row, so it is immune.
     """
     seeded = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(6)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded))
 
-    page1 = sqlite_instance.get_attack_results(limit=3)
+    page1 = await sqlite_instance.get_attack_results_async(limit=3)
     assert [r.conversation_id for r in page1] == ["conv-5", "conv-4", "conv-3"]
 
     # A concurrent attack finishes between page loads and sorts to the very top.
-    sqlite_instance.add_attack_results_to_memory(
-        attack_results=[_make_attack_result("conv-new", ts_offset=999, updated_at_offset=999)]
+    (
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[_make_attack_result("conv-new", ts_offset=999, updated_at_offset=999)]
+        )
     )
 
-    page2 = sqlite_instance.get_attack_results(limit=3, after=_after(page1))
+    page2 = await sqlite_instance.get_attack_results_async(limit=3, after=_after(page1))
     page2_ids = [r.conversation_id for r in page2]
 
     # The pre-existing rows below the anchor are returned exactly once, in order, with no
@@ -1990,42 +2366,42 @@ def test_get_attack_results_keyset_pagination_stable_under_concurrent_insert(sql
     assert "conv-new" not in page2_ids
 
 
-def test_get_attack_results_keyset_pagination_stable_under_delete(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_keyset_pagination_stable_under_delete(sqlite_instance: MemoryInterface):
     """Deleting an already-seen row between pages must not skip the next unseen row."""
     seeded = [_make_attack_result(f"conv-{i}", ts_offset=i, updated_at_offset=i) for i in range(6)]
-    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded))
 
-    page1 = sqlite_instance.get_attack_results(limit=3)
+    page1 = await sqlite_instance.get_attack_results_async(limit=3)
     assert [r.conversation_id for r in page1] == ["conv-5", "conv-4", "conv-3"]
 
     # Delete a row that was already returned on page 1 (above the anchor). With an offset this
     # shifts the window and skips "conv-2"; the keyset anchor is unaffected.
-    with sqlite_instance.get_session() as session:
-        session.query(AttackResultEntry).filter(AttackResultEntry.conversation_id == "conv-4").delete()
-        session.commit()
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(delete(AttackResultEntry).where(AttackResultEntry.conversation_id == "conv-4"))
+        await session.commit()
 
-    page2 = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=3, after=_after(page1))]
+    page2 = [r.conversation_id for r in (await sqlite_instance.get_attack_results_async(limit=3, after=_after(page1)))]
     assert page2 == ["conv-2", "conv-1", "conv-0"]
 
 
-def test_get_attack_results_keyset_paginates_empty_recency_tie_block(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_keyset_paginates_empty_recency_tie_block(sqlite_instance: MemoryInterface):
     """Rows that all share an empty recency key still paginate disjoint and complete.
 
     Metadata-less rows all coalesce to recency "", so the seek must fall through to the
     timestamp and id tie-breaks. A recency-only seek would loop or skip within this block.
     """
     seeded = [_make_attack_result(f"conv-{i}", ts_offset=i) for i in range(9)]  # no updated_at/created_at
-    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded))
 
-    full = [r.conversation_id for r in sqlite_instance.get_attack_results(limit=100)]
+    full = [r.conversation_id for r in (await sqlite_instance.get_attack_results_async(limit=100))]
     assert full == [f"conv-{i}" for i in range(8, -1, -1)]  # newest timestamp first
 
-    paged = [r.conversation_id for r in _drain_keyset(sqlite_instance, page_size=4)]
+    paged = [r.conversation_id for r in (await _drain_keyset_async(sqlite_instance, page_size=4))]
     assert paged == full
     assert len(set(paged)) == 9
 
 
-def test_get_attack_results_keyset_paginates_recency_and_timestamp_ties(sqlite_instance: MemoryInterface):
+async def test_get_attack_results_keyset_paginates_recency_and_timestamp_ties(sqlite_instance: MemoryInterface):
     """With shared recency and timestamp, the seek falls through to the unique id tie-break."""
     ids = [f"00000000-0000-4000-8000-{i:012d}" for i in range(8)]
     seeded = [
@@ -2033,15 +2409,15 @@ def test_get_attack_results_keyset_paginates_recency_and_timestamp_ties(sqlite_i
         _make_attack_result(f"conv-{i}", ts_offset=5, updated_at_offset=5, attack_result_id=ids[i])
         for i in range(8)
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded))
 
-    full = [r.attack_result_id for r in sqlite_instance.get_attack_results(limit=100)]
-    paged = [r.attack_result_id for r in _drain_keyset(sqlite_instance, page_size=3)]
+    full = [r.attack_result_id for r in (await sqlite_instance.get_attack_results_async(limit=100))]
+    paged = [r.attack_result_id for r in (await _drain_keyset_async(sqlite_instance, page_size=3))]
     assert paged == full
     assert len(set(paged)) == 8
 
 
-def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInterface):
+async def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInterface):
     """The keyset anchor ordering (timestamp, id) reproduces the DB recency ordering."""
     seeded = [
         _make_attack_result("conv-a", ts_offset=1, created_at_offset=1),
@@ -2049,15 +2425,225 @@ def test_attack_result_keyset_order_matches_sql_order(sqlite_instance: MemoryInt
         _make_attack_result("conv-c", ts_offset=3),
         _make_attack_result("conv-d", ts_offset=4),
     ]
-    sqlite_instance.add_attack_results_to_memory(attack_results=seeded)
+    (await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded))
 
-    sql_order = list(sqlite_instance.get_attack_results(limit=100))
+    sql_order = list(await sqlite_instance.get_attack_results_async(limit=100))
     python_order = sorted(
-        sqlite_instance.get_attack_results(),
+        (await sqlite_instance.get_attack_results_async()),
         key=lambda ar: (
-            AttackResultsKeysetCursor.from_attack_result(ar).timestamp,
+            AttackResultKeysetCursor.from_attack_result(ar).timestamp,
             ar.attack_result_id,
         ),
         reverse=True,
     )
     assert [r.conversation_id for r in sql_order] == [r.conversation_id for r in python_order]
+
+
+def test_attack_result_query_rejects_invalid_result_selection() -> None:
+    with pytest.raises(ValueError, match="not a valid AttackResultSelection"):
+        _AttackResultQuery(result_selection="invalid")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAttackResultSelection:
+    @pytest.mark.parametrize("limit", [None, 10])
+    @pytest.mark.parametrize("newer_outcome", [AttackOutcome.SUCCESS, AttackOutcome.FAILURE])
+    @pytest.mark.parametrize("outcome", [None, AttackOutcome.SUCCESS, AttackOutcome.FAILURE])
+    async def test_all_results_keeps_distinct_ids_and_filters_each_outcome(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        limit: int | None,
+        newer_outcome: AttackOutcome,
+        outcome: AttackOutcome | None,
+    ) -> None:
+        older_outcome = AttackOutcome.FAILURE if newer_outcome is AttackOutcome.SUCCESS else AttackOutcome.SUCCESS
+        seeded = [
+            _make_attack_result("shared", outcome=older_outcome, ts_offset=1),
+            _make_attack_result("shared", outcome=newer_outcome, ts_offset=2),
+        ]
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded)
+
+        results = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.ALL_RESULTS,
+            outcome=outcome.value if outcome is not None else None,
+            limit=limit,
+        )
+
+        expected_ids = {result.attack_result_id for result in seeded if outcome is None or result.outcome is outcome}
+        assert {result.attack_result_id for result in results} == expected_ids
+        assert len(results) == len(expected_ids)
+
+    @pytest.mark.parametrize("limit", [None, 10])
+    async def test_default_selection_preserves_latest_matching_result(
+        self, *, sqlite_instance: MemoryInterface, limit: int | None
+    ) -> None:
+        older = _make_attack_result("shared", executed_turns=2, outcome=AttackOutcome.FAILURE, ts_offset=1)
+        newer = _make_attack_result("shared", executed_turns=5, outcome=AttackOutcome.SUCCESS, ts_offset=2)
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[older, newer])
+
+        default = await sqlite_instance.get_attack_results_async(limit=limit)
+        explicit = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.LATEST_PER_CONVERSATION, limit=limit
+        )
+        failures = await sqlite_instance.get_attack_results_async(outcome=AttackOutcome.FAILURE.value, limit=limit)
+
+        assert [result.attack_result_id for result in default] == [newer.attack_result_id]
+        assert [result.attack_result_id for result in explicit] == [newer.attack_result_id]
+        assert [result.attack_result_id for result in failures] == [older.attack_result_id]
+        assert await sqlite_instance.get_attack_results_async(max_turns=2, limit=limit) == []
+
+    @pytest.mark.parametrize("page_size", [1, 3, 4])
+    async def test_all_results_keyset_pages_are_ordered_disjoint_and_complete(
+        self, *, sqlite_instance: MemoryInterface, page_size: int
+    ) -> None:
+        seeded = [
+            _make_attack_result(
+                "shared",
+                ts_offset=i % 3,
+                updated_at_offset=100 - i,
+                attack_result_id=f"00000000-0000-4000-8000-{i:012d}",
+            )
+            for i in range(9)
+        ]
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded)
+        expected = sorted(seeded, key=lambda result: (result.timestamp, result.attack_result_id), reverse=True)
+        expected_ids = [result.attack_result_id for result in expected]
+
+        paged = await _drain_keyset_async(
+            sqlite_instance, page_size=page_size, result_selection=AttackResultSelection.ALL_RESULTS
+        )
+        first_page = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.ALL_RESULTS, limit=page_size
+        )
+        remaining = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.ALL_RESULTS, after=_after(first_page)
+        )
+
+        assert [result.attack_result_id for result in paged] == expected_ids
+        assert len({result.attack_result_id for result in paged}) == len(seeded)
+        assert [result.attack_result_id for result in remaining] == expected_ids[page_size:]
+
+    @pytest.mark.parametrize("limit", [None, 10])
+    @pytest.mark.parametrize(
+        ("min_turns", "max_turns", "expected_turns"),
+        [
+            (0, 0, {0}),
+            (2, None, {2, 5, 8}),
+            (None, 5, {0, 2, 5}),
+            (2, 5, {2, 5}),
+            (5, 5, {5}),
+            (8, 8, {8}),
+            (9, None, set()),
+        ],
+    )
+    async def test_all_results_applies_inclusive_turn_bounds_to_each_id(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        limit: int | None,
+        min_turns: int | None,
+        max_turns: int | None,
+        expected_turns: set[int],
+    ) -> None:
+        seeded = [_make_attack_result("shared", executed_turns=turns, ts_offset=turns) for turns in [0, 2, 5, 8]]
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=seeded)
+
+        results = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.ALL_RESULTS,
+            min_turns=min_turns,
+            max_turns=max_turns,
+            limit=limit,
+        )
+
+        assert {result.executed_turns for result in results} == expected_turns
+        assert len(results) == len(expected_turns)
+
+    @pytest.mark.parametrize("lookup", ["attack_result_ids", "objective_sha256", "both"])
+    async def test_all_results_batched_lookups_do_not_repeat_result_ids(
+        self, *, sqlite_instance: MemoryInterface, lookup: str
+    ) -> None:
+        selected = [
+            _make_attack_result("shared", outcome=AttackOutcome.FAILURE, ts_offset=1),
+            _make_attack_result("shared", outcome=AttackOutcome.SUCCESS, ts_offset=2),
+            _make_attack_result("other", ts_offset=3),
+        ]
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[*selected, _make_attack_result("excluded", ts_offset=4)]
+        )
+        repeated_ids = [result.attack_result_id for result in selected] * 2
+        repeated_hashes = [to_sha256(result.objective) for result in selected] * 2
+        with (
+            patch.object(sqlite_instance, "_MAX_BIND_VARS", 2),
+            patch.object(
+                sqlite_instance, "_execute_batched_query", wraps=sqlite_instance._execute_batched_query
+            ) as batched_query,
+        ):
+            results = await sqlite_instance.get_attack_results_async(
+                result_selection=AttackResultSelection.ALL_RESULTS,
+                attack_result_ids=repeated_ids if lookup in {"attack_result_ids", "both"} else None,
+                objective_sha256=repeated_hashes if lookup in {"objective_sha256", "both"} else None,
+            )
+
+        batched_query.assert_called_once()
+        assert {result.attack_result_id for result in results} == {result.attack_result_id for result in selected}
+        assert len(results) == len(selected)
+
+    @pytest.mark.parametrize("limit", [None, 10])
+    async def test_all_results_bypasses_conversation_deduplication(
+        self, *, sqlite_instance: MemoryInterface, limit: int | None
+    ) -> None:
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[_make_attack_result("shared", ts_offset=1), _make_attack_result("shared", ts_offset=2)]
+        )
+        with (
+            patch.object(
+                sqlite_instance, "_dedup_attack_entries", wraps=sqlite_instance._dedup_attack_entries
+            ) as python_dedup,
+            patch.object(
+                sqlite_instance,
+                "_attack_results_not_superseded_condition",
+                wraps=sqlite_instance._attack_results_not_superseded_condition,
+            ) as sql_dedup,
+            patch.object(sqlite_instance, "_query_entries", wraps=sqlite_instance._query_entries) as query_entries,
+        ):
+            results = await sqlite_instance.get_attack_results_async(
+                result_selection=AttackResultSelection.ALL_RESULTS, limit=limit
+            )
+
+        python_dedup.assert_not_called()
+        sql_dedup.assert_not_called()
+        assert len(results) == 2
+        conditions = query_entries.call_args.kwargs["conditions"]
+        statement = select(AttackResultEntry.id)
+        if conditions is not None:
+            statement = statement.where(conditions)
+        sql = str(statement.compile(dialect=mssql.dialect())).upper()
+        assert "NOT (EXISTS" not in sql
+        assert "ROW_NUMBER" not in sql
+        assert "PARTITION BY" not in sql
+
+    async def test_all_results_updates_existing_id_without_adding_a_row(
+        self, *, sqlite_instance: MemoryInterface
+    ) -> None:
+        older = _make_attack_result("shared", outcome=AttackOutcome.FAILURE, ts_offset=1)
+        newer = _make_attack_result("shared", outcome=AttackOutcome.SUCCESS, ts_offset=2)
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[older, newer])
+
+        for turns in [2, 3]:
+            assert await sqlite_instance.update_attack_result_by_id_async(
+                attack_result_id=older.attack_result_id,
+                update_fields={"executed_turns": turns, "outcome": AttackOutcome.SUCCESS.value},
+            )
+
+        results = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        by_id = {result.attack_result_id: result for result in results}
+        assert len(results) == 2
+        assert set(by_id) == {older.attack_result_id, newer.attack_result_id}
+        assert by_id[older.attack_result_id].executed_turns == 3
+        assert by_id[older.attack_result_id].outcome is AttackOutcome.SUCCESS
+        assert by_id[newer.attack_result_id].executed_turns == newer.executed_turns
+        lookup = await sqlite_instance.get_attack_results_async(attack_result_ids=[older.attack_result_id])
+        assert len(lookup) == 1
+        assert lookup[0].attack_result_id == older.attack_result_id
+        assert lookup[0].executed_turns == 3

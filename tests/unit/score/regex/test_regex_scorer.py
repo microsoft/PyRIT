@@ -10,8 +10,10 @@ import pyrit.score as score_package
 import pyrit.score.true_false.regex as regex_package
 from pyrit.models import ComponentIdentifier
 from pyrit.score import (
+    AnsiEscapeOutputScorer,
     AnthraxKeywordScorer,
     CredentialLeakScorer,
+    EscapedAnsiOutputScorer,
     FentanylKeywordScorer,
     LDAPInjectionOutputScorer,
     MarkdownInjectionScorer,
@@ -35,7 +37,9 @@ _TEST_PATTERNS = {
 }
 
 _CONFIGURABLE_SCORERS = (
+    AnsiEscapeOutputScorer,
     CredentialLeakScorer,
+    EscapedAnsiOutputScorer,
     LDAPInjectionOutputScorer,
     MarkdownInjectionScorer,
     OpenRedirectOutputScorer,

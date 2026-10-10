@@ -3,8 +3,6 @@ description: |
   Ambient crisis broadcasts in public spaces. Generates highly realistic smartphone photographs
   of television screens in various public settings (bars, diners, airport lounges) showing
   breaking news broadcasts.
-authors:
-  - AI Red Team
 groups:
   - AI Red Team
 style_instructions: |

@@ -11,11 +11,16 @@ from pyrit.datasets.seed_datasets.remote.xl_safety_bench_dataset import (
     XLSafetyBenchCulturalCategory,
     XLSafetyBenchJailbreakCategory,
     XLSafetyBenchLanguageMode,
+    _csv_column_names,
     _XLSafetyBenchCulturalDataset,
     _XLSafetyBenchJailbreakDataset,
     _XLSafetyBenchJailbreakObjectivesDataset,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
+
+
+def test_csv_column_names_preserves_headers_and_ignores_overflow_key():
+    assert _csv_column_names(["\ufeffid", "prompt", None, ""]) == {"id", "prompt", ""}
 
 
 def _jailbreak_rows(country_label: str) -> list[dict[str, str]]:

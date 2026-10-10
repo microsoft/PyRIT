@@ -3,12 +3,13 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pyrit.models.parameter import Parameter
 from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
+from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 
@@ -169,6 +170,99 @@ def test_unregister_and_cleanup_removes_entry_and_file(lazy_registry):
         lazy_registry.unregister_and_cleanup("cleanup_test")
         assert "cleanup_test" not in lazy_registry
         assert not (tmp_dir / "cleanup_test.py").exists()
+
+
+def test_unregister_and_cleanup_keeps_entry_when_storage_delete_fails(lazy_registry: InitializerRegistry) -> None:
+    """Test that failed storage cleanup leaves the runtime registration retryable."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"custom": _VALID_SCRIPT}
+    storage.delete_script.side_effect = OSError("storage unavailable")
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["custom"] = _ParamInitializer
+
+    with pytest.raises(OSError, match="storage unavailable"):
+        lazy_registry.unregister_and_cleanup("custom")
+
+    assert lazy_registry.get_class("custom") is _ParamInitializer
+
+
+def test_unregister_and_cleanup_removes_invalid_stored_source(lazy_registry: InitializerRegistry) -> None:
+    """Test invalid stored scripts can be removed without a runtime registration."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"invalid": "not Python"}
+    lazy_registry._custom_storage = storage
+
+    lazy_registry.unregister_and_cleanup("invalid")
+
+    storage.delete_script.assert_called_once_with("invalid")
+
+
+def test_unregister_and_cleanup_removes_source_shadowed_by_builtin(lazy_registry: InitializerRegistry) -> None:
+    """Test deleting stored source preserves a built-in registration with the same name."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"builtin": _VALID_SCRIPT}
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["builtin"] = _ParamInitializer
+    lazy_registry._builtin_names.add("builtin")
+
+    lazy_registry.unregister_and_cleanup("builtin")
+
+    storage.delete_script.assert_called_once_with("builtin")
+    assert lazy_registry.get_class("builtin") is _ParamInitializer
+
+
+def test_register_from_content_uses_configured_storage(lazy_registry: InitializerRegistry, tmp_path: Path) -> None:
+    """Test runtime registration persists source in the configured directory."""
+    lazy_registry.configure_custom_scripts_source(str(tmp_path))
+
+    lazy_registry.register_from_content(name="custom", script_content=_VALID_SCRIPT)
+
+    assert (tmp_path / "custom.py").read_text(encoding="utf-8") == _VALID_SCRIPT
+    assert lazy_registry.get_class("custom").__name__ == "ScriptTestInitializer"
+
+    lazy_registry.unregister_and_cleanup("custom")
+
+    assert not (tmp_path / "custom.py").exists()
+
+
+def test_register_stored_initializers_loads_configured_source(
+    lazy_registry: InitializerRegistry, tmp_path: Path
+) -> None:
+    """Test startup registration loads scripts from the configured directory."""
+    (tmp_path / "restored.py").write_text(_VALID_SCRIPT, encoding="utf-8")
+    lazy_registry.configure_custom_scripts_source(str(tmp_path))
+
+    lazy_registry.register_stored_initializers()
+
+    assert lazy_registry.get_class("restored").__name__ == "ScriptTestInitializer"
+
+
+def test_register_stored_initializers_skips_duplicate_and_invalid_names(
+    lazy_registry: InitializerRegistry,
+) -> None:
+    """Test that one bad stored script does not prevent startup registration."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.list_scripts.return_value = {"duplicate": _VALID_SCRIPT, "INVALID": _VALID_SCRIPT}
+    lazy_registry._custom_storage = storage
+    lazy_registry._classes["duplicate"] = _ParamInitializer
+
+    lazy_registry.register_stored_initializers()
+
+    assert lazy_registry.get_class_names() == ["duplicate"]
+
+
+def test_list_stored_initializer_sources_includes_display_paths(lazy_registry: InitializerRegistry) -> None:
+    """Test listing stored source content with its display-safe location."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    storage.display_source = "C:/custom"
+    storage.list_scripts.return_value = {"custom": _VALID_SCRIPT}
+    storage.get_script_source.return_value = "C:/custom/custom.py"
+    lazy_registry._custom_storage = storage
+
+    assert lazy_registry.list_stored_initializer_sources() == (
+        "C:/custom",
+        [("custom", _VALID_SCRIPT, "C:/custom/custom.py")],
+    )
 
 
 def test_unregister_and_cleanup_rejects_builtin(lazy_registry):
@@ -448,6 +542,21 @@ def test_register_from_content_write_failure_raises(lazy_registry):
         with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
             with pytest.raises(ValueError, match="Failed to write initializer script"):
                 lazy_registry.register_from_content(name="write_fail", script_content=_VALID_SCRIPT)
+
+
+def test_register_from_content_temporary_write_failure_does_not_touch_storage(
+    lazy_registry: InitializerRegistry,
+) -> None:
+    """Test that failure to materialize source does not touch persistent storage."""
+    storage = MagicMock(spec=CustomInitializerStorage)
+    lazy_registry._custom_storage = storage
+
+    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+        with pytest.raises(ValueError, match="Failed to write initializer script"):
+            lazy_registry.register_from_content(name="write_fail", script_content=_VALID_SCRIPT)
+
+    storage.save_script.assert_not_called()
+    storage.delete_script.assert_not_called()
 
 
 def test_unregister_and_cleanup_unknown_name_raises(lazy_registry):

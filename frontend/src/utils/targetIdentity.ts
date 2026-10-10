@@ -1,4 +1,4 @@
-import type { TargetInfo, TargetInstance } from '../types'
+import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance, TargetReference } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -50,7 +50,69 @@ export function targetIdentifierHash(target: TargetInstance): string {
   return target.identifier.hash
 }
 
+export function targetReference(target: TargetInstance): TargetReference {
+  return { registryName: target.target_registry_name, identifierHash: targetIdentifierHash(target) }
+}
+
+export function resolveTargetReference(
+  reference: TargetReference | null,
+  targets: TargetInstance[],
+): TargetInstance | null {
+  return reference ? targets.find((target: TargetInstance) => (
+    target.target_registry_name === reference.registryName
+    && targetIdentifierHash(target) === reference.identifierHash
+  )) ?? null : null
+}
+
+export function sameTarget(
+  first: TargetInstance | null | undefined,
+  second: TargetInstance | null | undefined,
+): boolean {
+  return Boolean(first && second
+    && first.target_registry_name === second.target_registry_name
+    && targetIdentifierHash(first) === targetIdentifierHash(second))
+}
+
+export type TargetHashResolution =
+  | { status: 'resolved'; target: TargetInstance }
+  | { status: 'unavailable' | 'ambiguous' }
+
+/**
+ * Resolves a persisted canonical identifier hash to one registered root target.
+ *
+ * Inner targets are intentionally excluded: a composite attack is bound to the
+ * composite's identifier, not to one of its children.
+ */
+export function resolveTargetByIdentifierHash(
+  identifierHash: string,
+  targets: TargetInstance[],
+): TargetHashResolution {
+  if (!identifierHash) return { status: 'unavailable' }
+
+  const uniqueTargets = new Map<string, TargetInstance>()
+  for (const target of targets) {
+    uniqueTargets.set(target.target_registry_name, target)
+  }
+  const matches = [...uniqueTargets.values()].filter(
+    (target) => targetIdentifierHash(target) === identifierHash,
+  )
+
+  if (matches.length === 1) {
+    return { status: 'resolved', target: matches[0] }
+  }
+  return { status: matches.length === 0 ? 'unavailable' : 'ambiguous' }
+}
+
 /** Whether persisted attack target information identifies the active target. */
 export function targetInfoMatchesTarget(targetInfo: TargetInfo, target: TargetInstance): boolean {
   return targetInfo.identifier_hash === targetIdentifierHash(target)
+}
+
+/** Whether target resolution must keep an existing attack read-only. */
+export function isTargetResolutionBlocking(status: AttackTargetResolutionStatus): boolean {
+  return status === 'loading'
+    || status === 'unavailable'
+    || status === 'ambiguous'
+    || status === 'error'
+    || status === 'legacy'
 }

@@ -4,11 +4,13 @@
 import base64
 import logging
 from io import BytesIO
+from pathlib import Path
 
 from PIL import Image
 
+from pyrit.common import get_mime_type
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.memory import DataTypeSerializer, data_serializer_factory
+from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ class ImageOverlayConverter(Converter):
     def __init__(
         self,
         *,
-        base_image: str,
+        base_image: Path | str,
         position: tuple[int, int] = (0, 0),
         overlay_size: tuple[int, int] | None = None,
         opacity: float = 1.0,
@@ -39,7 +41,7 @@ class ImageOverlayConverter(Converter):
         Initialize the converter with base image and placement parameters.
 
         Args:
-            base_image (str): File path of the base image onto which overlays will be placed.
+            base_image (Path | str): Local file path or Azure Blob URL of the base image.
             position (tuple[int, int]): (x, y) pixel coordinates on the base image where
                 the top-left corner of the overlay will be placed. Defaults to (0, 0).
             overlay_size (tuple[int, int] | None): Optional (width, height) to resize the
@@ -58,12 +60,12 @@ class ImageOverlayConverter(Converter):
         if overlay_size is not None and (len(overlay_size) != 2 or overlay_size[0] <= 0 or overlay_size[1] <= 0):
             raise ValueError("overlay_size must be a tuple of two positive integers (width, height)")
 
-        self._base_image = base_image
+        self._base_image = str(base_image)
         self._position = position
         self._overlay_size = overlay_size
         self._opacity = opacity
 
-        mime_type = DataTypeSerializer.get_mime_type(self._base_image) or "image/png"
+        mime_type = get_mime_type(self._base_image) or "image/png"
         image_type = mime_type.split("/")[-1].lower()
         # PIL/Pillow uses "JPEG" as the save format; normalize the file extension to "jpg"
         # to match the convention used by other image converters.

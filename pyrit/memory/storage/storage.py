@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import aiofiles
+
+from pyrit.common import get_mime_type
 
 if TYPE_CHECKING:
     from azure.identity.aio import DefaultAzureCredential
@@ -33,6 +36,10 @@ class StorageIO(ABC):
     """
     Abstract interface for storage systems (local disk, Azure Storage Account, etc.).
     """
+
+    async def delete_file_async(self, path: Path | str) -> None:
+        """Delete one caller-owned file; custom storage must implement cleanup explicitly."""
+        raise NotImplementedError("This storage backend does not support file cleanup")
 
     @abstractmethod
     async def read_file_async(self, path: Path | str) -> bytes:
@@ -69,6 +76,10 @@ class DiskStorageIO(StorageIO):
     """
     Implementation of StorageIO for local disk storage.
     """
+
+    async def delete_file_async(self, path: Path | str) -> None:
+        """Delete one file, not its containing directory."""
+        await asyncio.to_thread(self._convert_to_path(path).unlink, missing_ok=True)
 
     async def read_file_async(self, path: Path | str) -> bytes:
         """
@@ -156,42 +167,6 @@ class AzureBlobStorageIO(StorageIO):
     """
     Implementation of StorageIO for Azure Blob Storage.
     """
-
-    _EXTENSION_TO_CONTENT_TYPE: ClassVar[dict[str, str]] = {
-        ".txt": "text/plain",
-        ".html": "text/html",
-        ".htm": "text/html",
-        ".csv": "text/csv",
-        ".md": "text/markdown",
-        ".json": "application/json",
-        ".xml": "application/xml",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-        ".svg": "image/svg+xml",
-        ".bmp": "image/bmp",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-        ".ogg": "audio/ogg",
-        ".flac": "audio/flac",
-        ".m4a": "audio/mp4",
-        ".mp4": "video/mp4",
-        ".webm": "video/webm",
-        ".ogv": "video/ogg",
-        ".avi": "video/x-msvideo",
-        ".pdf": "application/pdf",
-        ".doc": "application/msword",
-        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".xls": "application/vnd.ms-excel",
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".ppt": "application/vnd.ms-powerpoint",
-        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ".rtf": "application/rtf",
-        ".zip": "application/zip",
-        ".bin": "application/octet-stream",
-    }
 
     def __init__(
         self,
@@ -362,6 +337,19 @@ class AzureBlobStorageIO(StorageIO):
         except ValueError:
             return path_str
 
+    async def delete_file_async(self, path: Path | str) -> None:
+        """Delete one blob created by the caller."""
+        from azure.core.exceptions import ResourceNotFoundError
+
+        if not self._client_async:
+            self._client_async = await self._create_container_client_async()
+        try:
+            await self._client_async.delete_blob(self._resolve_blob_name(path))
+        except ResourceNotFoundError:
+            pass
+        finally:
+            await self._close_client_async()
+
     async def read_file_async(self, path: Path | str) -> bytes:
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
@@ -418,7 +406,7 @@ class AzureBlobStorageIO(StorageIO):
         if not self._client_async:
             self._client_async = await self._create_container_client_async()
         blob_name = self._resolve_blob_name(path)
-        content_type = self._EXTENSION_TO_CONTENT_TYPE.get(Path(blob_name).suffix.lower(), self._blob_content_type)
+        content_type = get_mime_type(blob_name) or self._blob_content_type
         try:
             await self._upload_blob_async(file_name=blob_name, data=data, content_type=content_type)
         except Exception as exc:

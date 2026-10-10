@@ -3,14 +3,34 @@
  * Licensed under the MIT license.
  */
 
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { Suspense } from "react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import App from "./App";
-import { ThemeProvider } from "./hooks/useTheme";
 
-import { attacksApi } from "./services/api";
+import { attacksApi, targetsApi } from "./services/api";
+import { makeTarget } from "./test-utils/targetFixtures";
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 
 const mockGetActiveAccount = jest.fn();
+let mockCreatedAttackRender: Promise<void> | null = null;
+
+jest.mock("./hooks/useTargetRegistry", () => ({
+  useTargetRegistry: () => {
+    const { useState } = jest.requireActual<typeof import("react")>("react");
+    const [targets, setTargets] = useState<import("./types").TargetInstance[]>([]);
+    return {
+      targets,
+      loading: false,
+      error: null,
+      refresh: jest.fn(),
+      rememberTarget: (target: import("./types").TargetInstance) => {
+        setTargets((current) => [...current, target]);
+      },
+    };
+  },
+}));
 
 // Mock react-joyride to prevent the guided tour from interfering with App tests.
 // The Joyride component is rendered as a no-op div, avoiding uncontrolled state
@@ -50,14 +70,31 @@ jest.mock("@azure/msal-react", () => ({
 }));
 
 jest.mock("./services/api", () => ({
+  runtimeApi: {
+    getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }),
+  },
   attacksApi: {
     getAttack: jest.fn(),
     listAttacks: jest.fn(),
     createAttack: jest.fn(),
     deleteAttack: jest.fn(),
   },
+  targetsApi: {
+    listTargets: jest.fn(),
+    getTarget: jest.fn(),
+  },
+  convertersApi: {
+    listConverters: jest.fn().mockResolvedValue({ items: [] }),
+    listConverterTypes: jest.fn().mockResolvedValue({ items: [] }),
+    createConverter: jest.fn(),
+    deleteConverter: jest.fn(),
+    previewConversion: jest.fn(),
+  },
   versionApi: {
     getVersion: jest.fn().mockResolvedValue({ version: "1.0.0" }),
+  },
+  authApi: {
+    getAccess: jest.fn().mockResolvedValue({ isAdmin: true }),
   },
   setMsalInstance: jest.fn(),
 }));
@@ -65,6 +102,8 @@ jest.mock("./services/api", () => ({
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
 const mockGetAttack = attacksApi.getAttack as jest.Mock;
+const mockListTargets = targetsApi.listTargets as jest.Mock;
+const mockGetTarget = targetsApi.getTarget as jest.Mock;
 
 // Mock the child components to isolate App logic
 jest.mock("./components/Labels/LabelsBar", () => {
@@ -82,24 +121,44 @@ jest.mock("./components/Layout/MainLayout", () => {
     children,
     currentView,
     onNavigate,
+    labels,
+    onLabelsChange,
+    operatorReadOnly,
   }: {
     children: React.ReactNode;
     currentView: string;
     onNavigate: (view: string) => void;
+    labels: Record<string, string>;
+    onLabelsChange: (labels: Record<string, string>) => void;
+    operatorReadOnly: boolean;
   }) => {
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
+        <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="operator-read-only">{String(operatorReadOnly)}</span>
+        <button onClick={() => onLabelsChange({ ...labels, operation: "op_edited", team: "red" })}>
+          Change run labels
+        </button>
+        <button onClick={() => onLabelsChange(Object.fromEntries(
+          Object.entries(labels).filter(([key]: [string, string]) => key !== "custom"),
+        ))}>
+          Remove custom label
+        </button>
         <button onClick={() => onNavigate("home")} data-testid="nav-home">
           Home
         </button>
-        <button onClick={() => onNavigate("config")} data-testid="nav-config">
-          Config
+        <button onClick={() => onNavigate("registry")} data-testid="nav-config">
+          Registry
         </button>
         <button onClick={() => onNavigate("chat")} data-testid="nav-chat">
           Chat
         </button>
         <button onClick={() => onNavigate("history")} data-testid="nav-history">
           History
+        </button>
+        <button onClick={() => onNavigate("scenarios")} data-testid="nav-scenarios">
+          Scenarios
         </button>
         {children}
       </div>
@@ -113,6 +172,7 @@ jest.mock("./components/Layout/MainLayout", () => {
 });
 
 jest.mock("./components/Chat/ChatWindow", () => {
+  const { useLocation } = jest.requireActual("react-router") as typeof import("react-router");
   const MockChatWindow = ({
     onNewAttack,
     activeTarget,
@@ -120,9 +180,15 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId,
     activeConversationId,
     attackTarget,
+    objective,
+    outcome,
+    targetResolutionStatus,
+    onRetryTargetResolution,
     onConversationCreated,
     onSelectConversation,
     labels,
+    scenarioResultId,
+    isLoadingAttack,
   }: {
     onNewAttack: () => void;
     activeTarget: unknown;
@@ -130,25 +196,44 @@ jest.mock("./components/Chat/ChatWindow", () => {
     conversationId: string | null;
     activeConversationId: string | null;
     attackTarget?: { identifier_hash?: string | null } | null;
+    objective?: string;
+    outcome?: string;
+    targetResolutionStatus?: string;
+    onRetryTargetResolution?: () => void;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
     labels: Record<string, string>;
+    scenarioResultId?: string | null;
+    isLoadingAttack?: boolean;
   }) => {
+    const location = useLocation();
+    if (attackResultId === "ar-123" && mockCreatedAttackRender) {
+      throw mockCreatedAttackRender;
+    }
     return (
       <div data-testid="chat-window">
         <span data-testid="attack-result-id">{attackResultId ?? "none"}</span>
         <span data-testid="conversation-id">{conversationId ?? "none"}</span>
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
+        <span data-testid="active-target-name">
+          {(activeTarget as { target_registry_name?: string } | null)?.target_registry_name ?? "none"}
+        </span>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
+        <span data-testid="objective">{objective ?? ""}</span>
+        <span data-testid="outcome">{outcome ?? "none"}</span>
+        <span data-testid="target-resolution-status">{targetResolutionStatus ?? "none"}</span>
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
+        <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
+        <span data-testid="route-location">{`${location.pathname}${location.search}`}</span>
         <button onClick={onNewAttack} data-testid="new-attack">
           New Attack
         </button>
         <button
           onClick={() => onConversationCreated("ar-123", "conv-123")}
           data-testid="set-conversation"
+          disabled={isLoadingAttack}
         >
           Set Conv
         </button>
@@ -158,6 +243,11 @@ jest.mock("./components/Chat/ChatWindow", () => {
         >
           Select Conv
         </button>
+        {onRetryTargetResolution && (
+          <button onClick={onRetryTargetResolution} data-testid="retry-target-resolution">
+            Retry target resolution
+          </button>
+        )}
       </div>
     );
   };
@@ -171,20 +261,20 @@ jest.mock("./components/Chat/ChatWindow", () => {
 jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
   const MockTargetConfig = ({
-    activeTarget,
-    onSetActiveTarget,
+    defaultObjectiveTarget,
+    onSetDefaultObjectiveTarget,
   }: {
-    activeTarget: unknown;
-    onSetActiveTarget: (t: unknown) => void;
+    defaultObjectiveTarget: unknown;
+    onSetDefaultObjectiveTarget: (t: unknown) => void;
   }) => {
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
-          {(activeTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
+          {(defaultObjectiveTarget as { target_registry_name?: string })?.target_registry_name ?? "none"}
         </span>
         <button
           onClick={() =>
-            onSetActiveTarget(makeTarget({
+            onSetDefaultObjectiveTarget(makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
               identifier_hash: "test-target-hash",
@@ -203,6 +293,11 @@ jest.mock("./components/Config/TargetConfig", () => {
     default: MockTargetConfig,
   };
 });
+
+jest.mock("./components/Configuration/Configuration", () => ({
+  __esModule: true,
+  default: () => <div data-testid="configuration">Configuration</div>,
+}));
 
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
@@ -227,7 +322,7 @@ jest.mock("./components/History/AttackHistory", () => {
             Start attack
           </button>
         ) : (
-          <button onClick={() => onNavigate("config")} data-testid="history-configure-target">
+          <button onClick={() => onNavigate("registry")} data-testid="history-configure-target">
             Configure target
           </button>
         )}
@@ -264,19 +359,16 @@ jest.mock("./components/Home/Home", () => {
     activeTarget,
     onNavigate,
     onOpenAttack,
-    labels,
   }: {
     activeTarget: unknown;
     onNavigate: (view: string) => void;
     onOpenAttack: (attackResultId: string) => void;
-    labels: Record<string, string>;
   }) => {
     return (
       <div data-testid="home-view">
         <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
-        <span data-testid="home-labels-json">{JSON.stringify(labels)}</span>
-        <button onClick={() => onNavigate("config")} data-testid="home-go-config">
-          Go to config
+        <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
+          Go to registry
         </button>
         <button
           onClick={() => onOpenAttack("ar-home-attack")}
@@ -294,22 +386,101 @@ jest.mock("./components/Home/Home", () => {
   };
 });
 
+jest.mock("./components/Scenarios/ScenarioCatalog", () => {
+  const MockScenarioCatalog = () => <div data-testid="scenario-catalog" />;
+  MockScenarioCatalog.displayName = "MockScenarioCatalog";
+  return {
+    __esModule: true,
+    default: MockScenarioCatalog,
+  };
+});
+
+jest.mock("./components/Scenarios/ScenarioDetail", () => {
+  const MockScenarioDetail = ({
+    defaultObjectiveTarget,
+    labels,
+    onNavigate,
+  }: {
+    defaultObjectiveTarget: unknown;
+    labels: Record<string, string>;
+    onNavigate: (view: string) => void;
+  }) => {
+    return (
+      <div data-testid="scenario-detail">
+        <span data-testid="scenario-detail-has-target">{defaultObjectiveTarget ? "yes" : "no"}</span>
+        <span data-testid="scenario-detail-labels-json">{JSON.stringify(labels)}</span>
+        <button onClick={() => onNavigate("registry")} data-testid="scenario-detail-go-config">
+          Configure target
+        </button>
+      </div>
+    );
+  };
+  MockScenarioDetail.displayName = "MockScenarioDetail";
+  return {
+    __esModule: true,
+    default: MockScenarioDetail,
+  };
+});
+
+jest.mock("./components/Scenarios/ScenarioRunPage", () => {
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockScenarioRunPage = () => {
+    const location = useLocation();
+    return <div data-testid="scenario-run-page" data-location={location.pathname} />;
+  };
+  MockScenarioRunPage.displayName = "MockScenarioRunPage";
+  return {
+    __esModule: true,
+    default: MockScenarioRunPage,
+  };
+});
+
+jest.mock("./components/History/ScenarioHistory", () => {
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  const MockScenarioHistory = () => {
+    const location = useLocation();
+    return <div data-testid="scenario-history" data-location={`${location.pathname}${location.search}`} />;
+  };
+  MockScenarioHistory.displayName = "MockScenarioHistory";
+  return {
+    __esModule: true,
+    default: MockScenarioHistory,
+  };
+});
+
+function RouterProbe() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  return (
+    <>
+      <output aria-label="Current URL">{location.pathname}</output>
+      <button type="button" onClick={() => navigate(-1)}>Back</button>
+    </>
+  );
+}
+
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
-  // initialPath lets a test deep-link straight to a view (e.g. "/config").
+  // initialPath lets a test deep-link straight to a view.
   function renderApp(initialPath = "/") {
     return render(
-      <ThemeProvider>
-        <MemoryRouter initialEntries={[initialPath]}>
-          <App />
-        </MemoryRouter>
-      </ThemeProvider>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <App />
+      </MemoryRouter>
     );
   }
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCreatedAttackRender = null;
     mockGetActiveAccount.mockReturnValue(null);
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+    mockListTargets.mockResolvedValue({
+      items: [],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+    mockGetTarget.mockRejectedValue({ isAxiosError: true, response: { status: 404 } });
     window.localStorage.clear();
   });
 
@@ -317,6 +488,68 @@ describe("App", () => {
     renderApp();
     expect(screen.getByTestId("main-layout")).toBeInTheDocument();
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
+  });
+
+  it("keeps run labels account-scoped and derives the operator without saving it", async () => {
+    const user = userEvent.setup();
+    const alice = { homeAccountId: "alice-id", tenantId: "tenant", username: "Alice@example.com" };
+    const bob = { homeAccountId: "bob-id", tenantId: "tenant", username: "Bob@example.com" };
+    mockGetActiveAccount.mockReturnValue(alice);
+    const { rerender } = renderApp();
+    await user.click(screen.getByRole("button", { name: "Change run labels" }));
+    expect(readUserPreferences("tenant:alice-id").labels).toEqual({ operation: "op_edited", team: "red" });
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"alice"');
+    expect(screen.getByTestId("operator-read-only")).toHaveTextContent("true");
+
+    mockGetActiveAccount.mockReturnValue(bob);
+    rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"bob"');
+    expect(screen.getByTestId("home-labels-json")).not.toHaveTextContent("op_edited");
+    mockGetActiveAccount.mockReturnValue(alice);
+    rerender(<MemoryRouter><App /></MemoryRouter>);
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_edited"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"team":"red"');
+  });
+
+  it("keeps edits and removed labels when backend defaults arrive after a reload", async () => {
+    const user = userEvent.setup();
+    mockedVersionApi.getVersion.mockResolvedValue({
+      version: "1.0.0",
+      default_labels: { custom: "backend", operation: "op_backend" },
+    });
+    const first = renderApp();
+    await waitFor(() => expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"custom":"backend"'));
+    await user.click(screen.getByRole("button", { name: "Remove custom label" }));
+    expect(readUserPreferences("local").labels).toEqual({ custom: null });
+    first.unmount();
+
+    let completeVersion!: (value: { version: string; default_labels: Record<string, string> }) => void;
+    mockedVersionApi.getVersion.mockReturnValue(new Promise((resolve) => { completeVersion = resolve; }));
+    renderApp();
+    await user.click(screen.getByRole("button", { name: "Change run labels" }));
+    await act(async () => {
+      completeVersion({ version: "1.0.0", default_labels: { custom: "backend", operation: "op_backend" } });
+    });
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_edited"');
+    expect(screen.getByTestId("home-labels-json")).not.toHaveTextContent('"custom"');
+    expect(readUserPreferences("local").labels).toEqual({ operation: "op_edited", team: "red", custom: null });
+  });
+
+  it("restores saved labels ahead of backend defaults for an authenticated account", async () => {
+    mockGetActiveAccount.mockReturnValue({
+      homeAccountId: "alice-id", tenantId: "tenant", username: "Alice@example.com",
+    });
+    writeUserPreferences("tenant:alice-id", {
+      ...DEFAULT_USER_PREFERENCES,
+      labels: { operation: "op_saved", team: "red" },
+    });
+    mockedVersionApi.getVersion.mockResolvedValue({
+      version: "1.0.0", default_labels: { operator: "backend_user", operation: "op_backend", custom: "backend" },
+    });
+    renderApp();
+    await waitFor(() => expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"custom":"backend"'));
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operation":"op_saved"');
+    expect(screen.getByTestId("home-labels-json")).toHaveTextContent('"operator":"alice"');
   });
 
   it("starts in home view", () => {
@@ -330,23 +563,197 @@ describe("App", () => {
   });
 
   it("renders the view named by the initial URL", () => {
-    renderApp("/config");
+    renderApp("/registry/targets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("renders the history view when deep-linked to /history", () => {
-    renderApp("/history");
+  it("redirects /registry to the target registry", async () => {
+    renderApp("/registry");
+
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+  });
+
+  it("redirects legacy /targets to the target registry without adding a history entry", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/chat", "/targets"]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/registry\/targets$/);
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+
+    expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
+  });
+
+  it("renders the converter registry from its direct URL", async () => {
+    renderApp("/registry/converters");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(await screen.findByRole("heading", { name: "Converter Registry" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Converters" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("renders configuration at /config", () => {
+    renderApp("/config");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "configuration"
+    );
+    expect(screen.getByTestId("configuration")).toBeInTheDocument();
+  });
+
+  it("renders the attack history tab when deep-linked to /history/attacks", () => {
+    renderApp("/history/attacks");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "history"
     );
+    expect(screen.getByRole("heading", { level: 1, name: "History" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Attacks" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+  });
+
+  it("renders the scenario catalog when deep-linked to /scanner", () => {
+    renderApp("/scanner");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+  });
+
+  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
+  });
+
+  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner-history/:id", () => {
+    renderApp("/scanner-history/sr-123");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "history"
+    );
+    expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
+  });
+
+  it("renders the scanner run dashboard for a direct attack detail link", () => {
+    renderApp("/scanner-history/sr-123/attack-456");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "history"
+    );
+    expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
+      "data-location",
+      "/scanner-history/sr-123/attack-456"
+    );
+  });
+
+  it("redirects legacy scenario-history links to scanner-history", async () => {
+    renderApp("/scenario-history/sr-123");
+
+    expect(await screen.findByTestId("scenario-run-page")).toHaveAttribute(
+      "data-location",
+      "/scanner-history/sr-123"
+    );
+  });
+
+  it("redirects the legacy scanner history page and preserves its filters", async () => {
+    renderApp("/scenario-history?operator=alice");
+
+    expect(await screen.findByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "history"
+    );
+    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
+    expect(screen.getByTestId("scenario-history")).toHaveAttribute(
+      "data-location",
+      "/history/scanner?operator=alice"
+    );
+  });
+
+  it("renders scanner history in its URL-backed history tab", () => {
+    renderApp("/history/scanner?operator=alice");
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "history"
+    );
+    expect(screen.getByRole("tab", { name: "Scanner" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
+  });
+
+  it("switches to the scenarios view via the sidebar", () => {
+    renderApp();
+
+    fireEvent.click(screen.getByTestId("nav-scenarios"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "scenarios"
+    );
+    expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
+  });
+
+  it("switches between history tabs", async () => {
+    renderApp("/history/attacks");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
+
+    expect(await screen.findByTestId("scenario-history")).toHaveAttribute(
+      "data-location",
+      "/history/scanner"
+    );
+  });
+
+  it("passes the active target and labels to the scenario detail view", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    expect(screen.getByTestId("scenario-detail-has-target")).toHaveTextContent("no");
+    expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
+  });
+
+  it("navigates from scenario detail to the registry when it requests it", () => {
+    renderApp("/scanner/foundry.red_team_agent");
+
+    fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
+
+    expect(screen.getByTestId("main-layout")).toHaveAttribute(
+      "data-current-view",
+      "registry"
+    );
+    expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
   it("redirects an unknown path back to home", () => {
@@ -371,19 +778,19 @@ describe("App", () => {
     expect(screen.getByTestId("chat-window")).toBeInTheDocument();
   });
 
-  it("switches to config view", () => {
+  it("switches to the target registry view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("switches back to chat from config", () => {
+  it("switches back to chat from the registry", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -403,7 +810,7 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
   });
 
-  it("retains the active target identifier when creating an attack", () => {
+  it("retains and trusts the active target when creating an attack", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("nav-config"));
@@ -412,6 +819,40 @@ describe("App", () => {
     fireEvent.click(screen.getByTestId("set-conversation"));
 
     expect(screen.getByTestId("attack-target-hash")).toHaveTextContent("test-target-hash");
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("retains a route-resolved target when branching to a new attack", async () => {
+    const resolvedTarget = makeTarget({
+      target_registry_name: "branch-target",
+      identifier_hash: "branch-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-source",
+      conversation_id: "conv-source",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "branch-target-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [resolvedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-source");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target")
+    );
+
+    fireEvent.click(screen.getByTestId("set-conversation"));
+
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target");
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).toHaveBeenCalledTimes(1);
   });
 
   it("clears conversationId on new attack", () => {
@@ -425,14 +866,14 @@ describe("App", () => {
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("sets active target from config page and passes to chat", () => {
+  it("sets an active target from the registry and passes it to chat", () => {
     renderApp();
 
     // Switch to chat and confirm no target initially
     fireEvent.click(screen.getByTestId("nav-chat"));
     expect(screen.getByTestId("has-target")).toHaveTextContent("no");
 
-    // Switch to config and set target
+    // Switch to the registry and set a target
     fireEvent.click(screen.getByTestId("nav-config"));
     fireEvent.click(screen.getByTestId("set-target"));
 
@@ -453,13 +894,13 @@ describe("App", () => {
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("navigates from empty history to config when no target is active", () => {
-    renderApp("/history");
+  it("navigates from empty history to the registry when no target is active", () => {
+    renderApp("/history/attacks");
 
     expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
 
-    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "config");
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "registry");
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
@@ -510,14 +951,14 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-id")).toHaveTextContent("home-conv-1"));
   });
 
-  it("navigates to config from the home view", () => {
+  it("navigates to the registry from the home view", () => {
     renderApp();
 
     fireEvent.click(screen.getByTestId("home-go-config"));
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "config"
+      "registry"
     );
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
@@ -636,10 +1077,8 @@ describe("App", () => {
 
     renderApp();
 
-    // Home receives the same labels prop — assert there to avoid racing the
-    // async initLabels effect against a view-change re-render.
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"operator":"test.user"');
       expect(labels).toContain('"custom":"value"');
     });
@@ -655,10 +1094,78 @@ describe("App", () => {
     renderApp();
 
     await waitFor(() => {
-      const labels = screen.getByTestId("home-labels-json").textContent ?? "";
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
       expect(labels).toContain('"operator":"override_user"');
       expect(labels).toContain('"custom":"value"');
     });
+  });
+
+  it("prefers the labels you last picked over the backend defaults", async () => {
+    window.localStorage.setItem(
+      "pyrit.globalLabels",
+      JSON.stringify({ operator: "roakey", operation: "op_i_picked" }),
+    );
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { operation: "op_from_backend", custom: "value" },
+    });
+
+    renderApp();
+
+    await waitFor(() => {
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
+      expect(labels).toContain('"custom":"value"');
+    });
+    const labels = screen.getByTestId("global-labels-json").textContent ?? "";
+    expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
+  it("still takes the operator from the signed-in account over a stored one", async () => {
+    window.localStorage.setItem(
+      "pyrit.globalLabels",
+      JSON.stringify({ operator: "stored_user", operation: "op_i_picked" }),
+    );
+    mockGetActiveAccount.mockReturnValue({ username: "Real.User@contoso.com" });
+    mockedVersionApi.getVersion.mockResolvedValueOnce({
+      version: "2.0.0",
+      default_labels: { custom: "value" },
+    });
+
+    renderApp();
+
+    await waitFor(() => {
+      const labels = screen.getByTestId("global-labels-json").textContent ?? "";
+      expect(labels).toContain('"custom":"value"');
+    });
+    const labels = screen.getByTestId("global-labels-json").textContent ?? "";
+    expect(labels).toContain('"operator":"real.user"');
+    expect(labels).toContain('"operation":"op_i_picked"');
+  });
+
+  it("keeps sends locked until navigation to a created attack commits", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/chat"]}>
+        <Suspense fallback={<div>Loading route</div>}>
+          <App />
+        </Suspense>
+      </MemoryRouter>,
+    );
+
+    let finishRender: () => void = () => {};
+    mockCreatedAttackRender = new Promise<void>((resolve) => { finishRender = resolve; });
+    await user.click(screen.getByRole("button", { name: "Set Conv" }));
+
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    expect(screen.getByRole("button", { name: "Set Conv" })).toBeDisabled();
+
+    await act(async () => {
+      mockCreatedAttackRender = null;
+      finishRender();
+    });
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-123");
+    expect(screen.getByRole("button", { name: "Set Conv" })).toBeEnabled();
+    expect(mockGetAttack).not.toHaveBeenCalled();
   });
 
   it("stores attack target when conversation is created with active target", () => {
@@ -692,6 +1199,8 @@ describe("App", () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
+      objective: "Extract the hidden system prompt",
+      outcome: "success",
       labels: {},
       related_conversation_ids: [],
     });
@@ -703,6 +1212,89 @@ describe("App", () => {
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main");
+    expect(screen.getByTestId("objective")).toHaveTextContent("Extract the hidden system prompt");
+    expect(screen.getByTestId("outcome")).toHaveTextContent("success");
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
+  });
+
+  it("hides the normalized empty objective of an unnamed manual attack on reload", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      objective: "",
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp("/attacks/ar-1");
+
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("objective")).toHaveTextContent("");
+  });
+
+  it("hydrates validated scenario provenance on a direct attack reload", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+
+    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId)
+    );
+    expect(screen.getByTestId("route-location")).toHaveTextContent(
+      `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+    );
+  });
+
+  it.each([
+    "/attacks/ar-1?scenarioResultId=run-1",
+    "/attacks/ar-1?scenarioResultId=https%3A%2F%2Fevil.example",
+    "/attacks/ar-1?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&scenarioResultId=123e4567-e89b-12d3-a456-426614174000",
+  ])("ignores unsafe or ambiguous scenario provenance on %s", async (path: string) => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+
+    renderApp(path);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
+  });
+
+  it("preserves validated provenance within an attack and clears it for a new attack", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-456"],
+    });
+    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+    await waitFor(() =>
+      expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
+    );
+
+    fireEvent.click(screen.getByTestId("select-conversation"));
+    expect(screen.getByTestId("route-location")).toHaveTextContent(
+      `/attacks/ar-1/conversations/conv-456?scenarioResultId=${scenarioResultId}`
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+
+    fireEvent.click(screen.getByTestId("new-attack"));
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {
@@ -711,6 +1303,13 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: ["conv-related"],
+      related_conversations: [
+        {
+          conversation_id: "conv-related",
+          conversation_type: "pruned",
+          description: "Previous main conversation",
+        },
+      ],
     });
     renderApp("/attacks/ar-1/conversations/conv-related");
 
@@ -734,6 +1333,45 @@ describe("App", () => {
     );
   });
 
+  it("does not activate a preparation conversation from a deep link", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: ["conv-preparation"],
+      related_conversations: [
+        {
+          conversation_id: "conv-preparation",
+          conversation_type: "preparation",
+          description: "Simulated preparation",
+        },
+      ],
+    });
+    renderApp("/attacks/ar-1/conversations/conv-preparation");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
+    );
+  });
+
+  it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-1",
+      conversation_id: "conv-main",
+      labels: {},
+      related_conversation_ids: [],
+    });
+    renderApp(`/attacks/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("route-location")).toHaveTextContent(
+        `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+      )
+    );
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+  });
+
   it("hydrates history filters from the URL query string", () => {
     renderApp("/history?outcome=success&attackType=PromptSendingAttack");
 
@@ -745,7 +1383,7 @@ describe("App", () => {
   });
 
   it("writes filter changes into the URL", () => {
-    renderApp("/history");
+    renderApp("/history/attacks");
 
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
@@ -774,5 +1412,663 @@ describe("App", () => {
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
     ).toBe("success");
+  });
+
+  it("restores the exact registered target from a direct attack URL across registry pages", async () => {
+    const nearDuplicate = makeTarget({
+      target_registry_name: "near-duplicate",
+      target_type: "OpenAIChatTarget",
+      endpoint: "https://example.test",
+      model_name: "gpt-test",
+      identifier_hash: "persisted-full-hash-near",
+    });
+    const exactTarget = makeTarget({
+      target_registry_name: "exact-target",
+      target_type: "OpenAIChatTarget",
+      endpoint: "https://example.test",
+      model_name: "gpt-test",
+      identifier_hash: "persisted-full-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-direct",
+      conversation_id: "conv-direct",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        endpoint: "https://example.test",
+        model_name: "gpt-test",
+        identifier_hash: "persisted-full-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [nearDuplicate],
+        pagination: { limit: 200, has_more: true, next_cursor: "page-2" },
+      })
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+
+    renderApp("/attacks/ar-direct");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("exact-target")
+    );
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockListTargets).toHaveBeenNthCalledWith(1, 200, undefined);
+    expect(mockListTargets).toHaveBeenNthCalledWith(2, 200, "page-2");
+  });
+
+  it("restores a named target directly after validating its full hash", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      identifier_hash: "persisted-alias-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-named",
+      conversation_id: "conv-named",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "persisted-alias-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(exactTarget);
+
+    renderApp("/attacks/ar-named");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
+    );
+    expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("falls back to full-hash resolution when a persisted alias points to a different target", async () => {
+    const staleAliasTarget = makeTarget({
+      target_registry_name: "reused-alias",
+      identifier_hash: "different-hash",
+    });
+    const renamedTarget = makeTarget({
+      target_registry_name: "renamed-target",
+      identifier_hash: "original-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-reused-alias",
+      conversation_id: "conv-reused-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "reused-alias",
+        identifier_hash: "original-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(staleAliasTarget);
+    mockListTargets.mockResolvedValue({
+      items: [staleAliasTarget, renamedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-reused-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("reused-alias");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("falls back to full-hash resolution when a persisted alias was removed", async () => {
+    const renamedTarget = makeTarget({
+      target_registry_name: "renamed-target",
+      identifier_hash: "original-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-removed-alias",
+      conversation_id: "conv-removed-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "removed-alias",
+        identifier_hash: "original-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [renamedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-removed-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("removed-alias");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("falls back when a reserved alias returns a non-target response", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "catalog",
+      identifier_hash: "catalog-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-catalog-alias",
+      conversation_id: "conv-catalog-alias",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "catalog",
+        identifier_hash: "catalog-target-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue({ items: [] });
+    mockListTargets.mockResolvedValue({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-catalog-alias");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("catalog")
+    );
+    expect(mockGetTarget).toHaveBeenCalledWith("catalog");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("retries named-target registry failures without masking them with a list fallback", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      identifier_hash: "persisted-alias-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-named-error",
+      conversation_id: "conv-named-error",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "persisted-alias-hash",
+      },
+    });
+    mockGetTarget
+      .mockRejectedValueOnce({ isAxiosError: true, response: { status: 500 } })
+      .mockResolvedValueOnce(exactTarget);
+    const user = userEvent.setup();
+
+    renderApp("/attacks/ar-named-error");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+    expect(mockListTargets).not.toHaveBeenCalled();
+
+    await user.click(screen.getByTestId("retry-target-resolution"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
+    );
+    expect(mockGetTarget).toHaveBeenCalledTimes(2);
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when registry pagination does not advance", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-stalled-pagination",
+      conversation_id: "conv-stalled-pagination",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "pagination-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
+      });
+
+    renderApp("/attacks/ar-stalled-pagination");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("restores the target again after an app remount", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "remounted-target",
+      identifier_hash: "remount-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-remount",
+      conversation_id: "conv-remount",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "remount-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    const firstRender = renderApp("/attacks/ar-remount");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
+    );
+    firstRender.unmount();
+
+    renderApp("/attacks/ar-remount");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
+    );
+    expect(mockListTargets).toHaveBeenCalledTimes(2);
+  });
+
+  it("revokes a restored target when it is removed before remount", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "removed-target",
+      identifier_hash: "removed-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-removed",
+      conversation_id: "conv-removed",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "removed-hash",
+      },
+    });
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+
+    const firstRender = renderApp("/attacks/ar-removed");
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("removed-target")
+    );
+    firstRender.unmount();
+
+    renderApp("/attacks/ar-removed");
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("revalidates a previously resolved target when revisiting the same attack", async () => {
+    const exactTarget = makeTarget({
+      target_registry_name: "revisited-target",
+      identifier_hash: "revisited-hash",
+    });
+    let resolveRevisitAttack: (value: unknown) => void = () => {};
+    let resolveRevisit: (value: unknown) => void = () => {};
+    const attack = {
+      attack_result_id: "ar-attack-1",
+      conversation_id: "conv-revisited",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "revisited-hash",
+      },
+    };
+    mockGetAttack
+      .mockResolvedValueOnce(attack)
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveRevisitAttack = resolve;
+        })
+      );
+    mockListTargets
+      .mockResolvedValueOnce({
+        items: [exactTarget],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      })
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveRevisit = resolve;
+        })
+      );
+    const user = userEvent.setup();
+    renderApp("/attacks/ar-attack-1");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("revisited-target")
+    );
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+
+    resolveRevisitAttack(attack);
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("loading")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+
+    resolveRevisit({
+      items: [exactTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("revisited-target")
+    );
+  });
+
+  it("keeps a near-duplicate target read-only when its full hash differs", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-near",
+      conversation_id: "conv-near",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        endpoint: "https://example.test",
+        model_name: "gpt-test",
+        identifier_hash: "required-full-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [
+        makeTarget({
+          target_registry_name: "near-target",
+          target_type: "OpenAIChatTarget",
+          endpoint: "https://example.test",
+          model_name: "gpt-test",
+          identifier_hash: "different-full-hash",
+        }),
+      ],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-near");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("keeps duplicate exact target identities read-only as ambiguous", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-ambiguous",
+      conversation_id: "conv-ambiguous",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "duplicate-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [
+        makeTarget({
+          target_registry_name: "duplicate-a",
+          identifier_hash: "duplicate-hash",
+        }),
+        makeTarget({
+          target_registry_name: "duplicate-b",
+          identifier_hash: "duplicate-hash",
+        }),
+      ],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    renderApp("/attacks/ar-ambiguous");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("ambiguous")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+  });
+
+  it("selects the history target instead of the objective default and preserves that default", async () => {
+    const historyTarget = makeTarget({
+      target_registry_name: "history-target",
+      identifier_hash: "other-target-hash",
+    });
+    mockListTargets.mockResolvedValue({
+      items: [historyTarget],
+      pagination: { limit: 200, has_more: false },
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-other-target",
+      conversation_id: "conv-other-target",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: "other-target-hash",
+      },
+    });
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("history-target");
+    await user.click(screen.getByTestId("new-attack"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    await user.click(screen.getByTestId("nav-config"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+  });
+
+  it("hash-validates an explicitly selected matching target against the registry", async () => {
+    const selectedTarget = makeTarget({
+      target_registry_name: "test_target",
+      target_type: "OpenAIChatTarget",
+      identifier_hash: "test-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-same-target",
+      conversation_id: "conv-same-target",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        identifier_hash: "test-target-hash",
+      },
+    });
+    mockListTargets.mockResolvedValue({
+      items: [selectedTarget],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(mockListTargets).toHaveBeenCalledWith(200, undefined);
+  });
+
+  it("selects the persisted alias rather than a default with the same hash", async () => {
+    const persistedAliasTarget = makeTarget({
+      target_registry_name: "persisted-alias",
+      target_type: "OpenAIChatTarget",
+      identifier_hash: "test-target-hash",
+    });
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-same-identity",
+      conversation_id: "conv-same-identity",
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "OpenAIChatTarget",
+        target_registry_name: "persisted-alias",
+        identifier_hash: "test-target-hash",
+      },
+    });
+    mockGetTarget.mockResolvedValue(persistedAliasTarget);
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByTestId("nav-config"));
+    await user.click(screen.getByTestId("set-target"));
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias");
+    expect(mockGetTarget).toHaveBeenCalledWith("persisted-alias");
+    expect(mockListTargets).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 500])(
+    "keeps the attack read-only after a registry %s and resolves it on retry",
+    async (status: number) => {
+      const exactTarget = makeTarget({
+        target_registry_name: "retry-target",
+        identifier_hash: "retry-hash",
+      });
+      mockGetAttack.mockResolvedValue({
+        attack_result_id: "ar-retry",
+        conversation_id: "conv-retry",
+        labels: {},
+        related_conversation_ids: [],
+        target: {
+          target_type: "TextTarget",
+          identifier_hash: "retry-hash",
+        },
+      });
+      mockListTargets
+        .mockRejectedValueOnce({ isAxiosError: true, response: { status } })
+        .mockResolvedValueOnce({
+          items: [exactTarget],
+          pagination: { limit: 200, has_more: false, next_cursor: null },
+        });
+      const user = userEvent.setup();
+      renderApp("/attacks/ar-retry");
+
+      await waitFor(() =>
+        expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
+      );
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+
+      await user.click(screen.getByTestId("retry-target-resolution"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("active-target-name")).toHaveTextContent("retry-target")
+      );
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved");
+    }
+  );
+
+  it("ignores a stale target registry response after navigating to another attack", async () => {
+    let resolveFirstRegistryPage: (value: unknown) => void = () => {};
+    mockGetAttack.mockImplementation(async (attackId: string) => ({
+      attack_result_id: attackId,
+      conversation_id: `conv-${attackId}`,
+      labels: {},
+      related_conversation_ids: [],
+      target: {
+        target_type: "TextTarget",
+        identifier_hash: `${attackId}-hash`,
+      },
+    }));
+    mockListTargets
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveFirstRegistryPage = resolve;
+        })
+      )
+      .mockResolvedValueOnce({
+        items: [
+          makeTarget({
+            target_registry_name: "attack-2-target",
+            identifier_hash: "ar-attack-2-hash",
+          }),
+        ],
+        pagination: { limit: 200, has_more: false, next_cursor: null },
+      });
+    const user = userEvent.setup();
+    renderApp("/history/attacks");
+
+    await user.click(screen.getByTestId("open-attack"));
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("loading")
+    );
+    await user.click(screen.getByTestId("nav-history"));
+    await user.click(screen.getByTestId("open-attack-2"));
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("attack-2-target")
+    );
+
+    resolveFirstRegistryPage({
+      items: [
+        makeTarget({
+          target_registry_name: "stale-attack-1-target",
+          identifier_hash: "ar-attack-1-hash",
+        }),
+      ],
+      pagination: { limit: 200, has_more: false, next_cursor: null },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("active-target-name")).toHaveTextContent("attack-2-target")
+    );
+  });
+
+  it("keeps legacy attacks without complete target metadata read-only", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "ar-legacy",
+      conversation_id: "conv-legacy",
+      labels: {},
+      related_conversation_ids: [],
+      target: null,
+    });
+
+    renderApp("/attacks/ar-legacy");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("legacy")
+    );
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("none");
+    expect(mockListTargets).not.toHaveBeenCalled();
   });
 });

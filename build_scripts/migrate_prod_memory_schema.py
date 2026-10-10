@@ -19,7 +19,7 @@ Safety rails:
 - Exits non-zero on any failure.
 
 Usage:
-    python build_scripts/migrate_prod_memory_schema.py
+    python -m build_scripts.migrate_prod_memory_schema
 
 The script reads the production connection string from
 AZURE_SQL_DB_CONNECTION_STRING_PROD (loaded from ~/.pyrit/.env).

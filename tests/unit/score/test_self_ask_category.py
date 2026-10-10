@@ -6,16 +6,18 @@ from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import Message, MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     ContentClassifier,
     ContentClassifierCategory,
     ContentClassifierPaths,
+    MessageScorable,
     SelfAskCategoryScorer,
 )
 
@@ -55,7 +57,7 @@ def scorer_category_response_false() -> Message:
 
 
 def test_category_scorer_set_no_category_found(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskCategoryScorer.from_content_classifier(
         chat_target=chat_target,
@@ -68,7 +70,7 @@ def test_category_scorer_set_no_category_found(patch_central_database):
 
 
 async def test_category_scorer_set_system_prompt(scorer_category_response_bullying: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_bullying])
@@ -79,11 +81,11 @@ async def test_category_scorer_set_system_prompt(scorer_category_response_bullyi
 
     await scorer.score_text_async("this has a lot of bullying")
 
-    chat_target.set_system_prompt.assert_called_once()
+    chat_target.set_system_prompt_async.assert_called_once()
 
 
 async def test_category_scorer_score(scorer_category_response_bullying: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_bullying])
@@ -105,7 +107,7 @@ async def test_category_scorer_score(scorer_category_response_bullying: Message,
 
 
 async def test_category_scorer_canonicalizes_boolean_value(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     response = Message(
         message_pieces=[
@@ -128,7 +130,7 @@ async def test_category_scorer_canonicalizes_boolean_value(patch_central_databas
 
 
 async def test_category_scorer_score_false(scorer_category_response_false: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_false])
@@ -150,7 +152,7 @@ async def test_category_scorer_score_false(scorer_category_response_false: Messa
 
 async def test_category_scorer_adds_to_memory(scorer_category_response_false: Message, patch_central_database):
     memory = MagicMock(MemoryInterface)
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_category_response_false])
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
@@ -161,16 +163,16 @@ async def test_category_scorer_adds_to_memory(scorer_category_response_false: Me
 
         await scorer.score_text_async(text="string")
 
-        memory.add_scores_to_memory.assert_called_once()
+        memory.add_scores_to_memory_async.assert_called_once()
 
 
 async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value="this is not a json")])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
-    with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
+    with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock(spec=MemoryInterface)):
         scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier=HARM_CLASSIFIER,
@@ -183,7 +185,7 @@ async def test_self_ask_objective_scorer_bad_json_exception_retries(patch_centra
 
 
 async def test_self_ask_objective_scorer_json_missing_key_exception_retries(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     json_response = (
@@ -200,7 +202,7 @@ async def test_self_ask_objective_scorer_json_missing_key_exception_retries(patc
 
     bad_json_resp = Message(message_pieces=[MessagePiece(role="assistant", original_value=json_response)])
     chat_target.send_prompt_async = AsyncMock(return_value=[bad_json_resp])
-    with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
+    with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock(spec=MemoryInterface)):
         scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier=HARM_CLASSIFIER,
@@ -228,7 +230,7 @@ async def test_category_scorer_retries_responses_outside_classifier_contract(
     response: dict[str, object],
     patch_central_database,
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     invalid_response = Message(message_pieces=[MessagePiece(role="assistant", original_value=json.dumps(response))])
     chat_target.send_prompt_async = AsyncMock(return_value=[invalid_response])
@@ -251,18 +253,30 @@ async def test_score_prompts_batch_async(
     scorer_category_response_false: Message,
     patch_central_database,
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock()
     chat_target._max_requests_per_minute = max_requests_per_minute
-    with patch.object(CentralMemory, "get_memory_instance", return_value=MagicMock()):
+
+    prompt = MessagePiece(role="assistant", original_value="test").to_message()
+    prompt2 = MessagePiece(role="assistant", original_value="test 2").to_message()
+
+    # Scoring resolves a scorable through memory, so the fake has to answer id lookups.
+    # A real database is not wanted here: the scorer would persist the same mocked
+    # response twice and collide on its primary key.
+    known = {str(piece.id): piece for message in (prompt, prompt2) for piece in message.message_pieces}
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_message_pieces_async = AsyncMock(
+        side_effect=lambda **kwargs: [
+            known[str(piece_id)] for piece_id in kwargs.get("prompt_ids", []) if str(piece_id) in known
+        ]
+    )
+
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         scorer = SelfAskCategoryScorer.from_content_classifier(
             chat_target=chat_target,
             content_classifier=HARM_CLASSIFIER,
         )
-
-        prompt = MessagePiece(role="assistant", original_value="test").to_message()
-        prompt2 = MessagePiece(role="assistant", original_value="test 2").to_message()
 
         with patch.object(chat_target, "send_prompt_async", return_value=[scorer_category_response_false]):
             if batch_size != 1 and max_requests_per_minute:
@@ -280,7 +294,7 @@ async def test_blocked_response_returns_false_without_invoking_llm(patch_central
 
     The unified TrueFalseScorer fallback returns Score(False) with a 'blocked' rationale.
     """
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock()
 
@@ -298,7 +312,7 @@ async def test_blocked_response_returns_false_without_invoking_llm(patch_central
     )
     blocked_message = Message(message_pieces=[blocked_piece])
 
-    scores = await scorer.score_async(blocked_message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(blocked_message)))
 
     chat_target.send_prompt_async.assert_not_called()
     assert len(scores) == 1
@@ -317,14 +331,14 @@ def test_category_init_no_chat_target_raises():
 
 
 def test_category_init_no_system_prompt_raises():
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     with pytest.raises(TypeError, match="system_prompt"):
         SelfAskCategoryScorer(chat_target=chat_target, content_classifier=HARM_CLASSIFIER)
 
 
 def test_category_init_system_prompt_str_and_invalid_type(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskCategoryScorer(
@@ -361,7 +375,7 @@ def test_content_classifier_validation():
 
 
 def test_category_factory_supports_inline_template(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskCategoryScorer.from_content_classifier(

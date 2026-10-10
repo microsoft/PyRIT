@@ -1,5 +1,5 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
-import { mobileTouchTarget } from '../../styles/touchTargets'
+import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTargets'
 
 export const useLabelsBarStyles = makeStyles({
   root: {
@@ -28,7 +28,8 @@ export const useLabelsBarStyles = makeStyles({
     alignItems: 'center',
     gap: tokens.spacingHorizontalXS,
     flexWrap: 'nowrap',
-    overflow: 'hidden',
+    // Metadata has no popover fallback, so keep it reachable on narrow bars.
+    overflowX: 'auto',
     flex: '1 1 0',
     minWidth: 0,
   },
@@ -47,7 +48,7 @@ export const useLabelsBarStyles = makeStyles({
     display: 'inline-flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalXXS,
-    padding: `2px ${tokens.spacingHorizontalS}`,
+    padding: `0 ${tokens.spacingHorizontalS}`,
     borderRadius: tokens.borderRadiusMedium,
     cursor: 'pointer',
     userSelect: 'none' as const,
@@ -61,11 +62,33 @@ export const useLabelsBarStyles = makeStyles({
     backgroundColor: tokens.colorPaletteYellowBackground2,
     border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
   },
+  labelEdit: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXXS,
+    // The badge keeps the horizontal padding so the pill looks the same; the
+    // vertical padding lives here so the whole height of it starts an edit.
+    padding: '2px 0',
+    background: 'none',
+    border: 'none',
+    margin: 0,
+    font: 'inherit',
+    color: 'inherit',
+    cursor: 'pointer',
+    userSelect: 'none' as const,
+  },
   removeBtn: {
     minWidth: '16px',
     width: '16px',
     height: '16px',
     padding: 0,
+  },
+  popover: {
+    [NARROW_VIEWPORT_QUERY]: {
+      boxSizing: 'border-box',
+      width: `calc(100vw - ${tokens.spacingHorizontalM} * 2)`,
+      maxWidth: `calc(100vw - ${tokens.spacingHorizontalM} * 2)`,
+    },
   },
   popoverSurface: {
     display: 'flex',
@@ -73,6 +96,9 @@ export const useLabelsBarStyles = makeStyles({
     gap: tokens.spacingVerticalS,
     padding: tokens.spacingVerticalM,
     minWidth: '250px',
+    [NARROW_VIEWPORT_QUERY]: {
+      minWidth: 0,
+    },
   },
   popoverDivider: {
     height: '1px',
@@ -88,6 +114,10 @@ export const useLabelsBarStyles = makeStyles({
   inputField: {
     flex: 1,
     minWidth: '80px',
+    '& input': {
+      minWidth: 0,
+      width: '100%',
+    },
   },
   suggestions: {
     display: 'flex',
@@ -113,6 +143,33 @@ export const useLabelsBarStyles = makeStyles({
     overflowY: 'auto',
     minWidth: '120px',
   },
+  // The picker is wider than the plain input it replaces, and the labels bar
+  // clips what overflows. Let it shrink rather than lose its chevron: Fluent
+  // puts an intrinsic min-width on both the root and the inner input.
+  operationPicker: {
+    width: '180px',
+    minWidth: 0,
+    maxWidth: '100%',
+    '& input': {
+      minWidth: 0,
+    },
+  },
+  // Caps the list so it stays under the input instead of stretching to fill
+  // the window. This only takes effect because the picker asks Fluent to
+  // auto-size width alone; by default it writes its own max-height inline,
+  // which beats this rule. Asking for width alone also gives up Fluent's
+  // vertical fitting, so the cap yields to the viewport when it has to.
+  operationListbox: {
+    maxHeight: 'min(240px, calc(100vh - 32px))',
+  },
+  // Fluent dims disabled options to ~1.9:1 contrast, which is too faint for
+  // text the user has to read. These are messages, not choices.
+  operationNote: {
+    color: tokens.colorNeutralForeground2,
+  },
+  operationNoteError: {
+    color: tokens.colorPaletteRedForeground1,
+  },
   suggestionChip: {
     cursor: 'pointer',
     ':hover': {
@@ -127,5 +184,6 @@ export const useLabelsBarStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     flexShrink: 0,
+    ...mobileTouchTarget,
   },
 })

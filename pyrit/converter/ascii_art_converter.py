@@ -2,10 +2,32 @@
 # Licensed under the MIT license.
 
 
-from art import text2art
+from art import ASCII_FONTS, text2art
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import ComponentIdentifier, PromptDataType
+
+# These public ASCII fonts are excluded by art 6.5's built-in "rand" mode.
+_ART_RANDOM_EXCLUDED_ASCII_FONTS = {
+    "5x8",
+    "binary",
+    "decimal",
+    "dwhistled",
+    "flyn_sh",
+    "gauntlet",
+    "high_noo",
+    "hills",
+    "katakana",
+    "morse",
+    "moscow",
+    "nfi1",
+    "octal",
+    "rot13",
+    "smtengwar",
+    "tengwar",
+    "tsalagi",
+}
+_ART_RANDOM_FONTS = sorted(set(ASCII_FONTS) - _ART_RANDOM_EXCLUDED_ASCII_FONTS)
 
 
 class AsciiArtConverter(Converter):
@@ -55,4 +77,8 @@ class AsciiArtConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        return ConverterResult(output_text=text2art(prompt, font=self._font), output_type="text")
+        font = self._font
+        if font == "rand":
+            font = self._get_random_generator(stream="font").choice(_ART_RANDOM_FONTS)
+
+        return ConverterResult(output_text=text2art(prompt, font=font), output_type="text")

@@ -5,13 +5,14 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    MessageScorable,
     ShieldGemmaGuideline,
     ShieldGemmaMessageRole,
     ShieldGemmaPolicy,
@@ -35,7 +36,9 @@ def _mock_target(response_text: str) -> MagicMock:
 
 def _sent_request(target: MagicMock) -> str:
     _, send_kwargs = target.send_prompt_async.call_args
-    return send_kwargs["message"].message_pieces[-1].converted_value
+    message = send_kwargs["message"]
+    assert isinstance(message, Message)
+    return message.message_pieces[-1].converted_value
 
 
 def test_render_prompt_only_matches_googles_instruction() -> None:
@@ -125,24 +128,26 @@ async def test_response_scoring_uses_only_the_response(patch_central_database: N
 async def test_response_scoring_excludes_a_stored_user_turn(sqlite_instance: MemoryInterface) -> None:
     """Conversation context must not bias the verdict or require a sequence-based lookup."""
     conversation_id = str(uuid.uuid4())
-    sqlite_instance.add_message_to_memory(
-        request=MessagePiece(
-            role="user",
-            original_value="harmful query that must not reach the classifier",
-            conversation_id=conversation_id,
-        ).to_message()
+    (
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user",
+                original_value="harmful query that must not reach the classifier",
+                conversation_id=conversation_id,
+            ).to_message()
+        )
     )
     response = MessagePiece(
         role="assistant",
         original_value="A response judged on its own.",
         conversation_id=conversation_id,
     ).to_message()
-    sqlite_instance.add_message_to_memory(request=response)
+    (await sqlite_instance.add_message_to_memory_async(request=response))
 
     target = _mock_target("No")
     scorer = ShieldGemmaScorer(chat_target=target, guideline=CUSTOM_GUIDELINE)
 
-    await scorer.score_async(response)
+    await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(response)))
 
     sent = _sent_request(target)
     assert "Chatbot Response: A response judged on its own." in sent
@@ -231,7 +236,7 @@ async def test_multiple_pieces_keep_every_verdict_and_report_the_aggregate(
     )
     message.set_response_not_in_memory()
 
-    scores = await scorer.score_async(message)
+    scores = await scorer.score_async(scorable=MessageScorable.from_message(await store_message_async(message)))
 
     assert target.send_prompt_async.call_count == 2
     assert scores[0].get_value() is True
@@ -254,7 +259,8 @@ async def test_multiple_pieces_keep_every_verdict_and_report_the_aggregate(
     } == {"Yes, this one is dangerous.", "No. This one is fine."}
 
 
-async def test_composite_over_two_guidelines_keeps_both_results(patch_central_database: None) -> None:
+@pytest.mark.usefixtures("patch_central_database")
+async def test_composite_over_two_guidelines_keeps_both_results(sqlite_instance: MemoryInterface) -> None:
     """
     The documented whole-policy path is one scorer per guideline under a composite. The
     aggregate merges child metadata last-writer-wins, so a mixed verdict has to leave every
@@ -282,6 +288,18 @@ async def test_composite_over_two_guidelines_keeps_both_results(patch_central_da
     outputs = [value for key, value in metadata.items() if key.endswith("_output")]
     assert any("build one" in output for output in outputs)
     assert any("protected group" in output for output in outputs)
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    assert stored[0] == Score.model_validate_json(scores[0].model_dump_json())
+    assert stored[0].score_category == ["shieldgemma"]
+    assert "build one" in stored[0].score_rationale
+    assert "protected group" in stored[0].score_rationale
+    children = await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True)
+    assert len(children) == 3
+    assert len({score.id for score in children}) == 3
+    assert [score.get_value() for score in children if score.id != scores[0].id].count(True) == 1
+    for child in children:
+        assert child == Score.model_validate_json(child.model_dump_json())
 
 
 async def test_compliant_response_scores_false(patch_central_database: None) -> None:
@@ -308,7 +326,7 @@ async def test_scorer_sends_request_without_system_prompt_or_json_format(patch_c
 
     await scorer.score_text_async("hello")
 
-    target.set_system_prompt.assert_not_called()
+    target.set_system_prompt_async.assert_not_called()
 
     # CallableResponseHandler imposes no wire format, so ShieldGemma stays free to reply in plain text.
     _, send_kwargs = target.send_prompt_async.call_args

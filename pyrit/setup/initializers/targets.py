@@ -41,6 +41,19 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 logger = logging.getLogger(__name__)
 
 
+def _auto_group_enabled(value: object) -> bool:
+    """
+    Normalize direct booleans and YAML string/list auto-group settings.
+
+    Returns:
+        bool: Whether automatic target grouping is enabled.
+    """
+    if isinstance(value, bool):
+        return value
+    scalar = value[0] if isinstance(value, list) else value
+    return str(scalar).lower() not in ("false", "0", "no")
+
+
 class TargetInitializerTags(str, Enum):
     """Tags used by TargetInitializer for filtering which targets to register."""
 
@@ -196,6 +209,24 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         key_var="ADVERSARIAL_CHAT_KEY",
         model_var="ADVERSARIAL_CHAT_MODEL",
         underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL",
+        temperature=1.2,
+    ),
+    TargetConfig(
+        registry_name="adversarial_chat2",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_ENDPOINT2",
+        key_var="ADVERSARIAL_CHAT_KEY2",
+        model_var="ADVERSARIAL_CHAT_MODEL2",
+        underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL2",
+        temperature=1.2,
+    ),
+    TargetConfig(
+        registry_name="adversarial_chat3",
+        target_class=OpenAIChatTarget,
+        endpoint_var="ADVERSARIAL_CHAT_ENDPOINT3",
+        key_var="ADVERSARIAL_CHAT_KEY3",
+        model_var="ADVERSARIAL_CHAT_MODEL3",
+        underlying_model_var="ADVERSARIAL_CHAT_UNDERLYING_MODEL3",
         temperature=1.2,
     ),
     TargetConfig(
@@ -539,6 +570,12 @@ class TargetInitializer(PyRITInitializer):
         await initializer.initialize_async()
     """
 
+    _ADVERSARIAL_CHAT_NAMES: tuple[str, ...] = (
+        "adversarial_chat",
+        "adversarial_chat2",
+        "adversarial_chat3",
+    )
+
     def __init__(self) -> None:
         """Initialize the TargetInitializer."""
         super().__init__()
@@ -592,11 +629,7 @@ class TargetInitializer(PyRITInitializer):
         if TargetInitializerTags.ALL in tags:
             tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
 
-        auto_group = self.params.get("auto_group", True)
-        # Normalize: params arrive as bool (direct), str, or list[str] (YAML).
-        if not isinstance(auto_group, bool):
-            value = auto_group[0] if isinstance(auto_group, list) else auto_group
-            auto_group = str(value).lower() not in ("false", "0", "no")
+        auto_group = _auto_group_enabled(self.params.get("auto_group", True))
 
         self._registered_names: list[str] = []
 
@@ -605,6 +638,7 @@ class TargetInitializer(PyRITInitializer):
                 continue
             self._register_target(config)
 
+        self._configure_adversarial_chat()
         if auto_group:
             self._auto_group_targets()
 
@@ -678,7 +712,7 @@ class TargetInitializer(PyRITInitializer):
 
         target = config.target_class(**kwargs)
         registry = TargetRegistry.get_registry_singleton()
-        registry.instances.register(target, name=config.registry_name)
+        registry.instances.register(target, name=config.registry_name, replace=True)
         if config.tags:
             registry.instances.add_tags(name=config.registry_name, tags=list(config.tags))
         if config.default_objective_target:
@@ -687,6 +721,46 @@ class TargetInitializer(PyRITInitializer):
             )
         self._registered_names.append(config.registry_name)
         logger.info(f"Registered target: {config.registry_name}")
+
+    def _configure_adversarial_chat(self) -> None:
+        """
+        Publish the configured adversarial endpoints under the canonical target name.
+
+        Raises:
+            ValueError: If multiple adversarial targets have incompatible configurations.
+        """
+        member_names = [name for name in self._ADVERSARIAL_CHAT_NAMES if name in self._registered_names]
+        self._registered_names = [name for name in self._registered_names if name not in self._ADVERSARIAL_CHAT_NAMES]
+        if not member_names:
+            return
+
+        registry = TargetRegistry.get_registry_singleton()
+        targets = [target for name in member_names if (target := registry.instances.get(name)) is not None]
+
+        if len(targets) == 1:
+            canonical_target = targets[0]
+        else:
+            try:
+                canonical_target = RoundRobinTarget(targets=targets)
+            except ValueError as ex:
+                raise ValueError(f"Adversarial chat round-robin targets are incompatible: {ex}") from ex
+
+        if "adversarial_chat" in member_names:
+            primary = registry.instances.get("adversarial_chat")
+            if primary is not None:
+                registry.instances.register(
+                    primary,
+                    name="adversarial_chat_primary",
+                    tags=[TargetInitializerTags.DEFAULT],
+                    replace=True,
+                )
+
+        registry.instances.register(
+            canonical_target,
+            name="adversarial_chat",
+            tags=[TargetInitializerTags.DEFAULT],
+            replace=True,
+        )
 
     def _auto_group_targets(self) -> None:
         """

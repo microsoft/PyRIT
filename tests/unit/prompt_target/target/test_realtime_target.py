@@ -3,7 +3,9 @@
 
 import asyncio
 import base64
+import gc
 import wave
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,6 +26,7 @@ from pyrit.prompt_target.openai._openai_realtime_event_router import (
     _OpenAIRealtimeEventKind,
     _OpenAIRealtimeEventRouter,
 )
+from pyrit.prompt_target.openai.openai_realtime_target import _RealtimeReceiveState
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -83,6 +86,79 @@ async def test_send_prompt_async(target):
 
     # Clean up the WebSocket connections
     await target.cleanup_target_async()
+
+
+async def test_cancellation_during_session_config_discards_connection(target):
+    connection = AsyncMock()
+    target._connect_async = AsyncMock(return_value=connection)
+    config_started = asyncio.Event()
+
+    async def wait_in_config_async(*, conversation_id: str, conversation: list[Message]) -> None:
+        config_started.set()
+        await asyncio.Event().wait()
+
+    target.send_config_async = AsyncMock(side_effect=wait_in_config_async)
+    message = Message.from_prompt(prompt="Hello", role="user")
+    message.get_piece().conversation_id = "cancelled-config"
+
+    send_task = asyncio.create_task(target.send_prompt_async(message=message))
+    await config_started.wait()
+    send_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await send_task
+
+    connection.close.assert_awaited_once_with()
+    assert "cancelled-config" not in target._existing_conversation
+
+
+async def test_response_create_failure_cancels_receive_task(target):
+    connection = AsyncMock()
+    target._existing_conversation["response-failure"] = connection
+    receive_started = asyncio.Event()
+    receive_cancelled = asyncio.Event()
+
+    async def receive_events_async(*, conversation_id: str) -> RealtimeTargetResult:
+        receive_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            receive_cancelled.set()
+        raise AssertionError("unreachable")
+
+    async def fail_response_create_async(*, conversation_id: str) -> None:
+        await receive_started.wait()
+        raise RuntimeError("response create failed")
+
+    target.receive_events_async = receive_events_async
+    target.send_response_create_async = AsyncMock(side_effect=fail_response_create_async)
+
+    with pytest.raises(RuntimeError, match="response create failed"):
+        await target.send_text_async(text="Hello", conversation_id="response-failure")
+
+    assert receive_started.is_set()
+    assert receive_cancelled.is_set()
+
+
+async def test_cancel_receive_task_async_retrieves_completed_failure(target):
+    async def fail_receive_async() -> RealtimeTargetResult:
+        raise RuntimeError("receive failed")
+
+    receive_task = asyncio.create_task(fail_receive_async())
+    await asyncio.sleep(0)
+    assert receive_task.done()
+
+    unhandled_exceptions: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    previous_exception_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled_exceptions.append(context))
+    try:
+        await target._cancel_receive_task_async(receive_task=receive_task)
+        del receive_task
+        gc.collect()
+    finally:
+        loop.set_exception_handler(previous_exception_handler)
+
+    assert not unhandled_exceptions
 
 
 async def test_send_prompt_async_propagates_interrupted_to_metadata(target):
@@ -431,7 +507,7 @@ async def test_receive_events_soft_finishes_after_audio_done(target):
         yield _scripted_event("response.output_audio.delta", delta=base64.b64encode(b"audio").decode("ascii"))
         yield _scripted_event("response.output_audio_transcript.delta", delta="partial")
         yield _scripted_event("response.output_audio.done")
-        raise asyncio.TimeoutError
+        raise TimeoutError
 
     mock_connection.__aiter__.side_effect = _events
 
@@ -439,6 +515,147 @@ async def test_receive_events_soft_finishes_after_audio_done(target):
 
     assert result.audio_bytes == b"audio"
     assert result.transcripts == ["partial"]
+
+
+async def test_receive_events_audio_done_deadline_is_not_extended_by_stale_or_noisy_events(target):
+    """Stale, duplicate, and unrelated events consume rather than reset the soft-finish grace period."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_bounded_soft_finish"
+    target._existing_conversation[conversation_id] = mock_connection
+    mock_connection.__aiter__.return_value = [
+        _scripted_event("response.done", **{"response.status": "success"}),
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("provider.noise"),
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("session.updated"),
+    ]
+    observed_timeouts: list[float | None] = []
+    wait_for = asyncio.wait_for
+
+    async def _record_wait_for(awaitable: Any, *, timeout: float | None) -> Any:
+        observed_timeouts.append(timeout)
+        return await wait_for(awaitable, timeout=timeout)
+
+    mock_loop = MagicMock()
+    mock_loop.time.side_effect = [100.0, 100.25, 100.5, 100.75, 101.0]
+    with (
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.get_running_loop",
+            return_value=mock_loop,
+        ),
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.wait_for",
+            side_effect=_record_wait_for,
+        ),
+    ):
+        result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b""
+    assert observed_timeouts == [None, None, 0.75, 0.5, 0.25, 0.0]
+
+
+async def test_receive_events_accepts_response_done_before_audio_done_deadline(target):
+    """A terminal event arriving within the remaining grace period still completes normally."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_late_terminal_event"
+    target._existing_conversation[conversation_id] = mock_connection
+    mock_connection.__aiter__.return_value = [
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("response.done", **{"response.status": "success"}),
+    ]
+    observed_timeouts: list[float | None] = []
+    wait_for = asyncio.wait_for
+
+    async def _record_wait_for(awaitable: Any, *, timeout: float | None) -> Any:
+        observed_timeouts.append(timeout)
+        return await wait_for(awaitable, timeout=timeout)
+
+    mock_loop = MagicMock()
+    mock_loop.time.side_effect = [100.0, 100.99]
+    with (
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.get_running_loop",
+            return_value=mock_loop,
+        ),
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.wait_for",
+            side_effect=_record_wait_for,
+        ),
+    ):
+        result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b""
+    assert observed_timeouts[0] is None
+    assert observed_timeouts[1] == pytest.approx(0.01)
+
+
+async def test_receive_events_cancellation_during_audio_done_grace_propagates(target):
+    """Cancellation while waiting within the grace period is never converted into a soft finish."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_grace_cancellation"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events() -> AsyncIterator[Any]:
+        yield _scripted_event("response.output_audio.done")
+        raise asyncio.CancelledError
+
+    mock_connection.__aiter__.side_effect = _events
+    mock_loop = MagicMock()
+    mock_loop.time.side_effect = [100.0, 100.25]
+    with patch(
+        "pyrit.prompt_target.openai.openai_realtime_target.asyncio.get_running_loop",
+        return_value=mock_loop,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await target.receive_events_async(conversation_id)
+
+
+async def test_receive_events_ignores_late_events_from_soft_finished_response(target):
+    """Late prior-turn deltas and completion events must not contaminate the next response."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_response_ownership"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _first_response_events() -> AsyncIterator[Any]:
+        yield _scripted_event("response.created", **{"response.id": "response-1"})
+        yield _scripted_event(
+            "response.audio.delta",
+            response_id="response-1",
+            delta=base64.b64encode(b"first").decode("ascii"),
+        )
+        yield _scripted_event("response.audio.done", response_id="response-1")
+        raise TimeoutError
+
+    async def _second_response_events() -> AsyncIterator[Any]:
+        yield _scripted_event(
+            "response.audio_transcript.delta",
+            response_id="response-1",
+            delta="late first transcript",
+        )
+        yield _scripted_event("response.done", **{"response.id": "response-1", "response.status": "success"})
+        yield _scripted_event("response.created", **{"response.id": "response-2"})
+        yield _scripted_event(
+            "response.audio.delta",
+            response_id="response-2",
+            delta=base64.b64encode(b"second").decode("ascii"),
+        )
+        yield _scripted_event(
+            "response.audio_transcript.delta",
+            response_id="response-2",
+            delta="second transcript",
+        )
+        yield _scripted_event("response.audio.done", response_id="response-2")
+        yield _scripted_event("response.done", **{"response.id": "response-2", "response.status": "success"})
+
+    event_streams = iter([_first_response_events(), _second_response_events()])
+    mock_connection.__aiter__.side_effect = lambda: next(event_streams)
+
+    first_result = await target.receive_events_async(conversation_id)
+    second_result = await target.receive_events_async(conversation_id)
+
+    assert first_result.audio_bytes == b"first"
+    assert second_result.audio_bytes == b"second"
+    assert second_result.transcripts == ["second transcript"]
 
 
 async def test_receive_events_connection_close_soft_finishes_with_audio(target):
@@ -489,12 +706,12 @@ async def test_receive_events_timeout_before_audio_done_raises(target):
     target._existing_conversation[conversation_id] = mock_connection
 
     async def _events():
-        raise asyncio.TimeoutError
+        raise TimeoutError
         yield  # pragma: no cover
 
     mock_connection.__aiter__.side_effect = _events
 
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(TimeoutError):
         await target.receive_events_async(conversation_id)
 
 
@@ -607,6 +824,192 @@ async def test_receive_events_skips_stale_response_done(target):
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts == ["hello"]
+
+
+# ---- Atomic receive state ------------------------------------------------------------------
+
+
+def _audio_delta(audio: bytes, **fields: Any) -> Any:
+    return _scripted_event("response.output_audio.delta", delta=base64.b64encode(audio).decode("ascii"), **fields)
+
+
+def test_apply_receive_event_normal_turn_completes_on_response_done():
+    """created -> audio -> transcript -> audio.done keep the turn open; its response.done completes it."""
+    state = _RealtimeReceiveState()
+    clock = MagicMock(return_value=100.0)
+    events = [
+        _scripted_event("response.created", **{"response.id": "r1"}),
+        _audio_delta(b"audio", response_id="r1"),
+        _scripted_event("response.output_audio_transcript.delta", response_id="r1", delta="hello"),
+        _scripted_event("response.output_audio.done", response_id="r1"),
+    ]
+
+    completed = [RealtimeTarget._apply_receive_event(event=event, state=state, clock=clock) for event in events]
+    done = _scripted_event("response.done", **{"response.id": "r1", "response.status": "completed"})
+
+    assert completed == [False, False, False, False]
+    assert state.response_id == "r1"
+    assert state.completion_deadline == 100.0 + _RealtimeReceiveState.GRACE_PERIOD_SEC
+    assert RealtimeTarget._apply_receive_event(event=done, state=state, clock=clock) is True
+    assert state.to_result() == RealtimeTargetResult(audio_bytes=b"audio", transcripts=["hello"])
+    clock.assert_called_once_with()
+
+
+def test_apply_receive_event_audio_done_fixes_deadline_once():
+    """A repeated audio.done must not move the soft-finish deadline or read the clock again."""
+    state = _RealtimeReceiveState()
+    clock = MagicMock(side_effect=[100.0, 100.5])
+
+    RealtimeTarget._apply_receive_event(event=_scripted_event("response.audio.done"), state=state, clock=clock)
+    RealtimeTarget._apply_receive_event(event=_scripted_event("response.audio.done"), state=state, clock=clock)
+
+    assert state.completion_deadline == 100.0 + _RealtimeReceiveState.GRACE_PERIOD_SEC
+    clock.assert_called_once_with()
+
+
+def test_apply_receive_event_ignores_events_for_other_responses():
+    """Events tagged with another response id neither accumulate, start the grace period, nor complete."""
+    state = _RealtimeReceiveState()
+    clock = MagicMock(return_value=100.0)
+    RealtimeTarget._apply_receive_event(
+        event=_scripted_event("response.created", **{"response.id": "r2"}), state=state, clock=clock
+    )
+    stale_events = [
+        _audio_delta(b"stale", response_id="r1"),
+        _scripted_event("response.output_audio_transcript.delta", response_id="r1", delta="stale"),
+        _scripted_event("response.output_audio.done", response_id="r1"),
+        _scripted_event("response.done", **{"response.id": "r1", "response.status": "failed"}),
+    ]
+
+    completed = [RealtimeTarget._apply_receive_event(event=event, state=state, clock=clock) for event in stale_events]
+
+    assert completed == [False, False, False, False]
+    assert state.accepted_event_count == 1
+    assert state.completion_deadline is None
+    assert state.to_result() == RealtimeTargetResult()
+    clock.assert_not_called()
+
+
+async def test_receive_events_late_transcript_within_grace_does_not_extend_deadline(target):
+    """A transcript arriving after audio.done is kept, and the wait shrinks toward the fixed deadline."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_late_transcript"
+    target._existing_conversation[conversation_id] = mock_connection
+    mock_connection.__aiter__.return_value = [
+        _audio_delta(b"audio"),
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("response.output_audio_transcript.delta", delta="late"),
+        _scripted_event("response.done", **{"response.status": "completed"}),
+    ]
+    observed_timeouts: list[float | None] = []
+    wait_for = asyncio.wait_for
+
+    async def _record_wait_for(awaitable: Any, *, timeout: float | None) -> Any:
+        observed_timeouts.append(timeout)
+        return await wait_for(awaitable, timeout=timeout)
+
+    mock_loop = MagicMock()
+    mock_loop.time.side_effect = [100.0, 100.4, 100.7]
+    with (
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.get_running_loop",
+            return_value=mock_loop,
+        ),
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.wait_for",
+            side_effect=_record_wait_for,
+        ),
+    ):
+        result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"audio"
+    assert result.transcripts == ["late"]
+    assert observed_timeouts[:2] == [None, None]
+    assert observed_timeouts[2:] == [pytest.approx(0.6), pytest.approx(0.3)]
+
+
+async def test_receive_events_soft_finishes_when_grace_expires(target):
+    """With no response.done, the turn soft-finishes once the grace period after audio.done elapses."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_grace_expiry"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events() -> AsyncIterator[Any]:
+        yield _audio_delta(b"audio")
+        yield _scripted_event("response.output_audio.done")
+        yield _scripted_event("response.output_audio_transcript.delta", delta="late")
+        await asyncio.Event().wait()
+
+    mock_connection.__aiter__.side_effect = _events
+
+    with patch.object(_RealtimeReceiveState, "GRACE_PERIOD_SEC", 0.05):
+        result = await asyncio.wait_for(target.receive_events_async(conversation_id), timeout=5)
+
+    assert result.audio_bytes == b"audio"
+    assert result.transcripts == ["late"]
+
+
+async def test_receive_events_error_within_grace_raises(target):
+    """A server error after audio.done still fails the turn instead of soft-finishing."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_error_within_grace"
+    target._existing_conversation[conversation_id] = mock_connection
+    mock_connection.__aiter__.return_value = [
+        _audio_delta(b"audio"),
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("error", **{"error.type": "server_error", "error.message": "boom"}),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"Server error: \[server_error\] boom"):
+        await target.receive_events_async(conversation_id)
+
+
+async def test_receive_events_external_cancel_during_grace_propagates(target):
+    """Cancelling the receive task while it waits out the grace period raises CancelledError."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_external_cancel"
+    target._existing_conversation[conversation_id] = mock_connection
+    waiting_in_grace = asyncio.Event()
+
+    async def _events() -> AsyncIterator[Any]:
+        yield _audio_delta(b"audio")
+        yield _scripted_event("response.output_audio.done")
+        waiting_in_grace.set()
+        await asyncio.Event().wait()
+
+    mock_connection.__aiter__.side_effect = _events
+
+    receive_task = asyncio.create_task(target.receive_events_async(conversation_id))
+    await waiting_in_grace.wait()
+    receive_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await receive_task
+
+
+async def test_receive_events_stops_reading_at_terminal_response_done(target):
+    """The turn ends on its response.done; later events stay unread for the next turn."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_terminal_response_done"
+    target._existing_conversation[conversation_id] = mock_connection
+    yielded: list[str] = []
+
+    async def _events() -> AsyncIterator[Any]:
+        for event in [
+            _scripted_event("response.created", **{"response.id": "r1"}),
+            _audio_delta(b"audio", response_id="r1"),
+            _scripted_event("response.done", **{"response.id": "r1", "response.status": "completed"}),
+            _scripted_event("response.created", **{"response.id": "r2"}),
+        ]:
+            yielded.append(event.type)
+            yield event
+
+    mock_connection.__aiter__.side_effect = _events
+
+    result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"audio"
+    assert yielded == ["response.created", "response.output_audio.delta", "response.done"]
 
 
 # ---------------------------------------------------------------------------
@@ -1270,31 +1673,82 @@ async def test_send_prompt_audio_path_calls_send_audio_async(target, tmp_path):
     target.send_audio_async.assert_awaited_once()
 
 
-async def test_cleanup_conversation_async_closes_and_removes(target):
+async def test_reset_conversation_async_closes_and_removes(target):
     mock_connection = AsyncMock()
     target._existing_conversation["conv"] = mock_connection
 
-    await target.cleanup_conversation_async(conversation_id="conv")
+    await target.reset_conversation_async(conversation_id="conv")
 
     mock_connection.close.assert_awaited_once()
     assert "conv" not in target._existing_conversation
 
 
-async def test_cleanup_conversation_async_swallows_close_error(target):
+async def test_reset_conversation_async_swallows_close_error(target):
     mock_connection = AsyncMock()
     mock_connection.close.side_effect = RuntimeError("close failed")
     target._existing_conversation["conv"] = mock_connection
 
     # The error is swallowed and the conversation is still removed.
-    await target.cleanup_conversation_async(conversation_id="conv")
+    await target.reset_conversation_async(conversation_id="conv")
 
     assert "conv" not in target._existing_conversation
 
 
-async def test_cleanup_conversation_async_unknown_id_is_noop(target):
+async def test_reset_conversation_async_finishes_close_before_propagating_cancellation(target):
+    close_started = asyncio.Event()
+    close_release = asyncio.Event()
+    close_finished = asyncio.Event()
+
+    async def close_async() -> None:
+        close_started.set()
+        await close_release.wait()
+        close_finished.set()
+
+    mock_connection = AsyncMock()
+    mock_connection.close.side_effect = close_async
+    target._existing_conversation["conv"] = mock_connection
+
+    cleanup_task = asyncio.create_task(target.reset_conversation_async(conversation_id="conv"))
+    await close_started.wait()
+    cleanup_task.cancel()
+    await asyncio.sleep(0)
+
+    assert not cleanup_task.done()
+    close_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task
+
+    assert close_finished.is_set()
+    assert "conv" not in target._existing_conversation
+
+
+async def test_reset_conversation_async_propagates_cancellation(target):
+    mock_connection = AsyncMock()
+    mock_connection.close.side_effect = asyncio.CancelledError
+    target._existing_conversation["conv"] = mock_connection
+
+    with pytest.raises(asyncio.CancelledError):
+        await target.reset_conversation_async(conversation_id="conv")
+
+    mock_connection.close.assert_awaited_once()
+    assert "conv" not in target._existing_conversation
+
+
+async def test_cleanup_conversation_async_warns_and_delegates(target):
+    mock_connection = AsyncMock()
+    target._existing_conversation["conv"] = mock_connection
+
+    with pytest.warns(DeprecationWarning, match="reset_conversation_async"):
+        await target.cleanup_conversation_async(conversation_id="conv")
+
+    mock_connection.close.assert_awaited_once()
+    assert "conv" not in target._existing_conversation
+
+
+async def test_reset_conversation_async_unknown_id_is_noop(target):
     target._existing_conversation["conv"] = AsyncMock()
 
-    await target.cleanup_conversation_async(conversation_id="missing")
+    await target.reset_conversation_async(conversation_id="missing")
 
     assert "conv" in target._existing_conversation
 

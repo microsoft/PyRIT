@@ -3,7 +3,7 @@
 """Inject the PyRIT version picker into a built doc site.
 
 Usage:
-    python build_scripts/inject_version_picker.py \\
+    python -m build_scripts.inject_version_picker \\
         --site-dir dist \\
         --base /PyRIT
 
@@ -12,6 +12,7 @@ The script walks every *.html under <site-dir> and injects (all into <head>):
     * <script>...inlined picker.js...</script>  (CSS is bundled inside)
 
 Idempotent: files that already contain our marker are skipped.
+Embedded players opt out with the ``pyrit-no-version-picker`` HTML comment.
 
 Why inline the JS instead of <script src="..."> AND why no <link>?
 
@@ -40,6 +41,7 @@ import sys
 from pathlib import Path
 
 INJECT_MARKER = "<!-- pyrit-version-picker -->"
+SKIP_MARKER = "<!-- pyrit-no-version-picker -->"
 ASSETS_SOURCE_DIR = Path(__file__).resolve().parent / "version_picker_assets"
 
 # The same marker string is used in compose_docs_dist.py's 404 template. Both
@@ -54,7 +56,7 @@ def _head_block(base: str, picker_js: str) -> str:
 
 
 def _inject(html: str, base: str, picker_js: str) -> tuple[str, bool]:
-    if INJECT_MARKER in html:
+    if INJECT_MARKER in html or SKIP_MARKER in html:
         return html, False
     head_block = _head_block(base, picker_js)
     new = html.replace("</head>", f"{head_block}</head>", 1) if "</head>" in html else head_block + html

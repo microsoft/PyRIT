@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+
+from pyrit.common.deprecation import print_deprecation_message
 
 # Runtime-required by Pydantic field / computed-field annotations.
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
@@ -46,6 +48,7 @@ class ScenarioRunState(str, Enum):
     """
 
     CREATED = "CREATED"
+    QUEUED = "QUEUED"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -80,9 +83,9 @@ class ScenarioResult(BaseModel):
     #: Optional labels.
     labels: dict[str, str] = Field(default_factory=dict)
     #: When the scenario result was created.
-    creation_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    creation_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     #: Optional completion timestamp.
-    completion_time: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completion_time: datetime | None = Field(default_factory=lambda: datetime.now(UTC))
     #: Number of run attempts.
     number_tries: int = 0
     #: Mapping of ``atomic_attack_name`` -> display group label. Used by the console
@@ -94,10 +97,8 @@ class ScenarioResult(BaseModel):
     error_type: str | None = None
     #: IDs of attack results that errored during the scenario run.
     error_attack_result_ids: list[str] = Field(default_factory=list)
-    #: Free-form JSON metadata persisted with the scenario result. Currently used to record
-    #: ``objective_hashes`` — the objective ``sha256`` set chosen on the first run, replayed
-    #: on resume so a fresh ``random.sample`` can't silently change which objectives the
-    #: scenario operates on. Keys are not part of any public contract and may evolve.
+    #: Free-form JSON metadata persisted with the scenario result. Stores the normalized
+    #: run plan and, for sampled runs, ``objective_hashes`` used to replay the original subset.
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -230,7 +231,16 @@ class ScenarioResult(BaseModel):
         Returns:
             int: Success rate as a percentage (0-100).
 
+        .. deprecated:: 1.2.0
+            Counts every persisted attempt, including ERROR attempts that were later retried or resumed.
+            Use ``pyrit.analytics.compute_scenario_statistics(result)``, which counts each execution unit
+            once and is shared with the GUI backend and the reports. Removed in 1.4.0.
         """
+        print_deprecation_message(
+            old_item="ScenarioResult.objective_achieved_rate",
+            new_item="pyrit.analytics.compute_scenario_statistics",
+            removed_in="1.4.0",
+        )
         if not atomic_attack_name:
             # Calculate rate across all atomic attacks
             all_results = []

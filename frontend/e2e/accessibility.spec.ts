@@ -1,8 +1,11 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
+import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
+const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
 type TourViewportName = "mobile" | "desktop";
 
@@ -72,8 +75,8 @@ async function expectTourContainedAndActionable(
 
   const dialog = page.getByRole("alertdialog");
 
-  for (let step = 0; step < 5; step += 1) {
-    await expect(dialog).toContainText(`${step + 1} of 5`);
+  for (let step = 0; step < TOUR_STEP_COUNT; step += 1) {
+    await expect(dialog).toContainText(`${step + 1} of ${TOUR_STEP_COUNT}`);
     await expectTourContained(page, dialog, viewportName === "mobile");
 
     if (viewportName === "desktop" && step === 0) {
@@ -85,7 +88,7 @@ async function expectTourContainedAndActionable(
       expect(dialogBox!.x).toBeGreaterThanOrEqual(targetBox!.x + targetBox!.width);
     }
 
-    if (step < 4) {
+    if (step < TOUR_STEP_COUNT - 1) {
       await dialog.getByRole("button", { name: "Next", exact: true }).click();
     }
   }
@@ -120,12 +123,12 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
-    await page.getByTitle("Configuration").click();
-    await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
-    const setActiveBtn = page.getByRole("button", { name: /set active/i });
-    await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-    await setActiveBtn.click();
+    // Save an objective default, then open a new chat with that target.
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
+    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+    await objectiveDefault.selectOption({ index: 1 });
     await page.getByTitle("Chat").click();
 
     // Input should be accessible
@@ -146,8 +149,8 @@ test.describe("Accessibility", () => {
     const chatBtn = page.getByTitle("Chat");
     await expect(chatBtn).toBeVisible();
 
-    // Configuration button
-    const configBtn = page.getByTitle("Configuration");
+    // Registry button
+    const configBtn = page.getByTitle("Registry");
     await expect(configBtn).toBeVisible();
 
     // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
@@ -199,6 +202,50 @@ test.describe("Accessibility", () => {
     await expect(page.locator(":focus")).toBeVisible();
   });
 
+  test("skip link is the first Tab stop, becomes visible on focus, and moves focus to main on activation", async ({
+    page,
+  }) => {
+    // Mock everything the app calls while booting, so this test does not
+    // depend on the dev-server proxy having a real backend behind it (see
+    // the same technique in labels-operation-picker.spec.ts). The shared
+    // beforeEach above already navigated once before these routes existed,
+    // so reload to get a fresh, intercepted navigation.
+    await page.route(/\/api\//, async (route) => {
+      const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
+      const json = (body: unknown) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+      if (path === "/health") return json({ status: "healthy" });
+      if (path === "/auth/config") {
+        return json({ clientId: "", tenantId: "", allowedGroupIds: "" });
+      }
+      if (path === "/version") return json(mockVersion({ display: "a11y-test" }));
+      if (path === "/labels") {
+        return json({ source: "attacks", labels: { operator: ["roakey"], operation: [] } });
+      }
+      if (path === "/attacks") return json({ items: [], total: 0, limit: 5, offset: 0 });
+      return json({});
+    });
+    await page.reload();
+
+    await expect(page.getByTitle("Home")).toBeVisible();
+
+    const skipLink = page.getByRole("link", { name: "Skip to main content" });
+    await expect(skipLink).not.toBeInViewport();
+
+    // See the note on "should be navigable with keyboard" above: dispatch
+    // through `body` to guarantee the document has focus when Tab fires.
+    await page.locator("body").press("Tab");
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeInViewport({ ratio: 1 });
+
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#main-content")).toBeFocused();
+  });
+
   test("should have proper focus management", async ({ page }) => {
     // Mock a target so the input is enabled
     await page.route(/\/api\/targets/, async (route) => {
@@ -219,12 +266,12 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config, set active, return to chat so input is enabled
-    await page.getByTitle("Configuration").click();
-    await expect(page.getByText("Target Configuration")).toBeVisible({ timeout: 10000 });
-    const setActiveBtn = page.getByRole("button", { name: /set active/i });
-    await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-    await setActiveBtn.click();
+    // Save an objective default, then open a new chat with that target.
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
+    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+    await objectiveDefault.selectOption({ index: 1 });
     await page.getByTitle("Chat").click();
 
     const input = page.getByRole("textbox");
@@ -239,7 +286,7 @@ test.describe("Accessibility", () => {
     await expect(input).toBeFocused();
   });
 
-  test("should have accessible target table in config view", async ({ page }) => {
+  test("should have accessible target table in targets view", async ({ page }) => {
     // Mock targets API for consistent test
     await page.route(/\/api\/targets/, async (route) => {
       await route.fulfill({
@@ -265,14 +312,14 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Navigate to config
-    await page.getByTitle("Configuration").click();
-    await expect(page.getByText("Target Configuration")).toBeVisible();
+    // Navigate to the registry
+    await page.getByTitle("Registry").click();
+    await expect(page.getByText("Target Registry")).toBeVisible();
 
     // Table should exist
     const table = page.getByRole("table");
     await expect(table).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Filter by type:" })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Filter by type:", exact: true })).toBeVisible();
   });
 
   test("major views expose page headings and one primary navigation landmark", async ({ page }) => {
@@ -288,8 +335,8 @@ test.describe("Accessibility", () => {
     );
 
     const views = [
-      { button: "Attack History", heading: "Attack History" },
-      { button: "Configuration", heading: "Target Configuration" },
+      { button: "History", heading: "History" },
+      { button: "Registry", heading: "Target Registry" },
       { button: "Chat", heading: "Chat" },
     ];
 
@@ -334,9 +381,9 @@ test.describe("Accessibility", () => {
         });
       });
 
-      await page.getByRole("button", { name: "Configuration" }).click();
+      await page.getByRole("button", { name: "Registry" }).click();
       await expect(
-        page.getByRole("heading", { level: 1, name: "Target Configuration" })
+        page.getByRole("heading", { level: 1, name: "Target Registry" })
       ).toBeVisible();
       await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));

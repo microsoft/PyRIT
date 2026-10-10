@@ -168,6 +168,7 @@ cython_debug/
 
 # PyRIT secrets file
 .env
+.env_akv
 .pyrit_cache/
 
 # Cache for generating docs
@@ -204,3 +205,4 @@ doc/_autosummary/
 
 # Impeccable skill local cache
 .impeccable/
+/pyrit/_compatibility.json

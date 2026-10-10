@@ -104,7 +104,7 @@ class _JailbreakVRedteam2KDataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "jailbreakv_redteam_2k"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch JailBreakV Redteam_2k dataset and return as SeedDataset.
 

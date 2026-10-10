@@ -11,6 +11,7 @@ import pytest
 from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, SeedPrompt, UnvalidatedScore
+from pyrit.prompt_target import PromptTarget
 from pyrit.score import ContentClassifierPaths, NumericRubric, SelfAskScaleScorer
 
 tree_scale_path = SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value
@@ -40,7 +41,7 @@ def scorer_scale_response() -> Message:
 
 @pytest.fixture
 def scale_scorer(patch_central_database) -> SelfAskScaleScorer:
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     return SelfAskScaleScorer.from_scale(
         chat_target=chat_target,
@@ -65,7 +66,7 @@ async def test_scale_scorer_set_system_prompt(
     system_prompt_path: Path | None,
     patch_central_database,
 ):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
 
@@ -77,7 +78,7 @@ async def test_scale_scorer_set_system_prompt(
 
     await scorer.score_text_async(text="string", objective="task")
 
-    chat_target.set_system_prompt.assert_called_once()
+    chat_target.set_system_prompt_async.assert_called_once()
 
     # assert that the scale score was loaded into system prompt
 
@@ -87,7 +88,7 @@ async def test_scale_scorer_set_system_prompt(
 
 
 def test_scale_scorer_invalid_scale_file_contents():
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     # When using a YAML with wrong keys the NumericRubric constructor will raise an exception.
     with pytest.raises(ValueError):
@@ -137,7 +138,7 @@ def test_validate_scale_arguments_missing_args_raises_value_error(scale_args: di
 
 
 async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     chat_target.send_prompt_async = AsyncMock(return_value=[scorer_scale_response])
@@ -162,7 +163,7 @@ async def test_scale_scorer_score(scorer_scale_response: Message, patch_central_
 
 
 async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     # set a higher score to test the scaling
@@ -196,8 +197,35 @@ async def test_scale_scorer_score_custom_scale(scorer_scale_response: Message, p
     assert score[0].objective == "task"
 
 
+@pytest.mark.parametrize("out_of_range_value", ["0", "11"])
+async def test_scale_scorer_retries_out_of_range_score(out_of_range_value: str, patch_central_database):
+    def _response(score_value: str) -> Message:
+        return Message(
+            message_pieces=[
+                MessagePiece(
+                    role="assistant",
+                    original_value=f'{{"score_value": "{score_value}", "rationale": "r", "description": "d"}}',
+                )
+            ]
+        )
+
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(side_effect=[[_response(out_of_range_value)], [_response("10")]])
+
+    scorer = SelfAskScaleScorer.from_scale(
+        chat_target=chat_target,
+        scale=NumericRubric.from_yaml(SelfAskScaleScorer.ScalePaths.TREE_OF_ATTACKS_SCALE.value),
+    )
+
+    score = await scorer.score_text_async(text="example text", objective="task")
+
+    assert chat_target.send_prompt_async.call_count == 2
+    assert score[0].get_value() == 1.0
+
+
 async def test_scale_scorer_score_calls_send_chat(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskScaleScorer.from_scale(
@@ -220,18 +248,18 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
     )
 
     with patch(
-        "pyrit.score.float_scale.self_ask_scale_scorer._run_llm_scoring_async",
+        "pyrit.score.observation.target_judge._run_llm_scoring_async",
         new=AsyncMock(return_value=score),
     ) as mock_run:
         await scorer.score_text_async(text="example text", objective="task")
     assert mock_run.call_count == 1
 
 
-async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database):
+async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database, tmp_path: Path):
     """Test that non-text content (e.g., image_path) uses prepended text for objective context."""
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scorer = SelfAskScaleScorer.from_scale(
@@ -254,18 +282,21 @@ async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database
         objective="Generate a cat",
     )
 
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"\x89PNG")
+
     with patch(
-        "pyrit.score.float_scale.self_ask_scale_scorer._run_llm_scoring_async",
+        "pyrit.score.observation.target_judge._run_llm_scoring_async",
         new=AsyncMock(return_value=score),
     ) as mock_run:
-        await scorer.score_image_async(image_path="/path/to/image.png", objective="Generate a cat")
+        await scorer.score_image_async(image_path=str(image_path), objective="Generate a cat")
 
     mock_run.assert_called_once()
     call_kwargs = mock_run.call_args
     # Non-text content should send prepended_text with objective
-    assert call_kwargs.kwargs["prepended_text"] == "objective: Generate a cat\nresponse:"
-    assert call_kwargs.kwargs["data_type"] == "image_path"
-    assert call_kwargs.kwargs["value"] == "/path/to/image.png"
+    assert call_kwargs.kwargs["request"].prepended_text == "objective: Generate a cat\nresponse:"
+    assert call_kwargs.kwargs["request"].data_type == "image_path"
+    assert call_kwargs.kwargs["request"].value == str(image_path)
 
 
 def test_scale_init_no_chat_target_raises():
@@ -278,7 +309,7 @@ def test_scale_init_no_chat_target_raises():
 
 
 def test_scale_factory_default_system_prompt(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scorer = SelfAskScaleScorer.from_scale(chat_target=chat_target)
     assert scorer._system_prompt
@@ -286,7 +317,7 @@ def test_scale_factory_default_system_prompt(patch_central_database):
 
 
 def test_scale_factory_renders_minimal_inline_scale(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
     scale = NumericRubric(minimum_value=0, maximum_value=10, category="custom")
 
@@ -297,7 +328,7 @@ def test_scale_factory_renders_minimal_inline_scale(patch_central_database):
 
 
 def test_scale_init_system_prompt_str_and_invalid_type(patch_central_database):
-    chat_target = MagicMock()
+    chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
 
     scale = NumericRubric(minimum_value=1, maximum_value=7, category="c")

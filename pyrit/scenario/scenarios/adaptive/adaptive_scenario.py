@@ -16,12 +16,19 @@ comparison and is excluded from the adaptive technique pool.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
+from pyrit.models import (
+    BoundedDatasetSize,
+    ScenarioRunPlanGroupKind,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -53,6 +60,7 @@ class AdaptiveScenario(Scenario):
     """
 
     VERSION: ClassVar[int]
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     @abstractmethod
@@ -106,6 +114,16 @@ class AdaptiveScenario(Scenario):
             default_dataset_config=self.default_dataset_config(),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
+        )
+
+    @property
+    def uses_default_adversarial_target(self) -> bool:
+        """Whether the adaptive pool includes a technique that uses the shared target."""
+        factories = self._get_attack_technique_factories()
+        return any(
+            factory.uses_default_adversarial_target
+            for technique in self._technique_class.get_all_techniques()
+            if (factory := factories.get(technique.value)) is not None
         )
 
     def _get_attack_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
@@ -173,7 +191,9 @@ class AdaptiveScenario(Scenario):
         Raises:
             ValueError: If ``_build_techniques_dict`` finds no usable techniques.
         """
-        techniques = self._build_techniques_dict(objective_target=context.objective_target)
+        # Building the technique catalog reads each technique's prompt YAML, so keep the
+        # synchronous builder off the event loop.
+        techniques = await asyncio.to_thread(self._build_techniques_dict, objective_target=context.objective_target)
 
         atomic_attacks: list[AtomicAttack] = []
         if context.include_baseline:
@@ -196,6 +216,52 @@ class AdaptiveScenario(Scenario):
             )
 
         return atomic_attacks
+
+    def _validate_runtime_configuration(self) -> None:
+        super()._validate_runtime_configuration()
+        max_attempts = int(self.params.get("max_attempts_per_objective", 3))
+        if max_attempts < 1:
+            raise ValueError(f"max_attempts_per_objective must be >= 1, got {max_attempts}")
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the configured envelope budget, excluding adaptive inner attempts.
+
+        Returns:
+            ScenarioRunSizeEstimate: The adaptive outer-envelope estimate.
+        """
+        selected_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        max_attempts = int(self.params.get("max_attempts_per_objective", 3))
+        baseline_components = (
+            [
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=selected_count,
+                    is_baseline=True,
+                )
+            ]
+            if self._include_baseline
+            else []
+        )
+        components = [
+            *baseline_components,
+            ScenarioRunSizeComponent(
+                label="Adaptive attack envelopes",
+                count=selected_count,
+            ),
+        ]
+        estimated_attack_count = sum(component.count for component in components)
+        note = (
+            f"Each planned unit is one persisted adaptive envelope. Up to {max_attempts} selected technique "
+            "attempts may run inside that unit; inner attempts and retries are excluded."
+        )
+        return ScenarioRunSizeEstimate(
+            total_attack_count=estimated_attack_count,
+            components=components,
+            datasets=datasets,
+            effective_parameters={"max_attempts_per_objective": max_attempts},
+            note=note,
+        )
 
     def _build_techniques_dict(
         self,
@@ -309,14 +375,20 @@ class AdaptiveScenario(Scenario):
             AttackScoringConfig | None: The most specific config that could
                 be built, or ``None`` if the technique is incompatible with
                 the scenario scorer.
+
+        Raises:
+            TypeError: If a factory returns a non-``AttackScoringConfig`` instance.
         """
         required = factory.scoring_config_type
         if required is None or required is AttackScoringConfig:
             return AttackScoringConfig(objective_scorer=self._objective_scorer)
         try:
-            return required(objective_scorer=self._objective_scorer)
+            config = required(objective_scorer=self._objective_scorer)
         except (TypeError, ValueError):
             return None
+        if not isinstance(config, AttackScoringConfig):
+            raise TypeError(f"Scoring config factory returned unsupported type: {type(config).__name__}")
+        return config
 
     async def _build_atomics_for_dataset_async(
         self,
@@ -384,6 +456,7 @@ class AdaptiveScenario(Scenario):
                     objective_scorer=self._objective_scorer,
                     memory_labels=dict(self._memory_labels),
                     display_group=dataset_name,
+                    group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
                 )
             )
 

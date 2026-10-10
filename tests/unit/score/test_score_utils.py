@@ -194,6 +194,22 @@ class TestCombineMetadataAndCategories:
         assert metadata == {"key1": "value1", "key2": "value2"}
         assert categories == ["cat1", "cat2"]
 
+    def test_omits_conflicting_metadata(self) -> None:
+        """Metadata with different values must not depend on score order."""
+        score1 = MagicMock()
+        score1.score_metadata = {"shared": "first", "same": 1}
+        score1.score_category = []
+
+        score2 = MagicMock()
+        score2.score_metadata = {"shared": "second", "same": 1}
+        score2.score_category = []
+
+        metadata, _ = combine_metadata_and_categories([score1, score2])
+        reversed_metadata, _ = combine_metadata_and_categories([score2, score1])
+
+        assert metadata == {"same": 1}
+        assert reversed_metadata == metadata
+
     def test_deduplicates_categories(self) -> None:
         """Duplicate categories should be removed."""
         score1 = MagicMock()
@@ -268,3 +284,27 @@ class TestFormatScoreForRationale:
 
         assert "TestScorer" in result
         assert "False" in result
+
+    def test_formats_categories_without_rationale(self) -> None:
+        score = Score(
+            score_type="float_scale",
+            score_value="0.8",
+            score_category=["Violence", "Hate"],
+            score_rationale="",
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=_make_scorer_id("TestScorer"),
+        )
+
+        assert format_score_for_rationale(score) == "   - TestScorer 0.8 (Category: Violence, Hate): "
+
+    def test_uncategorized_score_keeps_original_format(self) -> None:
+        score = Score(
+            score_type="float_scale",
+            score_value="0.2",
+            score_category=None,
+            score_rationale="explained",
+            message_piece_id=str(uuid.uuid4()),
+            scorer_class_identifier=_make_scorer_id("TestScorer"),
+        )
+
+        assert format_score_for_rationale(score) == "   - TestScorer 0.2: explained"

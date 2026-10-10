@@ -11,14 +11,30 @@ export interface TourStep extends Step {
   readonly viewRequired: ViewName
 }
 
-/** Builds tour guidance for the controls available in the current target state. */
-export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
+/** Controls which guidance the tour shows for state-dependent steps. */
+export interface TourContext {
+  /** Whether a default objective target is set for this browser. */
+  readonly hasActiveTarget: boolean
+  /** Whether the Configuration nav button is rendered for this user. */
+  readonly canManageConfiguration: boolean
+}
+
+/** Builds tour guidance for the controls available in the current app state. */
+export function createTourSteps({
+  hasActiveTarget,
+  canManageConfiguration,
+}: TourContext): TourStep[] {
   return [
     {
       target: '[data-tour="sidebar-nav"]',
       content:
         'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Chat is where you send prompts, ' +
-        'History tracks past attacks, and Configuration is where you set up targets. Feel free to try clicking between these views!',
+        'History tracks past attacks and scanner runs, Scanner launches full test campaigns, and Registry is where you manage ' +
+        'targets and converters.' +
+        (canManageConfiguration
+          ? ' Configuration holds environment settings for your deployment.'
+          : '') +
+        ' Feel free to try clicking between these views!',
       placement: 'right-start',
       skipBeacon: true,
       viewRequired: 'home',
@@ -26,8 +42,8 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
     {
       target: '[data-tour="labels-card"]',
       content:
-        'Labels like "operator" and "operation" tag every attack you run, making them easy to find later. ' +
-        'Update the defaults before you start!',
+        'The labels bar stays available across views, including scanner setup. Set "operator", "operation", ' +
+        'and other labels here before starting an attack or scan. Existing runs keep their original labels.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',
@@ -35,10 +51,10 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
     {
       target: '[data-tour="target-card"]',
       content: hasActiveTarget
-        ? 'This card shows the target currently active for Chat. To switch targets after the tour, choose Manage targets ' +
-          'and use Set Active in Configuration.'
-        : 'Targets are the AI endpoints you\'re testing. This card only shows the current target; target selection happens ' +
-          'in Configuration. After the tour, choose Configure a target, then create or choose one and use Set Active there.',
+        ? 'This card shows your default objective target for new chats and scanner runs. Use Manage targets ' +
+          'to change your objective or adversarial defaults in the Target Registry.'
+        : 'Targets are the AI endpoints you test. Select a target from the Chat dropdown, or use the Target Registry ' +
+          'to save objective and adversarial defaults for your account in this browser.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',
@@ -48,25 +64,46 @@ export function createTourSteps(hasActiveTarget: boolean): TourStep[] {
         ? '[data-tour="converter-toggle"]'
         : '[data-tour="chat-prerequisite"]',
       content: hasActiveTarget
-        ? 'With a target active, Chat shows the message composer. Use this Toggle converter panel button to transform text ' +
+        ? 'With a chat target selected, Chat shows the message composer. Use this Toggle converter panel button to transform text ' +
           'before sending, such as Base64 encoding or translation.'
-        : 'Chat needs an active target before the message composer is available. After the tour, choose Configure a target to ' +
-          'create or activate one in Configuration, then return to Chat. The message input and converter control appear once ' +
-          'a target is active.',
+        : 'Click Select a target in the chat ribbon to enable the message composer. If no targets are registered, ' +
+          'open the Target Registry to create one. Saved chats automatically select their original registered target.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'chat',
     },
     {
-      target: '[data-tour="history-filters"]',
+      target: '[data-tour="scanner-catalog"]',
       content:
-        'Every attack is logged here. Filter by different criteria like outcome, converter type, or labels to ' +
+        'Scanner runs a whole campaign for you. Pick a scenario to sweep many attack techniques and datasets ' +
+        'against a target in one run, instead of sending prompts one at a time in Chat.',
+      placement: 'bottom',
+      skipBeacon: true,
+      viewRequired: 'scenarios',
+    },
+    {
+      target: '[data-tour="history-tabs"]',
+      content:
+        'Every run is logged here. The Attacks tab lists individual conversations and the Scanner tab lists ' +
+        'scenario runs. Each tab has its own filters, such as outcome, converter type, or labels, so you can ' +
         'find exactly what you need!',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'history',
     },
+    {
+      target: '[data-tour="registry-tabs"]',
+      content:
+        'The Registry is your home base. Register targets and set your objective and adversarial defaults under ' +
+        'Targets, and browse the converters you can apply to prompts under Converters.',
+      placement: 'bottom',
+      skipBeacon: true,
+      viewRequired: 'registry',
+    },
   ]
 }
 
-export const TOUR_STEPS = createTourSteps(false)
+export const TOUR_STEPS = createTourSteps({
+  hasActiveTarget: false,
+  canManageConfiguration: false,
+})

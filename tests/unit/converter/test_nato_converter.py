@@ -4,6 +4,7 @@
 import pytest
 
 from pyrit.converter import ConverterResult, NatoConverter
+from pyrit.converter.text_selection_strategy import WordIndexSelectionStrategy
 
 
 async def test_nato_converter_simple_text():
@@ -43,7 +44,7 @@ async def test_nato_converter_mixed_case():
 
 
 async def test_nato_converter_with_numbers():
-    """Test that numbers are ignored in NATO conversion."""
+    """Test that numbers are preserved in NATO conversion."""
     converter = NatoConverter()
     prompt = "a1b2c3"
 
@@ -51,12 +52,12 @@ async def test_nato_converter_with_numbers():
 
     assert isinstance(result, ConverterResult)
     assert result.output_type == "text"
-    # Only letters should be converted
-    assert result.output_text == "Alfa Bravo Charlie"
+    # Digits are preserved as-is so the encoded prompt keeps its full content
+    assert result.output_text == "Alfa 1 Bravo 2 Charlie 3"
 
 
 async def test_nato_converter_with_spaces():
-    """Test that spaces are ignored in NATO conversion."""
+    """Test that word boundaries remain distinct from code-word separators."""
     converter = NatoConverter()
     prompt = "a b c"
 
@@ -64,12 +65,11 @@ async def test_nato_converter_with_spaces():
 
     assert isinstance(result, ConverterResult)
     assert result.output_type == "text"
-    # Spaces should be ignored
-    assert result.output_text == "Alfa Bravo Charlie"
+    assert result.output_text == "Alfa <space> Bravo <space> Charlie"
 
 
 async def test_nato_converter_with_punctuation():
-    """Test that punctuation is ignored in NATO conversion."""
+    """Test that punctuation is preserved in NATO conversion."""
     converter = NatoConverter()
     prompt = "Hello, world!"
 
@@ -77,8 +77,8 @@ async def test_nato_converter_with_punctuation():
 
     assert isinstance(result, ConverterResult)
     assert result.output_type == "text"
-    # Only letters should be converted
-    assert result.output_text == "Hotel Echo Lima Lima Oscar Whiskey Oscar Romeo Lima Delta"
+    # Punctuation is preserved as-is so the encoded prompt keeps its full content
+    assert result.output_text == "Hotel Echo Lima Lima Oscar , <space> Whiskey Oscar Romeo Lima Delta !"
 
 
 async def test_nato_converter_empty_string():
@@ -94,7 +94,11 @@ async def test_nato_converter_empty_string():
 
 
 async def test_nato_converter_no_letters():
-    """Test NATO conversion with no alphabetic characters."""
+    """Test NATO conversion with no alphabetic characters.
+
+    Regression: non-empty input must never convert to an empty prompt
+    (digits/punctuation are preserved rather than erased).
+    """
     converter = NatoConverter()
     prompt = "123!@#"
 
@@ -102,7 +106,35 @@ async def test_nato_converter_no_letters():
 
     assert isinstance(result, ConverterResult)
     assert result.output_type == "text"
-    assert result.output_text == ""
+    assert result.output_text == "1 2 3 ! @ #"
+
+
+async def test_nato_converter_space_only_prompt():
+    """Test that a non-empty whitespace prompt remains non-empty."""
+    converter = NatoConverter()
+
+    result = await converter.convert_async(prompt="   ", input_type="text")
+
+    assert result.output_text == "<space> <space> <space>"
+
+
+@pytest.mark.parametrize("prompt", ["é", "ß", "ı", "ñ"])
+async def test_nato_converter_preserves_unmapped_unicode(prompt: str):
+    """Test that Unicode characters are preserved without case conversion."""
+    converter = NatoConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+
+    assert result.output_text == prompt
+
+
+async def test_nato_converter_word_selection_strategy():
+    """Test that NATO conversion supports the shared word selection strategies."""
+    converter = NatoConverter(word_selection_strategy=WordIndexSelectionStrategy(indices=[1]))
+
+    result = await converter.convert_async(prompt="abc def", input_type="text")
+
+    assert result.output_text == "abc <space> Delta Echo Foxtrot"
 
 
 async def test_nato_converter_all_letters():
@@ -126,7 +158,7 @@ async def test_nato_converter_input_type_not_supported():
     """Test that non-text input types raise ValueError."""
     converter = NatoConverter()
 
-    with pytest.raises(ValueError, match="Input type not supported"):
+    with pytest.raises(ValueError, match="Input type image_path not supported"):
         await converter.convert_async(prompt="test", input_type="image_path")
 
 

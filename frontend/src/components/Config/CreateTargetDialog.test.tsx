@@ -1,8 +1,8 @@
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { makeTarget } from "@/test-utils/targetFixtures";
-import type { TargetCatalogResponse } from "@/types";
+import type { Parameter, TargetTypeListResponse } from "@/types";
 import CreateTargetDialog from "./CreateTargetDialog";
 import { parseWeight, MAX_WEIGHT } from "./weightValidation";
 import { targetsApi } from "@/services/api";
@@ -10,54 +10,210 @@ import { targetsApi } from "@/services/api";
 jest.mock("@/services/api", () => ({
   targetsApi: {
     createTarget: jest.fn(),
-    listTargetCatalog: jest.fn(),
+    listTargetTypes: jest.fn(),
     listTargets: jest.fn(),
   },
 }));
 
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
 
-const TARGET_CATALOG: TargetCatalogResponse = {
+const OPENAI_COMMON_PARAMETERS: Parameter[] = [
+  {
+    name: "model_name",
+    type_name: "str",
+    required: false,
+    default: null,
+    description: "The model or deployment name.",
+  },
+  {
+    name: "endpoint",
+    type_name: "str",
+    required: false,
+    default: null,
+    description: "The target URL for the OpenAI service.",
+  },
+  {
+    name: "api_key",
+    type_name: "str | Callable",
+    required: false,
+    default: null,
+    description: "The API key for accessing the OpenAI service.",
+  },
+  {
+    name: "underlying_model",
+    type_name: "str",
+    required: false,
+    default: null,
+    description: "The underlying model name used for identification.",
+  },
+];
+
+const AZURE_ML_COMMON_PARAMETERS: Parameter[] = [
+  {
+    name: "endpoint",
+    type_name: "str",
+    required: false,
+    default: null,
+    description: "The endpoint URL for the deployed Azure ML model.",
+  },
+  {
+    name: "api_key",
+    type_name: "str | Callable",
+    required: false,
+    default: null,
+    description: "The API key for accessing the Azure ML endpoint.",
+  },
+  {
+    name: "model_name",
+    type_name: "str",
+    required: false,
+    default: "",
+    description: "The name of the deployed model.",
+  },
+];
+
+const TARGET_TYPES: TargetTypeListResponse = {
   items: [
     {
       target_type: "AzureMLChatTarget",
-      parameters: [],
+      parameters: [
+        ...AZURE_ML_COMMON_PARAMETERS,
+        {
+          name: "max_new_tokens",
+          type_name: "int",
+          required: false,
+          default: "400",
+          description: "The maximum number of tokens to generate in the response.",
+        },
+        {
+          name: "temperature",
+          type_name: "float",
+          required: false,
+          default: "1.0",
+          description: "The temperature for generating diverse responses.",
+        },
+        {
+          name: "top_p",
+          type_name: "float",
+          required: false,
+          default: "1.0",
+          description: "The top-p value for generating diverse responses.",
+        },
+        {
+          name: "repetition_penalty",
+          type_name: "float",
+          required: false,
+          default: "1.0",
+          description: "The repetition penalty for generated responses.",
+        },
+      ],
       supported_auth_modes: ["api_key", "identity"],
       description: "A prompt target for Azure Machine Learning chat endpoints.",
     },
     {
       target_type: "OpenAIChatTarget",
-      parameters: [],
+      parameters: [
+        {
+          name: "temperature",
+          type_name: "float",
+          required: false,
+          default: null,
+          description: "Controls the randomness of the response.",
+        },
+        {
+          name: "top_p",
+          type_name: "float",
+          required: false,
+          default: null,
+          description: "Controls the diversity of the response.",
+        },
+        {
+          name: "seed",
+          type_name: "int",
+          required: false,
+          default: null,
+          description: "Makes a best effort to sample deterministically.",
+        },
+        {
+          name: "extra_body_parameters",
+          type_name: "dict[str, typing.Any]",
+          required: false,
+          default: null,
+          description: "Additional parameters to include in the request body.",
+        },
+        {
+          name: "httpx_client_kwargs",
+          type_name: "dict[str, typing.Any]",
+          required: false,
+          default: null,
+          description: "Additional parameters for the HTTP client.",
+        },
+        ...OPENAI_COMMON_PARAMETERS,
+      ],
       supported_auth_modes: ["api_key", "identity"],
       description: "Facilitates multimodal (image and text) input and text output generation.",
     },
     {
       target_type: "OpenAICompletionTarget",
-      parameters: [],
+      parameters: [
+        {
+          name: "stop",
+          type_name: "list[str]",
+          required: false,
+          default: null,
+          is_list: true,
+          description: "Sequences where generation should stop.",
+        },
+        ...OPENAI_COMMON_PARAMETERS,
+      ],
       supported_auth_modes: ["api_key", "identity"],
       description: "A prompt target for OpenAI completion endpoints.",
     },
     {
       target_type: "OpenAIImageTarget",
-      parameters: [],
+      parameters: OPENAI_COMMON_PARAMETERS,
       supported_auth_modes: ["api_key", "identity"],
       description: "A target for image generation or editing using OpenAI's image models.",
     },
     {
       target_type: "OpenAIResponseTarget",
-      parameters: [],
+      parameters: [
+        {
+          name: "reasoning_effort",
+          type_name: "str",
+          required: false,
+          default: null,
+          choices: ["none", "minimal", "low", "medium", "high", "xhigh"],
+          description: "Controls how much reasoning the model performs.",
+        },
+        {
+          name: "fail_on_missing_function",
+          type_name: "bool",
+          required: false,
+          default: "False",
+          description: "Raise when the response calls an unknown function.",
+        },
+        {
+          name: "custom_functions",
+          type_name: "dict[str, collections.abc.Callable]",
+          required: false,
+          default: null,
+          description: "Mapping of user-defined function names.",
+        },
+        ...OPENAI_COMMON_PARAMETERS,
+      ],
       supported_auth_modes: ["api_key", "identity"],
       description: "Enables communication with endpoints that support the OpenAI Response API.",
     },
     {
       target_type: "OpenAITTSTarget",
-      parameters: [],
+      parameters: OPENAI_COMMON_PARAMETERS,
       supported_auth_modes: ["api_key", "identity"],
       description: "A prompt target for OpenAI Text-to-Speech (TTS) endpoints.",
     },
     {
       target_type: "OpenAIVideoTarget",
-      parameters: [],
+      parameters: OPENAI_COMMON_PARAMETERS,
       supported_auth_modes: ["api_key", "identity"],
       description: "OpenAI Video Target using the OpenAI SDK for video generation.",
     },
@@ -66,6 +222,65 @@ const TARGET_CATALOG: TargetCatalogResponse = {
       parameters: [],
       supported_auth_modes: ["api_key"],
       description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
+    },
+    {
+      target_type: "HTTPTarget",
+      parameters: [
+        {
+          name: "http_request",
+          type_name: "str",
+          required: true,
+          default: null,
+          multiline: true,
+          description: "The HTTP request template containing the prompt placeholder.",
+        },
+        {
+          name: "use_tls",
+          type_name: "bool",
+          required: false,
+          default: "True",
+          description: "Whether to use TLS.",
+        },
+      ],
+      supported_auth_modes: ["api_key"],
+      description: "Sends prompts through a raw HTTP request template.",
+    },
+    {
+      target_type: "AzureBlobStorageTarget",
+      parameters: [
+        {
+          name: "storage_url",
+          type_name: "str",
+          required: false,
+          default: null,
+          description: "The Azure Blob Storage service URL.",
+        },
+        {
+          name: "sas_token",
+          type_name: "str",
+          required: false,
+          default: null,
+          sensitive: true,
+          identity_conflicting: true,
+          description: "The optional shared access signature.",
+        },
+      ],
+      supported_auth_modes: ["api_key", "identity"],
+      description: "Stores prompts and responses in Azure Blob Storage.",
+    },
+    {
+      target_type: "PlaywrightTarget",
+      parameters: [
+        {
+          name: "interaction_func",
+          type_name: "InteractionFunction",
+          required: true,
+          default: null,
+          description: "The Python function used to interact with the page.",
+        },
+      ],
+      supported_auth_modes: ["api_key"],
+      description: "Uses Playwright to interact with a web UI.",
     },
   ],
 };
@@ -79,6 +294,8 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   OpenAITTSTarget: "OpenAI text to speech",
   OpenAIVideoTarget: "OpenAI video",
   RoundRobinTarget: "Weighted round robin",
+  HTTPTarget: "HTTPTarget",
+  AzureBlobStorageTarget: "AzureBlobStorageTarget",
 };
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
@@ -141,7 +358,25 @@ async function selectTargetType(value: string): Promise<void> {
   await waitFor(() => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
-  restoreDialogAccessibility();
+  await waitFor(() => {
+    restoreDialogAccessibility();
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
+      TARGET_DISPLAY_NAMES[value]
+    );
+  });
+}
+
+// The target type fetch mock (see beforeEach) resolves on mount, and its
+// setTargetTypeEntries/setTypeMetadataStatus updates land on the next microtask
+// tick. Tests that follow up with an `await` (selectTargetType,
+// openTargetTypePicker, userEvent, ...) give React a chance to settle that
+// update inside their own act()-wrapped waiting. Tests that only make
+// synchronous assertions after `render` never yield, so the update fires
+// after the test body returns and React reports it as outside act(...).
+// Call this right after `render` in those synchronous tests to flush it
+// deterministically.
+async function flushTargetTypesFetch(): Promise<void> {
+  await act(async () => {});
 }
 
 describe("parseWeight", () => {
@@ -222,7 +457,7 @@ describe("CreateTargetDialog", () => {
   beforeEach(() => {
     dialogAccessibilityObserver = watchDialogAccessibility();
     jest.clearAllMocks();
-    mockedTargetsApi.listTargetCatalog.mockResolvedValue(TARGET_CATALOG);
+    mockedTargetsApi.listTargetTypes.mockResolvedValue(TARGET_TYPES);
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: [],
       pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
@@ -233,19 +468,20 @@ describe("CreateTargetDialog", () => {
     dialogAccessibilityObserver.disconnect();
   });
 
-  it("should render dialog when open", () => {
+  it("should render dialog when open", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushTargetTypesFetch();
 
     expect(screen.getByText("Create New Target")).toBeInTheDocument();
     expect(screen.getByText("Create Target")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
 
-  it("should show friendly names, catalog descriptions, implementation identifiers, and auth for all target types", async () => {
+  it("should show friendly names, registry descriptions, implementation identifiers, and auth for all target types", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
@@ -255,13 +491,15 @@ describe("CreateTargetDialog", () => {
     await openTargetTypePicker();
 
     const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(8);
-    for (const entry of TARGET_CATALOG.items) {
+    expect(options).toHaveLength(10);
+    for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
-      expect(within(option).getByText(TARGET_DISPLAY_NAMES[entry.target_type])).toBeInTheDocument();
-      expect(within(option).getByText(entry.target_type)).toBeInTheDocument();
+      expect(
+        within(option).getAllByText(TARGET_DISPLAY_NAMES[entry.target_type]).length,
+      ).toBeGreaterThan(0);
+      expect(within(option).getByText(entry.target_type, { selector: "code" })).toBeInTheDocument();
       expect(within(option).getByText(entry.description ?? "")).toBeInTheDocument();
     }
 
@@ -271,6 +509,9 @@ describe("CreateTargetDialog", () => {
     expect(within(screen.getByRole("option", {
       name: /Implementation: RoundRobinTarget/,
     })).getByText("Supported authentication: API key")).toBeInTheDocument();
+    expect(screen.queryByRole("option", {
+      name: /Implementation: PlaywrightTarget/,
+    })).not.toBeInTheDocument();
   });
 
   it("should keep guidance for the selected target visible after the list closes", async () => {
@@ -313,9 +554,9 @@ describe("CreateTargetDialog", () => {
     expect(picker).not.toHaveTextContent("Select a target type");
   });
 
-  it("should disable target selection while catalog details are loading", () => {
-    mockedTargetsApi.listTargetCatalog.mockReturnValue(
-      new Promise<TargetCatalogResponse>(() => {}),
+  it("should expose fallback target choices while type metadata is loading", async () => {
+    mockedTargetsApi.listTargetTypes.mockReturnValue(
+      new Promise<TargetTypeListResponse>(() => {}),
     );
 
     render(
@@ -325,11 +566,42 @@ describe("CreateTargetDialog", () => {
     );
 
     expect(screen.getByText("Loading target details...")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: /target type/i })).toBeDisabled();
+    await openTargetTypePicker();
+    expect(screen.getAllByRole("option")).toHaveLength(8);
   });
 
-  it("should keep all target types selectable and explain when catalog details fail to load", async () => {
-    mockedTargetsApi.listTargetCatalog.mockRejectedValueOnce(new Error("catalog unavailable"));
+  it("should preserve a fallback selection when type metadata arrives", async () => {
+    let resolveTargetTypes: ((targetTypes: TargetTypeListResponse) => void) | null = null;
+    mockedTargetsApi.listTargetTypes.mockReturnValue(
+      new Promise<TargetTypeListResponse>((resolve) => {
+        resolveTargetTypes = resolve;
+      }),
+    );
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent("OpenAI chat");
+
+    if (resolveTargetTypes === null) {
+      throw new Error("Target type resolver was not initialized");
+    }
+    await act(async () => {
+      resolveTargetTypes(TARGET_TYPES);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading target details...")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent("OpenAI chat");
+  });
+
+  it("should keep all target types selectable and explain when type metadata fails to load", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
 
     render(
       <TestWrapper>
@@ -355,12 +627,13 @@ describe("CreateTargetDialog", () => {
     expect(screen.queryByText("Create New Target")).not.toBeInTheDocument();
   });
 
-  it("should have Create button disabled until type and endpoint filled", () => {
+  it("should have Create button disabled until type and endpoint filled", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushTargetTypesFetch();
 
     const createButton = screen.getByText("Create Target");
     expect(createButton.closest("button")).toBeDisabled();
@@ -374,13 +647,13 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    // No type is chosen yet, so authentication option is not visible yet, but plain API Key input is.
+    // No type is chosen yet, so neither authentication nor API-key controls are visible.
     expect(
       screen.queryByRole("radio", { name: /Identity-based/ })
     ).not.toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("API key (stored in memory only)")
-    ).toBeInTheDocument();
+      screen.queryByPlaceholderText("API key (stored in memory only)")
+    ).not.toBeInTheDocument();
 
     // Selecting an identity-capable type should reveal the Authentication field.
     await selectTargetType("OpenAIChatTarget");
@@ -603,12 +876,13 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should display supported target initializer guidance", () => {
+  it("should display supported target initializer guidance", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushTargetTypesFetch();
 
     expect(screen.getByText("target", { selector: "code" })).toBeInTheDocument();
     expect(
@@ -619,12 +893,13 @@ describe("CreateTargetDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("should render .pyrit_conf_example as an accessible link", () => {
+  it("should render .pyrit_conf_example as an accessible link", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
+    await flushTargetTypesFetch();
 
     const link = screen.getByRole("link", { name: ".pyrit_conf_example" });
     expect(link).toBeInTheDocument();
@@ -635,7 +910,8 @@ describe("CreateTargetDialog", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("should show field validation errors when submitting form without endpoint", async () => {
+  it("should require an endpoint when identity authentication is selected", async () => {
+    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -643,8 +919,8 @@ describe("CreateTargetDialog", () => {
       </TestWrapper>
     );
 
-    // Select target type but leave endpoint empty
     await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
 
     // Submit via form (bypass disabled button by submitting the form directly)
     const form = screen.getByText("Create New Target").closest("form") ??
@@ -682,7 +958,7 @@ describe("CreateTargetDialog", () => {
     });
   });
 
-  it("should create AzureMLChatTarget with AzureML-specific params", async () => {
+  it("should omit untouched AzureML defaults so the constructor owns default behavior", async () => {
     const onCreated = jest.fn();
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
@@ -711,7 +987,7 @@ describe("CreateTargetDialog", () => {
     const modelInput = screen.getByPlaceholderText("e.g. Llama-3.2-3B-Instruct");
     fireEvent.change(modelInput, { target: { value: "Llama-3.2-3B-Instruct" } });
 
-    // Submit (uses defaults for max_new_tokens, temperature, top_p, repetition_penalty)
+    // Submit without overriding the displayed constructor defaults.
     await user.click(screen.getByText("Create Target"));
 
     await waitFor(() => {
@@ -720,17 +996,13 @@ describe("CreateTargetDialog", () => {
         params: {
           endpoint: "https://my-llama.eastus.inference.ml.azure.com/score",
           model_name: "Llama-3.2-3B-Instruct",
-          max_new_tokens: 400,
-          temperature: 1.0,
-          top_p: 1.0,
-          repetition_penalty: 1.0,
         },
       });
       expect(onCreated).toHaveBeenCalled();
     });
   });
 
-  it("should show AzureML fields and hide OpenAI fields when AzureMLChatTarget selected", async () => {
+  it("should show AzureML metadata fields without unrelated OpenAI fields", async () => {
 
     render(
       <TestWrapper>
@@ -746,8 +1018,27 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByText("Top P")).toBeInTheDocument();
     expect(screen.getByText("Repetition Penalty")).toBeInTheDocument();
 
-    // OpenAI-specific fields should NOT be visible, but underlying model switch should be
-    expect(screen.getByRole("switch")).toBeInTheDocument();
+    // Azure ML does not declare an underlying-model constructor parameter.
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("should show constructor defaults as editable guidance without setting the values", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureMLChatTarget");
+
+    const maxNewTokens = screen.getByLabelText("Max New Tokens");
+    expect(maxNewTokens).toHaveValue(null);
+    expect(maxNewTokens).toHaveAttribute("placeholder", "Defaults to 400");
+    expect(screen.getByText(/maximum number of tokens.*Defaults to 400\./i)).toBeInTheDocument();
+
+    const repetitionPenalty = screen.getByLabelText("Repetition Penalty");
+    expect(repetitionPenalty).toHaveValue(null);
+    expect(repetitionPenalty).toHaveAttribute("placeholder", "Defaults to 1.0");
   });
 
   it("should send custom AzureML params when fields are modified", async () => {
@@ -804,6 +1095,416 @@ describe("CreateTargetDialog", () => {
         },
       });
       expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should render and submit OpenAI numeric parameters from target metadata", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_chat_custom",
+      target_type: "OpenAIChatTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Temperature"), {
+      target: { value: "0" },
+    });
+    fireEvent.change(screen.getByLabelText("Seed"), {
+      target: { value: "42" },
+    });
+
+    expect(screen.getByLabelText("Extra Body Parameters")).toBeVisible();
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          temperature: 0,
+          seed: 42,
+        },
+      });
+    });
+  });
+
+  it("should submit the catalog video duration as a number", async () => {
+    const user = userEvent.setup();
+    const videoParameters: Parameter[] = [
+      {
+        name: "resolution_dimensions",
+        type_name: "str",
+        is_list: false,
+        choices: ["720x1280", "1280x720", "1024x1792", "1792x1024"],
+        default: "1280x720",
+        required: false,
+      },
+      { name: "n_seconds", type_name: "int", is_list: false, choices: null, default: "4", required: false },
+      { name: "model_name", type_name: "str", is_list: false, choices: null, default: null, required: true },
+      { name: "endpoint", type_name: "str", is_list: false, choices: null, default: null, required: true },
+      { name: "api_key", type_name: "str", is_list: false, choices: null, default: null, required: false },
+      { name: "underlying_model", type_name: "str", is_list: false, choices: null, default: null, required: false },
+    ];
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: TARGET_TYPES.items.map((item) => (
+        item.target_type === "OpenAIVideoTarget" ? { ...item, parameters: videoParameters } : item
+      )),
+    });
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_video_custom",
+      target_type: "OpenAIVideoTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIVideoTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("e.g. gpt-4o, my-deployment"), {
+      target: { value: "sora-2" },
+    });
+    fireEvent.change(screen.getByLabelText("N Seconds"), {
+      target: { value: "8" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIVideoTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          model_name: "sora-2",
+          n_seconds: 8,
+        },
+      });
+    });
+  });
+
+  it("should render and submit metadata choices and booleans", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_response_custom",
+      target_type: "OpenAIResponseTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIResponseTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    await user.selectOptions(screen.getByLabelText("Reasoning Effort"), "high");
+    const failOnMissingFunction = screen.getByLabelText("Fail On Missing Function");
+    expect(within(failOnMissingFunction).getByRole("option", {
+      name: "Use default (False)",
+    })).toBeInTheDocument();
+    await user.selectOptions(failOnMissingFunction, "false");
+
+    expect(screen.queryByLabelText("Custom Functions")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIResponseTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          reasoning_effort: "high",
+          fail_on_missing_function: false,
+        },
+      });
+    });
+  });
+
+  it("should render and submit scalar list parameters from target metadata", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_completion_custom",
+      target_type: "OpenAICompletionTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAICompletionTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Stop"), {
+      target: { value: "END, DONE" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAICompletionTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          stop: ["END", "DONE"],
+        },
+      });
+    });
+  });
+
+  it("should preserve an explicitly selected empty list", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_completion_empty_stop",
+      target_type: "OpenAICompletionTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAICompletionTarget");
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    await user.click(screen.getByText("Advanced settings"));
+    await user.click(screen.getByRole("checkbox", { name: "Use empty list for stop" }));
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAICompletionTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          stop: [],
+        },
+      });
+    });
+  });
+
+  it("should parse and submit JSON-object target parameters", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_chat_json",
+      target_type: "OpenAIChatTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    await user.click(screen.getByText("Advanced settings"));
+
+    fireEvent.change(screen.getByLabelText("Extra Body Parameters"), {
+      target: { value: '{"reasoning":{"effort":"high"},"include":["usage"]}' },
+    });
+    fireEvent.change(screen.getByLabelText("Httpx Client Kwargs"), {
+      target: { value: '{"timeout":180}' },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          extra_body_parameters: {
+            reasoning: { effort: "high" },
+            include: ["usage"],
+          },
+          httpx_client_kwargs: { timeout: 180 },
+        },
+      });
+    });
+  });
+
+  it("should reject malformed or non-object JSON target parameters", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    const extraBody = screen.getByLabelText("Extra Body Parameters");
+    fireEvent.change(extraBody, {
+      target: { value: '{"reasoning":' },
+    });
+    expect(screen.getByText("Extra Body Parameters must contain valid JSON.")).toBeVisible();
+
+    fireEvent.change(extraBody, {
+      target: { value: '["reasoning"]' },
+    });
+    expect(screen.getByText("Extra Body Parameters must be a JSON object.")).toBeVisible();
+
+    await user.click(screen.getByText("Create Target"));
+
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
+  it("should keep optional parameters in expandable advanced settings", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIResponseTarget");
+
+    const summary = screen.getByText("Advanced settings");
+    const advancedSettings = summary.closest("details");
+    expect(advancedSettings).not.toHaveAttribute("open");
+    expect(screen.getByLabelText("Reasoning Effort")).not.toBeVisible();
+
+    await user.click(summary);
+
+    expect(advancedSettings).toHaveAttribute("open");
+    expect(screen.getByLabelText("Reasoning Effort")).toBeVisible();
+    expect(screen.getByText(/Python callables cannot be configured in CopyRIT/)).toBeVisible();
+  });
+
+  it("should create a metadata-supported target without a hardcoded form shape", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "raw_http_target",
+      target_type: "HTTPTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    expect(screen.queryByLabelText("Endpoint URL")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+    expect(screen.getByText("Create Target").closest("button")).toBeDisabled();
+
+    // A real raw HTTP request template needs actual line breaks between the
+    // request line, headers, and body — the backend parser splits on real
+    // newlines, not on literal "\r\n" characters. The http_request field
+    // must render as a multiline control (Textarea) for this to be entered.
+    const httpRequestTemplate = "POST /chat HTTP/1.1\nHost: example.com\nContent-Type: application/json\n\n{\"message\": \"{PROMPT}\"}";
+    const httpRequestField = screen.getByLabelText(/Http Request/);
+    expect(httpRequestField.tagName).toBe("TEXTAREA");
+    fireEvent.change(httpRequestField, {
+      target: { value: httpRequestTemplate },
+    });
+
+    expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "HTTPTarget",
+        params: {
+          http_request: httpRequestTemplate,
+        },
+      });
+    });
+  });
+
+  it("should support identity auth for targets without an endpoint or api_key parameter", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureBlobStorageTarget");
+
+    expect(screen.queryByLabelText("Endpoint URL")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Identity-based/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+
+    expect(screen.getByText("Create Target").closest("button")).toBeEnabled();
+  });
+
+  it("should mask the sas_token parameter and drop it once identity auth is selected", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "blob_target",
+      target_type: "AzureBlobStorageTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureBlobStorageTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    const sasTokenField = screen.getByLabelText(/Sas Token/);
+    expect(sasTokenField).toHaveAttribute("type", "password");
+
+    fireEvent.change(sasTokenField, { target: { value: "sv=2024&sig=secret" } });
+    expect(sasTokenField).toHaveValue("sv=2024&sig=secret");
+
+    // Selecting identity-based auth must clear and disable sas_token so it
+    // can't silently override the chosen auth mode (SAS takes precedence
+    // over DefaultAzureCredential on the backend).
+    await user.click(screen.getByRole("radio", { name: /Identity-based/ }));
+
+    expect(sasTokenField).toBeDisabled();
+    expect(sasTokenField).toHaveValue("");
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "AzureBlobStorageTarget",
+        params: {},
+        auth_mode: "identity",
+      });
     });
   });
 

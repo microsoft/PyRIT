@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 
-from pyrit.auth import CopilotAuthenticator
+from pyrit.auth import BrowserSessionCopilotAuthenticator, CopilotAuthenticator
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import WebSocketCopilotTarget
 from pyrit.prompt_target.websocket_copilot_target import CopilotMessageType
@@ -120,9 +121,9 @@ def patch_convert_local_image_to_data_url():
 
 @pytest.fixture
 def mock_memory():
-    memory = MagicMock()
-    memory.get_conversation_messages.return_value = []
-    memory.add_message_to_memory = AsyncMock()
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_conversation_messages_async = AsyncMock(return_value=[])
+    memory.add_message_to_memory_async = AsyncMock()
     return memory
 
 
@@ -139,7 +140,7 @@ class TestWebSocketCopilotTargetInit:
             assert target._authenticator == mock_auth_instance
             assert target._response_timeout_seconds == WebSocketCopilotTarget.RESPONSE_TIMEOUT_SECONDS
             assert target._model_name == "copilot"
-            assert target._endpoint == "wss://substrate.office.com/m365Copilot/Chathub"
+            assert target._endpoint == "wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub"
             assert target._verbose is False
             assert target._max_requests_per_minute is None
 
@@ -160,6 +161,15 @@ class TestWebSocketCopilotTargetInit:
         for invalid_timeout in [0, -10, -1]:
             with pytest.raises(ValueError, match="response_timeout_seconds must be a positive integer."):
                 WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=invalid_timeout)
+
+    def test_init_with_browser_session_authenticator(self, tmp_path: Path) -> None:
+        authenticator = BrowserSessionCopilotAuthenticator(
+            profile_path=tmp_path / "copilot-profile",
+        )
+
+        target = WebSocketCopilotTarget(authenticator=authenticator)
+
+        assert target._authenticator is authenticator
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -252,7 +262,7 @@ class TestBuildWebsocketUrl:
         )
         expected_token = await mock_authenticator.get_token_async()
 
-        assert url.startswith("wss://substrate.office.com/m365Copilot/Chathub/test_object_id@test_tenant_id?")
+        assert url.startswith("wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub/test_object_id@test_tenant_id?")
         assert f"X-SessionId={session_id}" in url
         assert f"ConversationId={copilot_conversation_id}" in url
         assert f"access_token={expected_token}" in url
@@ -598,7 +608,7 @@ class TestConnectAndSend:
 
     async def test_connect_and_send_timeout(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=1)
-        mock_websocket.recv = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_websocket.recv = AsyncMock(side_effect=TimeoutError())
 
         with patch("websockets.connect", return_value=mock_websocket):
             with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response"):
@@ -747,29 +757,29 @@ class TestValidateRequest:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestIsStartOfSession:
-    def test_is_start_of_session_with_empty_history(self, mock_authenticator):
+    async def test_is_start_of_session_with_empty_history(self, mock_authenticator):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
-        mock_memory = MagicMock()
-        mock_memory.get_conversation_messages.return_value = []
+        mock_memory = MagicMock(spec=MemoryInterface)
+        mock_memory.get_conversation_messages_async = AsyncMock(return_value=[])
         target._memory = mock_memory
 
         conversation_id = "test_conv_123"
-        result = target._is_start_of_session(conversation_id=conversation_id)
+        result = await target._is_start_of_session_async(conversation_id=conversation_id)
 
         assert result is True
-        mock_memory.get_conversation_messages.assert_called_once_with(conversation_id=conversation_id)
+        mock_memory.get_conversation_messages_async.assert_called_once_with(conversation_id=conversation_id)
 
-    def test_is_start_of_session_with_existing_history(self, mock_authenticator):
+    async def test_is_start_of_session_with_existing_history(self, mock_authenticator):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
 
-        mock_memory = MagicMock()
+        mock_memory = MagicMock(spec=MemoryInterface)
         mock_message = MagicMock()
-        mock_memory.get_conversation_messages.return_value = [mock_message]
+        mock_memory.get_conversation_messages_async = AsyncMock(return_value=[mock_message])
         target._memory = mock_memory
 
         conversation_id = "test_conv_123"
-        result = target._is_start_of_session(conversation_id=conversation_id)
+        result = await target._is_start_of_session_async(conversation_id=conversation_id)
 
         assert result is False
 

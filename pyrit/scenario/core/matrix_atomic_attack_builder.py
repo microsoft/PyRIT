@@ -24,8 +24,13 @@ from typing import TYPE_CHECKING, cast
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup
+from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core._technique_resolution import (
+    TechniqueResolutionError,
+    resolve_technique_factories,
+    resolve_technique_factories_for_techniques,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 
@@ -36,10 +41,20 @@ if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.score import Scorer
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score import Scorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "MatrixAtomicAttackBuilder",
+    "MatrixCombo",
+    "TechniqueResolutionError",
+    "build_baseline_atomic_attack",
+    "build_matrix_atomic_attacks",
+    "filter_compatible_seed_groups",
+    "resolve_technique_factories",
+    "resolve_technique_factories_for_techniques",
+]
 
 
 @dataclass(frozen=True)
@@ -129,42 +144,27 @@ def build_baseline_atomic_attack(
         objective_scorer=cast("TrueFalseScorer", objective_scorer),
         memory_labels=memory_labels or {},
         display_group=display_group,
+        group_kind=ScenarioRunPlanGroupKind.BASELINE,
     )
 
 
-def resolve_technique_factories(
+def filter_compatible_seed_groups(
     *,
-    context: ScenarioContext,
-    extra_factories: dict[str, AttackTechniqueFactory] | None = None,
-) -> dict[str, AttackTechniqueFactory]:
+    factory: AttackTechniqueFactory,
+    seed_groups: Sequence[AttackSeedGroup],
+) -> list[AttackSeedGroup]:
     """
-    Resolve a run's selected techniques to their registered ``AttackTechniqueFactory`` instances.
-
-    Reads the ``AttackTechniqueRegistry`` singleton and keeps only the factories whose name
-    matches a selected technique, preserving selection order. Techniques with no registered
-    factory are silently dropped so the caller can proceed with whatever techniques exist.
-
-    Args:
-        context (ScenarioContext): The resolved runtime inputs for this run.
-        extra_factories (dict[str, AttackTechniqueFactory] | None): Scenario-local factories
-            merged on top of the registry before filtering, so a scenario can offer techniques
-            without registering them globally. Entries override registry factories of the same
-            name.
+    Apply the matrix builder's seed-technique compatibility rule.
 
     Returns:
-        dict[str, AttackTechniqueFactory]: Mapping of technique name to factory, ordered by
-        the selected techniques.
+        list[AttackSeedGroup]: Compatible groups in source order.
     """
-    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-
-    all_factories = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise())
-    if extra_factories:
-        all_factories.update(extra_factories)
-    return {
-        technique.value: all_factories[technique.value]
-        for technique in context.scenario_techniques
-        if technique.value in all_factories
-    }
+    if factory.seed_technique is None:
+        return list(seed_groups)
+    return AttackSeedGroup.filter_compatible(
+        seed_groups=list(seed_groups),
+        technique=factory.seed_technique,
+    )
 
 
 def build_matrix_atomic_attacks(
@@ -286,7 +286,11 @@ class MatrixAtomicAttackBuilder:
         Iterates technique → (adversarial target) → dataset. The caller pre-resolves
         ``technique_factories`` to exactly the techniques to build (and, by dict
         insertion order, the order to build them in), so the builder does not need the
-        full registry or the selected-technique set.
+        full registry or the selected-technique set. Callers that need to layer static
+        guidance onto a technique's adversarial prompt should call
+        ``factory.with_adversarial_system_prompt_prefix(...)`` on the relevant factories
+        before passing ``technique_factories`` in — the builder stays generic and does
+        not forward such a concept itself.
 
         Args:
             technique_factories (dict[str, AttackTechniqueFactory]): Mapping of technique
@@ -341,12 +345,11 @@ class MatrixAtomicAttackBuilder:
                     if compatible_groups is None:
                         continue
 
-                    create_adversarial = {"adversarial_chat": target_instance} if target_instance is not None else {}
                     attack_technique = factory.create(
                         objective_target=self._objective_target,
                         attack_scoring_config=scoring_config,
+                        adversarial_chat=target_instance,
                         extra_request_converters=extra_request_converters,
-                        **create_adversarial,
                     )
 
                     combo = MatrixCombo(
@@ -365,6 +368,7 @@ class MatrixAtomicAttackBuilder:
                             objective_scorer=cast("TrueFalseScorer", self._objective_scorer),
                             memory_labels=self._memory_labels,
                             display_group=display_group_fn(combo),
+                            technique_name=technique_name,
                         )
                     )
 
@@ -404,13 +408,7 @@ class MatrixAtomicAttackBuilder:
             list[AttackSeedGroup] | None: The compatible groups, or ``None`` when the
             ``(technique, dataset)`` pair has no compatible groups and should be skipped.
         """
-        if factory.seed_technique is None:
-            return list(seed_groups)
-
-        compatible_groups = AttackSeedGroup.filter_compatible(
-            seed_groups=seed_groups,
-            technique=factory.seed_technique,
-        )
+        compatible_groups = filter_compatible_seed_groups(factory=factory, seed_groups=seed_groups)
         skipped = len(seed_groups) - len(compatible_groups)
         if skipped:
             logger.info(

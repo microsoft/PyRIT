@@ -6,6 +6,8 @@ Tests for the merged ``TargetRegistry`` (buildable catalog + instance container)
 and its introspection helpers.
 """
 
+import re
+
 import pytest
 
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
@@ -124,15 +126,36 @@ class TestTargetRegistryRegisterInstance:
 
         assert len(registry.instances) == 2
 
-    def test_register_instance_duplicate_name_overwrites(self, registry: TargetRegistry):
+    def test_register_instance_duplicate_name_raises(self, registry: TargetRegistry):
         first = MockPromptTarget(model_name="first")
         second = MockPromptTarget(model_name="second")
 
         registry.instances.register(first, name="same_name")
-        registry.instances.register(second, name="same_name")
 
-        assert len(registry.instances) == 1
-        assert registry.instances.get("same_name") is second
+        with pytest.raises(ValueError, match="already exists"):
+            registry.instances.register(second, name="same_name")
+
+        assert registry.instances.get("same_name") is first
+
+    def test_create_named_instance_builds_and_stores_target(self, registry: TargetRegistry):
+        registry.register_class(MockPromptTarget)
+
+        target = registry.create_named_instance(
+            name="mock",
+            type_name="MockPromptTarget",
+            params={"model_name": "named-model"},
+        )
+
+        assert isinstance(target, MockPromptTarget)
+        assert target.get_identifier().model_name == "named-model"
+        assert registry.instances.get("mock") is target
+
+    @pytest.mark.parametrize("name", ["types"])
+    def test_create_named_instance_rejects_reserved_name(self, registry: TargetRegistry, name: str):
+        registry.register_class(MockPromptTarget)
+
+        with pytest.raises(ValueError, match="reserved"):
+            registry.create_named_instance(name=name, type_name="MockPromptTarget")
 
     def test_register_instance_rejects_non_target(self, registry: TargetRegistry):
         class NotATarget:
@@ -347,16 +370,49 @@ class TestClassMetadata:
         assert "supported_auth_modes" in meta.class_attributes
         assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity")
 
+    @pytest.mark.usefixtures("patch_central_database")
+    def test_instance_registration_does_not_invalidate_class_metadata(self, registry: TargetRegistry) -> None:
+        registry.get_all_registered_class_metadata()
+        initial_cache = registry._metadata_cache
+
+        registry.instances.register(MockPromptTarget(), name="runtime-instance")
+
+        assert registry._metadata_cache is initial_cache
+
     def test_openai_metadata_includes_forwarded_base_parameters(self, registry: TargetRegistry) -> None:
         params = {param.name: param for param in self._metadata_for(registry, "OpenAIChatTarget").parameters}
 
-        assert params["endpoint"].param_type is str
-        assert params["model_name"].param_type is str
+        assert params["endpoint"].param_type == str | None
+        assert params["model_name"].param_type == str | None
+        assert params["endpoint"].type_name == "str"
+        assert params["model_name"].type_name == "str"
         assert "api_key" in params
+
+    def test_http_request_metadata_is_multiline(self, registry: TargetRegistry) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, "HTTPTarget").parameters}
+
+        assert params["http_request"].multiline is True
+
+    def test_sas_token_metadata_conflicts_with_identity(self, registry: TargetRegistry) -> None:
+        params = {param.name: param for param in self._metadata_for(registry, "AzureBlobStorageTarget").parameters}
+
+        assert params["sas_token"].identity_conflicting is True
 
 
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every target."""
+
+    CREDENTIAL_NAME_PATTERN = re.compile(r"token|secret|password|credential|api_key", re.IGNORECASE)
+    NON_CREDENTIAL_PARAMETER_NAMES = frozenset(
+        {
+            "api_key_header",
+            "max_tokens",
+            "max_new_tokens",
+            "max_completion_tokens",
+            "max_output_tokens",
+            "skip_special_tokens",
+        }
+    )
 
     def test_discovery_validates_all_targets(self, registry: TargetRegistry) -> None:
         # Discovery registers every target through ``register_class``, which validates
@@ -377,3 +433,16 @@ class TestRegistrationGate:
                         ComponentType.CONVERTER,
                         ComponentType.SCORER,
                     )
+
+    def test_credential_parameters_are_sensitive(self, registry: TargetRegistry) -> None:
+        from pyrit.models.identifiers import TargetIdentifier
+
+        for name in registry.get_class_names():
+            parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
+            for parameter in parameters:
+                looks_like_credential = (
+                    self.CREDENTIAL_NAME_PATTERN.search(parameter.name)
+                    and parameter.name not in self.NON_CREDENTIAL_PARAMETER_NAMES
+                )
+                if looks_like_credential:
+                    assert parameter.sensitive, f"{name}.{parameter.name} looks like a credential"

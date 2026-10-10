@@ -46,6 +46,12 @@ def test_add_image_text_converter_invalid_font(image_text_converter_sample_image
         AddImageTextConverter(img_to_add=image_text_converter_sample_image, font_name="helvetica.otf")
 
 
+@pytest.mark.parametrize("color", [(0, 0), (0, 0, 256), [0, 0, 0]])
+def test_add_image_text_converter_invalid_color(image_text_converter_sample_image, color):
+    with pytest.raises(ValueError, match="color must be a tuple of three integers between 0 and 255"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, color=color)
+
+
 def test_add_image_text_converter_null_img_to_add():
     with pytest.raises(ValueError):
         AddImageTextConverter(img_to_add="")
@@ -256,3 +262,12 @@ def test_add_image_text_converter_auto_font_size_no_bounding_box(large_sample_im
     )
     updated_image = converter._add_text_to_image("Auto-sized text on full image")
     assert updated_image is not None
+
+
+@pytest.mark.parametrize("rotation", [float("nan"), float("inf"), float("-inf")])
+def test_add_image_text_converter_rejects_non_finite_rotation(
+    image_text_converter_sample_image: str, rotation: float
+) -> None:
+    """Non-finite rotation angles should fail during converter construction."""
+    with pytest.raises(ValueError, match="rotation must be finite"):
+        AddImageTextConverter(img_to_add=image_text_converter_sample_image, rotation=rotation)

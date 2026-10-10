@@ -2,19 +2,18 @@
 # Licensed under the MIT license.
 
 import base64
-import logging
+import math
 from io import BytesIO
-from typing import cast
+from pathlib import Path
 
-from PIL import Image, ImageFont
+from PIL import Image
 from PIL.ImageFont import FreeTypeFont
 
+from pyrit.common import get_mime_type
 from pyrit.converter.base_image_text_converter import _BaseImageTextConverter
 from pyrit.converter.converter import ConverterResult
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType
-
-logger = logging.getLogger(__name__)
 
 
 class AddImageTextConverter(_BaseImageTextConverter):
@@ -37,8 +36,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
     def __init__(
         self,
         *,
-        img_to_add: str,
-        font_name: str | None = None,
+        img_to_add: Path,
+        font_name: Path | None = None,
         color: tuple[int, int, int] = (0, 0, 0),
         font_size: int | tuple[int, int] = 15,
         bounding_box: tuple[int, int, int, int] | None = None,
@@ -49,8 +48,8 @@ class AddImageTextConverter(_BaseImageTextConverter):
         Initialize the converter with the image file path and text properties.
 
         Args:
-            img_to_add (str): File path of image to add text to.
-            font_name (str | None): Path of font to use. Must be a TrueType font (.ttf).
+            img_to_add (Path): File path of image to add text to.
+            font_name (Path | None): Path of font to use. Must be a TrueType font (.ttf).
                 Defaults to None which uses Pillow's built-in default font.
             color (tuple[int, int, int]): Color to print text in, using RGB values. Defaults to (0, 0, 0).
             font_size (int | tuple[int, int]): Font size as a fixed int, or a (min, max) tuple for automatic
@@ -58,25 +57,28 @@ class AddImageTextConverter(_BaseImageTextConverter):
             bounding_box (tuple[int, int, int, int] | None): Optional (x1, y1, x2, y2) region to constrain
                 text within. When not set, the full image is used with a default margin.
                 Defaults to None.
-            rotation (float): Rotation angle in degrees for the text. Defaults to 0.0.
+            rotation (float): Rotation angle in degrees for the text. Must be finite. Defaults to 0.0.
             center_text (bool): Whether to center text horizontally and vertically within the bounding box.
                 Defaults to False.
 
         Raises:
             ValueError: If img_to_add is empty, font_name doesn't end with ".ttf",
-                font_size tuple is invalid, or bounding_box coordinates are invalid.
+                color is not a valid RGB tuple, font_size is invalid, bounding_box
+                coordinates are invalid, or rotation is non-finite.
         """
         if not img_to_add:
             raise ValueError("Please provide valid image path")
-        if font_name is not None and not font_name.endswith(".ttf"):
-            raise ValueError("The specified font must be a TrueType font with a .ttf extension")
+        self._validate_font_name(font_name)
+        self._validate_color(color)
         self._extract_font_size(font_size)
         if bounding_box is not None:
             x1, y1, x2, y2 = bounding_box
             if x2 <= x1 or y2 <= y1:
                 raise ValueError("bounding_box must have x2 > x1 and y2 > y1")
-        self._img_to_add = img_to_add
-        self._font_name = font_name
+        if not math.isfinite(rotation):
+            raise ValueError(f"rotation must be finite, got {rotation}")
+        self._img_to_add = str(img_to_add)
+        self._font_name = str(font_name) if font_name is not None else None
         self._font_size = self._font_size_max
         self._font_load_failed = font_name is None
         self._font = self._load_font()
@@ -110,27 +112,6 @@ class AddImageTextConverter(_BaseImageTextConverter):
         params["center_text"] = self._center_text
         return self._create_identifier(params=params)
 
-    def _extract_font_size(self, font_size: int | tuple[int, int]) -> None:
-        """
-        Parse font_size into internal min/max/auto fields.
-
-        Args:
-            font_size (int | tuple[int, int]): Fixed size or (min, max) range.
-
-        Raises:
-            ValueError: If font_size tuple is invalid.
-        """
-        if isinstance(font_size, tuple):
-            if len(font_size) != 2 or font_size[0] > font_size[1] or font_size[0] < 1:
-                raise ValueError("font_size tuple must be (min, max) with 1 <= min <= max")
-            self._font_size_min = font_size[0]
-            self._font_size_max = font_size[1]
-            self._auto_font_size = True
-        else:
-            self._font_size_min = font_size
-            self._font_size_max = font_size
-            self._auto_font_size = False
-
     def _load_font(self) -> FreeTypeFont:
         """
         Load the font at self._font_size.
@@ -139,55 +120,6 @@ class AddImageTextConverter(_BaseImageTextConverter):
             FreeTypeFont: The loaded font object. Falls back to the default font on error.
         """
         return self._load_font_at_size(self._font_size)
-
-    def _load_font_at_size(self, size: int) -> FreeTypeFont:
-        """
-        Load the font at a specific size.
-
-        Args:
-            size (int): The font size to load.
-
-        Returns:
-            FreeTypeFont: The loaded font object. Falls back to Pillow's built-in default font on error.
-        """
-        if self._font_load_failed:
-            return cast("FreeTypeFont", ImageFont.load_default(size=size))
-        try:
-            return ImageFont.truetype(self._font_name, size)  # type: ignore[ty:invalid-argument-type]
-        except OSError:
-            logger.warning(f"Cannot open font resource: {self._font_name}. Using Pillow built-in default font.")
-            self._font_load_failed = True
-            return cast("FreeTypeFont", ImageFont.load_default(size=size))
-
-    def _fit_text_to_box(self, *, text: str, box_width: int, box_height: int) -> tuple[FreeTypeFont, list[str]]:
-        """
-        Auto-size font from font_size_max down to font_size_min until text fits in the box.
-
-        Args:
-            text (str): The text to fit.
-            box_width (int): The box width in pixels.
-            box_height (int): The box height in pixels.
-
-        Returns:
-            tuple[FreeTypeFont, list[str]]: The chosen font and wrapped text lines.
-        """
-        usable_width = int(box_width * 0.95)
-        usable_height = int(box_height * 0.95)
-
-        for size in range(self._font_size_max, self._font_size_min - 1, -1):
-            font = self._load_font_at_size(size)
-            lines = self._wrap_text(text=text, font=font, max_width=usable_width)
-            line_height = self._get_line_height(font=font)
-            if len(lines) * line_height <= usable_height:
-                return font, lines
-
-        min_font = self._load_font_at_size(self._font_size_min)
-        lines = self._wrap_text(text=text, font=min_font, max_width=usable_width)
-        logger.warning(
-            f"Text does not fit in bounding box ({box_width}x{box_height}) even at minimum font size "
-            f"{self._font_size_min}. Text may be clipped."
-        )
-        return min_font, lines
 
     def _add_text_to_image(self, text: str) -> Image.Image:
         """
@@ -216,7 +148,14 @@ class AddImageTextConverter(_BaseImageTextConverter):
 
         if self._auto_font_size:
             x1, y1, x2, y2 = bounding_box
-            font, lines = self._fit_text_to_box(text=text, box_width=x2 - x1, box_height=y2 - y1)
+            font, lines = self._fit_font_to_box(
+                text=text,
+                font_loader=self._load_font_at_size,
+                min_size=self._font_size_min,
+                max_size=self._font_size_max,
+                box_width=x2 - x1,
+                box_height=y2 - y1,
+            )
             overlay = self._draw_text_overlay(
                 lines=lines,
                 font=font,
@@ -264,7 +203,7 @@ class AddImageTextConverter(_BaseImageTextConverter):
         updated_img = self._add_text_to_image(text=prompt)
 
         image_bytes = BytesIO()
-        mime_type = img_serializer.get_mime_type(self._img_to_add) or "image/png"
+        mime_type = get_mime_type(self._img_to_add) or "image/png"
         image_type = mime_type.split("/")[-1]
         updated_img.save(image_bytes, format=image_type)
         image_str = base64.b64encode(image_bytes.getvalue())

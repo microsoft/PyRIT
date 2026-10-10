@@ -8,9 +8,9 @@ from io import BytesIO
 from typing import Literal
 from urllib.parse import urlparse
 
-import aiohttp
 from PIL import Image
 
+from pyrit.converter._image_url_downloader import _download_image_from_url_async
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
 from pyrit.models import PromptDataType
@@ -139,12 +139,7 @@ class BaseImageToImageConverter(Converter, ABC):
         Raises:
             RuntimeError: If there is an error during the download process.
         """
-        try:
-            async with aiohttp.ClientSession() as session, session.get(url) as response:
-                response.raise_for_status()
-                return await response.read()
-        except aiohttp.ClientError as e:
-            raise RuntimeError(f"Failed to download content from URL {url}: {str(e)}") from e
+        return await _download_image_from_url_async(url)
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "image_path") -> ConverterResult:
         """

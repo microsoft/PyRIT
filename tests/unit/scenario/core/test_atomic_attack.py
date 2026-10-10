@@ -10,15 +10,19 @@ import pytest
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    ScoringExpectation,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    TargetIdentifier,
 )
 from pyrit.scenario import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -215,6 +219,32 @@ class TestAtomicAttackInitialization:
 class TestAtomicAttackExecution:
     """Tests for AtomicAttack execution methods."""
 
+    async def test_run_async_preserves_incomplete_result_ids(
+        self, mock_attack: AttackStrategy, sample_seed_groups: list[AttackSeedGroup]
+    ) -> None:
+        error = RuntimeError("execution failed")
+        executor_result = AttackExecutorResult(
+            completed_results=[],
+            incomplete_objectives=[("objective1", error), ("objective2", error)],
+            incomplete_result_ids=["confirmed-result-id", None],
+        )
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        with patch.object(
+            AttackExecutor,
+            "execute_attack_from_seed_groups_async",
+            new_callable=AsyncMock,
+            return_value=executor_result,
+        ):
+            result = await atomic_attack.run_async()
+
+        assert result.incomplete_objectives == executor_result.incomplete_objectives
+        assert result.incomplete_result_ids == executor_result.incomplete_result_ids
+
     async def test_run_async_with_valid_atomic_attack(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test successful execution of an atomic attack."""
         atomic_attack = AtomicAttack(
@@ -314,6 +344,20 @@ class TestAtomicAttackExecution:
             assert "seed_groups" in call_kwargs
             assert call_kwargs["seed_groups"] == sample_seed_groups
 
+    async def test_run_async_raises_when_executor_returns_non_attack_result(self, mock_attack, sample_seed_groups):
+        """Test that a non-AttackResult item from the executor raises ValueError."""
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="Test Attack Run",
+        )
+
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = wrap_results(["not-an-attack-result"])
+
+            with pytest.raises(ValueError, match="unsupported result type"):
+                await atomic_attack.run_async()
+
     async def test_run_async_passes_attack_execute_params(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that attack execute parameters are passed to the executor."""
         atomic_attack = AtomicAttack(
@@ -332,6 +376,67 @@ class TestAtomicAttackExecution:
             call_kwargs = mock_exec.call_args.kwargs
             assert call_kwargs["custom_param"] == "value"
             assert call_kwargs["max_retries"] == 3
+
+    @pytest.mark.parametrize("override", [ScoringExpectation(objective="execution criterion"), None])
+    async def test_run_async_overrides_expectation_without_changing_defaults(
+        self, mock_attack, sample_seed_groups, sample_attack_results, override
+    ):
+        default = ScoringExpectation(objective="default criterion")
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            expectation=default,
+            max_retries=3,
+            atomic_attack_name="expectation transport",
+        )
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            execute.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async(expectation=override, max_retries=7)
+            assert execute.call_args.kwargs["expectation"] is override
+            assert execute.call_args.kwargs["max_retries"] == 7
+            await atomic.run_async()
+            assert execute.call_args.kwargs["expectation"] is default
+            assert execute.call_args.kwargs["max_retries"] == 3
+        assert atomic._attack_execute_params == {"expectation": default, "max_retries": 3}
+
+    @pytest.mark.parametrize(
+        "labels", [None, {}, {"new": "run", "shared": "override"}], ids=["none", "empty", "override"]
+    )
+    async def test_run_async_merges_labels_without_changing_defaults(
+        self, mock_attack, sample_seed_groups, sample_attack_results, labels
+    ):
+        defaults = {"scenario": "campaign", "shared": "default"}
+        original_labels = dict(labels) if labels is not None else None
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            memory_labels=defaults,
+            atomic_attack_name="label merge",
+        )
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            execute.return_value = wrap_results(sample_attack_results)
+            await atomic.run_async(memory_labels=labels)
+            merged = execute.call_args.kwargs["memory_labels"]
+            assert merged == {**defaults, **(labels or {})}
+            assert merged is not defaults and merged is not labels
+            await atomic.run_async()
+            assert execute.call_args.kwargs["memory_labels"] == defaults
+        assert defaults == atomic._memory_labels == {"scenario": "campaign", "shared": "default"}
+        assert labels == original_labels
+
+    @pytest.mark.parametrize(
+        "reserved", ["attack", "seed_groups", "adversarial_chat", "objective_scorer", "attribution", "attributions"]
+    )
+    async def test_run_async_rejects_owned_executor_arguments(self, mock_attack, sample_seed_groups, reserved):
+        atomic = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="reserved arguments",
+        )
+        with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as execute:
+            with pytest.raises(ValueError, match="owns these executor arguments"):
+                await atomic.run_async(**{reserved: None})
+            execute.assert_not_called()
 
     async def test_run_async_merges_all_parameters(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test that all parameters are merged and passed correctly."""
@@ -926,14 +1031,14 @@ class TestEnrichAtomicAttackIdentifiers:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
 
-            mock_memory = MagicMock()
-            mock_memory.update_attack_result_by_id.return_value = True
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.update_attack_result_by_id_async = AsyncMock(return_value=True)
             with patch("pyrit.scenario.core.atomic_attack.CentralMemory") as mock_cm:
                 mock_cm.get_memory_instance.return_value = mock_memory
                 await atomic.run_async()
 
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args.kwargs
+        mock_memory.update_attack_result_by_id_async.assert_called_once()
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "00000000-0000-0000-0000-000000000001"
         assert "atomic_attack_identifier" in call_kwargs["update_fields"]
         # The persisted dict should have the AtomicAttack shape
@@ -967,12 +1072,12 @@ class TestEnrichAtomicAttackIdentifiers:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
 
-            mock_memory = MagicMock()
+            mock_memory = MagicMock(spec=MemoryInterface)
             with patch("pyrit.scenario.core.atomic_attack.CentralMemory") as mock_cm:
                 mock_cm.get_memory_instance.return_value = mock_memory
                 await atomic.run_async()
 
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1105,7 +1210,7 @@ class TestAtomicAttackAttributionStamping:
         self, mock_attack, sample_seed_groups, sample_attack_results
     ):
         """Outside a Scenario, ``_scenario_result_id`` is None and the
-        executor must receive ``attribution=None``."""
+        executor must receive ``attributions=None``."""
         atomic = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
             seed_groups=sample_seed_groups,
@@ -1117,13 +1222,13 @@ class TestAtomicAttackAttributionStamping:
             mock_exec.return_value = wrap_results(sample_attack_results)
             await atomic.run_async()
 
-        assert mock_exec.call_args.kwargs["attribution"] is None
+        assert mock_exec.call_args.kwargs["attributions"] is None
 
     async def test_attribution_built_when_scenario_result_id_set(
         self, mock_attack, sample_seed_groups, sample_attack_results
     ):
         """When the Scenario stamps ``_scenario_result_id`` onto the atomic
-        attack, ``run_async`` must build and pass a single attribution object."""
+        attack, ``run_async`` must build and pass per-seed-group attribution."""
         from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 
         atomic = AtomicAttack(
@@ -1137,10 +1242,14 @@ class TestAtomicAttackAttributionStamping:
             mock_exec.return_value = wrap_results(sample_attack_results)
             await atomic.run_async()
 
-        attribution = mock_exec.call_args.kwargs["attribution"]
-        assert isinstance(attribution, AttackResultAttribution)
-        assert attribution.parent_id == "00000000-0000-0000-0000-000000000abc"
-        assert attribution.parent_collection == "MyAtomicAttack"
+        attributions = mock_exec.call_args.kwargs["attributions"]
+        assert len(attributions) == len(sample_seed_groups)
+        assert all(isinstance(attribution, AttackResultAttribution) for attribution in attributions)
+        assert all(attribution.parent_id == "00000000-0000-0000-0000-000000000abc" for attribution in attributions)
+        assert all(attribution.parent_collection == "MyAtomicAttack" for attribution in attributions)
+        assert [attribution.seed_group_id for attribution in attributions] == [
+            seed_group.logical_id for seed_group in sample_seed_groups
+        ]
 
     async def test_attribution_includes_technique_eval_hash(
         self, mock_attack, sample_seed_groups, sample_attack_results
@@ -1159,9 +1268,9 @@ class TestAtomicAttackAttributionStamping:
             mock_exec.return_value = wrap_results(sample_attack_results)
             await atomic.run_async()
 
-        attribution = mock_exec.call_args.kwargs["attribution"]
-        assert attribution.parent_eval_hash is not None
-        assert attribution.parent_eval_hash == atomic.technique_eval_hash
+        attributions = mock_exec.call_args.kwargs["attributions"]
+        assert all(attribution.parent_eval_hash is not None for attribution in attributions)
+        assert all(attribution.parent_eval_hash == atomic.technique_eval_hash for attribution in attributions)
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1199,3 +1308,38 @@ class TestAtomicAttackTechniqueEvalHash:
             atomic_attack_name="same",
         )
         assert a1.technique_eval_hash != a2.technique_eval_hash
+
+    def test_hash_differs_for_different_adversarial_prompt_template(self, sample_seed_groups):
+        """Two otherwise-identical adversarial attacks that differ only in their resolved
+        per-turn adversarial_prompt_template must land in different resume buckets --
+        otherwise resuming a scenario after only the follow-up prompt changed would
+        silently reuse results generated under the old template."""
+        adv_target = TargetIdentifier(class_name="AdvChat", class_module="pyrit.test")
+
+        attack_a = MagicMock(spec=AttackStrategy)
+        attack_a.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="A: {{ feedback_text }}",
+        )
+        attack_b = MagicMock(spec=AttackStrategy)
+        attack_b.get_identifier.return_value = AttackIdentifier(
+            class_name="RedTeamingAttack",
+            class_module="pyrit.test",
+            adversarial_chat=adv_target,
+            adversarial_prompt_template="B: {{ feedback_text }}",
+        )
+
+        a1 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_a),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        a2 = AtomicAttack(
+            attack_technique=AttackTechnique(attack=attack_b),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        assert a1.technique_eval_hash != a2.technique_eval_hash
+        assert a1.logical_group_id != a2.logical_group_id

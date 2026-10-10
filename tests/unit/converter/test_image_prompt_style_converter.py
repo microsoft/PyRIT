@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
+from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import ImagePromptStyleConverter
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.prompt_target import PromptTarget
@@ -13,7 +14,7 @@ from pyrit.prompt_target.common.prompt_target import PromptTarget
 
 @pytest.fixture
 def mock_target() -> PromptTarget:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[
             MessagePiece(
@@ -45,6 +46,17 @@ def test_init_no_filter_picks_random(mock_target) -> None:
     available = ImagePromptStyleConverter.list_available_filters()
     assert converter._filter_name in available
     assert converter._variation is None
+
+
+def test_init_no_filter_uses_configured_root_seed(mock_target) -> None:
+    try:
+        configure_random_seed(seed=42)
+        first = ImagePromptStyleConverter(converter_target=mock_target)
+        second = ImagePromptStyleConverter(converter_target=mock_target)
+
+        assert first._filter_name == second._filter_name
+    finally:
+        configure_random_seed(seed=None)
 
 
 def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
@@ -155,7 +167,6 @@ def test_list_available_filters() -> None:
     assert len(filters) > 0
 
 
-@pytest.mark.asyncio
 async def test_convert_async_with_specific_variation(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
@@ -164,8 +175,8 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
     )
     result = await converter.convert_async(prompt="person walking through a dark alley")
 
-    mock_target.set_system_prompt.assert_called_once()
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_called_once()
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     assert "bodycam_footage" in system_arg
     assert "style_instructions" not in system_arg or "CRITICAL INSTRUCTION" in system_arg
 
@@ -174,7 +185,6 @@ async def test_convert_async_with_specific_variation(mock_target) -> None:
     assert result.output_type == "text"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_with_random_variation(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
@@ -182,15 +192,14 @@ async def test_convert_async_with_random_variation(mock_target) -> None:
     )
     result = await converter.convert_async(prompt="person in a park")
 
-    mock_target.set_system_prompt.assert_called_once()
-    system_arg = mock_target.set_system_prompt.call_args[1]["system_prompt"]
+    mock_target.set_system_prompt_async.assert_called_once()
+    system_arg = mock_target.set_system_prompt_async.call_args[1]["system_prompt"]
     # Should contain one of the variation names
     assert any(name in system_arg for name in converter._variations)
 
     assert result.output_text == "A blurry bodycam shot of a figure in a dark alley"
 
 
-@pytest.mark.asyncio
 async def test_convert_async_unsupported_input_type_raises(mock_target) -> None:
     converter = ImagePromptStyleConverter(
         converter_target=mock_target,
@@ -222,7 +231,7 @@ def test_duplicate_variation_prefix_logs_warning(mock_target, caplog) -> None:
         ),
         patch("pathlib.Path.exists", return_value=True),
         patch("builtins.open", mock_open()),
-        patch("yaml.safe_load", return_value=duplicate_yaml),
+        patch("pyrit.converter.image_prompt_style_converter.safe_load_yaml", return_value=duplicate_yaml),
     ):
         converter = ImagePromptStyleConverter(
             converter_target=mock_target,

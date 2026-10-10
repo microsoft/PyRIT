@@ -12,6 +12,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target.common.realtime_audio import (
     STREAMING_INTERRUPTED_KEY,
@@ -47,6 +48,7 @@ def _paced_chunks(chunks: list[bytes], finish: asyncio.Event):
 def _build_target() -> MagicMock:
     """Build a MagicMock target exposing the connection + audio surface the session calls."""
     target = MagicMock(name="RealtimeTarget")
+    target._memory = MagicMock(spec=MemoryInterface)
     target.SAMPLE_RATE_HZ = 24000
 
     connection = AsyncMock(name="connection")
@@ -102,7 +104,9 @@ def _mock_session_wire(session: _OpenAIRealtimeStreamingSession) -> None:
 
 
 def _build_normalizer() -> MagicMock:
-    normalizer = MagicMock(name="PromptNormalizer")
+    from unit.mocks import get_mock_prompt_normalizer
+
+    normalizer = get_mock_prompt_normalizer()
     normalizer.add_prepended_conversation_to_memory_async = AsyncMock()
     # Identity: the session treats ``converted is raw_pcm`` as "no converters ran".
     normalizer.convert_audio_async = AsyncMock(side_effect=lambda raw_pcm, **kw: raw_pcm)
@@ -461,6 +465,36 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
 
         with pytest.raises(RuntimeError, match="dispatch loop died"):
             await asyncio.gather(_consume(), _fire_failure())
+
+
+async def test_run_async_propagates_audio_source_failure_and_cleans_up():
+    """A failing audio source surfaces its error after preserving session teardown."""
+    target = _build_target()
+    normalizer = _build_normalizer()
+    connection = target._connect_async.return_value
+
+    async def _failing_chunks():
+        yield b"\x01" * 100
+        raise RuntimeError("audio source disconnected")
+
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=_failing_chunks(),
+        prompt_normalizer=normalizer,
+    )
+    _mock_session_wire(session)
+
+    with _patched_dispatcher() as captured:
+        with pytest.raises(RuntimeError, match="audio source disconnected"):
+            async for _ in session.run_async():
+                pytest.fail("no message should be yielded after the audio source fails")
+
+    session._push_audio_chunk_async.assert_awaited_once_with(b"\x01" * 100)
+    captured["dispatcher"].drain_callbacks_async.assert_not_awaited()
+    captured["dispatcher"].stop_async.assert_awaited_once()
+    connection.input_audio_buffer.commit.assert_not_awaited()
+    connection.close.assert_awaited_once()
+    normalizer.hash_and_persist_message_async.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -888,22 +922,40 @@ async def test_swap_user_audio_async_inserts_converted_then_deletes_original(sql
     assert create_index < delete_index
 
 
-async def test_swap_user_audio_async_logs_and_swallows_delete_failure(sqlite_instance, caplog):
-    """Best-effort delete: if ``delete`` raises, ``swap`` logs a warning and returns normally."""
+async def test_swap_user_audio_async_propagates_delete_failure(sqlite_instance):
+    """A failed raw-audio deletion must stop response generation."""
     session = _real_session_with_mock_connection(sqlite_instance)
     session._connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
     event = CommittedEvent(item_id="raw_swap_fail")
 
-    with caplog.at_level("WARNING"):
+    with pytest.raises(RuntimeError, match="delete blew up"):
         await session._swap_user_audio_async(committed_event=event, converted_pcm=b"\x01" * 96)
 
     session._connection.conversation.item.create.assert_awaited_once()
     session._connection.conversation.item.delete.assert_awaited_once_with(item_id="raw_swap_fail")
-    # Even on delete failure, insert must have happened first.
     create_index = session._connection.method_calls.index(call.conversation.item.create(item=ANY))
     delete_index = session._connection.method_calls.index(call.conversation.item.delete(item_id="raw_swap_fail"))
     assert create_index < delete_index
-    assert any("delete failed for raw_swap_fail" in record.message for record in caplog.records)
+
+
+async def test_handle_committed_turn_async_stops_after_raw_audio_delete_failure(sqlite_instance):
+    session = _real_session_with_mock_connection(sqlite_instance)
+    session._dispatcher = MagicMock()
+    session._request_converter_configurations = [MagicMock(name="request_converter_config")]
+    session._prompt_normalizer.convert_audio_async = AsyncMock(return_value=b"converted")
+    session._prompt_normalizer.hash_and_persist_message_async = AsyncMock()
+    session._target.save_audio_async = AsyncMock()
+    session._connection.conversation.item.delete.side_effect = RuntimeError("delete blew up")
+
+    with pytest.raises(RuntimeError, match="delete blew up"):
+        await session._handle_committed_turn_async(
+            event=CommittedEvent(item_id="raw_swap_fail"),
+            raw_pcm=b"\x01" * 96,
+        )
+
+    session._connection.response.create.assert_not_awaited()
+    session._target.save_audio_async.assert_not_awaited()
+    session._prompt_normalizer.hash_and_persist_message_async.assert_not_awaited()
 
 
 # --- _request_response_async ------------------------------------------------

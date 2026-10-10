@@ -40,7 +40,7 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan foundry.red_team_agent --target openai_chat --techniques base64 --max-dataset-size 1
+# pyrit_scan run foundry.red_team_agent --target openai_chat --techniques base64 --max-dataset-size 1
 # ```
 #
 # **Available techniques by difficulty:**

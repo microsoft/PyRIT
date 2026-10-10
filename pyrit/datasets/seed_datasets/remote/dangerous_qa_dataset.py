@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Literal, cast
+from typing import Literal
 
 from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import (
     _RemoteDatasetLoader,
@@ -67,7 +67,7 @@ class _DangerousQADataset(_RemoteDatasetLoader):
         """The dataset name."""
         return "dangerous_qa"
 
-    async def fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
+    async def _fetch_dataset_async(self, *, cache: bool = True) -> SeedDataset:
         """
         Fetch DangerousQA dataset and return as SeedDataset.
 
@@ -91,13 +91,13 @@ class _DangerousQADataset(_RemoteDatasetLoader):
             cache=cache,
         )
 
-        if not all(isinstance(item, str) for item in raw):
-            invalid_types = sorted({type(item).__name__ for item in raw if not isinstance(item, str)})
+        invalid_types = sorted({type(item).__name__ for item in raw if not isinstance(item, str)})
+        if invalid_types:
             raise ValueError(
                 f"Expected DangerousQA source to contain a JSON list of strings, got items of types: {invalid_types}"
             )
 
-        questions = cast("list[str]", raw)
+        questions = [item for item in raw if isinstance(item, str)]
 
         authors = [
             "Omar Shaikh",

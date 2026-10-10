@@ -26,7 +26,7 @@ When reviewing: reject any `CentralMemory` import in a non-leaf file (`pretty.py
 
 ### Sinks must use async I/O
 
-Sink implementations must not block the event loop. Use `asyncio.to_thread()` or native async libraries for I/O operations. `FileSink` uses an `asyncio.Lock` to prevent concurrent write races.
+Sink implementations must not block the event loop. Use `asyncio.to_thread()` or native async libraries for I/O operations. `FileSink` uses a `threading.Lock` inside its worker thread to prevent concurrent write races, including when one sink is reused across event loops.
 
 When reviewing: reject synchronous `open()`, `write()`, or network calls inside a sink's `write_async`.
 
@@ -61,6 +61,7 @@ Every new domain printer **must** have a corresponding convenience function adde
 
 ```python
 from pyrit.output.helpers import output_attack_async
+
 await output_attack_async(result, format="pretty")
 ```
 

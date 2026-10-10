@@ -6,10 +6,12 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING
 
+# Deprecation support: remove in 1.4.0.
+from pyrit.common.deprecation import print_deprecation_message
+from pyrit.converter.text_selection_strategy import WordSelectionStrategy  # noqa: TC001 - registry annotation resolution
 from pyrit.converter.word_level_converter import WordLevelConverter
 
 if TYPE_CHECKING:
-    from pyrit.converter.text_selection_strategy import WordSelectionStrategy
     from pyrit.models import ComponentIdentifier
 
 
@@ -56,17 +58,17 @@ class BinaryConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "bits_per_char": self.bits_per_char.value,
-            }
-        )
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(params={**base_identifier.params, "bits_per_char": self.bits_per_char.value})
 
+    # Deprecation shim: remove in 1.4.0 with both hooks; keep _validate_word.
     def validate_input(self, prompt: str) -> None:
         """
-        Check if ``bits_per_char`` is sufficient for the characters in the prompt.
+        Validate the bit width of selected words (deprecated until 1.4.0).
+
+        Subclass overrides may still call this method via ``super()``. After removal,
+        standalone preflight is caller-owned: inherited ``WordLevelConverter.validate_input``
+        does not check bit width.
 
         Args:
             prompt (str): The input text prompt to validate.
@@ -74,8 +76,34 @@ class BinaryConverter(WordLevelConverter):
         Raises:
             ValueError: If ``bits_per_char`` is too small to represent any character in the prompt.
         """
+        print_deprecation_message(
+            old_item="BinaryConverter.validate_input",
+            new_item="BinaryConverter.convert_async",
+            removed_in="1.4.0",
+        )
+        words = prompt.split() if self._word_split_separator is None else prompt.split(self._word_split_separator)
+        selected_indices = self._word_selection_strategy.select_words(words=words)
+        for idx in selected_indices:
+            self._validate_word(words[idx])
+
+    # Deprecation helper: remove in 1.4.0 with validate_input.
+    def _validate_before_conversion(self, prompt: str) -> None:
+        """Skip only the built-in deprecated validator, preserving subclass overrides."""
+        if type(self).validate_input is not BinaryConverter.validate_input:
+            self.validate_input(prompt=prompt)
+
+    def _validate_word(self, word: str) -> None:
+        """
+        Check if ``bits_per_char`` is sufficient for the characters in a word being converted.
+
+        Args:
+            word (str): The word that is about to be converted.
+
+        Raises:
+            ValueError: If ``bits_per_char`` is too small to represent any character in the word.
+        """
         bits = self.bits_per_char.value
-        max_code_point = max((ord(char) for char in prompt), default=0)
+        max_code_point = max((ord(char) for char in word), default=0)
         min_bits_required = max_code_point.bit_length()
         if bits < min_bits_required:
             raise ValueError(
@@ -92,7 +120,12 @@ class BinaryConverter(WordLevelConverter):
 
         Returns:
             str: The converted word.
+
+        Raises:
+            ValueError: If ``bits_per_char`` is too small to represent any character in the word.
         """
+        # Validate per word because unselected words are not encoded.
+        self._validate_word(word)
         bits = self.bits_per_char.value
         return " ".join(format(ord(char), f"0{bits}b") for char in word)
 

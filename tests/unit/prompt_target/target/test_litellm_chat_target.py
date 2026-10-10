@@ -1,13 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import base64
 import json
 import sys
+import threading
 import types
+from collections.abc import Callable, Iterator
+from email.message import Message as HTTPHeaders
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import SpanLimits, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from pyrit.exceptions import (
     EmptyResponseException,
@@ -15,13 +25,28 @@ from pyrit.exceptions import (
     RateLimitException,
     get_retry_max_num_attempts,
 )
-from pyrit.models import JsonResponseConfig, Message, MessagePiece
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
+from pyrit.memory import SQLiteMemory
+from pyrit.models import (
+    AttackOutcome,
+    JsonResponseConfig,
+    Message,
+    MessagePiece,
+    MessageScorable,
+    RequestTraceContext,
+    ScoringExpectation,
+    ToolCallRequirement,
+    ToolsCalled,
+    TraceScorable,
+)
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
+    TargetTraceConfig,
 )
 from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
+from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
 # LiteLLM stub
@@ -52,6 +77,7 @@ def _make_litellm_stub(
     supports_response_schema: bool = False,
     supports_audio_input: bool = False,
     supports_audio_output: bool = False,
+    supports_function_calling: bool = False,
 ):
     mod = types.ModuleType("litellm")
     mod.acompletion = AsyncMock(name="litellm.acompletion")
@@ -59,6 +85,7 @@ def _make_litellm_stub(
     mod.supports_response_schema = MagicMock(return_value=supports_response_schema)
     mod.supports_audio_input = MagicMock(return_value=supports_audio_input)
     mod.supports_audio_output = MagicMock(return_value=supports_audio_output)
+    mod.supports_function_calling = MagicMock(return_value=supports_function_calling)
     mod.get_supported_openai_params = MagicMock(
         return_value=["temperature", "top_p", "max_tokens", "response_format", "seed", "n", "stop"]
     )
@@ -136,6 +163,31 @@ def _user_message(text="test prompt", conversation_id="convo"):
 
 def _disabled_json_config() -> JsonResponseConfig:
     return JsonResponseConfig.from_metadata(metadata={})
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_tool_history_capability_from_model_metadata(patch_central_database, litellm_stub, enabled: bool) -> None:
+    litellm_stub.supports_function_calling.return_value = enabled
+    target = LiteLLMChatTarget(model_name="custom/model")
+    assert ("function_call" in target.capabilities.supported_input_modalities) is enabled
+    assert ("function_call_output" in target.capabilities.supported_input_modalities) is enabled
+
+
+async def test_tool_history_discovery_preserves_litellm_wire_fields(target: LiteLLMChatTarget, litellm_stub) -> None:
+    from pyrit.prompt_target import discover_target_capabilities_async
+
+    litellm_stub.acompletion.return_value = _mock_response()
+    result = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[],
+        test_modalities={frozenset({"function_call"}), frozenset({"function_call_output"})},
+        retries=0,
+    )
+    assert "function_call_output" in result.supported_input_modalities
+    litellm_stub.acompletion.assert_called_once()
+    messages = litellm_stub.acompletion.call_args.kwargs["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant", "tool", "user"]
+    assert messages[2]["tool_call_id"] == messages[1]["tool_calls"][0]["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +447,15 @@ async def test_send_prompt_captures_token_usage(target, litellm_stub):
     assert metadata["token_usage_total_tokens"] == 15
 
 
+async def test_send_prompt_captures_finish_reason(target, litellm_stub):
+    """LiteLLM normalizes provider stop reasons (Anthropic ``end_turn`` becomes ``stop``)."""
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok", finish_reason="stop"))
+
+    result = await target.send_prompt_async(message=_user_message("hi"))
+
+    assert result[0].message_pieces[0].prompt_metadata["finish_reason"] == "stop"
+
+
 async def test_send_prompt_captures_response_cost_from_hidden_params(target, litellm_stub):
     response = _mock_response("ok")
     response._hidden_params = {"response_cost": 0.00042}
@@ -574,6 +635,21 @@ async def test_content_filter_finish_reason_returns_error_message(target, litell
     assert piece.prompt_metadata.get("partial_content") == "partial answer"
 
 
+async def test_content_filter_captures_token_usage_finish_reason_and_cost(target, litellm_stub):
+    """A blocked response still reports the tokens and spend it consumed."""
+    response = _mock_response(content="partial answer", finish_reason="content_filter")
+    response._hidden_params = {"response_cost": 0.00042}
+    litellm_stub.acompletion = AsyncMock(return_value=response)
+
+    result = await target.send_prompt_async(message=_user_message("bad prompt"))
+
+    metadata = result[0].message_pieces[0].prompt_metadata
+    assert metadata["finish_reason"] == "content_filter"
+    assert metadata["token_usage_input_tokens"] == 10
+    assert metadata["token_usage_output_tokens"] == 5
+    assert float(metadata["token_usage_cost"]) == pytest.approx(0.00042)
+
+
 async def test_content_policy_exception_returns_error_message(target, litellm_stub):
     exc = litellm_stub.exceptions.ContentPolicyViolationError("content_filter triggered")
     litellm_stub.acompletion = AsyncMock(side_effect=exc)
@@ -616,6 +692,39 @@ async def test_unknown_finish_reason_raises(target, litellm_stub):
 
 
 # ---------------------------------------------------------------------------
+# Token-limit truncation (finish_reason == "length")
+# ---------------------------------------------------------------------------
+
+
+async def test_token_limit_truncation_marks_the_piece(target, litellm_stub, caplog):
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("The answer is", finish_reason="length"))
+
+    result = await target.send_prompt_async(message=_user_message("hi"))
+
+    piece = result[0].message_pieces[0]
+    assert piece.converted_value == "The answer is"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    assert piece.prompt_metadata["token_usage_output_tokens"] == 5
+    assert "finish_reason='length'" in caplog.text
+
+
+async def test_token_limit_truncation_with_no_content_does_not_raise(target, litellm_stub):
+    empty = _mock_response(content=None, finish_reason="length")
+    empty.choices[0].message.content = None
+    empty.choices[0].message.tool_calls = None
+    empty.choices[0].message.audio = None
+    litellm_stub.acompletion = AsyncMock(return_value=empty)
+
+    result = await target.send_prompt_async(message=_user_message())
+
+    piece = result[0].message_pieces[0]
+    assert piece.response_error == "empty"
+    assert piece.is_truncated is True
+    assert piece.prompt_metadata["finish_reason"] == "length"
+
+
+# ---------------------------------------------------------------------------
 # Exception translation
 # ---------------------------------------------------------------------------
 
@@ -648,6 +757,314 @@ async def test_unknown_error_wrapped_in_pyrit_exception(target, litellm_stub):
     litellm_stub.acompletion = AsyncMock(side_effect=RuntimeError("something broke"))
     with pytest.raises(PyritException, match="LiteLLM error"):
         await target.send_prompt_async(message=_user_message())
+
+
+# ---------------------------------------------------------------------------
+# Request tracing
+# ---------------------------------------------------------------------------
+
+
+async def test_trace_config_sends_and_records_fresh_context_per_request_async(
+    patch_central_database, litellm_stub
+) -> None:
+    emitted: list[str] = []
+
+    async def complete_async(**kwargs: object) -> object:
+        await asyncio.sleep(0)
+        headers = kwargs["extra_headers"]
+        assert isinstance(headers, dict)
+        assert headers["X-Gateway"] == "1"
+        emitted.append(headers["traceparent"])
+        assert emitted[-1].split("-")[1] == f"{trace.get_current_span().get_span_context().trace_id:032x}"
+        return _mock_response()
+
+    litellm_stub.acompletion = AsyncMock(side_effect=complete_async)
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", headers={"X-Gateway": "1"}, trace_config=TargetTraceConfig(enabled=True)
+    )
+    requests = [_user_message(f"request {i}", conversation_id=f"convo-{i}") for i in range(2)]
+    await asyncio.gather(*(target.send_prompt_async(message=request) for request in requests))
+
+    links = [RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) for request in requests]
+    assert {link.traceparent for link in links if link} == set(emitted)
+    assert len(set(emitted)) == 2
+    assert target._headers == {"X-Gateway": "1"}
+    assert not trace.get_current_span().get_span_context().is_valid
+
+
+async def test_trace_context_survives_extra_headers_passthrough_async(patch_central_database, litellm_stub) -> None:
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response())
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o",
+        extra_body_parameters={"extra_headers": {"X-Route": "a"}},
+        trace_config=TargetTraceConfig(enabled=True),
+    )
+    request = _user_message()
+    await target.send_prompt_async(message=request)
+
+    link = RequestTraceContext.from_metadata(request.get_piece().prompt_metadata)
+    assert link is not None
+    assert litellm_stub.acompletion.call_args.kwargs["extra_headers"] == {
+        "X-Route": "a",
+        "traceparent": link.traceparent,
+    }
+
+
+@pytest.mark.parametrize("trace_config", [None, TargetTraceConfig(enabled=False)])
+async def test_tracing_is_disabled_by_default_and_clears_stale_links_async(
+    patch_central_database, litellm_stub, trace_config: TargetTraceConfig | None
+) -> None:
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response())
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", trace_config=trace_config)
+    request = _user_message()
+    request.get_piece().prompt_metadata.update(
+        RequestTraceContext(traceparent=f"00-{'1' * 32}-{'2' * 16}-01").to_metadata()
+    )
+    await target.send_prompt_async(message=request)
+
+    assert "extra_headers" not in litellm_stub.acompletion.call_args.kwargs
+    assert RequestTraceContext.from_metadata(request.get_piece().prompt_metadata) is None
+
+
+@pytest.mark.parametrize(
+    ("target_kwargs", "litellm_kwarg"),
+    [
+        ({"headers": {"TraceParent": "manual"}}, "extra_headers"),
+        ({"extra_body_parameters": {"extra_headers": {"tracestate": "manual"}}}, "extra_headers"),
+        ({"extra_body_parameters": {"headers": {"traceparent": "manual"}}}, "headers"),
+    ],
+)
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_manual_trace_headers_require_disabled_tracing_async(
+    patch_central_database, litellm_stub, target_kwargs: dict, litellm_kwarg: str, enabled: bool
+) -> None:
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response())
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", trace_config=TargetTraceConfig(enabled=enabled), **target_kwargs
+    )
+    if enabled:
+        with pytest.raises(ValueError, match="Manual trace headers"):
+            await target.send_prompt_async(message=_user_message())
+        litellm_stub.acompletion.assert_not_called()
+    else:
+        await target.send_prompt_async(message=_user_message())
+        assert "manual" in litellm_stub.acompletion.call_args.kwargs[litellm_kwarg].values()
+
+
+@pytest.mark.parametrize(
+    ("tool", "complete", "outcome"),
+    [
+        ("lookup", True, AttackOutcome.SUCCESS),
+        ("other", True, AttackOutcome.FAILURE),
+        ("other", False, AttackOutcome.UNDETERMINED),
+    ],
+)
+async def test_attack_scores_tool_call_through_traced_target_async(
+    sqlite_instance: SQLiteMemory,
+    patch_central_database,
+    tool: str,
+    complete: bool,
+    outcome: AttackOutcome,
+) -> None:
+    client = InMemoryTraceClient()
+    provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+    provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+    tracer = provider.get_tracer("litellm-agent")
+
+    async def agent_async(**kwargs: object) -> object:
+        headers = kwargs["extra_headers"]
+        assert isinstance(headers, dict)
+        context = TraceContextTextMapPropagator().extract(headers)
+        with tracer.start_as_current_span("agent", context=context) as root:
+            with tracer.start_as_current_span(
+                tool, attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": tool}
+            ):
+                pass
+        if complete:
+            client.mark_complete(trace_ids=(f"{root.get_span_context().trace_id:032x}",))
+        return _mock_response("done")
+
+    # Patch the import hook rather than sys.modules so scorer modules imported lazily here stay loaded.
+    litellm, _ = _make_litellm_stub()
+    litellm.acompletion = AsyncMock(side_effect=agent_async)
+    try:
+        with patch.object(LiteLLMChatTarget, "_import_litellm", return_value=litellm):
+            attack = PromptSendingAttack(
+                objective_target=LiteLLMChatTarget(
+                    model_name="openai/gpt-4o", trace_config=TargetTraceConfig(enabled=True)
+                ),
+                attack_scoring_config=AttackScoringConfig(
+                    objective_scorer=OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+                ),
+                max_attempts_on_failure=0,
+            )
+            result = await attack.execute_async(
+                objective="use the lookup tool",
+                expectation=ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name="lookup"),)),)),
+            )
+    finally:
+        provider.shutdown()
+        client.close()
+
+    assert result.outcome is outcome
+    score = result.automated_score
+    assert score is not None
+    assert result.last_response is not None
+    assert score.scorable == MessageScorable(message_piece_ids=(result.last_response.id,))
+    request = (await sqlite_instance.get_message_pieces_async(conversation_id=result.conversation_id, role="user"))[0]
+    link = RequestTraceContext.from_metadata(request.prompt_metadata)
+    assert link is not None
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert observation.scorable == TraceScorable(trace_ids=(link.trace_id,))
+
+
+@pytest.mark.parametrize(
+    "provider_specific_header",
+    [
+        {"custom_llm_provider": "openai", "extra_headers": {"TraceParent": "manual"}},
+        [
+            {"custom_llm_provider": "anthropic", "extra_headers": {"X-Other": "1"}},
+            {"custom_llm_provider": "anthropic,openai", "extra_headers": {"TRACESTATE": "manual"}},
+        ],
+    ],
+)
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_provider_specific_trace_headers_require_disabled_tracing_async(
+    patch_central_database, litellm_stub, provider_specific_header: object, enabled: bool
+) -> None:
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response())
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o",
+        extra_body_parameters={"provider_specific_header": provider_specific_header},
+        trace_config=TargetTraceConfig(enabled=enabled),
+    )
+    if enabled:
+        with pytest.raises(ValueError, match="Manual trace headers"):
+            await target.send_prompt_async(message=_user_message())
+        litellm_stub.acompletion.assert_not_called()
+    else:
+        await target.send_prompt_async(message=_user_message())
+        assert litellm_stub.acompletion.call_args.kwargs["provider_specific_header"] == provider_specific_header
+
+
+# ---------------------------------------------------------------------------
+# Request tracing through the real LiteLLM adapter
+# ---------------------------------------------------------------------------
+
+_OPENAI_REPLY = {
+    "id": "chatcmpl-1",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "gpt-4o",
+    "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+}
+_ANTHROPIC_REPLY = {
+    "id": "msg_1",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-6",
+    "content": [{"type": "text", "text": "hello"}],
+    "stop_reason": "end_turn",
+    "stop_sequence": None,
+    "usage": {"input_tokens": 1, "output_tokens": 1},
+}
+# LiteLLM appends ``/chat/completions`` to an OpenAI base and ``/v1/messages`` to an Anthropic base.
+_WIRE_PROVIDERS = pytest.mark.parametrize(
+    ("model_name", "base_path"), [("openai/gpt-4o", "/v1"), ("anthropic/claude-sonnet-4-6", "")]
+)
+
+
+@pytest.fixture
+def chat_endpoint() -> Iterator[tuple[str, list[HTTPHeaders]]]:
+    """Serve OpenAI and Anthropic chat replies on loopback and record the headers of each request."""
+    pytest.importorskip("litellm")
+    received: list[HTTPHeaders] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            received.append(self.headers)
+            reply = _ANTHROPIC_REPLY if self.path.endswith("/v1/messages") else _OPENAI_REPLY
+            payload = json.dumps(reply).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", received
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@_WIRE_PROVIDERS
+async def test_recorded_trace_context_reaches_wire_through_litellm_async(
+    patch_central_database, chat_endpoint: tuple[str, list[HTTPHeaders]], model_name: str, base_path: str
+) -> None:
+    url, received = chat_endpoint
+    provider = model_name.split("/")[0]
+    target = LiteLLMChatTarget(
+        model_name=model_name,
+        endpoint=url + base_path,
+        api_key="test-key",
+        extra_body_parameters={
+            "provider_specific_header": {"custom_llm_provider": provider, "extra_headers": {"X-Route": "a"}}
+        },
+        trace_config=TargetTraceConfig(enabled=True),
+    )
+    request = _user_message()
+    responses = await target.send_prompt_async(message=request)
+
+    link = RequestTraceContext.from_metadata(request.get_piece().prompt_metadata)
+    assert link is not None
+    assert len(received) == 1
+    assert received[0].get_all("traceparent") == [link.traceparent]
+    assert received[0].get_all("tracestate") is None
+    assert received[0]["X-Route"] == "a"
+    assert responses[0].get_value() == "hello"
+
+
+def _single_scope(provider: str) -> object:
+    return {"custom_llm_provider": provider, "extra_headers": {"TraceParent": f"00-{'3' * 32}-{'4' * 16}-01"}}
+
+
+def _list_scope(provider: str) -> object:
+    return [
+        {"custom_llm_provider": "bedrock", "extra_headers": {"X-Other": "1"}},
+        {"custom_llm_provider": f"bedrock, {provider}", "extra_headers": {"tracestate": "vendor=manual"}},
+    ]
+
+
+@_WIRE_PROVIDERS
+@pytest.mark.parametrize("scoped_headers", [_single_scope, _list_scope])
+async def test_provider_specific_trace_header_is_rejected_through_litellm_async(
+    patch_central_database,
+    chat_endpoint: tuple[str, list[HTTPHeaders]],
+    model_name: str,
+    base_path: str,
+    scoped_headers: Callable[[str], object],
+) -> None:
+    url, received = chat_endpoint
+    target = LiteLLMChatTarget(
+        model_name=model_name,
+        endpoint=url + base_path,
+        api_key="test-key",
+        extra_body_parameters={"provider_specific_header": scoped_headers(model_name.split("/")[0])},
+        trace_config=TargetTraceConfig(enabled=True),
+    )
+    with pytest.raises(ValueError, match="Manual trace headers"):
+        await target.send_prompt_async(message=_user_message())
+    assert received == []
 
 
 # ---------------------------------------------------------------------------

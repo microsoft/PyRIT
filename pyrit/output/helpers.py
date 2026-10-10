@@ -9,12 +9,24 @@ deferred inside each ``*MemoryPrinter`` constructor, so importing this module (o
 ``pyrit.output``) does not pull in the memory stack until a memory-backed printer is instantiated.
 """
 
+import asyncio
 import os
 
 from pyrit.models import AttackResult, ComponentIdentifier, Message, ScenarioResult, Score
+from pyrit.output._derivation import select_attacks
 from pyrit.output.attack_result.markdown import MarkdownAttackResultMemoryPrinter
 from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
+from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
+from pyrit.output.conversation.source import MemoryConversationSource
+from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
+from pyrit.output.scenario_result.json import (
+    ConversationEntry,
+    JsonScenarioResultMemoryPrinter,
+    build_scenario_conversations_document,
+    build_scenario_full_document,
+    build_scenario_full_payload,
+)
 from pyrit.output.scenario_result.pretty import PrettyScenarioResultMemoryPrinter
 from pyrit.output.score.pretty import PrettyScorePrinter
 from pyrit.output.scorer.pretty import PrettyScorerMemoryPrinter
@@ -98,7 +110,7 @@ async def output_scenario_async(
 
     Args:
         result (ScenarioResult): The scenario result to print.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        format (OutputFormat): Output format. Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
         sort_groups_by_success_rate (bool): When True, the Per-Group Breakdown is sorted so
             that the group with the highest success rate appears first. Defaults to False,
@@ -107,14 +119,181 @@ async def output_scenario_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        json_printer = JsonScenarioResultMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(result)
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for scenario results: {format!r}. Only 'pretty' is available.")
+        raise ValueError(
+            f"Unsupported format for scenario results: {format!r}. Only 'pretty' and 'json' are available."
+        )
 
     printer = PrettyScenarioResultMemoryPrinter(
         sink=sink or get_default_sink(StdoutSink),
         sort_groups_by_success_rate=sort_groups_by_success_rate,
     )
     await printer.write_async(result)
+
+
+async def output_scenario_attacks_async(
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+    format: OutputFormat = "pretty",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a compact per-attack table for a scenario result.
+
+    Complements ``output_scenario_async`` (which prints the aggregate overview) by
+    listing individual attack results: id, technique, objective, outcome, and score.
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to list.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of attacks to show. Defaults to None.
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+    """
+    if format == "json":
+        json_printer = JsonScenarioResultMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
+        return
+    resolved_sink = sink or get_default_sink(StdoutSink)
+    printer = PrettyScenarioResultMemoryPrinter(sink=resolved_sink)
+    await printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
+
+
+async def output_scenario_conversations_async(
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+    format: OutputFormat = "json",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print every attack's summary and conversation for a scenario result as one JSON document.
+
+    The document has the same format as the CLI's ``scenario-results --view conversations
+    --format json`` output, and each response keeps only the score from the scenario's objective
+    scorer. Conversations are read from memory and every attack is included unless you pass
+    ``attack_result_ids`` or ``limit``, so narrow large scenarios.
+
+    Args:
+        result (ScenarioResult): The scenario result whose conversations to print.
+        attack_result_ids (list[str] | None): Restrict to these attack ids. Defaults to None.
+        limit (int | None): Maximum number of conversations to include; 0 gives an empty
+            document. Defaults to None (all).
+        format (OutputFormat): Output format. Only "json" is supported, so it is the default.
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not "json" or ``limit`` is negative.
+    """
+    if format != "json":
+        raise ValueError(f"Unsupported format for scenario conversations: {format!r}. Only 'json' is available.")
+
+    entries = await _collect_conversation_entries_async(result=result, attack_result_ids=attack_result_ids, limit=limit)
+    document = build_scenario_conversations_document(result=result, entries=entries)
+    await (sink or StdoutSink()).write_async(document)
+
+
+async def output_scenario_full_async(
+    result: ScenarioResult,
+    *,
+    attack_result_ids: list[str] | None = None,
+    limit: int | None = None,
+    format: OutputFormat = "json",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print the full scenario report: the overview plus every attack's conversation.
+
+    The report has the same format as the CLI's ``scenario-results --view full`` output with
+    ``--format json`` or ``--format html``, and each response keeps only the score from the
+    scenario's objective scorer. The overview always covers the whole scenario;
+    ``attack_result_ids`` and ``limit`` only choose which conversations are included.
+
+    Args:
+        result (ScenarioResult): The scenario result to report.
+        attack_result_ids (list[str] | None): Restrict the conversations to these attack ids.
+            Defaults to None.
+        limit (int | None): Maximum number of conversations to include; 0 gives none.
+            Defaults to None (all).
+        format (OutputFormat): Output format — "json" or a standalone, text-only "html"
+            report. Defaults to "json".
+        sink (Sink | None): Output sink. Defaults to StdoutSink for "json"; "html" requires
+            an explicit sink, such as ``FileSink``.
+
+    Raises:
+        ValueError: If ``format`` is not "json" or "html", ``format`` is "html" without a sink,
+            or ``limit`` is negative.
+    """
+    if format not in ("json", "html"):
+        raise ValueError(
+            f"Unsupported format for full scenario report: {format!r}. Only 'json' and 'html' are available."
+        )
+    if format == "html" and sink is None:
+        raise ValueError(
+            "format='html' writes a report file and requires an explicit sink, such as FileSink(path=...)."
+        )
+
+    entries = await _collect_conversation_entries_async(result=result, attack_result_ids=attack_result_ids, limit=limit)
+    # The overview's scorer metrics are read from a JSONL file, so build it off the event loop.
+    overview = await asyncio.to_thread(JsonScenarioResultMemoryPrinter().build, result, view="overview")
+    if format == "html":
+        payload = build_scenario_full_payload(result=result, overview=overview, entries=entries)
+        await HtmlScenarioReportPrinter(sink=sink).write_async(payload)
+        return
+    document = build_scenario_full_document(result=result, overview=overview, entries=entries)
+    await (sink or StdoutSink()).write_async(document)
+
+
+async def _collect_conversation_entries_async(
+    *,
+    result: ScenarioResult,
+    attack_result_ids: list[str] | None,
+    limit: int | None,
+) -> list[ConversationEntry]:
+    """
+    Read each selected attack's conversation from memory and build its JSON form.
+
+    Attacks are filtered by id and then limited before any conversation is read, as in the CLI.
+
+    Args:
+        result (ScenarioResult): The scenario result whose attacks to read.
+        attack_result_ids (list[str] | None): Restrict to these attack ids.
+        limit (int | None): Maximum number of attacks to read.
+
+    Returns:
+        list[ConversationEntry]: ``(atomic_attack_name, attack, structured_messages)`` triples.
+
+    Raises:
+        ValueError: If ``limit`` is negative.
+    """
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must be zero or greater, got {limit}.")
+    selected = select_attacks(result, attack_result_ids=attack_result_ids)
+    if limit is not None:
+        selected = selected[:limit]
+    if not selected:
+        return []
+
+    objective_scorer_identifier = result.objective_scorer_identifier
+    source = MemoryConversationSource()
+    printer = JsonConversationPrinter(source=source)
+    entries: list[ConversationEntry] = []
+    for atomic_attack_name, attack in selected:
+        messages = await source.get_messages_async(conversation_id=attack.conversation_id)
+        structured = await printer.build_async(
+            messages,
+            include_scores=objective_scorer_identifier is not None,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
+        entries.append((atomic_attack_name, attack, structured))
+    return entries
 
 
 async def output_scorer_async(
@@ -133,14 +312,20 @@ async def output_scorer_async(
     Args:
         scorer_identifier (ComponentIdentifier): The scorer identifier.
         harm_category (str | None): The harm category. None for objective scorers.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        from pyrit.output.scorer.json import JsonScorerMemoryPrinter
+
+        json_printer = JsonScorerMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for scorer: {format!r}. Only 'pretty' is available.")
+        raise ValueError(f"Unsupported format for scorer: {format!r}. Only 'pretty' and 'json' are available.")
 
     printer = PrettyScorerMemoryPrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scorer_identifier=scorer_identifier, harm_category=harm_category)
@@ -161,13 +346,12 @@ async def output_conversation_async(
 
     Args:
         messages (list[Message]): The messages to print.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
-        sink (Sink | None): Output sink. Defaults to StdoutSink for "pretty", IPythonMarkdownSink
-            for "markdown".
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
+        sink (Sink | None): Output sink. Defaults to StdoutSink.
         include_scores (bool): Whether to include scores. Defaults to False.
         include_reasoning_summaries (bool): Whether to include reasoning summaries. Defaults to False.
         blur_images (bool): If True, apply a Gaussian blur to image outputs before
-            rendering them. For "pretty" output (the only format supported here),
+            rendering them. For "pretty" output (the only format that renders images),
             image bytes are blurred in-memory before display. The original image file
             is **not** modified; this flag is intended to reduce reviewer exposure,
             not to enforce access control. If blurring fails for any reason, a warning
@@ -179,8 +363,16 @@ async def output_conversation_async(
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        json_printer = JsonConversationMemoryPrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(
+            messages,
+            include_scores=include_scores,
+            include_reasoning_summaries=include_reasoning_summaries,
+        )
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' is available.")
+        raise ValueError(f"Unsupported format for conversation: {format!r}. Only 'pretty' and 'json' are available.")
 
     printer = PrettyConversationMemoryPrinter(
         sink=sink or get_default_sink(StdoutSink),
@@ -205,14 +397,20 @@ async def output_score_async(
 
     Args:
         scores (list[Score]): The scores to print.
-        format (OutputFormat): Output format — "pretty" or "markdown". Defaults to "pretty".
+        format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
 
     Raises:
         ValueError: If ``format`` is not a supported value.
     """
+    if format == "json":
+        from pyrit.output.score.json import JsonScorePrinter
+
+        json_printer = JsonScorePrinter(sink=sink or StdoutSink())
+        await json_printer.write_async(scores)
+        return
     if format != "pretty":
-        raise ValueError(f"Unsupported format for scores: {format!r}. Only 'pretty' is available.")
+        raise ValueError(f"Unsupported format for scores: {format!r}. Only 'pretty' and 'json' are available.")
 
     printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scores)

@@ -50,7 +50,12 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
-from pyrit.models import AttackSeedGroup
+from pyrit.models import (
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -108,7 +113,7 @@ class FoundryComposite:
     def name(self) -> str:
         """A human-readable name for this composite."""
         if not self.converters:
-            return self.attack.value if self.attack else "baseline"
+            return str(self.attack.value) if self.attack else "baseline"
         if self.attack is None and len(self.converters) == 1:
             return str(self.converters[0].value)
         attack_name = self.attack.value if self.attack else "baseline"
@@ -248,6 +253,7 @@ class RedTeamAgent(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
     _DEFAULT_ATTACK_SPECIFICATION: ClassVar[_AttackSpecification] = _AttackSpecification(PromptSendingAttack)
     _ATTACK_SPECIFICATIONS: ClassVar[Mapping[FoundryTechnique, _AttackSpecification]] = MappingProxyType(
         {
@@ -337,6 +343,7 @@ class RedTeamAgent(Scenario):
         # Call super().__init__() first to initialize self._memory
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=FoundryTechnique,
             default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
             objective_scorer=objective_scorer,
@@ -413,6 +420,36 @@ class RedTeamAgent(Scenario):
 
         self._scenario_composites = composites
         return flat
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate one selected seed population per resolved Foundry composition.
+
+        Returns:
+            ScenarioRunSizeEstimate: The composition population estimate.
+        """
+        selected_count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
+        components = [
+            ScenarioRunSizeComponent(
+                label=composition.name,
+                count=selected_count,
+            )
+            for composition in self._scenario_composites
+        ]
+        if self._include_baseline:
+            components.append(
+                ScenarioRunSizeComponent(
+                    label="Baseline",
+                    count=selected_count,
+                    is_baseline=True,
+                )
+            )
+        return ScenarioRunSizeEstimate(
+            total_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Counts one population per resolved Foundry composite, not per flattened constituent technique.",
+        )
 
     @staticmethod
     def _technique_to_composite(technique: ScenarioTechnique) -> "FoundryComposite":

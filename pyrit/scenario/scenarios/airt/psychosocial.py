@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
@@ -30,7 +31,16 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     CrescendoAttack,
 )
-from pyrit.models import SeedPrompt
+from pyrit.models import (
+    AllAvailableDatasetSize,
+    BoundedDatasetSize,
+    ScenarioDatasetSizeCap,
+    ScenarioDatasetSizeEstimate,
+    ScenarioDatasetSummary,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedPrompt,
+)
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -45,7 +55,6 @@ from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import (
-    FloatScaleScorer,
     FloatScaleThresholdScorer,
     NumericRange,
     SelfAskGeneralFloatScaleScorer,
@@ -58,7 +67,7 @@ if TYPE_CHECKING:
     from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
-    from pyrit.score import TrueFalseScorer
+    from pyrit.score import FloatScaleScorer, TrueFalseScorer
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +296,27 @@ _DETERMINISTIC_CONVERTER_BUILDERS: dict[PsychosocialTechnique, Callable[[], Conv
 }
 
 
+def _build_simulated_base_factory(*, harm: _SubHarm, max_turns: int) -> AttackTechniqueFactory:
+    """
+    Build the simulated-conversation base factory for a sub-harm.
+
+    Reads the sub-harm's escalation prompt from disk, so async callers must run it through
+    ``asyncio.to_thread``.
+
+    Args:
+        harm: The sub-harm whose escalation prompt drives the simulated conversation.
+        max_turns: Number of simulated conversation turns.
+
+    Returns:
+        AttackTechniqueFactory: The base factory every converter technique layers onto.
+    """
+    return AttackTechniqueFactory.with_simulated_conversation(
+        name=f"psychosocial_{harm.name}",
+        adversarial_chat_system_prompt=SeedPrompt.from_yaml_file(harm.escalation_prompt_path),
+        num_turns=max_turns,
+    )
+
+
 def _converter_for_technique(technique: PsychosocialTechnique, *, adversarial_chat: PromptTarget) -> Converter | None:
     """
     Map a converter technique to its converter instance.
@@ -338,7 +368,8 @@ class Psychosocial(Scenario):
     datasets (``--dataset-names`` is ignored).
     """
 
-    VERSION: int = 3
+    VERSION: int = 4
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -414,6 +445,7 @@ class Psychosocial(Scenario):
 
         super().__init__(
             version=self.VERSION,
+            uses_default_adversarial_target=adversarial_chat is None,
             technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 dataset_names=[harm.dataset_name for harm in _SUB_HARMS],
@@ -471,7 +503,9 @@ class Psychosocial(Scenario):
         per_subharm_cap = self._dataset_config.max_dataset_size
         filters = self._dataset_config.filters
         if per_subharm_cap is None:
-            self._dataset_config = DatasetAttackConfiguration(dataset_names=dataset_names, filters=filters)
+            self._dataset_config = DatasetAttackConfiguration(
+                dataset_names=dataset_names, max_dataset_size=None, filters=filters
+            )
         else:
             rebuilt = CompoundDatasetAttackConfiguration.per_dataset(
                 dataset_names=dataset_names, max_dataset_size=per_subharm_cap, filters=filters
@@ -482,6 +516,62 @@ class Psychosocial(Scenario):
             rebuilt.max_dataset_size = per_subharm_cap * len(dataset_names)
             self._dataset_config = rebuilt
         return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
+
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
+        """
+        Use the outer limit applied by seed resolution, not compound child budgets.
+
+        Returns:
+            ScenarioDatasetSizeEstimate: Combined sub-harm cap or all available finite data.
+        """
+        cap = self._dataset_config.max_dataset_size
+        return (
+            AllAvailableDatasetSize()
+            if cap is None
+            else BoundedDatasetSize(value=cap * len(self._selected_sub_harms()))
+        )
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the independent sub-harm technique sweeps and per-harm baselines.
+
+        Returns:
+            ScenarioRunSizeEstimate: Configured per-sub-harm budget.
+        """
+        per_harm_count = budget.value // len(self._selected_sub_harms())
+        datasets = [
+            ScenarioDatasetSummary(
+                name=harm.dataset_name,
+                configured_caps=[ScenarioDatasetSizeCap(label="per-sub-harm cap", count=per_harm_count)],
+            )
+            for harm in self._selected_sub_harms()
+        ]
+        technique_count = len(self._scenario_techniques)
+        components: list[ScenarioRunSizeComponent] = []
+        for dataset in datasets:
+            dataset_name = dataset.name
+            count = per_harm_count
+            components.append(
+                ScenarioRunSizeComponent(
+                    label=f"{dataset_name} technique sweep",
+                    count=count * technique_count,
+                )
+            )
+            if self._include_baseline:
+                components.append(
+                    ScenarioRunSizeComponent(
+                        label=f"{dataset_name} baseline",
+                        count=count,
+                        is_baseline=True,
+                        note="Psychosocial uses a distinct baseline and scorer for each sub-harm.",
+                    )
+                )
+        return ScenarioRunSizeEstimate(
+            total_attack_count=sum(component.count for component in components),
+            components=components,
+            datasets=datasets,
+            note="Each default sub-harm is planned independently; retries and internal turns are excluded.",
+        )
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
@@ -545,11 +635,9 @@ class Psychosocial(Scenario):
                     )
                 )
 
-            base_factory = AttackTechniqueFactory.with_simulated_conversation(
-                name=f"psychosocial_{harm.name}",
-                adversarial_chat_system_prompt_path=harm.escalation_prompt_path,
-                num_turns=max_turns,
-            )
+            # Building the base factory reads the sub-harm's escalation prompt from disk, so keep
+            # it off the event loop.
+            base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
             for technique in techniques:
                 if technique is PsychosocialTechnique.Crescendo:

@@ -1,58 +1,114 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./_fixtures";
+import type { BackendMessage, TargetInfo } from "@/types";
+import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
+import { READY_RUNTIME } from "./_runtime";
+import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
+
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/runtime", async (route) => { await route.fulfill({ json: READY_RUNTIME }); });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const MOCK_CONV_ID = "err-conv-001";
+const MOCK_ATTACK_TARGET: TargetInfo = {
+  target_type: "OpenAIChatTarget",
+  identifier_hash: "mock-target-hash",
+  endpoint: "https://mock.endpoint.com",
+  model_name: "gpt-4o-mock",
+};
 
 /** Standard mock for a successful first-message round-trip (create + send). */
 function buildSuccessMessageMock(userText: string) {
-  return {
-    messages: {
-      messages: [
+  return makeAddMessageResponse("err-ar-001", MOCK_CONV_ID, [
+    {
+      turn_number: 0,
+      role: "user",
+      created_at: new Date().toISOString(),
+      message_pieces: [
         {
-          turn_number: 1,
-          role: "user",
-          created_at: new Date().toISOString(),
-          message_pieces: [
-            {
-              id: "p-u",
-              original_value_data_type: "text",
-              converted_value_data_type: "text",
-              original_value: userText,
-              converted_value: userText,
-              scores: [],
-              response_error: "none",
-            },
-          ],
-        },
-        {
-          turn_number: 1,
-          role: "assistant",
-          created_at: new Date().toISOString(),
-          message_pieces: [
-            {
-              id: "p-a",
-              original_value_data_type: "text",
-              converted_value_data_type: "text",
-              original_value: `Reply to: ${userText}`,
-              converted_value: `Reply to: ${userText}`,
-              scores: [],
-              response_error: "none",
-            },
-          ],
+          id: "p-u",
+          original_value_data_type: "text",
+          converted_value_data_type: "text",
+          original_value: userText,
+          converted_value: userText,
+          scores: [],
+          response_error: "none",
         },
       ],
     },
-  };
+    {
+      turn_number: 1,
+      role: "assistant",
+      created_at: new Date().toISOString(),
+      message_pieces: [
+        {
+          id: "p-a",
+          original_value_data_type: "text",
+          converted_value_data_type: "text",
+          original_value: `Reply to: ${userText}`,
+          converted_value: `Reply to: ${userText}`,
+          scores: [],
+          response_error: "none",
+        },
+      ],
+    },
+  ], {
+    response_error: "none",
+    request_turn_number: 0,
+    response_turn_number: 1,
+  }, { target: MOCK_ATTACK_TARGET });
+}
+
+function buildProcessingFailureMock(userText: string) {
+  return makeAddMessageResponse("err-ar-001", MOCK_CONV_ID, [
+    {
+      turn_number: 2,
+      role: "user",
+      created_at: new Date().toISOString(),
+      message_pieces: [
+        {
+          id: "p-processing-user",
+          original_value_data_type: "text",
+          converted_value_data_type: "text",
+          original_value: userText,
+          converted_value: userText,
+          scores: [],
+          response_error: "none",
+        },
+      ],
+    },
+    {
+      turn_number: 3,
+      role: "assistant",
+      created_at: new Date().toISOString(),
+      message_pieces: [
+        {
+          id: "p-processing-error",
+          original_value_data_type: "text",
+          converted_value_data_type: "error",
+          original_value: "",
+          converted_value:
+            "RuntimeError: target failed\nTraceback (most recent call last): ...",
+          scores: [],
+          response_error: "processing",
+        },
+      ],
+    },
+  ], {
+    response_error: "processing",
+    request_turn_number: 2,
+    response_turn_number: 3,
+  }, { target: MOCK_ATTACK_TARGET });
 }
 
 /**
  * Set up all the mocks needed for a full chat flow.
  *
- * The `addMessageHandler` parameter controls what happens on POST messages.
+ * The `addMessageHandler` parameter controls what happens on POST message-sends.
  * By default it returns a success response.  Tests can override it to
  * inject errors on specific calls.
  */
@@ -60,6 +116,19 @@ async function mockAllAPIs(
   page: Page,
   addMessageHandler?: (route: Route) => Promise<void>,
 ) {
+  // Authentication config
+  await page.route(/\/api\/auth\/config/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        clientId: "",
+        tenantId: "",
+        allowedGroupIds: "",
+      }),
+    });
+  });
+
   // Targets
   await page.route(/\/api\/targets/, async (route) => {
     if (route.request().method() === "GET") {
@@ -75,6 +144,7 @@ async function mockAllAPIs(
               model_name: "gpt-4o-mock",
             }),
           ],
+          pagination: { limit: 200, has_more: false },
         }),
       });
     } else {
@@ -87,7 +157,7 @@ async function mockAllAPIs(
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ version: "0.0.0-test", display: "test" }),
+      body: JSON.stringify(mockVersion({ version: "0.0.0-test", display: "test" })),
     });
   });
 
@@ -109,8 +179,8 @@ async function mockAllAPIs(
 
   // Messages (GET = conversation load, POST = send)
   // Accumulate sent messages so GET returns them
-  const sentMessages: Record<string, unknown>[] = [];
-  await page.route(/\/api\/attacks\/[^/]+\/messages/, async (route) => {
+  const sentMessages: BackendMessage[] = [];
+  await page.route(/\/api\/attacks\/[^/]+\/(?:messages|message-sends)(?:\?|$)/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -146,11 +216,7 @@ async function mockAllAPIs(
       }
       const successMock = buildSuccessMessageMock(userText);
       sentMessages.push(...successMock.messages.messages);
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(successMock),
-      });
+      await fulfillMessageSend(route, successMock);
     } else {
       await route.continue();
     }
@@ -166,15 +232,15 @@ async function mockAllAPIs(
   });
 }
 
-/** Navigate to config, set mock target active, return to chat. */
+/** Navigate to the target registry, set the objective default, return to chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByTitle("Configuration").click();
-  await expect(page.getByText("Target Configuration")).toBeVisible({
+  await page.getByTitle("Registry").click();
+  await expect(page.getByText("Target Registry")).toBeVisible({
     timeout: 10000,
   });
-  const setActiveBtn = page.getByRole("button", { name: /set active/i });
-  await expect(setActiveBtn).toBeVisible({ timeout: 5000 });
-  await setActiveBtn.click();
+  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
+  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
+  await objectiveDefault.selectOption({ index: 1 });
   await page.getByTitle("Chat").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
@@ -207,6 +273,103 @@ async function triggerVisibilityChange(page: Page) {
 }
 
 // ---------------------------------------------------------------------------
+// Error scenario: accepted send persists a target processing failure
+// ---------------------------------------------------------------------------
+
+test.describe("Error: accepted send with target processing failure", () => {
+  test("should preserve the draft and offer edit recovery", async ({ page }) => {
+    let callCount = 0;
+    let recoveryRequest: Record<string, unknown> | undefined;
+    let recoveryCreated = false;
+    await mockAllAPIs(page, async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}");
+      const userText =
+        body?.pieces?.find(
+          (piece: Record<string, string>) => piece.data_type === "text",
+        )?.original_value || "message";
+      callCount++;
+      const response = callCount === 1
+        ? buildSuccessMessageMock(userText)
+        : buildProcessingFailureMock(userText);
+      await fulfillMessageSend(route, response);
+    });
+    await page.route(/\/api\/attacks\/[^/]+\/conversations/, async (route) => {
+      if (route.request().method() === "GET" && recoveryCreated) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            attack_result_id: "err-ar-001",
+            main_conversation_id: MOCK_CONV_ID,
+            conversations: [
+              {
+                conversation_id: MOCK_CONV_ID,
+                message_count: 4,
+                last_message_preview: "Target response error",
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+              {
+                conversation_id: "err-conv-recovery",
+                message_count: 2,
+                last_message_preview: "Reply to: Setup message",
+                created_at: "2026-01-01T00:00:01.000Z",
+              },
+            ],
+          }),
+        });
+        return;
+      }
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      recoveryRequest = JSON.parse(route.request().postData() ?? "{}");
+      recoveryCreated = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          conversation_id: "err-conv-recovery",
+          created_at: "2026-01-01T00:00:01.000Z",
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await activateMockTarget(page);
+    await sendAndWait(page, "Setup message", "Reply to: Setup message");
+
+    const input = page.getByRole("textbox");
+    await input.fill("Preserve this draft");
+    await page.getByRole("button", { name: /send/i }).click();
+
+    await expect(
+      page.getByText(/target could not process this message/i),
+    ).toBeVisible();
+    const recoveryButton = page.getByRole("button", {
+      name: /edit in clean conversation/i,
+    });
+    await expect(recoveryButton).toHaveCount(1);
+    await expect(input).toHaveValue("Preserve this draft");
+    await expect(input).toBeDisabled();
+    await expect(page.getByText(/Traceback \(most recent call last\)/i)).toHaveCount(0);
+
+    await recoveryButton.click();
+    await expect.poll(() => recoveryRequest).toEqual({
+      source_conversation_id: MOCK_CONV_ID,
+      cutoff_index: 1,
+    });
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("Preserve this draft");
+    await expect(page.getByTestId(`conversation-item-${MOCK_CONV_ID}`)).toBeVisible();
+    await expect(
+      page.getByTestId("conversation-item-err-conv-recovery"),
+    ).toBeVisible();
+    expect(callCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Error scenario: backend returns 500 on send message
 // ---------------------------------------------------------------------------
 
@@ -231,11 +394,7 @@ test.describe("Error: backend 500 on send message", () => {
         } catch {
           /* ignore */
         }
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(buildSuccessMessageMock(userText)),
-        });
+        await fulfillMessageSend(route, buildSuccessMessageMock(userText));
       } else {
         // Subsequent sends fail
         await route.fulfill({
@@ -262,8 +421,10 @@ test.describe("Error: backend 500 on send message", () => {
       page.getByText(/Internal server error/i),
     ).toBeVisible({ timeout: 10000 });
 
-    // The failed text should be restored in the input for easy re-send
+    // Retain the draft, but uncertain acceptance permits only evidence refresh.
     await expect(input).toHaveValue("This should fail", { timeout: 5000 });
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Refresh saved messages" })).toBeVisible();
   });
 
   test("should recover cleanly when the first send fails", async ({ page }) => {
@@ -310,11 +471,7 @@ test.describe("Error: network error on send message", () => {
         } catch {
           /* ignore */
         }
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify(buildSuccessMessageMock(userText)),
-        });
+        await fulfillMessageSend(route, buildSuccessMessageMock(userText));
       } else {
         await route.abort("connectionrefused");
       }
@@ -446,6 +603,7 @@ test.describe("Error: create attack fails", () => {
                 model_name: "gpt-4o-mock",
               }),
             ],
+            pagination: { limit: 200, has_more: false },
           }),
         });
       } else {
@@ -458,7 +616,7 @@ test.describe("Error: create attack fails", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ version: "0.0.0-test", display: "test" }),
+        body: JSON.stringify(mockVersion({ version: "0.0.0-test", display: "test" })),
       });
     });
 

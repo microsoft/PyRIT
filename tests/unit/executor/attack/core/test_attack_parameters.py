@@ -6,11 +6,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.exceptions import AdversarialChatResponseBlockedException
 from pyrit.executor.attack.core.attack_parameters import (
     AttackParameters,
 )
+from pyrit.executor.attack.core.attack_preparation import (
+    AttackPreparationFailure,
+    AttackPreparationFailureKind,
+)
+from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
+from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttackParameters
 from pyrit.models import (
     AttackSeedGroup,
+    ConversationReference,
+    ConversationType,
     Message,
     MessagePiece,
     SeedObjective,
@@ -129,8 +138,8 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         """Create a SeedSimulatedConversation config."""
         return SeedSimulatedConversation(
             num_turns=3,
-            adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
-            simulated_target_system_prompt_path="/path/to/target.yaml",
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            simulated_target_system_prompt=SeedPrompt(value="target", parameters=["objective", "num_turns"]),
         )
 
     @pytest.fixture
@@ -151,13 +160,21 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         return MagicMock()
 
     @pytest.fixture
-    def mock_simulated_result(self) -> list:
-        """Create a mock simulated conversation result (list[SeedPrompt])."""
-        return [
+    def mock_simulated_result(self) -> SimulatedConversationResult:
+        """Create a simulated conversation result with source lineage."""
+        prompts = [
             SeedPrompt(value="Simulated user message", data_type="text", role="user", sequence=0),
             SeedPrompt(value="Simulated assistant response", data_type="text", role="assistant", sequence=1),
             SeedPrompt(value="Final simulated message", data_type="text", role="user", sequence=2),
         ]
+        reference = ConversationReference(
+            conversation_id="preparation-1",
+            conversation_type=ConversationType.PREPARATION,
+        )
+        return SimulatedConversationResult(
+            seed_prompts=prompts,
+            related_conversations=frozenset({reference}),
+        )
 
     async def test_raises_when_adversarial_chat_missing(
         self,
@@ -214,7 +231,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        mock_simulated_result: MagicMock,
+        mock_simulated_result: SimulatedConversationResult,
     ) -> None:
         """Test that simulated conversation is generated when config is present."""
         mock_generate.return_value = mock_simulated_result
@@ -239,7 +256,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        mock_simulated_result: list,
+        mock_simulated_result: SimulatedConversationResult,
     ) -> None:
         """Test that prepended_conversation comes from the generated result."""
         mock_generate.return_value = mock_simulated_result
@@ -255,6 +272,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         assert len(params.prepended_conversation) == 2
         assert params.prepended_conversation[0].get_value() == "Simulated user message"
         assert params.prepended_conversation[1].get_value() == "Simulated assistant response"
+        assert params.source_conversations == mock_simulated_result.related_conversations
 
     @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
     async def test_uses_generated_next_message(
@@ -263,7 +281,7 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         seed_group_with_simulated_conv: AttackSeedGroup,
         mock_adversarial_chat: MagicMock,
         mock_objective_scorer: MagicMock,
-        mock_simulated_result: list,
+        mock_simulated_result: SimulatedConversationResult,
     ) -> None:
         """Test that next_message comes from the generated result."""
         mock_generate.return_value = mock_simulated_result
@@ -277,6 +295,63 @@ class TestFromSeedGroupAsyncWithSimulatedConversation:
         # next_message should be the last user message
         assert params.next_message is not None
         assert params.next_message.get_value() == "Final simulated message"
+
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
+    async def test_preserves_simulated_conversation_preparation_failure(
+        self,
+        mock_generate: AsyncMock,
+        seed_group_with_simulated_conv: AttackSeedGroup,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+    ) -> None:
+        reference = ConversationReference(
+            conversation_id="preparation-1",
+            conversation_type=ConversationType.PREPARATION,
+        )
+        failure_reason = "Adversarial chat blocked the attack."
+        mock_generate.return_value = SimulatedConversationResult(
+            seed_prompts=[],
+            related_conversations=frozenset({reference}),
+            preparation_failure=AttackPreparationFailure(
+                kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                reason=failure_reason,
+            ),
+        )
+
+        params = await PromptSendingAttackParameters.from_seed_group_async(
+            seed_group=seed_group_with_simulated_conv,
+            adversarial_chat=mock_adversarial_chat,
+            objective_scorer=mock_objective_scorer,
+        )
+
+        assert params.preparation_failure is not None
+        assert params.preparation_failure.reason == failure_reason
+        assert params.source_conversations == frozenset({reference})
+
+    @patch("pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async")
+    async def test_unsupported_params_preserve_preparation_failure(
+        self,
+        mock_generate: AsyncMock,
+        seed_group_with_simulated_conv: AttackSeedGroup,
+        mock_adversarial_chat: MagicMock,
+        mock_objective_scorer: MagicMock,
+    ) -> None:
+        failure_reason = "Adversarial chat blocked the attack."
+        mock_generate.return_value = SimulatedConversationResult(
+            seed_prompts=[],
+            related_conversations=frozenset(),
+            preparation_failure=AttackPreparationFailure(
+                kind=AttackPreparationFailureKind.ADVERSARIAL_CHAT_BLOCKED,
+                reason=failure_reason,
+            ),
+        )
+
+        with pytest.raises(AdversarialChatResponseBlockedException, match=failure_reason):
+            await AttackParameters.from_seed_group_async(
+                seed_group=seed_group_with_simulated_conv,
+                adversarial_chat=mock_adversarial_chat,
+                objective_scorer=mock_objective_scorer,
+            )
 
 
 class TestExcluding:

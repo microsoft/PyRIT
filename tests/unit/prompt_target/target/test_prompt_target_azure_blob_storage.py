@@ -39,6 +39,7 @@ def test_supported_auth_modes_includes_identity():
     assert AzureBlobStorageTarget.supported_auth_modes == ("api_key", "identity")
 
 
+@pytest.mark.usefixtures("patch_central_database")
 def test_initialization_with_required_parameters_from_env():
     os.environ[AzureBlobStorageTarget.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE] = (
         "https://test.blob.core.windows.net/test"
@@ -49,6 +50,7 @@ def test_initialization_with_required_parameters_from_env():
     assert abs_target._sas_token is None
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @patch.dict(
     "os.environ",
     {
@@ -104,7 +106,11 @@ async def test_azure_blob_storage_validate_prev_convs(
 ):
     mock_upload_async.return_value = None
     message_piece = sample_entries[0]
-    azure_blob_storage_target._memory.add_message_to_memory(request=Message(message_pieces=[message_piece]))
+    (
+        await azure_blob_storage_target._memory.add_message_to_memory_async(
+            request=Message(message_pieces=[message_piece])
+        )
+    )
     request = Message(message_pieces=[message_piece])
 
     with pytest.raises(
@@ -193,6 +199,40 @@ async def test_create_container_client_uses_default_credential_when_no_sas_token
         credential=mock_credential,
     )
     assert target._client_async is mock_container_client
+    assert target._credential is mock_credential
+
+
+@patch.dict(
+    "os.environ",
+    {AzureBlobStorageTarget.SAS_TOKEN_ENVIRONMENT_VARIABLE: "environment-sas-token"},
+)
+async def test_create_container_client_identity_mode_ignores_sas_environment_variable(patch_central_database):
+    target = AzureBlobStorageTarget(
+        container_url="https://test.blob.core.windows.net/test",
+        auth_mode="identity",
+    )
+    mock_container_client = AsyncMock()
+    mock_credential = AsyncMock()
+
+    with (
+        patch(
+            "pyrit.prompt_target.azure_blob_storage_target.DefaultAzureCredential",
+            return_value=mock_credential,
+        ),
+        patch(
+            "pyrit.prompt_target.azure_blob_storage_target.AsyncContainerClient",
+            return_value=mock_container_client,
+        ) as mock_container_cls,
+        patch.object(AsyncContainerClient, "from_container_url") as mock_from_container_url,
+    ):
+        await target._create_container_client_async()
+
+    mock_from_container_url.assert_not_called()
+    mock_container_cls.assert_called_once_with(
+        account_url="https://test.blob.core.windows.net",
+        container_name="test",
+        credential=mock_credential,
+    )
     assert target._credential is mock_credential
 
 

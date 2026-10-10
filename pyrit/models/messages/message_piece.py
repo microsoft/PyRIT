@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ from pyrit.models.literals import (  # noqa: TC001  (runtime-required by Pydanti
 from pyrit.models.score import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
     ComponentIdentifierField,
 )
+from pyrit.models.target.request_trace_context import RequestTraceContext
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
@@ -45,6 +46,7 @@ class MessagePiece(BaseModel):
 
     STRUCTURED_REFUSAL_METADATA_KEY: ClassVar[str] = "structured_refusal"
     TRUNCATED_METADATA_KEY: ClassVar[str] = "truncated"
+    PREPENDED_HISTORY_METADATA_KEY: ClassVar[str] = "prepended_history"
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -56,7 +58,7 @@ class MessagePiece(BaseModel):
     role: ChatMessageRole
     conversation_id: str | None = None
     sequence: int = -1
-    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(tz=UTC))
     original_value: str
     original_value_data_type: PromptDataType = "text"
     original_value_sha256: str | None = None
@@ -81,14 +83,14 @@ class MessagePiece(BaseModel):
     @classmethod
     def _mirror_original_to_converted(cls, data: Any) -> Any:
         """
-        When ``converted_value`` / ``converted_value_data_type`` aren't supplied, mirror the originals.
+        Mirror omitted or null converted values, preserving explicitly empty strings.
 
         Returns:
             The input ``data`` with mirrored converted fields applied.
         """
         if not isinstance(data, dict):
             return data
-        if not data.get("converted_value") and "original_value" in data:
+        if data.get("converted_value") is None and "original_value" in data:
             data["converted_value"] = data["original_value"]
         if not data.get("converted_value_data_type") and "original_value_data_type" in data:
             data["converted_value_data_type"] = data["original_value_data_type"]
@@ -114,15 +116,27 @@ class MessagePiece(BaseModel):
         """
         Role to use for API calls.
 
-        Maps ``simulated_assistant`` to ``assistant`` for API compatibility.
+        Maps simulated assistant and tool roles to their API roles.
         Use this property when sending messages to external APIs.
         """
-        return "assistant" if self.role == "simulated_assistant" else self.role
+        if self.role == "simulated_assistant":
+            return "assistant"
+        return "tool" if self.role == "simulated_tool" else self.role
 
     @property
     def is_simulated(self) -> bool:
-        """Whether this piece represents a simulated assistant response."""
-        return self.role == "simulated_assistant"
+        """Whether this piece represents a simulated assistant response or tool result."""
+        return self.role in {"simulated_assistant", "simulated_tool"}
+
+    def set_simulated_role(self) -> None:
+        """Mark injected history without retaining evidence of a previous live send."""
+        if self.role == "assistant":
+            self.role = "simulated_assistant"
+        elif self.role == "tool":
+            self.role = "simulated_tool"
+        self.prompt_metadata[self.PREPENDED_HISTORY_METADATA_KEY] = True
+        self.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
+        self.prompt_metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
 
     def to_message(self) -> Message:
         """
@@ -252,10 +266,10 @@ class MessagePiece(BaseModel):
 
 def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece]:
     """
-    Group by ``conversation_id``, ordering by earliest timestamp then ``sequence``.
+    Group by ``conversation_id``, then order by sequence and piece timestamp.
 
     Conversations are ordered by their earliest piece's timestamp; pieces
-    within a conversation are ordered by ``sequence``.
+    within a conversation are ordered by ``sequence`` and then by creation time.
 
     Args:
         message_pieces: The pieces to sort. Not mutated.
@@ -269,5 +283,5 @@ def sort_message_pieces(message_pieces: list[MessagePiece]) -> list[MessagePiece
     }
     return sorted(
         message_pieces,
-        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence),
+        key=lambda x: (earliest_timestamps[x.conversation_id], x.conversation_id or "", x.sequence, x.timestamp),
     )
