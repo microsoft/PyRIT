@@ -40,22 +40,29 @@ All configuration (database, initializers, env-files, etc.) is read from
 the config file (~/.pyrit/.pyrit_conf by default, or --config-file).
 
 Examples:
-  # Start backend with default settings
-  pyrit_backend
+  # Start a loopback-only backend for local development
+  pyrit_backend --auth-mode local
 
   # Start with a custom config file
-  pyrit_backend --config-file ./my_config.yaml
+  pyrit_backend --auth-mode local --config-file ./my_config.yaml
 
-    # Start with a config file stored in Azure Blob Storage
-    pyrit_backend --config-file https://account.blob.core.windows.net/config/.pyrit_conf
+  # Start an authenticated shared backend
+  pyrit_backend --auth-mode entra --host 0.0.0.0
 
-  # Start with custom port and host
-  pyrit_backend --host 0.0.0.0 --port 8080
-
-  # Start with auto-reload for development
-  pyrit_backend --reload
+  # Start with auto-reload for local development
+  pyrit_backend --auth-mode local --reload
 """,
         formatter_class=RawDescriptionHelpFormatter,
+    )
+
+    parser.add_argument(
+        "--auth-mode",
+        choices=("local", "entra"),
+        help=(
+            "Incoming-request authentication mode. 'local' deliberately disables Entra authentication "
+            "for loopback-only development; 'entra' requires complete ENTRA_* settings. "
+            "If omitted, startup requires complete Entra configuration."
+        ),
     )
 
     parser.add_argument(
@@ -125,14 +132,28 @@ def main(*, args: list[str] | None = None) -> int:
     # Forward config file to the FastAPI lifespan via env var
     if parsed_args.config_file is not None:
         os.environ["PYRIT_CONFIG_FILE"] = str(parsed_args.config_file)
+    if parsed_args.auth_mode is not None:
+        os.environ["PYRIT_AUTH_MODE"] = parsed_args.auth_mode
 
     if parsed_args.host not in ("localhost", "127.0.0.1", "::1"):
-        print(
-            f"WARNING: Binding pyrit_backend to {parsed_args.host}:{parsed_args.port} exposes the API "
-            "on a non-loopback interface. The PyRIT backend has no authentication; only do this on "
-            "a trusted network.",
-            file=sys.stderr,
-        )
+        if parsed_args.auth_mode == "local":
+            print(
+                "ERROR: PYRIT_AUTH_MODE=local may only be used with a loopback host (localhost, 127.0.0.1, or ::1).",
+                file=sys.stderr,
+            )
+            return 1
+        if os.getenv("PYRIT_AUTH_MODE", "").strip().casefold() == "local":
+            print(
+                f"WARNING: Binding local-mode pyrit_backend to {parsed_args.host}:{parsed_args.port}; "
+                "the launcher must enforce loopback-only publication or equivalent network isolation.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"WARNING: Binding pyrit_backend to {parsed_args.host}:{parsed_args.port} exposes the API "
+                "on a non-loopback interface. Configure complete Entra authentication before sharing it.",
+                file=sys.stderr,
+            )
 
     try:
         _run_server(

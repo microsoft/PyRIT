@@ -36,15 +36,6 @@ class RuntimeLifecycle:
     def __init__(self, *, app: FastAPI, source: ConfigurationFileService) -> None:
         """Bind lifecycle state to one app and its immutable configuration source."""
         self.app = app
-        self.app.state.auth_environment = {
-            key: os.getenv(key, "")
-            for key in (
-                "ENTRA_CLIENT_ID",
-                "ENTRA_TENANT_ID",
-                "ENTRA_ALLOWED_GROUP_IDS",
-                "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN",
-            )
-        }
         self.source = source
         self.edit_lock = asyncio.Lock()
         self.state = "initializing"

@@ -25,6 +25,7 @@ if (!isCompatibilityId(compatibilityId)
 const logger = createLogger()
 const originalError = logger.error
 const backendUrl = process.env.PYRIT_BACKEND_URL ?? 'http://127.0.0.1:8000'
+const frontendHost = process.env.PYRIT_FRONTEND_HOST ?? '127.0.0.1'
 let proxyWarned = false
 logger.error = (msg, options) => {
   if (typeof msg === 'string' && msg.includes('http proxy error')) {
@@ -58,7 +59,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    host: true, // Listen on all interfaces for devcontainer
+    host: frontendHost,
     // Improve HMR performance for devcontainer
     hmr: {
       overlay: false,

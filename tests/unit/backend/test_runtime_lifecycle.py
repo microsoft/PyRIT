@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health
@@ -37,6 +38,7 @@ def runtime(tmp_path: Path) -> Generator[RuntimeLifecycle, None, None]:
     )
     source = ConfigurationFileService(config_file_value=str(config_path))
     app = FastAPI()
+    app.state.authentication_policy = AuthenticationPolicy(mode="local")
     with patch.dict(os.environ, {}, clear=True):
         service = RuntimeLifecycle(app=app, source=source)
     assert service.topology_supported
@@ -331,7 +333,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
 
 
 def test_authorization_policy_does_not_change_with_environment(runtime: RuntimeLifecycle) -> None:
-    runtime.app.state.auth_environment["PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"] = ""
+    runtime.app.state.authentication_policy = AuthenticationPolicy(mode="local")
     request = Request({"type": "http", "app": runtime.app})
     with patch.dict(os.environ, {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}):
         with pytest.raises(Exception) as error:

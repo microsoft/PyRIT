@@ -57,6 +57,7 @@ services:
       - ~/.azure:/home/vscode/.azure
     environment:
       - PYRIT_MODE=gui
+      - PYRIT_AUTH_MODE=local
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]

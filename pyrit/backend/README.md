@@ -7,14 +7,20 @@ FastAPI-based REST API for PyRIT.
 ### Run the Server
 
 ```bash
-# Development server with auto-reload
-python -m pyrit.backend.main
+# Loopback-only local development without Entra authentication
+python -m pyrit.backend.pyrit_backend --auth-mode local --host 127.0.0.1 --reload
 
-# Or with uvicorn directly
-uvicorn pyrit.backend.main:app --reload --host 0.0.0.0 --port 8000
+# Equivalent direct Uvicorn launch
+PYRIT_AUTH_MODE=local python -m uvicorn pyrit.backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 The API will be available at `http://localhost:8000`
+
+For a shared deployment, set `PYRIT_AUTH_MODE=entra`, configure
+`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, and `ENTRA_ALLOWED_GROUP_IDS`, and then
+bind the server to the intended network interface. Startup fails when neither
+explicit local mode nor complete Entra configuration is present. Target-provider
+API keys do not authenticate incoming GUI users.
 
 ### API Documentation
 
@@ -250,6 +256,12 @@ CLI wheel, and backend must be available before enabling enforcement in deployme
 ## Configuration
 
 Environment variables:
+- `PYRIT_AUTH_MODE` - Incoming-request authentication mode: `local` or `entra`
+- `ENTRA_TENANT_ID` - Entra directory used for GUI sign-in
+- `ENTRA_CLIENT_ID` - Entra application registration used by the GUI
+- `ENTRA_ALLOWED_GROUP_IDS` - Comma-separated groups allowed to use protected APIs
+- `ENTRA_ADMIN_GROUP_ID` - Optional group allowed to use administrator APIs
+- `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN` - Local-mode-only administrator override
 - `PYRIT_API_HOST` - Host to bind to (default: localhost)
 - `PYRIT_API_PORT` - Port to listen on (default: 8000)
 - `PYRIT_API_RELOAD` - Enable auto-reload (default: false)

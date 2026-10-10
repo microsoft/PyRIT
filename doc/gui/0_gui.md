@@ -11,14 +11,17 @@ There are several ways to run CoPyRIT:
 If you have PyRIT installed, use the `pyrit_backend` command to start the server. The bundled frontend is served automatically.
 
 ```bash
-pyrit_backend
+pyrit_backend --auth-mode local
 ```
 
 Then open `http://localhost:8000` in your browser.
 
-Authentication-disabled local servers deny administrator operations by default. To enable configuration and initializer
-administration for a trusted local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
-setting on a network-accessible deployment.
+Local mode deliberately disables incoming-request Entra authentication and is
+restricted to a loopback host by the packaged CLI. Authentication-disabled local
+servers deny administrator operations by default. To enable configuration and
+initializer administration for a trusted local development server, also set
+`PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use these local settings on a
+network-accessible deployment.
 
 ### Docker
 

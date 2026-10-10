@@ -203,6 +203,11 @@ servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 The frontend proxies API requests to `http://localhost:8000` in development.
 Configure this in `vite.config.ts` if needed.
 
+The Vite development server binds to `127.0.0.1` by default so its `/api`
+proxy cannot expose a local unauthenticated backend to the LAN. Environments
+that already provide an isolated network boundary, such as a devcontainer with
+controlled port forwarding, can explicitly set `PYRIT_FRONTEND_HOST=0.0.0.0`.
+
 The Vite development server disables its own CORS handling. Use the frontend's
 same-origin `/api` proxy for API requests. Cross-origin API preflights pass to
 the backend, which applies its configured origin policy. Do not enable

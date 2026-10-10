@@ -190,6 +190,8 @@ def test_build_server_launch_plan_constructs_platform_settings(
         "127.0.0.1",
         "--port",
         "8765",
+        "--auth-mode",
+        "local",
         "--config-file",
         "config.yaml",
         "--log-level",

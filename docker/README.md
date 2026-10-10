@@ -6,6 +6,12 @@ This Docker container provides a pre-configured environment for running PyRIT (P
 
 This README contains technical details for working with the Docker setup locally.
 
+> **Security:** The shipped GUI Compose profile is intentionally local-only. It
+> combines `PYRIT_AUTH_MODE=local` with a `127.0.0.1:8000` host publication.
+> Do not republish that container to a LAN or public interface. Shared
+> deployments must use `PYRIT_AUTH_MODE=entra` with complete Entra settings.
+> Target API keys authenticate outbound provider calls, not incoming GUI users.
+
 ## Docker CI
 
 The `docker_build` workflow builds the devcontainer base, builds the local-source

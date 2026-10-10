@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from pyrit import _compatibility
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app
 from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
@@ -32,6 +33,7 @@ def compatibility_id() -> Iterator[str]:
     with (
         patch.object(_compatibility, "get_compatibility_id", return_value=identity),
         patch.object(app.state, "compatibility_id", identity, create=True),
+        patch.object(app.state, "authentication_policy", AuthenticationPolicy(mode="local"), create=True),
     ):
         yield identity
 

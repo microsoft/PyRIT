@@ -64,7 +64,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-container_id=$(docker create --env "PYRIT_MODE=$mode" --publish "127.0.0.1::$port" "$image")
+auth_args=()
+if [[ "$mode" == "gui" ]]; then
+    auth_args=(--env "PYRIT_AUTH_MODE=local")
+fi
+container_id=$(docker create --env "PYRIT_MODE=$mode" "${auth_args[@]}" --publish "127.0.0.1::$port" "$image")
 docker start "$container_id"
 address=$(docker port "$container_id" "$port/tcp")
 base_url="http://$address"

@@ -90,6 +90,8 @@ def _build_server_launch_plan(
         host,
         "--port",
         str(port),
+        "--auth-mode",
+        "local",
     ]
     if config_file is not None:
         command.extend(["--config-file", str(config_file)])

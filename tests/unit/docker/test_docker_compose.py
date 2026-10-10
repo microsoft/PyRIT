@@ -25,3 +25,10 @@ def test_compose_publishes_only_on_loopback(*, service: str, port: int) -> None:
     compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
 
     assert compose["services"][service]["ports"] == [f"127.0.0.1:{port}:{port}"]
+
+
+def test_gui_compose_explicitly_selects_local_authentication() -> None:
+    compose_path = Path(__file__).resolve().parents[3] / "docker" / "docker-compose.yaml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+
+    assert "PYRIT_AUTH_MODE=local" in compose["services"]["pyrit-gui"]["environment"]
