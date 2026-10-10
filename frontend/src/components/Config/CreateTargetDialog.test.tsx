@@ -1140,6 +1140,66 @@ describe("CreateTargetDialog", () => {
     });
   });
 
+  it("should submit the catalog video duration as a number", async () => {
+    const user = userEvent.setup();
+    const videoParameters: Parameter[] = [
+      {
+        name: "resolution_dimensions",
+        type_name: "str",
+        is_list: false,
+        choices: ["720x1280", "1280x720", "1024x1792", "1792x1024"],
+        default: "1280x720",
+        required: false,
+      },
+      { name: "n_seconds", type_name: "int", is_list: false, choices: null, default: "4", required: false },
+      { name: "model_name", type_name: "str", is_list: false, choices: null, default: null, required: true },
+      { name: "endpoint", type_name: "str", is_list: false, choices: null, default: null, required: true },
+      { name: "api_key", type_name: "str", is_list: false, choices: null, default: null, required: false },
+      { name: "underlying_model", type_name: "str", is_list: false, choices: null, default: null, required: false },
+    ];
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: TARGET_TYPES.items.map((item) => (
+        item.target_type === "OpenAIVideoTarget" ? { ...item, parameters: videoParameters } : item
+      )),
+    });
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "openai_video_custom",
+      target_type: "OpenAIVideoTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIVideoTarget");
+    await user.click(screen.getByText("Advanced settings"));
+
+    fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
+      target: { value: "https://api.openai.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("e.g. gpt-4o, my-deployment"), {
+      target: { value: "sora-2" },
+    });
+    fireEvent.change(screen.getByLabelText("N Seconds"), {
+      target: { value: "8" },
+    });
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIVideoTarget",
+        params: {
+          endpoint: "https://api.openai.com",
+          model_name: "sora-2",
+          n_seconds: 8,
+        },
+      });
+    });
+  });
+
   it("should render and submit metadata choices and booleans", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({

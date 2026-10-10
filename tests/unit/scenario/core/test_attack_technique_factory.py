@@ -496,8 +496,8 @@ class TestFactoryCreate:
         assert cfg.request_converters == baked_request + extra
         assert cfg.response_converters == baked_response
 
-    def test_create_extra_request_converters_skipped_when_unsupported(self):
-        """Attacks that don't accept ``attack_converter_config`` silently ignore extras."""
+    def test_create_extra_request_converters_raise_when_unsupported(self):
+        """Attacks that don't accept ``attack_converter_config`` reject extras instead of dropping them."""
 
         class _NoConverterAttack(_StubAttack):
             def __init__(self, *, objective_target, attack_scoring_config=None):
@@ -510,13 +510,12 @@ class TestFactoryCreate:
         target = MagicMock(spec=PromptTarget)
         extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 
-        technique = factory.create(
-            objective_target=target,
-            attack_scoring_config=self._scoring(),
-            extra_request_converters=extra,
-        )
-
-        assert isinstance(technique, AttackTechnique)
+        with pytest.raises(ValueError, match="does not accept 'attack_converter_config'"):
+            factory.create(
+                objective_target=target,
+                attack_scoring_config=self._scoring(),
+                extra_request_converters=extra,
+            )
 
     def test_create_with_deferred_forward_ref_scoring_config_policy_raise(self):
         """Forward-referenced scoring config defined after factory init resolves and raises on incompatible type."""

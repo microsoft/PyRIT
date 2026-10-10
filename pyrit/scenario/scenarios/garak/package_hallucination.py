@@ -153,6 +153,7 @@ class PackageHallucination(Scenario):
     """
 
     VERSION: int = 3
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden

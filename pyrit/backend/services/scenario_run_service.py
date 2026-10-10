@@ -76,7 +76,7 @@ from pyrit.models.catalog.scenario import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
-from pyrit.registry.resolution import resolve_declared_params
+from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import override_default_adversarial_target
 
@@ -637,6 +637,12 @@ class ScenarioRunService:
             ValueError: If scenario, target, initializer, or technique cannot be found.
         """
         scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
+        if request.scenario_params:
+            reject_non_external_params(
+                params=request.scenario_params,
+                declared=scenario_class.supported_parameters(),
+                owner=request.scenario_name,
+            )
         await self._run_initializers_async(request=request)
         objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
         adversarial_target = self._configuration_resolver.resolve_adversarial_target(

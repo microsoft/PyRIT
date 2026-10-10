@@ -145,6 +145,10 @@ class Scenario(ABC):
     #: an unavailable verdict is an expected result rather than a scenario error.
     RAISE_IF_DEFAULT_SCORER_BLOCKS: ClassVar[bool] = True
 
+    #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
+    #: False so the parameter isn't declared, and passing it fails instead of being ignored.
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Enforce the keyword-only constructor contract on subclasses.
@@ -441,7 +445,10 @@ class Scenario(ABC):
         Returns:
             list[Parameter]: Declared parameters (default: common run inputs + additional).
         """
-        return cls._common_scenario_parameters() + cls.additional_parameters()
+        parameters = cls._common_scenario_parameters() + cls.additional_parameters()
+        if not cls.SUPPORTS_TECHNIQUE_CONVERTERS:
+            parameters = [parameter for parameter in parameters if parameter.name != "technique_converters"]
+        return parameters
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.

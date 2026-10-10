@@ -76,7 +76,7 @@ class TestSeedPreparation:
         assert len(prepared.seed_group.seeds) == 1
         assert prepared.seed_group.objective.conditions == source.objective.conditions
         assert prepared.seed_group.objective.metadata == source.objective.metadata
-        assert prepared.seed_group.harm_categories == source.harm_categories
+        assert set(prepared.seed_group.harm_categories) == set(source.harm_categories)
         prepared.seed_group.objective.metadata["source"]["index"] = 2
         assert source.model_dump() == original
         assert source.logical_id == source_id

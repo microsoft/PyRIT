@@ -103,6 +103,7 @@ class WebInjection(Scenario):
     """
 
     VERSION: int = 2
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 

@@ -7,7 +7,7 @@ import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
@@ -374,6 +374,7 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 4
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:

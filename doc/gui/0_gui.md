@@ -588,9 +588,11 @@ at `GET /api/runtime`.
 ## Registry API Migration Notes
 
 Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
-These endpoints return all constructor parameters from the registry, including
-lists, unions, and component references. The temporary `/catalog` routes retain
-their scalar-only filtering for the current UI.
+These endpoints return the constructor parameters external callers can set, each
+described in the form callers send it: a flat collection as a list, a union as its
+first alternative callers can send (`font_size: int | tuple[int, int]` as `int`),
+and a component reference as a name. They leave out types external callers can't
+create. Registry metadata keeps every parameter with its full annotation.
 Create requests should supply an explicit registry `name`. Converter creation
 returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat
@@ -607,10 +609,8 @@ allowlisted image, audio, and video extensions inline. Other files, including PD
 SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
 
 **Temporary compatibility, scheduled for removal with the chat migration:**
-the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
-registry metadata for the current UI. Create requests without a name receive a
-generated `compat_...` name. New clients should not depend on these routes or
-unnamed creation.
+target create requests without a name receive a generated `compat_...` name.
+New clients should supply an explicit name.
 
 ## Connection Health
 

@@ -529,6 +529,7 @@ class AdversarialBenchmark(Scenario):
             adversarial_targets=resolved_targets,
             display_group_fn=lambda combo: combo.target_name or "",
             include_baseline=context.include_baseline,
+            technique_converters=self._technique_converters,
         )
         if not self._is_cache_reuse_enabled() or self._scenario_result_id:
             return atomic_attacks
