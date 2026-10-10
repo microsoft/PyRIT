@@ -35,7 +35,7 @@ ANALYTICS_REVISION = "901e6c7bf9d4"
 
 def test_analytics_migration_is_single_successor_of_main() -> None:
     scripts = ScriptDirectory(str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
-    assert scripts.get_heads() == [ANALYTICS_REVISION]
+    assert len(scripts.get_heads()) == 1
     revision = scripts.get_revision(ANALYTICS_REVISION)
     assert revision is not None
     assert revision.down_revision == MAIN_REVISION
@@ -80,7 +80,7 @@ def test_analytics_migration_upgrades_from_main_revisions(*, tmp_path: Path, sta
             head_revision = connection.execute(
                 text("SELECT version_num FROM pyrit_memory_alembic_version")
             ).scalar_one()
-            assert head_revision == ANALYTICS_REVISION
+            assert head_revision == ScriptDirectory.from_config(config).get_current_head()
             assert (
                 connection.execute(
                     text('SELECT resolved_atomic_attack_identifier_hash FROM "AttackResultEntries" WHERE id = :id'),

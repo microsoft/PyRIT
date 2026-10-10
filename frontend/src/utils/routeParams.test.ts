@@ -5,6 +5,7 @@ import {
   scenarioRunAttackRoutePath,
   scenarioRunProvenance,
   scenarioRunRoutePath,
+  findingEvidenceOrigin,
 } from './routeParams'
 
 const SCENARIO_RESULT_ID = '123e4567-e89b-12d3-a456-426614174000'
@@ -25,6 +26,18 @@ describe('routerPathParamValue', () => {
 })
 
 describe('scenario run provenance routes', () => {
+  it('builds evidence-origin routes preserving scanner provenance', () => {
+    expect(attackConversationRoutePath('attack/1', 'conversation/1', SCENARIO_RESULT_ID, SCENARIO_RESULT_ID)).toBe(
+      `/attacks/attack%2F1/conversations/conversation%2F1?scenarioResultId=${SCENARIO_RESULT_ID}&findingEvidenceId=${SCENARIO_RESULT_ID}`,
+    )
+    expect(findingEvidenceOrigin(new URLSearchParams(`findingEvidenceId=${SCENARIO_RESULT_ID}`))).toBe(SCENARIO_RESULT_ID)
+  })
+  it.each(['findingEvidenceId=bad', `findingEvidenceId=${SCENARIO_RESULT_ID}&findingEvidenceId=${SCENARIO_RESULT_ID}`, ''])(
+    'rejects invalid evidence origin %s', (query: string) => {
+      expect(findingEvidenceOrigin(new URLSearchParams(query))).toBeNull()
+      expect(attackConversationRoutePath('a', 'c', null, 'bad')).toBe('/attacks/a/conversations/c')
+    },
+  )
   it('reads one canonical UUID and ignores unrelated query values', () => {
     const params = new URLSearchParams(`tab=messages&scenarioResultId=${SCENARIO_RESULT_ID}`)
 

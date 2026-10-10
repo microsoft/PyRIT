@@ -726,6 +726,20 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
+  it("carries the exact operation across history tabs", async () => {
+    const operation = "Red team / α% &";
+    renderApp(`/history/attacks?operation=${encodeURIComponent(operation)}&outcome=success`);
+    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
+    const scanner = await screen.findByTestId("scenario-history");
+    const url = new URL(scanner.getAttribute("data-location") ?? "", "http://localhost");
+    expect(url.pathname).toBe("/history/scanner");
+    expect(url.searchParams.get("operation")).toBe(operation);
+    expect(url.searchParams.has("outcome")).toBe(false);
+    fireEvent.click(screen.getByRole("tab", { name: "Attacks" }));
+    expect(await screen.findByTestId("history-filters")).toHaveTextContent(operation);
+    expect(screen.getByTestId("history-filters")).toHaveTextContent("success");
+  });
+
   it("switches between history tabs", async () => {
     renderApp("/history/attacks");
 
@@ -735,6 +749,30 @@ describe("App", () => {
       "data-location",
       "/history/scanner"
     );
+  });
+
+  it("clears the remembered operation while preserving each tab's other filters", async () => {
+    function HistoryNavigation() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/history/attacks?outcome=success")}>Clear operation via URL</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/history/scanner?operation=old&operator=alice"]}>
+        <HistoryNavigation />
+        <App />
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("scenario-history");
+    fireEvent.click(screen.getByRole("button", { name: "Clear operation via URL" }));
+    await screen.findByTestId("attack-history");
+    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
+    const scanner = await screen.findByTestId("scenario-history");
+    const url = new URL(scanner.getAttribute("data-location") ?? "", "http://localhost");
+    expect(url.searchParams.has("operation")).toBe(false);
+    expect(url.searchParams.get("operator")).toBe("alice");
+    fireEvent.click(screen.getByRole("tab", { name: "Attacks" }));
+    expect(await screen.findByTestId("history-filters")).toHaveTextContent("success");
+    expect(screen.getByTestId("history-filters")).not.toHaveTextContent("alice");
   });
 
   it("passes the active target and labels to the scenario detail view", () => {
@@ -975,6 +1013,23 @@ describe("App", () => {
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-1"));
     // The chat window is replaced by an inline "attack not found" message
     await waitFor(() => expect(screen.getByTestId("attack-not-found")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+  });
+
+  it.each([404, 503])("distinguishes evidence-origin attack load status %s", async (status: number) => {
+    mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status, data: {} } });
+    renderApp("/attacks/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
+    expect(await screen.findByText(status === 404 ? "Evidence unavailable" : "Could not load attack")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+  });
+
+  it("never redirects a missing evidence conversation to the attack main conversation", async () => {
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
+      labels: {}, objective: "", outcome: "undetermined",
+    });
+    renderApp("/attacks/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
+    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
   });
 

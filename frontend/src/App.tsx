@@ -16,6 +16,8 @@ import RegistryLayout from './components/Registry/RegistryLayout'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
 import HistoryPage from './components/History/HistoryPage'
+import OperationDetailPage from './components/Operations/OperationDetailPage'
+import OperationsPage from './components/Operations/OperationsPage'
 import type { HistoryTab } from './components/History/HistoryPage'
 import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
@@ -55,6 +57,7 @@ import {
   attackRoutePath,
   routerPathParamValue,
   scenarioRunProvenance,
+  findingEvidenceOrigin,
   scenarioRunRoutePath,
 } from './utils/routeParams'
 
@@ -67,6 +70,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
+  operations: '/operations',
   registry: '/registry/targets',
   scenarios: '/scanner',
   configuration: '/config',
@@ -84,6 +88,9 @@ function viewFromPath(pathname: string): ViewName {
   }
   if (pathname === '/targets' || pathname.startsWith('/registry')) {
     return 'registry'
+  }
+  if (pathname.startsWith(`${VIEW_PATHS.operations}/`)) {
+    return 'operations'
   }
   if (
     pathname === VIEW_PATHS.scenarios
@@ -263,6 +270,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     () => scenarioRunProvenance(searchParams),
     [searchParams],
   )
+  const findingEvidenceId = useMemo(
+    () => findingEvidenceOrigin(searchParams),
+    [searchParams],
+  )
   const lastHistorySearch = useRef('')
   const lastScenarioHistorySearch = useRef('')
   useEffect(() => {
@@ -285,8 +296,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const handleHistoryTabChange = useCallback((tab: HistoryTab) => {
     const path = tab === 'attacks' ? HISTORY_ATTACKS_PATH : HISTORY_SCANNER_PATH
     const search = tab === 'attacks' ? lastHistorySearch.current : lastScenarioHistorySearch.current
-    navigate(path + search)
-  }, [navigate])
+    const params = new URLSearchParams(search)
+    params.delete('operation')
+    for (const operation of searchParams.getAll('operation')) {
+      params.append('operation', operation)
+    }
+    const query = params.toString()
+    navigate(path + (query ? `?${query}` : ''))
+  }, [navigate, searchParams])
 
   /** App version display, attached to feedback context */
   const [appVersion, setAppVersion] = useState<string>('')
@@ -427,6 +444,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const readyAttack = attackForRoute?.status === 'success' ? attackForRoute : null
   const isAttackNotFound = attackForRoute?.status === 'not-found'
   const isAttackError = attackForRoute?.status === 'error'
+  const isEvidenceConversationMissing = useMemo(
+    () => Boolean(
+      findingEvidenceId && readyAttack && routeConversationId
+      && routeConversationId !== readyAttack.mainConversationId
+      && !readyAttack.relatedConversationIds.includes(routeConversationId),
+    ),
+    [findingEvidenceId, readyAttack, routeConversationId],
+  )
   const isLoadingAttack = isNavigatingToCreatedAttack
     || (routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError)
   const {
@@ -464,11 +489,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       const isKnown =
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
-      if (!isKnown) {
+      if (!isKnown && !findingEvidenceId) {
         navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
       }
     }
-  }, [readyAttack, routeConversationId, navigate, scenarioResultId])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId])
 
   const handleNavigate = useCallback((view: ViewName) => {
     // Re-attach the last filter query so returning to history restores filters.
@@ -579,10 +604,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     })
   }, [location.search, navigate])
 
-  const chatElement = isAttackNotFound || isAttackError ? (
+  const chatElement = isAttackNotFound || isAttackError || isEvidenceConversationMissing ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
       variant={isAttackError ? 'error' : 'not-found'}
+      findingEvidenceId={findingEvidenceId}
       onStartNew={() => navigate(VIEW_PATHS.chat)}
       onBackToHistory={() => navigate(VIEW_PATHS.history)}
     />
@@ -626,6 +652,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       humanScore={readyAttack?.humanScore}
       lastResponseMessagePieceId={readyAttack?.lastResponseMessagePieceId}
       scenarioResultId={readyAttack ? scenarioResultId : null}
+      findingEvidenceId={findingEvidenceId}
     />
   )
 
@@ -760,6 +787,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/scenario-history/:scenarioResultId" element={<LegacyScenarioRunRedirect />} />
               <Route path="/config" element={<Configuration />} />
               <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
+              <Route path="/operations" element={<OperationsPage />} />
+              <Route path="/operations/:operationId" element={<OperationDetailPage />} />
+              <Route path="/findings" element={<Navigate to="/operations" replace />} />
               <Route
                 path={HISTORY_ATTACKS_PATH}
                 element={

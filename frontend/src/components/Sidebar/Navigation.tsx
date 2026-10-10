@@ -13,6 +13,7 @@ import {
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
+  BriefcaseRegular,
   PersonFeedbackRegular,
   ScriptRegular,
   TargetRegular,
@@ -29,6 +30,7 @@ export type ViewName =
   | 'home'
   | 'chat'
   | 'history'
+  | 'operations'
   | 'registry'
   | 'configuration'
   | 'scenarios'
@@ -99,6 +101,17 @@ export default function Navigation({
           aria-label="History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'operations'}
+          appearance="subtle"
+          icon={<BriefcaseRegular />}
+          title="Operations"
+          aria-label="Operations"
+          aria-current={currentView === 'operations' ? 'page' : undefined}
+          onClick={() => onNavigate('operations')}
         />
 
         <Button

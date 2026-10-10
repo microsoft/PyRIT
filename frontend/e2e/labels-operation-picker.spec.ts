@@ -26,6 +26,7 @@ async function setupMocks(
     versionDelayMs?: number;
     defaultLabels?: Record<string, string>;
     operatorLabels?: string[];
+    savedOperations?: string[];
   } = {},
 ): Promise<void> {
   let versionRequests = 0;
@@ -63,6 +64,15 @@ async function setupMocks(
         },
       }));
     }
+    if (path === "/operations") {
+      return route.fulfill(json({
+        items: (options.savedOperations ?? operationLabels).map((name, index) => ({
+          id: `saved-operation-${index}`,
+          name,
+          created_at: "2026-01-01T00:00:00Z",
+        })),
+      }));
+    }
     if (path === "/attacks") {
       return route.fulfill(json({ items: [], total: 0, limit: 5, offset: 0 }));
     }
@@ -81,7 +91,7 @@ function json(body: unknown) {
 /** Opens the picker from the labels bar and returns the rendered listbox. */
 async function openOperationPicker(page: Page) {
   await page.goto("/");
-  const chip = page.getByTestId("label-operation");
+  const chip = page.getByTestId("edit-label-operation");
   await expect(chip).toBeVisible();
   await chip.click();
 
@@ -100,14 +110,14 @@ test.describe("operation picker placement", () => {
     await expect(bar.getByText("New run labels", { exact: true })).toHaveCount(0);
     await expect(bar.getByText("Used for new attacks and scans.", { exact: false })).toHaveCount(0);
 
-    await bar.getByRole("button", { name: /^Edit operation, currently / }).click();
+    await bar.getByRole("combobox", { name: "Operation" }).click();
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
-    await expect(bar.getByRole("button", { name: "Edit operation, currently op_beta" })).toBeVisible();
+    await expect(bar.getByRole("combobox", { name: "Operation" })).toBeVisible();
 
-    await bar.getByRole("button", { name: /^Edit operator, currently / }).click();
-    await page.getByRole("textbox", { name: "Value for operator label" }).fill("alice");
-    await page.getByRole("textbox", { name: "Value for operator label" }).press("Enter");
-    await expect(bar.getByRole("button", { name: "Edit operator, currently alice" })).toBeVisible();
+    await bar.getByRole("textbox", { name: "Operator" }).click();
+    await page.getByRole("textbox", { name: "Operator" }).fill("alice");
+    await page.getByRole("textbox", { name: "Operator" }).press("Enter");
+    await expect(bar.getByRole("textbox", { name: "Operator" })).toBeVisible();
 
     await bar.getByTestId("labels-icon-btn").click();
     const popover = page.getByRole("group").filter({
@@ -156,7 +166,7 @@ test.describe("operation picker placement", () => {
     await page.getByRole("region", { name: "Default Labels" }).evaluate(
       (bar: HTMLElement) => { bar.style.marginTop = "240px"; },
     );
-    await page.getByTestId("label-operation").click();
+    await page.getByTestId("edit-label-operation").click();
 
     const listbox = page.getByRole("listbox");
     await expect(listbox).toBeVisible();
@@ -246,7 +256,9 @@ test.describe("operation picker placement", () => {
         JSON.stringify({ operator: "roakey", operation: "op_chosen_elsewhere" }),
       );
     });
-    await setupMocks(page, ["op_alpha", "op_beta"]);
+    await setupMocks(page, ["op_alpha", "op_beta"], {
+      savedOperations: ["op_alpha", "op_beta", "op_chosen_elsewhere"],
+    });
     await openOperationPicker(page);
 
     await expect(
@@ -280,11 +292,9 @@ test.describe("operation picker placement", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
-  test("keeps the operation in use reachable past the end of a long list", async ({
+  test("keeps a legacy operation removable without offering it as a saved choice", async ({
     page,
   }) => {
-    // The value in use goes to the front of the list. Cap the wrong end and it
-    // is the first thing to disappear — whether or not the request returned it.
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.addInitScript(() => {
       window.localStorage.setItem(
@@ -299,11 +309,13 @@ test.describe("operation picker placement", () => {
       name: "op_chosen_elsewhere",
       exact: true,
     });
-    await expect(inUse).toBeVisible();
-    await inUse.click();
-    await expect(page.getByTestId("label-operation")).toContainText(
+    await expect(inUse).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue(
       "op_chosen_elsewhere",
     );
+    await page.getByRole("button", { name: "Remove operation label" }).click();
+    await expect(page.getByRole("combobox", { name: "Operation" })).toBeVisible();
   });
 
   test("keeps an operation the saved list already holds past the cap", async ({
@@ -335,11 +347,11 @@ test.describe("operation picker persistence", () => {
     await openOperationPicker(page);
 
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
-    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
 
     await page.reload();
 
-    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
   });
 
   test("keeps an operation picked while the app was still starting up", async ({
@@ -362,13 +374,13 @@ test.describe("operation picker persistence", () => {
     await page
       .getByRole("option", { name: "op_picked_early", exact: true })
       .click();
-    await expect(page.getByTestId("label-operation")).toContainText(
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue(
       "op_picked_early",
     );
 
     // Let the slow response land; it must not undo the choice.
     await page.waitForTimeout(5000);
-    await expect(page.getByTestId("label-operation")).toContainText(
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue(
       "op_picked_early",
     );
   });
@@ -379,7 +391,7 @@ test.describe("operation picker persistence", () => {
     // Nothing is stored, and the backend supplies its own `operation` default
     // that lands after the bar is already usable. The only thing standing
     // between the pick and that late response is that the value on screen is
-    // no longer the built-in placeholder.
+    // no longer the untouched default.
     await page.setViewportSize({ width: 1280, height: 800 });
     await setupMocks(page, ["op_alpha", "op_picked_early"], {
       versionDelayMs: 4000,
@@ -390,12 +402,12 @@ test.describe("operation picker persistence", () => {
     await page
       .getByRole("option", { name: "op_picked_early", exact: true })
       .click();
-    await expect(page.getByTestId("label-operation")).toContainText(
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue(
       "op_picked_early",
     );
 
     await page.waitForTimeout(5000);
-    await expect(page.getByTestId("label-operation")).toContainText(
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue(
       "op_picked_early",
     );
     // What is on screen is also what a refresh would restore.
@@ -416,7 +428,7 @@ test.describe("operation picker persistence", () => {
     await openOperationPicker(page);
 
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
-    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
 
     // A later visit, once the deployment configures an operator.
     await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -425,10 +437,10 @@ test.describe("operation picker persistence", () => {
     });
     await page.reload();
 
-    await expect(page.getByTestId("label-operator")).toContainText(
+    await expect(page.getByTestId("edit-label-operator")).toHaveValue(
       "configured_user",
     );
-    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
   });
 
   test("lets the backend change a label it supplied, after you pick", async ({
@@ -443,7 +455,7 @@ test.describe("operation picker persistence", () => {
     await openOperationPicker(page);
 
     await page.getByRole("option", { name: "op_beta", exact: true }).click();
-    await expect(page.getByTestId("label-operator")).toContainText(
+    await expect(page.getByTestId("edit-label-operator")).toHaveValue(
       "configured_day1",
     );
 
@@ -453,10 +465,10 @@ test.describe("operation picker persistence", () => {
     });
     await page.reload();
 
-    await expect(page.getByTestId("label-operator")).toContainText(
+    await expect(page.getByTestId("edit-label-operator")).toHaveValue(
       "configured_day2",
     );
-    await expect(page.getByTestId("label-operation")).toContainText("op_beta");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_beta");
   });
 });
 
@@ -471,7 +483,7 @@ test.describe("switching between labels", () => {
     await setupMocks(page, ["op_alpha", "op_beta"]);
     await openOperationPicker(page);
 
-    await page.getByTestId("label-operator").click();
+    await page.getByTestId("edit-label-operator").click();
 
     const operatorEditor = page.getByTestId("edit-label-operator");
     await expect(operatorEditor).toBeVisible();
@@ -488,16 +500,16 @@ test.describe("switching between labels", () => {
     await setupMocks(page, ["op_alpha", "op_beta"]);
     await page.goto("/");
 
-    await page.getByTestId("label-operator").click();
+    await page.getByTestId("edit-label-operator").click();
     await page.getByTestId("edit-label-operator").fill("alice");
-    await page.getByTestId("label-operation").click();
+    await page.getByTestId("edit-label-operation").click();
 
     await expect(page.getByRole("listbox")).toBeVisible();
     await page.waitForTimeout(500);
     await expect(page.getByRole("listbox")).toBeVisible();
     // The operator edit still went in; only its clean-up was skipped.
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("label-operator")).toContainText("alice");
+    await expect(page.getByTestId("edit-label-operator")).toHaveValue("alice");
   });
 });
 
@@ -511,32 +523,36 @@ test.describe("finishing an edit another way", () => {
     await setupMocks(page, ["op_alpha"], { operatorLabels: ["roakey", "alice"] });
     await page.goto("/");
 
-    await page.getByTestId("label-operator").click();
+    await page.getByTestId("edit-label-operator").click();
     await page.getByTestId("edit-label-operator").fill("al");
     await page.getByText("alice", { exact: true }).click();
 
     await page.waitForTimeout(500);
-    await expect(page.getByTestId("label-operator")).toContainText("alice");
+    await expect(page.getByTestId("edit-label-operator")).toHaveValue("alice");
   });
 
-  test("starts an edit when the chip is clicked beside the edit control", async ({
+  test("keeps compact metadata inputs visible and creation first on mobile", async ({
     page,
   }) => {
-    // The pill's padding sits outside the control that opens the editor, and
-    // only a real layout says where that padding actually is.
-    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.setViewportSize({ width: 360, height: 800 });
     await setupMocks(page, ["op_alpha"]);
     await page.goto("/");
 
-    const chip = page.getByTestId("label-operator");
-    await expect(chip).toBeVisible();
-    const badge = chip.locator("xpath=..");
-    const box = await badge.boundingBox();
-    if (!box) throw new Error("chip has no layout");
-
-    // Two pixels in from the pill's left edge is padding, not the control.
-    await page.mouse.click(box.x + 2, box.y + box.height / 2);
-
-    await expect(page.getByTestId("edit-label-operator")).toBeVisible();
+    const operator = page.getByRole("textbox", { name: "Operator" });
+    const operation = page.getByRole("combobox", { name: "Operation" });
+    await expect(operator).toBeVisible();
+    await expect(operation).toBeVisible();
+    expect(await operator.evaluate(input => input.parentElement?.getBoundingClientRect().width)).toBeLessThanOrEqual(100);
+    expect(await operation.evaluate(input => input.parentElement?.getBoundingClientRect().width)).toBeLessThanOrEqual(140);
+    await operation.click();
+    await expect(page.getByRole("option").first()).toHaveText("New operation…");
+    await operation.fill("missing");
+    await expect(page.getByRole("option").first()).toHaveText("New operation…");
+    await page.getByRole("option", { name: "New operation…" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("textbox", { name: "Name" })).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(operation).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
   });
 });

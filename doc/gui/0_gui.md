@@ -34,7 +34,7 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+Use the left sidebar to switch between views, including **Chat**, **Attack History**, **Operations**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
 
 ### Themes
 
@@ -379,11 +379,11 @@ Export stays available for read-only historical conversations, and is disabled w
 
 #### Labels
 
-The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. The required `operator` and `operation` controls remain in the bar, outside this popover, and cannot be removed. A signed-in operator is read-only.
+The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. **Operator:** is an always-visible text input; **Operation:** is an always-visible searchable dropdown outside this popover. Operator is required; an operation is optional and removable. A signed-in operator is read-only.
 
 In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
 
-Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. On narrow screens, use the labels icon to view or edit labels that do not fit inline.
+Open the **Operation** dropdown to choose a saved operation. **New operation…** stays first, including while searching, and opens the creation dialog. Typing alone never selects an unsaved name. Very long lists show up to 200 saved choices and say how many match, so type to narrow them. The compact metadata controls wrap on narrow screens; custom labels that do not fit remain available through the labels icon.
 
 Your choices persist in this browser across navigation and refreshes. Backend configuration supplies defaults for labels you have not chosen, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels from this bar.
 
@@ -468,6 +468,69 @@ technique, or dataset before trying again.
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
+### Operations and Findings
+
+An operation groups related red-teaming work. Inside it you record findings:
+human assessments, whether or not an attack produced them.
+
+Open **Operations** in the sidebar and choose **New operation**. Names are unique,
+ignoring case and surrounding spaces; if the name is taken, the dialog offers the
+existing operation. The **Operation** dropdown in the labels bar applies the
+selected operation to new attacks and scanner runs, and **New operation…** at the
+top of that list creates one without leaving the page.
+
+Operations can't be renamed or deleted from the GUI.
+
+#### Findings
+
+Open an operation and choose **New finding**.
+
+| Field | Required | Values |
+| --- | --- | --- |
+| Title | Yes | Free text |
+| Severity | Yes | Critical, Important, Moderate, Low, Informational, or Other (your own text). Defaults to Moderate. |
+| Harm-type | No | A PyRIT harm category, Other (your own text), or Not set |
+| Description | No | Free text |
+
+Findings are sorted by severity in the order above, newest first within each
+level, 20 per page. **Edit** changes any field; the operation and creation time
+stay fixed. **Delete** asks for confirmation and can't be undone.
+
+**View execution history** opens History filtered to the operation's exact name,
+and the filter stays when you switch between the Attacks and Scanner tabs. Runs
+labeled with a different capitalization or spacing of the name don't match.
+
+#### Conversation evidence
+
+To attach a saved conversation to a finding, open it in Chat and choose **Link to
+finding**, the link icon next to Export. The picker lists findings from the
+operation the attack was labeled with. Search by title, select one, and choose
+**Attach**. If the attack's operation label doesn't exactly match a saved
+operation, the button is unavailable. The current toolbar selection doesn't
+change this.
+
+**New finding** in the picker opens the same form and attaches the conversation
+once the finding is saved. If the finding saves but the attachment fails, the
+finding is kept and the viewer offers **Retry attachment**, which won't create a
+second finding. Retry works only from the original conversation.
+
+Evidence points to the live conversation, not a copy, so later messages show up
+too. Attaching the same conversation again reports **Already attached**.
+
+On the operation page, **Evidence (n)** under a finding lists its conversations.
+**Open conversation** reopens one in Chat. If a conversation no longer exists,
+its entry stays, shows its ID and attachment time, and reads **Evidence
+unavailable**. **Remove link** removes only the link, never the conversation.
+Deleting a finding removes its links the same way.
+
+#### Upgrading an existing database
+
+One migration adds the operation, finding, and evidence tables and leaves
+existing data alone. The backend applies it automatically when it starts, so
+restart a running backend after upgrading. If you start memory with
+`skip_schema_migration=True`, run the migration yourself. Downgrading refuses to
+drop the tables while any operation exists.
 
 ### Target Configuration
 
