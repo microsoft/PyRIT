@@ -98,6 +98,7 @@ def _create_aggregator(
     result_func: Callable[[list[bool | None]], bool | None],
     true_msg: str,
     false_msg: str,
+    raise_on_empty: bool = False,
 ) -> TrueFalseAggregatorFunc:
     """
     Create a True/False aggregator using a result function over boolean values.
@@ -109,6 +110,7 @@ def _create_aggregator(
             constituent scores, and a ``None`` result means no verdict was reachable.
         true_msg (str): Description to use when the result is True.
         false_msg (str): Description to use when the result is False.
+        raise_on_empty (bool): Whether to raise ValueError when no scores are provided. Defaults to False.
 
     Returns:
         TrueFalseAggregatorFunc: Aggregator function that reduces a sequence of true/false Scores
@@ -125,6 +127,8 @@ def _create_aggregator(
                 raise ValueError("All scores must be of type 'true_false'.")
 
         if not scores_list:
+            if raise_on_empty:
+                raise ValueError("No scores available for aggregation")
             # No scores; return a neutral result
             return ScoreAggregatorResult(
                 value=False,
@@ -167,6 +171,7 @@ def _create_binary_aggregator(
     op: BinaryBoolOp,
     true_msg: str,
     false_msg: str,
+    raise_on_empty: bool = False,
 ) -> TrueFalseAggregatorFunc:
     """
     Turn a binary operator over verdicts (e.g. ``_and``) into an aggregation function.
@@ -176,6 +181,7 @@ def _create_binary_aggregator(
         op (BinaryBoolOp): Binary three-valued operator to apply.
         true_msg (str): Description to use when the result is True.
         false_msg (str): Description to use when the result is False.
+        raise_on_empty (bool): Whether to raise ValueError when no scores are provided. Defaults to False.
 
     Returns:
         TrueFalseAggregatorFunc: Aggregator function that reduces scores using the binary operator.
@@ -185,6 +191,7 @@ def _create_binary_aggregator(
         result_func=lambda bs, _op=op: functools.reduce(_op, bs),
         true_msg=true_msg,
         false_msg=false_msg,
+        raise_on_empty=raise_on_empty,
     )
 
 
@@ -228,4 +235,28 @@ class TrueFalseScoreAggregator:
         result_func=_majority,
         true_msg="A strict majority of constituent scorers returned True in a MAJORITY composite scorer.",
         false_msg="A strict majority of constituent scorers did not return True in a MAJORITY composite scorer.",
+    )
+
+    AND_RAISE_ON_EMPTY: TrueFalseAggregatorFunc = _create_binary_aggregator(
+        "AND_RAISE_ON_EMPTY",
+        _and,
+        "All constituent scorers returned True in an AND composite scorer.",
+        "At least one constituent scorer returned False in an AND composite scorer.",
+        raise_on_empty=True,
+    )
+
+    OR_RAISE_ON_EMPTY: TrueFalseAggregatorFunc = _create_binary_aggregator(
+        "OR_RAISE_ON_EMPTY",
+        _or,
+        "At least one constituent scorer returned True in an OR composite scorer.",
+        "All constituent scorers returned False in an OR composite scorer.",
+        raise_on_empty=True,
+    )
+
+    MAJORITY_RAISE_ON_EMPTY: TrueFalseAggregatorFunc = _create_aggregator(
+        "MAJORITY_RAISE_ON_EMPTY",
+        result_func=_majority,
+        true_msg="A strict majority of constituent scorers returned True in a MAJORITY composite scorer.",
+        false_msg="A strict majority of constituent scorers did not return True in a MAJORITY composite scorer.",
+        raise_on_empty=True,
     )
