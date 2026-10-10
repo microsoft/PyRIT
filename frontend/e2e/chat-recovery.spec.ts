@@ -8,25 +8,32 @@ import {
   type Page,
   type Request,
   type Route,
-} from "@playwright/test";
+} from "./_fixtures";
+import { compatibilityHeaders } from "./_compatibility";
 import type {
   AddMessageRequest,
   AddMessageResponse,
   ConversationMessagesResponse,
   CreateConversationResponse,
+  MessageSendStatus,
+  AttackConversationsResponse,
   TargetInstance,
 } from "@/types";
+import { readMessageSendResult } from "./_attacks";
 
 interface LocalTarget {
   registryName: string;
   requestBodies: string[];
   setProcessingFailure: (enabled: boolean) => void;
+  holdResponse: () => void;
+  releaseResponse: () => void;
 }
 
 const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>({
   imageConverterId: async ({ request }, runTest) => {
     const name = `recovery-image-${randomUUID()}`;
     const created = await request.post("/api/converters", {
+      headers: compatibilityHeaders(),
       data: {
         name,
         type: "ImageRotationConverter",
@@ -37,7 +44,9 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
     try {
       await runTest(name);
     } finally {
-      const deleted = await request.delete(`/api/converters/${encodeURIComponent(name)}`);
+      const deleted = await request.delete(`/api/converters/${encodeURIComponent(name)}`, {
+        headers: compatibilityHeaders(),
+      });
       expect(deleted.status()).toBe(204);
     }
   },
@@ -47,6 +56,8 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
     const pageErrors: Error[] = [];
     page.on("pageerror", (error: Error) => { pageErrors.push(error); });
     let processingFailure = false;
+    let holdResponse = false;
+    let heldResponse: (() => void) | undefined;
     const server = createServer((incoming: IncomingMessage, response: ServerResponse) => {
       if (incoming.method !== "POST" || incoming.url !== "/v1/chat/completions") {
         errors.push(new Error(`Unexpected provider request: ${incoming.method} ${incoming.url}`));
@@ -65,7 +76,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
         requestBodies.push(Buffer.concat(chunks).toString("utf8"));
         response.setHeader("Content-Type", "application/json");
         // Invalid provider JSON exercises the real normalizer's persisted processing-error path.
-        response.end(processingFailure ? '{"choices":' : JSON.stringify({
+        const reply = processingFailure ? '{"choices":' : JSON.stringify({
           id: `local-${requestBodies.length}`,
           object: "chat.completion",
           created: Math.floor(Date.now() / 1000),
@@ -76,7 +87,9 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
             message: { role: "assistant", content: "Local target response" },
           }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        }));
+        });
+        const deliver = (): void => { response.end(reply); };
+        if (holdResponse) { heldResponse = deliver; } else { deliver(); }
       });
     });
     await new Promise<void>((resolve, reject) => {
@@ -89,6 +102,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
         throw new Error("Expected a loopback provider port");
       }
       const created = await request.post("/api/targets", {
+        headers: compatibilityHeaders(),
         data: {
           type: "OpenAIChatTarget",
           auth_mode: "api_key",
@@ -105,6 +119,12 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
         registryName: target.target_registry_name,
         requestBodies,
         setProcessingFailure: (enabled: boolean): void => { processingFailure = enabled; },
+        holdResponse: (): void => { holdResponse = true; },
+        releaseResponse: (): void => {
+          holdResponse = false;
+          heldResponse?.();
+          heldResponse = undefined;
+        },
       });
       expect(errors).toEqual([]);
       expect(pageErrors).toEqual([]);
@@ -122,7 +142,7 @@ const test = base.extend<{ localTarget: LocalTarget; imageConverterId: string }>
 
 function isMessagePost(request: Request): boolean {
   return request.method() === "POST"
-    && /\/api\/attacks\/[^/]+\/messages$/.test(new URL(request.url()).pathname);
+    && /\/api\/attacks\/[^/]+\/message-sends$/.test(new URL(request.url()).pathname);
 }
 
 async function sendFromComposer(page: Page, text?: string): Promise<AddMessageResponse> {
@@ -136,12 +156,15 @@ async function sendFromComposer(page: Page, text?: string): Promise<AddMessageRe
     page.waitForResponse((candidate) => isMessagePost(candidate.request())),
     sendButton.click(),
   ]);
-  expect(response.status()).toBe(200);
-  return response.json();
+  expect(response.status()).toBe(202);
+  const accepted: MessageSendStatus = await response.json();
+  return readMessageSendResult(page.request, accepted);
 }
 
 async function createConversation(request: APIRequestContext, attackId: string): Promise<string> {
-  const response = await request.post(`/api/attacks/${attackId}/conversations`, { data: {} });
+  const response = await request.post(`/api/attacks/${attackId}/conversations`, {
+    data: {}, headers: compatibilityHeaders(),
+  });
   expect(response.status()).toBe(201);
   const created: CreateConversationResponse = await response.json();
   return created.conversation_id;
@@ -196,6 +219,150 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTitle("Chat", { exact: true }).click();
   });
 
+  test("repeats and nests only the selected conversation through the real backend", async ({ page, request, localTarget }, testInfo) => {
+    let submissions = 0;
+    page.on("request", (outgoing: Request) => { if (isMessagePost(outgoing)) submissions += 1; });
+    const initial = await sendFromComposer(page, "History shared by the repeats");
+    const attackId = initial.attack.attack_result_id;
+    let selectedId = initial.messages.conversation_id;
+    const path = `/api/attacks/${encodeURIComponent(attackId)}`;
+    const readConversation = async (conversationId: string): Promise<ConversationMessagesResponse> => {
+      const response = await request.get(`${path}/messages?conversation_id=${encodeURIComponent(conversationId)}`, {
+        headers: compatibilityHeaders(),
+      });
+      expect(response.ok()).toBeTruthy();
+      return response.json();
+    };
+    let previousIds = [selectedId];
+    for (const count of [5, 3]) {
+      const before = new Map(await Promise.all(previousIds.map(async (id: string) => (
+        [id, await readConversation(id)] as const
+      ))));
+      const source = before.get(selectedId);
+      if (!source) throw new Error("Expected the selected history");
+      await expect(page.getByRole("button", { name: "Repetitions: 1", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Repetitions: 1", exact: true }).click();
+      for (let index = 1; index < count; index++) {
+        await page.getByRole("button", { name: "Increase repetitions", exact: true }).click();
+      }
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await page.getByTestId("chat-input").fill(`Repeat ${count}`);
+      const [submitted] = await Promise.all([
+        page.waitForResponse((response) => isMessagePost(response.request())),
+        page.getByTestId("chat-input").press("Enter"),
+      ]);
+      expect(submitted.status(), await submitted.text()).toBe(202);
+      const accepted: MessageSendStatus = await submitted.json();
+      expect(accepted.count).toBe(count);
+      expect(accepted.conversation_id).toBe(selectedId);
+      await readMessageSendResult(request, accepted);
+      const completedResponse = await request.get(`${path}/message-sends/${accepted.send_id}`, {
+        headers: compatibilityHeaders(),
+      });
+      const completed: MessageSendStatus = await completedResponse.json();
+      expect(completed.state).toBe("completed");
+      expect(completed.conversations).toHaveLength(count);
+      const repeatedIds = completed.conversations?.map((conversation) => conversation.conversation_id);
+      if (!repeatedIds) throw new Error("Expected committed conversation IDs");
+      expect(repeatedIds[0]).toBe(selectedId);
+      const sourceOrigins = source.messages.flatMap((message) => message.message_pieces.map(
+        (piece) => piece.original_prompt_id,
+      ));
+      for (const id of repeatedIds) {
+        const conversation = await readConversation(id);
+        expect(conversation.messages).toHaveLength(source.messages.length + 2);
+        expect(conversation.messages.slice(0, -2).flatMap((message) => message.message_pieces.map(
+          (piece) => piece.original_prompt_id,
+        ))).toEqual(sourceOrigins);
+        expect(conversation.messages.at(-2)?.message_pieces[0].original_value).toBe(`Repeat ${count}`);
+        await expect(page.getByRole("button", { name: `Open conversation ${id}`, exact: true })).toBeVisible();
+      }
+      for (const id of previousIds.filter((candidate: string) => candidate !== selectedId)) {
+        expect(await readConversation(id)).toEqual(before.get(id));
+      }
+      const listingResponse = await request.get(`${path}/conversations`, { headers: compatibilityHeaders() });
+      const listing: AttackConversationsResponse = await listingResponse.json();
+      expect(listing.conversations).toHaveLength(count === 5 ? 5 : 7);
+      previousIds = listing.conversations.map((conversation) => conversation.conversation_id);
+      selectedId = repeatedIds[1];
+      await selectConversation(page, selectedId);
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Repetitions: 1", exact: true })).toBeVisible();
+    }
+    expect(submissions).toBe(3);
+    expect(localTarget.requestBodies).toHaveLength(9);
+    await expect(page.getByText("Repeat 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Loading conversation...", { exact: true })).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("repeat-desktop.png"), animations: "disabled" });
+    if (await page.getByTestId("conversation-panel").isVisible()) {
+      await page.getByTestId("close-panel-btn").click();
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Repetitions: 1", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Increase repetitions", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("repeat-mobile.png"), animations: "disabled" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  });
+
+  test("accepts before target completion and continues after leaving chat", async ({ page, request, localTarget }) => {
+    localTarget.holdResponse();
+    let submissions = 0;
+    page.on("request", (request: Request) => { if (isMessagePost(request)) submissions += 1; });
+    await page.getByTestId("chat-input").fill("Continue independently");
+    const [acceptedResponse] = await Promise.all([
+      page.waitForResponse((response) => isMessagePost(response.request())),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    expect(acceptedResponse.status()).toBe(202);
+    const accepted: MessageSendStatus = await acceptedResponse.json();
+    expect(accepted.state).toBe("queued");
+    // First use can initialize the target's HTTP client after the submission has already been accepted.
+    await expect.poll(() => localTarget.requestBodies.length, { timeout: 30_000 }).toBe(1);
+    const live = await request.get(`/api/attacks/${accepted.attack_result_id}/message-sends/${accepted.send_id}`, {
+      headers: compatibilityHeaders(),
+    });
+    expect((await live.json()).state).toBe("sending");
+    await expect(page).toHaveURL((url: URL) => url.pathname.includes(accepted.attack_result_id));
+    const chatUrl = page.url();
+    await page.getByTitle("Registry", { exact: true }).click();
+    localTarget.releaseResponse();
+    const result = await readMessageSendResult(request, accepted);
+    expect(result.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    await page.goto(chatUrl);
+    await expect(page.getByTestId("message-list").getByText("Local target response", { exact: true })).toBeVisible();
+    expect(localTarget.requestBodies).toHaveLength(1);
+    expect(submissions).toBe(1);
+  });
+
+  test("refreshes a completed send after an attack-details read fails without a second submission", async ({
+    page, localTarget,
+  }) => {
+    localTarget.holdResponse();
+    let submissions = 0;
+    page.on("request", (request: Request) => { if (isMessagePost(request)) submissions += 1; });
+    await page.getByTestId("chat-input").fill("Keep this accepted draft");
+    const [acceptedResponse] = await Promise.all([
+      page.waitForResponse((response) => isMessagePost(response.request())),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    const accepted: MessageSendStatus = await acceptedResponse.json();
+    await expect.poll(() => localTarget.requestBodies.length).toBe(1);
+    const path = new RegExp(`/api/attacks/${accepted.attack_result_id}$`);
+    await page.route(path, async (route: Route) => {
+      await route.fulfill({ status: 503, json: { detail: "Controlled metadata read failure" } });
+    });
+    localTarget.releaseResponse();
+    await expect(page.getByText(/Saved messages or attack details could not be loaded/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await page.unroute(path);
+    await page.getByRole("button", { name: "Refresh saved messages" }).click();
+    await expect(page.getByTestId("message-list").getByText("Local target response", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("chat-input")).toHaveValue("");
+    expect(submissions).toBe(1);
+    expect(localTarget.requestBodies).toHaveLength(1);
+  });
+
   for (const keepSafePrefix of [false, true]) {
     test(`recovers the latest failed draft without earlier errors, safe prefix ${keepSafePrefix}`, async ({
       page, request, localTarget,
@@ -209,6 +376,7 @@ test.describe("Chat processing recovery @seeded", () => {
       const attackId = first.attack.attack_result_id;
       const sourceId = first.attack.conversation_id;
       const later = await request.post(`/api/attacks/${attackId}/messages`, {
+        headers: compatibilityHeaders(),
         data: {
           role: "user",
           pieces: [{ data_type: "text", original_value: "Latest failed draft" }],
@@ -243,18 +411,14 @@ test.describe("Chat processing recovery @seeded", () => {
       await expect(recover).toHaveCount(0);
       const historyResponse = await request.get(
         `/api/attacks/${attackId}/messages?conversation_id=${cloned.conversation_id}`,
+        { headers: compatibilityHeaders() },
       );
       expect(historyResponse.ok()).toBeTruthy();
       const history: ConversationMessagesResponse = await historyResponse.json();
       expect(history.messages).toHaveLength(keepSafePrefix ? 2 : 0);
+      expect(history.target_response_status).toBeNull();
       if (keepSafePrefix) {
-        expect(history.target_response_status).toEqual({
-          response_error: "none",
-          request_turn_number: 0,
-          response_turn_number: 1,
-        });
-      } else {
-        expect(history.target_response_status).toBeNull();
+        expect(history.messages.map((message) => message.role)).toEqual(["user", "simulated_assistant"]);
       }
       expect(localTarget.requestBodies).toHaveLength(keepSafePrefix ? 3 : 2);
 
@@ -276,6 +440,7 @@ test.describe("Chat processing recovery @seeded", () => {
     const attackId = first.attack.attack_result_id;
     const otherId = await createConversation(request, attackId);
     const stored = await request.post(`/api/attacks/${attackId}/messages`, {
+      headers: compatibilityHeaders(),
       data: {
         role: "user",
         pieces: [{ data_type: "text", original_value: "Only conversation B history" }],
@@ -289,7 +454,7 @@ test.describe("Chat processing recovery @seeded", () => {
     const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
     let loadStarted = false;
     let postCount = 0;
-    await page.route(new RegExp(`/api/attacks/${attackId}/messages`), async (route: Route) => {
+    await page.route(new RegExp(`/api/attacks/${attackId}/(?:messages|message-sends)(?:\\?|$)`), async (route: Route) => {
       if (route.request().method() === "GET"
         && new URL(route.request().url()).searchParams.get("conversation_id") === otherId) {
         loadStarted = true;
@@ -313,7 +478,7 @@ test.describe("Chat processing recovery @seeded", () => {
     }
     await expect(page.getByTestId("message-list").getByText("Only conversation B history")).toBeVisible();
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await expect(page.getByTestId("message-list").getByText(/Network error/)).toBeVisible();
+    await expect(page.getByText(/Network error/)).toBeVisible();
     expect(postCount).toBe(1);
     await expect(page.getByTestId("chat-input")).toHaveValue("Retain this unsent draft");
     const [download] = await Promise.all([

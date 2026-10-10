@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from functools import cache
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -13,7 +13,6 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,11 +79,6 @@ class Leakage(Scenario):
     """
 
     VERSION: int = 2
-    RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = True
-
-    def _get_run_size_extra_factories(self) -> dict[str, AttackTechniqueFactory]:
-        """Return Leakage's source-owned factories for matrix sizing."""
-        return {factory.name: factory for factory in _leakage_factories()}
 
     @classmethod
     def _get_additional_scoring_questions(cls) -> list[Path]:

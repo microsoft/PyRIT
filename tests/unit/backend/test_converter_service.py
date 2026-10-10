@@ -7,12 +7,15 @@ Tests for backend converter service.
 
 import asyncio
 import base64
+import codecs
 from collections.abc import AsyncGenerator
+from io import BytesIO
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 from pydantic import ValidationError
 
 from pyrit import converter
@@ -30,13 +33,18 @@ from pyrit.converter import (
     BinaryConverter,
     CaesarConverter,
     RepeatTokenConverter,
+    ROT13Converter,
+    SelectiveTextConverter,
     SuffixAppendConverter,
+    TokenSelectionStrategy,
+    TranslationConverter,
 )
 from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
+from unit.mocks import MockPromptTarget
 
 _TOKEN_BIJECTION_VOCAB = (
     "cat",
@@ -213,19 +221,17 @@ class TestListConverterTypes:
         assert "text" in base64_entry.supported_input_types
         assert "text" in base64_entry.supported_output_types
 
-    async def test_types_include_all_constructible_converters(self) -> None:
-        """The projection surfaces every constructible converter, including base/helper classes.
-
-        Whether to display a given converter is left to the caller (e.g. the frontend),
-        so the service no longer hides anything.
-        """
+    async def test_types_omit_converters_that_need_python_objects(self) -> None:
+        """Converters whose required parameters take Python objects cannot be built from the API."""
         service = ConverterService()
 
         result = await service.list_converter_types_async()
 
         converter_types = [item.converter_type for item in result.items]
         assert "Base64Converter" in converter_types
-        assert "SelectiveTextConverter" in converter_types
+        assert "SearchReplaceConverter" in converter_types
+        assert "SelectiveTextConverter" not in converter_types
+        assert "TextJailbreakConverter" not in converter_types
 
     async def test_types_serialize_parameter_type(self) -> None:
         """Type entries render the raw annotation into a human-readable type_name."""
@@ -259,20 +265,71 @@ class TestListConverterTypes:
         target_param = next(param for param in persuasion_entry.parameters if param.name == "converter_target")
         assert target_param.reference_type == "target"
 
-    async def test_types_preserve_all_registry_parameters(self, upload_service: ConverterService) -> None:
+    async def test_types_expose_component_external_inputs(self, upload_service: ConverterService) -> None:
         result = await upload_service.list_converter_types_async()
-        metadata_by_name = {
-            metadata.class_name: metadata for metadata in upload_service._registry.get_all_registered_class_metadata()
+        parameters = {
+            entry.converter_type: {parameter.name for parameter in entry.parameters} for entry in result.items
         }
 
-        assert {entry.converter_type for entry in result.items} == set(metadata_by_name)
-        for entry in result.items:
-            assert entry.parameters == list(metadata_by_name[entry.converter_type].parameters)
+        assert {
+            "GridCompositeConverter",
+            "SelectiveTextConverter",
+            "TextJailbreakConverter",
+            "TokenBijectionConverter",
+        }.isdisjoint(parameters)
+        assert "font_size" in parameters["AddImageTextConverter"]
+        assert {"stopwords", "candidate_words"} <= parameters["SATAMaskingConverter"]
+        assert {"existing_docx", "placeholder"} <= parameters["WordDocConverter"]
+        assert "existing_pdf" in parameters["PDFConverter"]
+        assert "font_color" not in parameters["PDFConverter"]
+
+    async def test_registry_metadata_keeps_parameters_the_api_cannot_set(
+        self, upload_service: ConverterService
+    ) -> None:
+        metadata = upload_service._registry.get_registered_class_metadata("PDFConverter")
+        assert metadata is not None
+        registry_parameters = {parameter.name: parameter for parameter in metadata.parameters}
+
+        assert registry_parameters["font_color"].type_name == "tuple[int, int, int]"
+        assert not registry_parameters["font_color"].is_external_input
+
+    async def test_types_describe_parameters_in_the_form_callers_send(self, upload_service: ConverterService) -> None:
+        result = await upload_service.list_converter_types_async()
+        serialized = {
+            (entry.converter_type, parameter["name"]): {
+                key: parameter[key] for key in ("type_name", "is_list", "choices", "default", "required")
+            }
+            for entry in result.items
+            for parameter in entry.model_dump(mode="json")["parameters"]
+        }
+
+        assert serialized[("AddImageTextConverter", "font_size")] == {
+            "type_name": "int",
+            "is_list": False,
+            "choices": None,
+            "default": "15",
+            "required": False,
+        }
+        for name in ("stopwords", "candidate_words"):
+            assert serialized[("SATAMaskingConverter", name)] == {
+                "type_name": "list[str]",
+                "is_list": True,
+                "choices": None,
+                "default": None,
+                "required": False,
+            }
+        registry = {
+            (metadata.class_name, parameter.name): parameter.type_name
+            for metadata in upload_service._registry.get_all_registered_class_metadata()
+            for parameter in metadata.parameters
+        }
+        assert registry[("AddImageTextConverter", "font_size")] == "int | tuple[int, int]"
+        assert registry[("SATAMaskingConverter", "stopwords")] == "collections.abc.Collection[str]"
 
     @pytest.mark.parametrize(
         ("converter_type", "parameter_name", "type_name", "required", "is_list"),
         [
-            ("SearchReplaceConverter", "replace", "str | list[str]", True, False),
+            ("SearchReplaceConverter", "replace", "str", True, False),
             ("DenylistConverter", "denylist", "list[str]", False, True),
         ],
     )
@@ -413,6 +470,27 @@ class TestCreateConverter:
         with pytest.raises(ValueError, match="not found"):
             await service.create_converter_async(request=request)
 
+    async def test_create_converter_rejects_parameters_that_take_python_objects(self) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="jailbreak", type="TextJailbreakConverter", params={"jailbreak_template": {"name": "x"}}
+        )
+
+        with pytest.raises(ValueError, match="'jailbreak_template' of 'TextJailbreakConverter' cannot be set"):
+            await service.create_converter_async(request=request)
+
+        assert service.get_converter_object(converter_id="jailbreak") is None
+
+    async def test_create_converter_accepts_string_for_string_union_parameter(self) -> None:
+        service = ConverterService()
+        request = CreateConverterRequest(
+            name="replace", type="SearchReplaceConverter", params={"pattern": "a", "replace": "b"}
+        )
+
+        result = await service.create_converter_async(request=request)
+
+        assert result.converter_id == "replace"
+
     async def test_create_converter_success(self) -> None:
         """Test successful converter creation."""
         service = ConverterService()
@@ -428,6 +506,26 @@ class TestCreateConverter:
         assert result.converter_id == "my-base64"
         assert result.identifier.class_name == "Base64Converter"
         assert result.is_llm_based is False
+
+    async def test_create_converter_supports_deprecated_task_framing_converter(self) -> None:
+        """Deprecated TaskFramingConverter stays creatable by type until its removal in 1.4.0."""
+        service = ConverterService()
+
+        request = CreateConverterRequest(
+            name="task-framing",
+            type="TaskFramingConverter",
+            params={"task_template": "Example {{ prompt }}"},
+        )
+
+        with pytest.warns(
+            DeprecationWarning, match=r"TaskFramingConverter is deprecated and will be removed in 1\.4\.0"
+        ):
+            result = await service.create_converter_async(request=request)
+
+        assert result.identifier.class_name == "TaskFramingConverter"
+        converter_obj = service.get_converter_object(converter_id=result.converter_id)
+        converted = await converter_obj.convert_async(prompt="x")
+        assert converted.output_text == "Example x"
 
     async def test_create_converter_registers_in_registry(self) -> None:
         """Test that create_converter registers object in registry."""
@@ -747,9 +845,7 @@ class TestPersistDataUriParams:
 
         assert list(service._upload_path.iterdir()) == []
 
-    async def test_create_converter_cleans_upload_when_construction_fails(
-        self, upload_service: ConverterService
-    ) -> None:
+    async def test_create_converter_cleans_upload_when_creation_fails(self, upload_service: ConverterService) -> None:
         service = upload_service
         params = {
             "existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n"),
@@ -757,11 +853,138 @@ class TestPersistDataUriParams:
         }
         request = CreateConverterRequest(name="invalid-pdf", type="PDFConverter", params=params)
 
-        with pytest.raises(ValueError, match="Invalid font_color"):
+        with pytest.raises(ValueError, match="'font_color' of 'PDFConverter' cannot be set through the API"):
             await service.create_converter_async(request=request)
 
         assert service._registry.instances.get("invalid-pdf") is None
         assert list(service._upload_path.iterdir()) == []
+
+    async def test_create_converter_cleans_upload_when_constructor_rejects_value(
+        self, upload_service: ConverterService
+    ) -> None:
+        docx_mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        request = CreateConverterRequest(
+            name="invalid-word-doc",
+            type="WordDocConverter",
+            params={
+                "existing_docx": _make_data_uri(mime_type=docx_mime_type, content=b"PK\x03\x04"),
+                "placeholder": "",
+            },
+        )
+
+        with pytest.raises(ValueError, match="Placeholder must be a non-empty string"):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("invalid-word-doc") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_accepts_scalar_alternative_of_union(self, upload_service: ConverterService) -> None:
+        image = BytesIO()
+        Image.new("RGB", (8, 8)).save(image, format="PNG")
+        request = CreateConverterRequest(
+            name="sized-text",
+            type="AddImageTextConverter",
+            params={"img_to_add": _make_data_uri(mime_type="image/png", content=image.getvalue()), "font_size": 24},
+        )
+
+        response = await upload_service.create_converter_async(request=request)
+
+        converter = upload_service.get_converter_object(converter_id=response.converter_id)
+        assert converter._font_size == 24
+
+    async def test_create_converter_accepts_word_lists(self, upload_service: ConverterService) -> None:
+        request = CreateConverterRequest(
+            name="masked",
+            type="SATAMaskingConverter",
+            params={"stopwords": ["the", "a"], "candidate_words": ["bomb"]},
+        )
+
+        response = await upload_service.create_converter_async(request=request)
+
+        strategy_params = upload_service.get_converter_object(
+            converter_id=response.converter_id
+        )._selection_strategy.get_identifier_params()
+        assert strategy_params["stopwords"] == ["a", "the"]
+        assert strategy_params["candidate_words"] == ["bomb"]
+
+    @pytest.mark.parametrize("innocuous_image", ["/etc/hosts", "https://example.com/cat.png"])
+    async def test_create_converter_rejects_file_collections(
+        self, upload_service: ConverterService, innocuous_image: str
+    ) -> None:
+        request = CreateConverterRequest(
+            name="grid",
+            type="GridCompositeConverter",
+            params={"innocuous_images": [innocuous_image]},
+        )
+
+        with pytest.raises(ValueError, match="'innocuous_images' of 'GridCompositeConverter' cannot be set"):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("grid") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_registers_nothing_when_response_mapping_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="unmapped-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch(
+                "pyrit.backend.services.converter_service.converter_object_to_instance",
+                side_effect=RuntimeError("mapping failed"),
+            ),
+            pytest.raises(RuntimeError, match="mapping failed"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert upload_service._registry.instances.get("unmapped-pdf") is None
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_rechecks_name_after_upload(self, upload_service: ConverterService) -> None:
+        persist_async = upload_service._persist_data_uri_params_async
+
+        async def persist_then_take_name_async(**kwargs: object) -> object:
+            result = await persist_async(**kwargs)
+            upload_service._registry.instances.register(Base64Converter(), name="taken")
+            return result
+
+        request = CreateConverterRequest(
+            name="taken",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+        with (
+            patch.object(upload_service, "_persist_data_uri_params_async", side_effect=persist_then_take_name_async),
+            patch.object(upload_service._registry, "create_instance") as create_instance,
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        create_instance.assert_not_called()
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    async def test_create_converter_removes_upload_when_registration_fails(
+        self, upload_service: ConverterService
+    ) -> None:
+        request = CreateConverterRequest(
+            name="raced-pdf",
+            type="PDFConverter",
+            params={"existing_pdf": _make_data_uri(mime_type="application/pdf", content=b"%PDF-1.4\n")},
+        )
+
+        with (
+            patch.object(
+                upload_service._registry.instances, "register", side_effect=ValueError("'raced-pdf' already exists")
+            ),
+            pytest.raises(ValueError, match="already exists"),
+        ):
+            await upload_service.create_converter_async(request=request)
+
+        assert list(upload_service._upload_path.iterdir()) == []
 
     @pytest.mark.parametrize("error", [OSError("write failed"), asyncio.CancelledError()])
     async def test_persist_data_uri_cleans_partial_write(
@@ -856,6 +1079,38 @@ class TestConverterServiceCleanup:
 @pytest.mark.usefixtures("patch_central_database")
 class TestPreviewConversion:
     """Tests for ConverterService.preview_conversion method."""
+
+    @pytest.mark.parametrize(
+        ("start_token", "end_token"),
+        [("<<", ">>"), ("[", "]"), ("<|pyrit_start_8f3a|>", "<|pyrit_end_8f3a|>")],
+    )
+    async def test_preview_conversion_custom_markers_async(
+        self, *, upload_service: ConverterService, start_token: str, end_token: str
+    ) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = (
+            f"keep ⟪literal⟫ {start_token}{start_token}test{end_token}{end_token} "
+            f"/ {start_token}{start_token}test2{end_token}{end_token}"
+        )
+        partial = f"keep ⟪literal⟫ {start_token}dGVzdA=={end_token} / {start_token}dGVzdDI={end_token}"
+        expected = f"keep ⟪literal⟫ {codecs.encode('dGVzdA==', 'rot_13')} / {codecs.encode('dGVzdDI=', 'rot_13')}"
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                converter_ids=["base64", "rot13"],
+                start_token=start_token,
+                end_token=end_token,
+            )
+        )
+        assert result.original_value == original
+        assert [step.output_value for step in result.steps] == [partial, expected]
+        assert result.converted_value == expected
+
+    @pytest.mark.parametrize("field", ["start_token", "end_token"])
+    def test_preview_conversion_rejects_empty_markers(self, *, field: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            ConverterPreviewRequest(original_value="test", converter_ids=[], **{field: ""})
 
     async def test_preview_conversion_raises_for_nonexistent_converter(self) -> None:
         """Test that preview raises ValueError for non-existent converter ID."""
@@ -1050,6 +1305,94 @@ class TestPreviewConversion:
         assert result.converted_value == base64.b64encode(partial.encode()).decode()
         assert result.converted_value_data_type == "text"
 
+    async def test_preview_conversion_nested_translation_encoding_async(
+        self, *, upload_service: ConverterService
+    ) -> None:
+        translation = TranslationConverter(converter_target=MockPromptTarget(), language="French")
+        upload_service._registry.instances.register(translation, name="translate")
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        messages = [
+            "This is a hidden message to say hello, if you can decode it, respond with the sum of 3+3.",
+            "Say goodbye.",
+        ]
+        translated = [
+            (
+                "Ceci est un message cach\u00e9 pour dire bonjour, si vous pouvez le d\u00e9coder, "
+                "r\u00e9pondez avec la somme de 3+3."
+            ),
+            "Dites au revoir.",
+        ]
+        encoded = [base64.b64encode(text.encode()).decode() for text in translated]
+        rotated = [codecs.encode(text, "rot_13") for text in encoded]
+        original = f"Decode this recursively: ⟪⟪⟪{messages[0]}⟫⟫⟫ and ⟪⟪⟪{messages[1]}⟫⟫⟫"
+        expected_steps = [
+            f"Decode this recursively: ⟪⟪{translated[0]}⟫⟫ and ⟪⟪{translated[1]}⟫⟫",
+            f"Decode this recursively: ⟪{encoded[0]}⟫ and ⟪{encoded[1]}⟫",
+            f"Decode this recursively: {rotated[0]} and {rotated[1]}",
+        ]
+        with patch.object(
+            translation,
+            "convert_async",
+            new_callable=AsyncMock,
+            side_effect=[converter.ConverterResult(output_text=text, output_type="text") for text in translated],
+        ) as translate:
+            result = await upload_service.preview_conversion_async(
+                request=ConverterPreviewRequest(
+                    original_value=original,
+                    original_value_data_type="text",
+                    converter_ids=["translate", "base64", "rot13"],
+                )
+            )
+
+        assert translate.await_args_list == [call(prompt=text, input_type="text") for text in messages]
+        assert result.original_value == original
+        assert [step.input_value for step in result.steps] == [original, *expected_steps[:-1]]
+        assert [step.output_value for step in result.steps] == expected_steps
+        assert result.converted_value == expected_steps[-1]
+        assert result.converted_value_data_type == "text"
+
+    async def test_preview_conversion_nested_remaining_markers_async(self, *, upload_service: ConverterService) -> None:
+        upload_service._registry.instances.register(Base64Converter(), name="base64")
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫",
+                original_value_data_type="text",
+                converter_ids=["base64"],
+            )
+        )
+        assert result.converted_value == "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
+
+    @pytest.mark.parametrize("preserve_tokens", [False, True])
+    async def test_preview_conversion_token_selection_matches_direct_async(
+        self, *, upload_service: ConverterService, preserve_tokens: bool
+    ) -> None:
+        selected = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=TokenSelectionStrategy(),
+            preserve_tokens=preserve_tokens,
+        )
+        upload_service._registry.instances.register(selected, name="selected")
+        upload_service._registry.instances.register(ROT13Converter(), name="rot13")
+        original = "keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫"
+        direct = await selected.convert_async(prompt=original)
+        result = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value=original,
+                original_value_data_type="text",
+                converter_ids=["selected", "rot13"],
+            )
+        )
+        rotated = [codecs.encode(text, "rot_13") for text in ("dGVzdA==", "dGVzdDI=")]
+        expected_first = "keep ⟪⟪dGVzdA==⟫⟫ and ⟪⟪dGVzdDI=⟫⟫" if preserve_tokens else "keep ⟪dGVzdA==⟫ and ⟪dGVzdDI=⟫"
+        expected_final = (
+            f"keep ⟪{rotated[0]}⟫ and ⟪{rotated[1]}⟫" if preserve_tokens else f"keep {rotated[0]} and {rotated[1]}"
+        )
+        assert result.original_value == original
+        assert result.steps[0].output_value == direct.output_text == expected_first
+        assert result.steps[1].input_value == expected_first
+        assert result.converted_value == expected_final
+
     async def test_preview_conversion_accepts_empty_marked_region_async(
         self, *, upload_service: ConverterService
     ) -> None:
@@ -1063,7 +1406,7 @@ class TestPreviewConversion:
         )
         assert result.converted_value == "before  after"
 
-    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫⟫"])
+    @pytest.mark.parametrize("prompt", ["⟪unclosed", "⟫reversed⟪", "⟪outer⟪inner⟫", "⟪⟪inner⟫⟫⟫"])
     async def test_preview_conversion_rejects_invalid_selection_before_conversion_async(
         self, *, upload_service: ConverterService, prompt: str
     ) -> None:
@@ -1345,8 +1688,10 @@ def _try_instantiate_converter(converter_name: str):
         "CodeChameleonConverter": {"encrypt_type": "reverse"},
         "SearchReplaceConverter": {"pattern": "foo", "replace": "bar"},
         "PersuasionConverter": {"persuasion_technique": "logical_appeal"},
+        "PromptTemplateConverter": {"template": "Test {{ prompt }}"},
         "ImagePromptStyleConverter": {"filter_name": "gritty_documentary"},
         "VigenereConverter": {"key": "testvalue"},
+        "GridCompositeConverter": {"innocuous_images": ["a.png", "b.png", "c.png"]},
     }
 
     converter_cls = getattr(converter, converter_name, None)

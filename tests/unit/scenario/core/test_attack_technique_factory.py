@@ -15,12 +15,14 @@ from pyrit.executor.attack.core.attack_config import (
     AttackConverterConfig,
     AttackScoringConfig,
 )
+from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig, TreeOfAttacksWithPruningAttack
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import AttackTechniqueSeedGroup, ComponentIdentifier, Identifiable, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+from pyrit.score import FloatScaleThresholdScorer, Scorer, TrueFalseScorer
 
 if TYPE_CHECKING:
     # The regression tests bind these names only after constructing each factory.
@@ -254,6 +256,37 @@ class TestFactoryInit:
         assert not default_factory.supports_additional_request_converters
         assert composable_factory.supports_additional_request_converters
 
+    def test_with_attack_kwargs_preserves_factory_and_merges_values(self) -> None:
+        seed_technique = _make_seed_technique()
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_StubAttack,
+            description="Configured stub.",
+            technique_tags=["multi_turn"],
+            attack_kwargs={"max_turns": 7},
+            seed_technique=seed_technique,
+            uses_adversarial=True,
+            supports_additional_request_converters=True,
+            scorer_override_policy=ScorerOverridePolicy.RAISE,
+        )
+
+        specialized = factory.with_attack_kwargs(attack_kwargs={"max_turns": 2})
+
+        assert specialized is not factory
+        assert specialized.name == factory.name
+        assert specialized.attack_class is factory.attack_class
+        assert specialized.description == factory.description
+        assert specialized.technique_tags == factory.technique_tags
+        assert specialized.seed_technique is factory.seed_technique
+        assert specialized.uses_adversarial == factory.uses_adversarial
+        assert specialized.supports_additional_request_converters == factory.supports_additional_request_converters
+        target = MagicMock(spec=PromptTarget)
+        scoring = MagicMock(spec=AttackScoringConfig)
+        original_technique = factory.create(objective_target=target, attack_scoring_config=scoring)
+        specialized_technique = specialized.create(objective_target=target, attack_scoring_config=scoring)
+        assert original_technique.attack.max_turns == 7
+        assert specialized_technique.attack.max_turns == 2
+
 
 class TestFactoryCreate:
     """Tests for AttackTechniqueFactory.create()."""
@@ -461,8 +494,8 @@ class TestFactoryCreate:
         assert cfg.request_converters == baked_request + extra
         assert cfg.response_converters == baked_response
 
-    def test_create_extra_request_converters_skipped_when_unsupported(self):
-        """Attacks that don't accept ``attack_converter_config`` silently ignore extras."""
+    def test_create_extra_request_converters_raise_when_unsupported(self):
+        """Attacks that don't accept ``attack_converter_config`` reject extras instead of dropping them."""
 
         class _NoConverterAttack:
             def __init__(self, *, objective_target, attack_scoring_config=None):
@@ -475,13 +508,12 @@ class TestFactoryCreate:
         target = MagicMock(spec=PromptTarget)
         extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 
-        technique = factory.create(
-            objective_target=target,
-            attack_scoring_config=self._scoring(),
-            extra_request_converters=extra,
-        )
-
-        assert isinstance(technique, AttackTechnique)
+        with pytest.raises(ValueError, match="does not accept 'attack_converter_config'"):
+            factory.create(
+                objective_target=target,
+                attack_scoring_config=self._scoring(),
+                extra_request_converters=extra,
+            )
 
     def test_create_with_deferred_forward_ref_scoring_config_policy_raise(self):
         """Forward-referenced scoring config defined after factory init resolves and raises on incompatible type."""
@@ -1294,3 +1326,166 @@ class TestWithSimulatedConversationPromptSources:
         prompts = list(factory.seed_technique.prompts)
         assert prompts[0].value == "yes."
         assert prompts[0].sequence == sim.sequence_range.stop
+
+
+class TestScoreFeedbackOverride:
+    """Tests for the technique-level ``use_score_as_feedback`` override."""
+
+    class _AdversarialAttack:
+        def __init__(self, *, objective_target=None, attack_scoring_config=None, attack_adversarial_config=None):
+            self.attack_scoring_config = attack_scoring_config
+
+        def get_identifier(self):
+            return ComponentIdentifier(class_name="_AdversarialAttack", class_module="test")
+
+    def test_unset_passes_scenario_config_through(self):
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+        scoring = AttackScoringConfig()
+
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=scoring)
+
+        assert technique.attack.attack_scoring_config is scoring
+
+    def test_override_applied_to_copy_keeping_scenario_scorers(self):
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack, use_score_as_feedback=False)
+        objective_scorer = MagicMock(spec=TrueFalseScorer)
+        auxiliary_scorers = [MagicMock(spec=Scorer)]
+        scoring = AttackScoringConfig(objective_scorer=objective_scorer, auxiliary_scorers=auxiliary_scorers)
+
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=scoring)
+
+        applied = technique.attack.attack_scoring_config
+        assert applied is not scoring
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
+        assert applied.auxiliary_scorers == auxiliary_scorers
+        # The scenario's config is shared across techniques and must not be changed.
+        assert scoring.use_score_as_feedback is True
+
+    def test_matching_scenario_value_passes_config_through(self):
+        factory = AttackTechniqueFactory(name="test", attack_class=_StubAttack, use_score_as_feedback=False)
+        scoring = AttackScoringConfig(use_score_as_feedback=False)
+
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=scoring)
+
+        assert technique.attack.attack_scoring_config is scoring
+
+    def test_override_keeps_scoring_config_subtype(self):
+        """TAP's config has its own constructor; copying must keep its type and threshold."""
+
+        class _TapStubAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+
+        objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        objective_scorer.threshold = 0.7
+        factory = AttackTechniqueFactory(name="test", attack_class=_TapStubAttack, use_score_as_feedback=False)
+        scoring = TAPAttackScoringConfig(objective_scorer=objective_scorer)
+
+        technique = factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=scoring)
+
+        applied = technique.attack.attack_scoring_config
+        assert type(applied) is TAPAttackScoringConfig
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
+        assert applied.threshold == 0.7
+        assert scoring.use_score_as_feedback is True
+
+    @pytest.mark.parametrize("policy", [ScorerOverridePolicy.WARN, ScorerOverridePolicy.SKIP])
+    def test_skipped_scenario_config_without_baked_config_raises(self, policy):
+        """A skipped scenario config leaves the attack to build its own default, which would
+        silently run with feedback on, so create() must reject the technique instead."""
+
+        class _TapStubAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+
+        factory = AttackTechniqueFactory(
+            name="test", attack_class=_TapStubAttack, use_score_as_feedback=False, scorer_override_policy=policy
+        )
+
+        with pytest.raises(ValueError, match="use_score_as_feedback=False cannot be applied"):
+            factory.create(objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=AttackScoringConfig())
+
+    def test_skipped_scenario_config_applies_override_to_baked_config(self):
+        class _TapStubAttack:
+            def __init__(self, *, objective_target, attack_scoring_config: TAPAttackScoringConfig | None = None):
+                self.attack_scoring_config = attack_scoring_config
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_TapStubAttack", class_module="test")
+
+        objective_scorer = MagicMock(spec=FloatScaleThresholdScorer)
+        baked = TAPAttackScoringConfig(objective_scorer=objective_scorer)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=_TapStubAttack,
+            attack_kwargs={"attack_scoring_config": baked},
+            use_score_as_feedback=False,
+            scorer_override_policy=ScorerOverridePolicy.SKIP,
+        )
+
+        technique = factory.create(
+            objective_target=MagicMock(spec=PromptTarget), attack_scoring_config=AttackScoringConfig()
+        )
+
+        applied = technique.attack.attack_scoring_config
+        assert type(applied) is TAPAttackScoringConfig
+        assert applied.use_score_as_feedback is False
+        assert applied.objective_scorer is objective_scorer
+        assert baked.use_score_as_feedback is True
+
+    def test_tap_with_plain_scenario_config_rejects_instead_of_enabling_feedback(self):
+        """Regression test: TAP requires TAPAttackScoringConfig, so a plain scenario config is
+        skipped and TAP would otherwise build its default config with feedback on."""
+        factory = AttackTechniqueFactory(
+            name="tap_no_feedback", attack_class=TreeOfAttacksWithPruningAttack, use_score_as_feedback=False
+        )
+
+        with pytest.raises(ValueError, match="not forwarded to TreeOfAttacksWithPruningAttack"):
+            factory.create(
+                objective_target=MagicMock(spec=PromptTarget),
+                attack_scoring_config=AttackScoringConfig(objective_scorer=MagicMock(spec=TrueFalseScorer)),
+                adversarial_chat=MagicMock(spec=PromptTarget),
+            )
+
+    def test_override_requires_attack_scoring_config_param(self):
+        class _NoScoringAttack:
+            def __init__(self, *, objective_target):
+                pass
+
+            def get_identifier(self):
+                return ComponentIdentifier(class_name="_NoScoringAttack", class_module="test")
+
+        with pytest.raises(ValueError, match="use_score_as_feedback requires _NoScoringAttack"):
+            AttackTechniqueFactory(name="test", attack_class=_NoScoringAttack, use_score_as_feedback=False)
+
+    def test_identifier_includes_override_only_when_set(self):
+        unset = AttackTechniqueFactory(name="test", attack_class=_StubAttack)
+        disabled = AttackTechniqueFactory(name="test", attack_class=_StubAttack, use_score_as_feedback=False)
+        enabled = AttackTechniqueFactory(name="test", attack_class=_StubAttack, use_score_as_feedback=True)
+
+        assert "use_score_as_feedback" not in unset.get_identifier().params
+        assert disabled.get_identifier().params["use_score_as_feedback"] is False
+        assert len({unset.get_identifier().hash, disabled.get_identifier().hash, enabled.get_identifier().hash}) == 3
+
+    def test_prefixed_copy_keeps_override(self):
+        factory = AttackTechniqueFactory(
+            name="test", attack_class=self._AdversarialAttack, use_score_as_feedback=False, uses_adversarial=True
+        )
+
+        prefixed = factory.with_adversarial_system_prompt_prefix("Static guidance")
+        technique = prefixed.create(
+            objective_target=MagicMock(spec=PromptTarget),
+            attack_scoring_config=AttackScoringConfig(),
+            adversarial_chat=MagicMock(spec=PromptTarget),
+        )
+
+        assert technique.attack.attack_scoring_config.use_score_as_feedback is False
+        assert prefixed.get_identifier().params["use_score_as_feedback"] is False

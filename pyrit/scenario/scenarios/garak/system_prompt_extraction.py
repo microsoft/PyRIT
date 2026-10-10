@@ -10,7 +10,17 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioDatasetSizeEstimate,
+    ScenarioDatasetSummary,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedObjective,
+    SeedPrompt,
+    scenario_dataset_size_from_limit,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
@@ -87,6 +97,7 @@ class SystemPromptExtraction(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Template-dominated like the Doctor/Jailbreak scenarios: the bare system prompt with no
     # extraction request is a weak comparison point, so baseline is off by default.
@@ -148,7 +159,36 @@ class SystemPromptExtraction(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
-    def _load_system_prompts(self) -> list[str]:
+    USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
+
+    def _validate_runtime_configuration(self) -> None:
+        super()._validate_runtime_configuration()
+        if self._prompt_cap is not None and self._prompt_cap < 1:
+            raise ValueError("prompt_cap must be greater than zero or None")
+        if self._system_prompt_subsample < 1:
+            raise ValueError("system_prompt_subsample must be greater than zero")
+
+    def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
+        """Return the shared cap on system-prompt and template combinations."""
+        return scenario_dataset_size_from_limit(self._prompt_cap)
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate the combined prompt budget without multiplying it by category count.
+
+        Returns:
+            ScenarioRunSizeEstimate: Shared prompt cap.
+        """
+        count = budget.value
+        return ScenarioRunSizeEstimate(
+            total_attack_count=count,
+            components=[ScenarioRunSizeComponent(label="System-prompt/template combinations", count=count)],
+            datasets=[ScenarioDatasetSummary(name="System-prompt/template combinations", kind="synthesized")],
+            effective_parameters={"prompt_cap": budget.value},
+            note="The prompt cap is shared across all selected categories. Dataset size limits do not apply.",
+        )
+
+    async def _load_system_prompts_async(self) -> list[str]:
         """
         Load the real system prompts (the *what*) from the configured datasets in memory.
 
@@ -159,13 +199,13 @@ class SystemPromptExtraction(Scenario):
         rng = random.Random(self._random_seed)
         system_prompts: list[str] = []
         for name in (DATASET_DRH_SYSTEM_PROMPTS, DATASET_TM_SYSTEM_PROMPTS):
-            values = [seed.value for seed in memory.get_seeds(dataset_name=name)]
+            values = [seed.value for seed in (await memory.get_seeds_async(dataset_name=name))]
             if len(values) > self._system_prompt_subsample:
                 values = rng.sample(values, self._system_prompt_subsample)
             system_prompts.extend(values)
         return system_prompts
 
-    def _load_templates_by_category(self) -> dict[str, list[str]]:
+    async def _load_templates_by_category_async(self) -> dict[str, list[str]]:
         """
         Load the extraction templates (the *how*) from memory, grouped by ``technique`` metadata.
 
@@ -174,7 +214,7 @@ class SystemPromptExtraction(Scenario):
         """
         memory = CentralMemory.get_memory_instance()
         templates_by_category: dict[str, list[str]] = {}
-        for seed in memory.get_seeds(dataset_name=DATASET_EXTRACTION_TEMPLATES):
+        for seed in await memory.get_seeds_async(dataset_name=DATASET_EXTRACTION_TEMPLATES):
             category = (seed.metadata or {}).get("technique")
             if not category:
                 continue
@@ -205,8 +245,8 @@ class SystemPromptExtraction(Scenario):
             ValueError: If no system prompts or templates were found in memory.
         """
         await self._dataset_config._collect_named_seeds_async()
-        system_prompts = self._load_system_prompts()
-        templates_by_category = self._load_templates_by_category()
+        system_prompts = await self._load_system_prompts_async()
+        templates_by_category = await self._load_templates_by_category_async()
 
         selected_categories = {technique.value for technique in self._scenario_techniques}
 

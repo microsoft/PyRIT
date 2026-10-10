@@ -30,7 +30,9 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
     from pyrit.models.seeds.seed_grouping import group_seeds_into_attack_groups
     from pyrit.models.seeds.seed_objective import SeedObjective
+    from pyrit.models.seeds.seed_origin import SeedOrigin
     from pyrit.models.seeds.seed_prompt import SeedPrompt
+    from pyrit.models.seeds.seed_record import SeedRecord
     from pyrit.models.seeds.seed_simulated_conversation import (
         NextMessageSystemPromptPaths,
         SeedSimulatedConversation,
@@ -63,7 +65,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SeedDatasetSummary": "pyrit.models.seeds.seed_dataset_summary",
     "SeedGroup": "pyrit.models.seeds.seed_group",
     "SeedObjective": "pyrit.models.seeds.seed_objective",
+    "SeedOrigin": "pyrit.models.seeds.seed_origin",
     "SeedPrompt": "pyrit.models.seeds.seed_prompt",
+    "SeedRecord": "pyrit.models.seeds.seed_record",
     "SeedSimulatedConversation": "pyrit.models.seeds.seed_simulated_conversation",
     "SeedUnion": "pyrit.models.seeds.seed_group",
     "SimulatedTargetSystemPromptPaths": "pyrit.models.seeds.seed_simulated_conversation",

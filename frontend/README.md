@@ -19,6 +19,19 @@ Failed runs offer **Resume run** on the run page and **Resume** in Scanner Histo
 See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for resume
 behavior and the saved launch configuration requirement.
 
+## Default labels after runtime changes
+
+When the runtime configuration changes, CoPyRIT reloads the server's default
+labels before allowing new chat attacks, copies saved to new attacks, or scans. Browser label
+overrides and saved attack/run attribution are preserved. If loading fails,
+use **Retry default labels** in the error banner without restarting the runtime.
+The interface stays mounted while the runtime is unavailable, even if its
+readiness response has no generation; defaults remain unloaded until recovery.
+If the runtime changes while preparing a new chat message or saving a draft to
+a new attack, the draft is kept so you can retry after loading finishes. Copies
+and drafts saved to an existing attack remain available during defaults reloads
+and keep that attack's attribution.
+
 ## Development
 
 ```bash
@@ -56,6 +69,20 @@ npm run preview
 ```
 
 ### Backend CLI
+
+The browser starts only after an authenticated `/api/version` handshake confirms
+that its embedded compatibility identity matches the backend. Use frontend, CLI,
+and backend artifacts from the same package version **and full source commit**.
+`dev.py` stamps before starting the backend; Vite uses the same source stamp.
+After changing commits, restart both servers. When starting the backend manually,
+first run `python -m build_scripts.stamp_compatibility --development` at the repository root.
+Dirty local edits warn without changing the identity; they are not publishable.
+If the backend changes incompatibly during a session, requests stop and the mounted
+UI state stays retained until you explicitly reload; failed mutations are not replayed.
+
+Wheel/sdist builds prepare matching bundled assets automatically. A standalone
+`npm run build` is a local build, not approval to publish dirty sources. See the
+[release gate](../doc/contributing/10_release_process.md#coordinated-api-release-gate).
 
 The backend uses `pyrit_backend` CLI which supports initializers:
 
@@ -115,7 +142,7 @@ npm run test:watch    # Watch mode for development
 npm run test:coverage # Run with coverage report (85%+ threshold)
 
 # End-to-End Tests (Playwright)
-npm run test:e2e          # Run headless (auto-starts frontend + backend via dev.py)
+npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
@@ -147,7 +174,27 @@ E2E_LIVE_MODE=true npx playwright test
 
 The mock and seeded projects run in the **GitHub Actions** pull-request workflow. The live project is intended for a protected pipeline with an Entra identity or API keys.
 
-E2E tests use `dev.py` to automatically start both frontend and backend servers. If servers are already running, they will be reused.
+CI runs two isolated mock shards alongside one serial seeded job, with one
+worker per job. Each job starts its own Vite server and Python backend because
+mock specs still depend on backend auth bootstrap and some API calls. The jobs
+never share backend state. The required **Frontend E2E Tests** check merges their reports and fails
+if any shard fails, is cancelled, or is missing a report. Skipped and flaky tests
+also fail CI.
+
+The `playwright-report` artifact contains the combined HTML report. CI retains
+traces for every failing test attempt, including the original attempt before a
+retry, and uploads diagnostic artifacts named by project, shard, and workflow
+attempt. Per-shard blob reports are replaced on reruns so **Re-run failed jobs**
+can reuse the reports from successful shards.
+
+Default local E2E runs (`CI` and `E2E_FRONTEND_PORT` unset) use `dev.py` to
+automatically start both frontend and backend servers and can reuse servers
+that are already running. Setting `E2E_FRONTEND_PORT` locally instead starts
+only a dedicated Vite server, expects the backend to already be running, and
+disables server reuse.
+
+In CI with `E2E_SEEDED_MODE=true`, Playwright starts its own backend and Vite
+servers with reuse disabled, even when `E2E_FRONTEND_PORT` is set.
 
 > **Note**: `test:e2e:ui` and `test:e2e:headed` require a graphical display and won't work in headless environments like devcontainers. Use `npm run test:e2e` for CI/headless testing.
 

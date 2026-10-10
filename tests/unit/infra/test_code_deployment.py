@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,140 @@ def _find_bash() -> str | None:
 
 BASH = _find_bash()
 JQ = shutil.which("jq")
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestLocalDockerBuild(unittest.TestCase):
+    def test_compose_setup_exports_source_provenance_and_fails_on_git_errors(self) -> None:
+        assert BASH is not None
+        commit = "a" * 40
+        git_stub = (
+            'git() { case "$*" in\n'
+            '"rev-parse --verify HEAD") printf "%s\\n" "$TEST_COMMIT";;\n'
+            '"status --porcelain") printf "%s" "$TEST_STATUS"; return "$TEST_STATUS_EXIT";;\n'
+            "*) return 97;; esac; }\n"
+        )
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("PYRIT_SOURCE_")}
+        environment.pop("BASH_ENV", None)
+        for path in ("docker/README.md", "doc/getting_started/install_docker.md"):
+            text = (REPO_ROOT / path).read_text(encoding="utf-8")
+            blocks = [section.split("```", 1)[0] for section in text.split("```bash\n")[1:]]
+            setup = [block for block in blocks if "PYRIT_SOURCE_COMMIT=" in block]
+            assert len(setup) == 1, f"{path} must include one runnable source provenance setup"
+            for status, status_exit, expected in (
+                ("", "0", "false"),
+                (" M pyrit/example.py", "0", "true"),
+                ("?? new-file", "0", "true"),
+                ("", "128", None),
+            ):
+                with self.subTest(path=path, status=status, status_exit=status_exit):
+                    result = subprocess.run(
+                        [BASH, "--noprofile", "--norc", "-s"],
+                        input=git_stub
+                        + setup[0]
+                        + '\nsh -c \'printf "%s\\n%s\\n" "$PYRIT_SOURCE_COMMIT" "$PYRIT_SOURCE_DIRTY"\'\n',
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=30,
+                        env={
+                            **environment,
+                            "TEST_COMMIT": commit,
+                            "TEST_STATUS": status,
+                            "TEST_STATUS_EXIT": status_exit,
+                        },
+                    )
+                    if expected is None:
+                        assert result.returncode != 0
+                        assert not result.stdout
+                    else:
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        assert result.stdout.splitlines() == [commit, expected]
+
+    def test_only_dirty_local_builds_use_development_preparation(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        local_build = dockerfile.split('elif [ "$PYRIT_SOURCE" = "local" ]; then', 1)[1].split("\n    else", 1)[0]
+        script = (
+            'set -eu\nuv() { :; }\npython() { printf "prepare:%s\\n" "$*"; }\n'
+            + local_build.replace("/opt/venv/bin/python", "python")
+            + "\n"
+        )
+
+        for dirty in ("true", "false"):
+            with self.subTest(dirty=dirty):
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input=script,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**os.environ, "GIT_COMMIT": "a" * 40, "GIT_MODIFIED": dirty},
+                )
+                assert result.returncode == 0, result.stdout + result.stderr
+                preparation = [line for line in result.stdout.splitlines() if line.startswith("prepare:")]
+                expected = "prepare:-m build_scripts.prepare_package" + (" --development" if dirty == "true" else "")
+                assert preparation == [expected]
+
+
+@unittest.skipIf(BASH is None, "Native Bash is not installed")
+class TestPypiBuild(unittest.TestCase):
+    def test_pypi_builds_preserve_installed_package_provenance_and_remove_local_sources(self) -> None:
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        pypi_build = dockerfile.split('if [ "$PYRIT_SOURCE" = "pypi" ]; then', 1)[1].split(
+            'elif [ "$PYRIT_SOURCE" = "local" ]; then', 1
+        )[0]
+        assert "==$PYRIT_VERSION" in pypi_build
+        assert "rm -rf /app/pyrit /app/frontend /app/build_scripts" in pypi_build
+        assert "stamp" not in pypi_build
+        assert "prepare_package" not in pypi_build
+
+    def test_pypi_compatibility_validation_fails_closed_with_a_release_diagnostic(self) -> None:
+        assert BASH is not None
+        dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+        validation = dockerfile.split("    cd /tmp && \\\n", 1)[1].split('    echo "Creating build info..."', 1)[0]
+        validation = validation.replace("/opt/venv/bin/python", shlex.quote(Path(sys.executable).as_posix()))
+        version = "9.9.9"
+        identity = f"{version}+g{'a' * 40}"
+
+        for state in ("legacy", "missing-stamp", "malformed-stamp", "stamped"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                package = root / "pyrit"
+                package.mkdir()
+                (package / "__init__.py").write_text("from ._version import __version__\n", encoding="utf-8")
+                (package / "_version.py").write_text(f"__version__ = {version!r}\n", encoding="utf-8")
+                if state != "legacy":
+                    shutil.copyfile(REPO_ROOT / "pyrit/_compatibility.py", package / "_compatibility.py")
+                if state in ("malformed-stamp", "stamped"):
+                    stamp = {
+                        "version": version if state == "stamped" else "9.9.8",
+                        "commit": "a" * 40,
+                        "compatibility_id": identity,
+                        "dirty": False,
+                    }
+                    (package / "_compatibility.json").write_text(json.dumps(stamp), encoding="utf-8")
+                environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+                result = subprocess.run(
+                    [BASH, "--noprofile", "--norc", "-s"],
+                    input="set -eu\n" + validation + "true\n",
+                    cwd=root,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=30,
+                    env={**environment, "PYRIT_SOURCE": "pypi", "PYRIT_VERSION": version},
+                )
+                if state == "stamped":
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    assert result.stdout.strip() == identity
+                    assert result.stderr == ""
+                else:
+                    assert result.returncode != 0
+                    assert f"Selected PyPI release {version} lacks valid compatibility metadata" in result.stderr
+                    assert "Wheels published before compatibility stamping are unsupported" in result.stderr
+                    assert "matching Python and frontend stamps is required" in result.stderr
 
 
 @unittest.skipIf(BASH is None or JQ is None, "Native Bash and jq are required")
@@ -329,7 +464,7 @@ wait_for_http_health https://copyrit.example.azurefd.net/api/health 31
 
     def _run_cancellation_rollback(
         self, *, removed: bool, signal: str
-    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], list[int]]:
         environment_id = f"{RESOURCE_GROUP}/providers/Microsoft.App/managedEnvironments/copyrit-test-env"
         connection = json.dumps(
             [
@@ -372,7 +507,7 @@ az() {
     *) echo 'Unexpected Azure call' >&2; exit 97 ;;
   esac
 }
-sleep() { :; }
+sleep() { printf 'sleep:%s\\n' "$1" >&2; SECONDS=$((SECONDS + 3600)); }
 trap rollback_public_origin EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
@@ -385,12 +520,13 @@ kill -"$TEST_SIGNAL" $$
             for line in result.stderr.splitlines()
             if line.startswith("az:")
         ]
-        return result, calls
+        sleeps = [int(line.removeprefix("sleep:")) for line in result.stderr.splitlines() if line.startswith("sleep:")]
+        return result, calls, sleeps
 
     def test_cancellation_keeps_public_access_disabled_until_connection_removal(self) -> None:
         for signal, exit_code in (("TERM", 143), ("INT", 130)):
             with self.subTest(signal=signal):
-                result, calls = self._run_cancellation_rollback(removed=False, signal=signal)
+                result, calls, sleeps = self._run_cancellation_rollback(removed=False, signal=signal)
                 assert result.returncode == exit_code, result.stdout + result.stderr
                 assert "private endpoint connection deletion was not confirmed" in result.stdout
                 assert any(call[:3] == ["rest", "--method", "delete"] for call in calls)
@@ -398,13 +534,16 @@ kill -"$TEST_SIGNAL" $$
                 assert len(deployments) == 1
                 assert deployments[0][deployments[0].index("--name") + 1].endswith("-rollback-origin")
                 assert not any("disableContainerAppsPublicAccess=false" in call for call in calls)
+                assert result.stdout.count("Waiting for ACA private endpoint connection removal") == 1
+                assert sleeps == [15]
 
     def test_cancellation_rolls_back_only_infrastructure_after_connection_removal(self) -> None:
         for signal, exit_code in (("TERM", 143), ("INT", 130)):
             with self.subTest(signal=signal):
-                result, calls = self._run_cancellation_rollback(removed=True, signal=signal)
+                result, calls, sleeps = self._run_cancellation_rollback(removed=True, signal=signal)
                 assert result.returncode == exit_code, result.stdout + result.stderr
                 assert "Public ACA origin rollback completed" in result.stdout
+                assert sleeps == []
                 assert any(call[:3] == ["rest", "--method", "delete"] for call in calls)
                 deployments = [call for call in calls if call[:3] == ["deployment", "group", "create"]]
                 assert len(deployments) == 2

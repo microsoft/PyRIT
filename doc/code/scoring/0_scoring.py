@@ -107,6 +107,25 @@ print(df.to_string(index=False))
 # accepts a `MessageTrueFalseScorer` or `MessageFloatScaleScorer` and builds a compatible
 # subclass that evaluates a whole conversation.
 #
+# ### Custom scorer migration
+#
+# Concrete judge constructors still accept `chat_target`. Generic `Scorer` and message-family
+# bases accept it with a deprecation warning until 1.4.0. This parameter only validates target
+# requirements; it does not store a target or create a judge. To migrate, remove the target
+# argument from the base call, initialize the message validator through the base, then compose
+# `TargetJudge(target=chat_target, requirements=self.TARGET_REQUIREMENTS)` at the concrete scorer.
+# Keep `_prompt_target` for `get_chat_target()` compatibility. Pass the effective expectation
+# in `JudgmentRequest` from `_score_piece_with_expectation_async`; keep prompt rendering and
+# verdict conversion in the scorer. Call `_capture_judgment_evidence` before sending a prepared
+# request. The request itself does not read ambient context. Raw sources do not receive criteria.
+#
+# **Hook migration is required:** a subclass of a migrated scorer that overrides only
+# `_score_piece_async` raises `TypeError` at construction, including for objective-only use.
+# Move that override and its `super()` call to `_score_piece_with_expectation_async`, and
+# forward the complete expectation. PyRIT does not silently bypass the old override or infer
+# how to combine both hooks. Legacy hooks on unmigrated leaves still work for objective-only
+# calls, but cannot accept other typed criteria.
+#
 # Generic family scorers consume a `Scorable` without assuming that it resolves to a
 # message. Message scorers also support message-specific entry points and policy. Generic
 # wrappers do not inherit those message APIs from their children; use their canonical
@@ -120,6 +139,13 @@ print(df.to_string(index=False))
 # `ContentScorable` is persisted with a score, PyRIT copies the file to configured results
 # storage and stores its SHA-256 digest. The score remains resolvable after the source file is
 # removed.
+#
+# `ConversationScorable(conversation_id=...)` names the whole current conversation.
+# Each acquisition records exact ordered piece IDs and digests in a conversation observation.
+# A fresh score can include new turns; an earlier snapshot cannot. The wrapper retains any child
+# judgment separately, with its rendered-content anchor. That child can replay its judgment
+# under the existing strict rules. A raw conversation snapshot alone does not make an arbitrary
+# wrapped scorer replayable.
 #
 # Target-backed scorers over text evidence also persist an `Observation` that references and hashes
 # the retained response in the SCORE conversation. The observation and its first score are
@@ -152,7 +178,7 @@ print(df.to_string(index=False))
 # setting that changes the judgment or parsing. Subclasses without their own declaration
 # can still capture observations, but replay raises `NonReplayableObservationError`.
 #
-# Deleting a score through `memory.get_session()` and ORM `session.delete()` removes its
+# Deleting a score through `await memory.get_session_async()` and ORM `await session.delete()` removes its
 # observation only after the final score reference is gone. Removing an ORM observation link
 # also triggers this cleanup, including when a collection is cleared before its score is deleted.
 # Cleanup uses persisted links and removed relationship history, not just cached collections.
@@ -252,11 +278,11 @@ results = await AttackExecutor().execute_attack_async(  # type: ignore
 memory = CentralMemory.get_memory_instance()
 prompt_ids = []
 for r in results:
-    prompt_ids.extend(str(p.id) for p in memory.get_message_pieces(conversation_id=r.conversation_id))
+    prompt_ids.extend(str(p.id) for p in (await memory.get_message_pieces_async(conversation_id=r.conversation_id)))
 
 batch_scorer = BatchScorer()
 scores = await batch_scorer.score_responses_by_filters_async(scorer=scorer, prompt_ids=prompt_ids)  # type: ignore
 
 for score in scores:
-    text = memory.get_message_pieces(prompt_ids=[str(score.message_piece_id)])[0].original_value
+    text = (await memory.get_message_pieces_async(prompt_ids=[str(score.message_piece_id)]))[0].original_value
     print(f"{score.get_value()} : {text}")

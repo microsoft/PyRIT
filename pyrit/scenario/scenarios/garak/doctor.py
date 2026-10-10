@@ -103,16 +103,11 @@ class Doctor(Scenario):
     (https://hiddenlayer.com/innovation-hub/novel-universal-bypass-for-all-major-llms/)
     """
 
-    VERSION: int = 1
-    RUN_SIZE_USES_FACTORY_COMPATIBILITY: ClassVar[bool] = True
+    VERSION: int = 2
 
     # Template-dominated like the Jailbreak scenario: baseline is supported but off
     # by default since the unmodified objective is a weak comparison point here.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
-
-    def _get_run_size_extra_factories(self) -> dict[str, AttackTechniqueFactory]:
-        """Return Doctor's local Policy Puppetry factories for matrix sizing."""
-        return {factory.name: factory for factory in DOCTOR_FACTORIES}
 
     @classmethod
     def required_datasets(cls) -> list[str]:
@@ -177,4 +172,5 @@ class Doctor(Scenario):
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             include_baseline=context.include_baseline,
+            technique_converters=self._technique_converters,
         )

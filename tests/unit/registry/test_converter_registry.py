@@ -206,6 +206,24 @@ class TestConverterRegistryRegisterInstance:
         assert entry.instance is converter
         assert entry.metadata == {"owned_artifact_paths": ["managed.dat"]}
 
+    def test_create_instance_from_external_input_rejects_object_parameters(self, registry: ConverterRegistry):
+        with pytest.raises(ValueError, match="'jailbreak_template' of 'TextJailbreakConverter' cannot be set"):
+            registry.create_instance_from_external_input(
+                "TextJailbreakConverter", params={"jailbreak_template": {"template": "x"}}
+            )
+
+    def test_create_named_instance_selects_external_input_explicitly(self, registry: ConverterRegistry):
+        with pytest.raises(ValueError, match="cannot be set through the API"):
+            registry.create_named_instance(
+                name="math", type_name="MathObfuscationConverter", params={"rng": None}, external_input=True
+            )
+        assert registry.instances.get("math") is None
+
+        converter = registry.create_named_instance(
+            name="caesar", type_name="CaesarConverter", params={"caesar_offset": "3"}, external_input=True
+        )
+        assert registry.instances.get("caesar") is converter
+
     @pytest.mark.parametrize("name", ["preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
         with pytest.raises(ValueError, match="reserved"):
@@ -298,6 +316,18 @@ class TestDiscovery:
         # SelectiveTextConverter is hidden from the user-facing catalog (a frontend
         # concern) but must remain discoverable/buildable so agents can use it.
         assert "SelectiveTextConverter" in registry.get_class_names()
+
+    def test_discovers_prompt_template_converter(self, registry: ConverterRegistry):
+        assert "PromptTemplateConverter" in registry.get_class_names()
+
+    async def test_builds_deprecated_task_framing_converter_by_name(self, registry: ConverterRegistry):
+        # Deprecated until 1.4.0, but existing callers must still be able to build it by name.
+        with pytest.warns(
+            DeprecationWarning, match=r"TaskFramingConverter is deprecated and will be removed in 1\.4\.0"
+        ):
+            converter = registry.create_instance("TaskFramingConverter", task_template="Example {{ prompt }}")
+        result = await converter.convert_async(prompt="x")
+        assert result.output_text == "Example x"
 
     def test_does_not_register_base_class(self, registry: ConverterRegistry):
         assert "Converter" not in registry.get_class_names()

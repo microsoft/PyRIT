@@ -12,9 +12,105 @@ import pytest
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.random_context import get_configured_random_seed
 from pyrit.common.singleton import Singleton
+from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.models import MessagePiece
 from pyrit.registry import InitializerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
+
+
+@pytest.mark.parametrize("existing_memory", [False, True])
+async def test_initializer_failure_closes_only_newly_installed_memory(
+    existing_memory: bool, sqlite_instance: SQLiteMemory
+) -> None:
+    previous = sqlite_instance if existing_memory else None
+    instances = {SQLiteMemory: sqlite_instance} if existing_memory else {}
+    initializer = mock.MagicMock(spec=PyRITInitializer)
+    initializer.validate.side_effect = ValueError("invalid initializer")
+    with (
+        mock.patch.object(CentralMemory, "_memory_instance", previous),
+        mock.patch.object(Singleton, "_instances", instances),
+        mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock),
+        mock.patch.object(SQLiteMemory, "dispose_engine_async", new_callable=mock.AsyncMock) as dispose,
+    ):
+        with pytest.raises(ValueError, match="invalid initializer"):
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[initializer])
+        assert CentralMemory._memory_instance is previous
+        memory = instances[SQLiteMemory]
+    if existing_memory:
+        dispose.assert_not_awaited()
+    else:
+        dispose.assert_awaited_once()
+        await memory.dispose_engine_async()
+
+
+@pytest.mark.parametrize("central_is_set", [False, True])
+async def test_repeated_setup_preserves_rows_without_repeating_schema_initialization(
+    sqlite_instance: SQLiteMemory, central_is_set: bool
+) -> None:
+    piece = MessagePiece(role="user", original_value="keep this row", conversation_id="repeated-setup")
+    await sqlite_instance.add_message_to_memory_async(request=piece.to_message())
+    with (
+        mock.patch.object(CentralMemory, "_memory_instance", sqlite_instance if central_is_set else None),
+        mock.patch.object(Singleton, "_instances", {SQLiteMemory: sqlite_instance}),
+        mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock),
+        mock.patch.object(
+            sqlite_instance, "_run_schema_migration", side_effect=RuntimeError("schema check failed")
+        ) as migrate,
+        mock.patch.object(sqlite_instance, "dispose_engine_async", new_callable=mock.AsyncMock) as dispose,
+    ):
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, load_defaults=False)
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, load_defaults=False)
+        migrate.assert_not_called()
+        dispose.assert_not_awaited()
+        assert CentralMemory.get_memory_instance() is sqlite_instance
+        assert Singleton._instances[SQLiteMemory] is sqlite_instance
+        messages = await sqlite_instance.get_conversation_messages_async(conversation_id="repeated-setup")
+        assert [message.get_piece().id for message in messages] == [piece.id]
+
+
+@pytest.mark.usefixtures("reset_memory_singletons")
+async def test_setup_retries_after_new_memory_is_disposed_on_initializer_failure() -> None:
+    initializer = mock.MagicMock(spec=PyRITInitializer)
+    initializer.validate.side_effect = ValueError("invalid initializer")
+    with mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock):
+        with pytest.raises(ValueError, match="invalid initializer"):
+            await initialize_pyrit_async(memory_db_type=IN_MEMORY, initializers=[initializer])
+        memory = Singleton._instances[SQLiteMemory]
+        assert not memory._initialized
+        assert CentralMemory._memory_instance is None
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, load_defaults=False)
+        assert CentralMemory.get_memory_instance() is memory
+        piece = MessagePiece(role="user", original_value="after retry", conversation_id="setup-retry")
+        await memory.add_message_to_memory_async(request=piece.to_message())
+        assert [row.id for row in await memory.get_message_pieces_async()] == [piece.id]
+
+
+@pytest.mark.parametrize("cached_kind", ["missing", "different", "wrong_backend"])
+async def test_setup_rejects_disagreeing_memory_singletons(sqlite_instance: SQLiteMemory, cached_kind: str) -> None:
+    instances = {} if cached_kind == "missing" else {SQLiteMemory: object()}
+    if cached_kind == "wrong_backend":
+        instances = {SQLiteMemory: sqlite_instance}
+    with (
+        mock.patch.object(Singleton, "_instances", instances),
+        mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock),
+        mock.patch.object(sqlite_instance, "dispose_engine_async", new_callable=mock.AsyncMock) as dispose,
+        pytest.raises(ValueError, match="singleton disagree"),
+    ):
+        await initialize_pyrit_async(
+            memory_db_type="AzureSQL" if cached_kind == "wrong_backend" else IN_MEMORY, load_defaults=False
+        )
+    assert CentralMemory.get_memory_instance() is sqlite_instance
+    dispose.assert_not_awaited()
+
+
+async def test_setup_rejects_switching_sqlite_modes(sqlite_instance: SQLiteMemory) -> None:
+    with (
+        mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock),
+        pytest.raises(ValueError, match="Cannot switch"),
+    ):
+        await initialize_pyrit_async(memory_db_type="SQLite", load_defaults=False)
+    assert CentralMemory.get_memory_instance() is sqlite_instance
 
 
 class TestLoadInitializersFromScripts:
@@ -114,6 +210,7 @@ class LocalInitializer(PyRITInitializer):
             assert initializers[0].name == "Local"
 
 
+@pytest.mark.usefixtures("reset_memory_singletons")
 class TestInitializePyrit:
     """Tests for initialize_pyrit_async function - basic orchestration tests."""
 
@@ -264,20 +361,23 @@ class ScriptInit(PyRITInitializer):
 
 
 @pytest.fixture
-def reset_memory_singletons():
+async def reset_memory_singletons():
     """Force memory __init__ (and schema migration) to run by clearing cached singletons."""
-    saved_instances = Singleton._instances.copy()
-    Singleton._instances.clear()
-    try:
-        yield
-    finally:
-        Singleton._instances.clear()
-        Singleton._instances.update(saved_instances)
+    with (
+        mock.patch.object(Singleton, "_instances", {}),
+        mock.patch.object(CentralMemory, "_memory_instance", None),
+    ):
+        try:
+            yield
+        finally:
+            for memory in Singleton._instances.values():
+                if isinstance(memory, SQLiteMemory):
+                    await memory.dispose_engine_async()
 
 
 @pytest.mark.usefixtures("reset_memory_singletons")
 class TestInitializePyritSilent:
-    """Tests that the silent flag suppresses all console output during initialization."""
+    """Tests that initialization keeps the console free of schema-migration noise."""
 
     def setup_method(self) -> None:
         """Clear default values before each test."""
@@ -292,9 +392,17 @@ class TestInitializePyritSilent:
         assert captured.out == ""
 
     @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
-    async def test_initialize_not_silent_prints_migration_message(self, mock_load_environment, capsys):
-        """Without silent, the Alembic schema-check message is printed and tagged as Alembic output."""
+    async def test_initialize_not_silent_produces_no_migration_output(self, mock_load_environment, capsys):
+        """An in-memory database is built from nothing, so initialization reports no migration work."""
         await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=False, load_defaults=False)
 
         captured = capsys.readouterr()
-        assert "[pyrit:alembic] No new upgrade operations detected." in captured.out
+        assert "[pyrit:alembic]" not in captured.out
+
+    @pytest.mark.parametrize("silent", [True, False])
+    @mock.patch("pyrit.setup.initialization.load_environment_async", new_callable=mock.AsyncMock)
+    async def test_initialize_forwards_silent_to_memory(self, mock_load_environment, silent):
+        """An in-memory database is quiet either way, so stdout alone cannot prove silent is wired."""
+        await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=silent, load_defaults=False)
+
+        assert CentralMemory.get_memory_instance()._silent is silent

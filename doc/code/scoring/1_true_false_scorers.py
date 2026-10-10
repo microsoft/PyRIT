@@ -33,6 +33,33 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
 # These run locally and deterministically — no model call, no credentials. Use them in CI
 # and to score large response sets cheaply.
 #
+# ### OutputMatchesScorer
+#
+# Use `OutputMatches` for a criterion stored with a seed or supplied per call:
+#
+# %%
+from pyrit.models import Contains, ContentScorable, OutputMatches, ScoringExpectation
+from pyrit.score import OutputMatchesScorer
+
+expectation = ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="answer")),))
+scores = await OutputMatchesScorer().score_async(scorable=ContentScorable(value="The ANSWER"), expectation=expectation)
+assert scores[0].get_value() is True
+print(f"[output match] {scores[0].get_value()}")
+
+# %% [markdown]
+# `Contains`, `Equals`, and `Regex` default to case-insensitive matching and edge-whitespace
+# normalization. Internal whitespace is unchanged. `Regex` preserves the authored pattern and
+# searches the candidate text. For literal equality, use
+# `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
+# `Contains` returns false for empty candidate text; `Equals` can match two empty values.
+# Blank or invalid regex patterns fail before scoring.
+#
+# By default, `OutputMatchesScorer` matches each supported text piece independently and returns
+# True if any piece matches. It does not combine text across pieces before matching.
+#
+# Existing `SubStringScorer` and `DecodingScorer` behavior is unchanged. Decoding infers candidate
+# text from the paired request; `OutputMatchesScorer` is the explicit expected-output path.
+#
 # ### RegexScorer
 #
 # `RegexScorer` returns True if **any** named pattern matches. Subclass it to ship a
@@ -325,29 +352,78 @@ print(f"[category] value={scored.get_value()} category={scored.score_category}")
 #
 # WildGuard's bundled prompt includes the full
 # [AI2 completion wrapper](https://github.com/allenai/wildguard/blob/main/wildguard/utils.py).
-# Serve `allenai/wildguard` through an OpenAI-compatible **completions** endpoint, then configure:
-#
-# ```python
-# from pyrit.prompt_target import OpenAICompletionTarget
-# from pyrit.score import WildGuardScorer
-#
-# target = OpenAICompletionTarget(
-#     model_name="allenai/wildguard",
-#     endpoint="http://localhost:8000/v1",  # Your WildGuard completion server
-#     api_key="your-server-key",  # Use the authentication required by your server
-#     max_tokens=128,
-#     temperature=0,
-# )
-# scorer = WildGuardScorer(chat_target=target, user_prompt="The original user request")
-# scores = await scorer.score_text_async("The model response")
-# ```
-#
+# Serve `allenai/wildguard` through an OpenAI-compatible **completions** endpoint.
+# This configuration example constructs the scorer without sending a request.
+# Replace the example URL and key with your server settings before scoring.
+# %%
+from pyrit.prompt_target import OpenAICompletionTarget
+from pyrit.score import WildGuardScorer
+
+wildguard_target = OpenAICompletionTarget(
+    model_name="allenai/wildguard",
+    endpoint="http://localhost:8000/v1",
+    api_key="your-server-key",
+    max_tokens=128,
+    temperature=0,
+)
+wildguard_scorer = WildGuardScorer(chat_target=wildguard_target, user_prompt="The original user request")
+print(type(wildguard_scorer).__name__)
+
+# %% [markdown]
 # The checkpoint does not supply a tokenizer chat template, so
 # `HuggingFaceChatTarget(model_id="allenai/wildguard")` is not a drop-in alternative.
 # Do not apply a second chat wrapper to the bundled prompt. If using a chat server that
 # supplies its own formatting, pass a matching `prompt_template` explicitly.
 #
 # All five need their respective endpoints/credentials even though they are not "self-ask".
+#
+# ## Local model scorers
+#
+# ### LocalRefusalClassifierScorer
+#
+# `LocalRefusalClassifierScorer` is an **experimental** local refusal classifier. It uses
+# [Laya](https://huggingface.co/convaiinnovations/laya), an Apache 2.0 encoder, to form
+# question-conditioned representations and applies a logistic head trained on PyRIT's refusal rows.
+# Install the runtime with `pip install laya`. It may download the pinned checkpoint on first use,
+# but does not send scored text to a hosted judgment API. Call `await scorer.load_model_async()`
+# to load the encoder and train the head at startup; download and training time depend on the machine.
+#
+# Inference covers all response tokens in overlapping windows, with two encoder passes per window.
+# `max_input_tokens` defaults to 512 including Laya and JSON framing, `chunk_overlap_tokens` to 64,
+# and `max_objective_tokens` to 128 serialized objective tokens. Shortened objective context is
+# reported in `score_metadata["objective_truncated"]`; response windows retain all serialized
+# response tokens after Laya's mask-token sanitization. Overlap does not preserve all long-range context.
+#
+# A completed verdict requires all chunks to agree. Conflicting verdicts or any chunk inside
+# `abstain_band` (default `(0.2, 0.8)`) return `UNDETERMINED`; the caller decides whether to use an LLM
+# judge. `abstain_band=None` disables probability-based abstention, but disagreement still returns
+# `UNDETERMINED`. Metadata records the chunk count, minimum and maximum chunk probabilities, and
+# `aggregation="unanimous"`. These probabilities are not calibrated whole-response confidence.
+# Fully blocked responses and SDK-provided structured refusals return `True` without model inference;
+# readable partial output is scored normally.
+#
+# Training uses the same tokenization, framing, and token budgets as inference, without character
+# cutoffs. It selects complete responses that fit one window from both packaged refusal datasets.
+# Whole-response labels are not assigned to individual chunks: multi-window training rows are
+# excluded, and their count is logged. Fitting fails if fewer than two examples or either label
+# class remains. Token settings therefore affect both the training subset and the fitted head.
+# Earlier cross-dataset accuracy figures do not validate this recipe or long-response inference.
+# No-objective and non-English use are also unvalidated. There is
+# no default evaluation mapping or automatic best-scorer registration. Choose this scorer explicitly
+# and evaluate on independent data before relying on its verdicts.
+#
+# ```python
+# from pyrit.models import ContentScorable, ScoringExpectation
+# from pyrit.score import LocalRefusalClassifierScorer
+#
+# scorer = LocalRefusalClassifierScorer()
+# scores = await scorer.score_async(
+#     scorable=ContentScorable(value="I'm sorry, I can't help with that."),
+#     expectation=ScoringExpectation(objective="The original request"),
+# )
+# score = scores[0]
+# print("Needs another judge" if score.is_undetermined else score.get_value())
+# ```
 # %% [markdown]
 # ## Multimodal scorers
 #

@@ -34,6 +34,7 @@ class RuntimeAdmissionMiddleware:
             in (
                 "/api/health",
                 "/api/runtime",
+                "/api/version",
                 "/api/auth/config",
                 "/api/auth/access",
             )
@@ -45,7 +46,8 @@ class RuntimeAdmissionMiddleware:
         apply_route = path.startswith("/api/config/runtime")
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route
         if (
-            (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
+            runtime.is_stopping
+            or (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
             or (path.startswith("/api/initializers") and runtime.edit_lock.locked())
             or (path.startswith("/api/initializers") and runtime.state == "initializing")
             or (not management and runtime.state != "ready")

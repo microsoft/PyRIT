@@ -1,7 +1,7 @@
 name: goat
 description: |
   Generative Offensive Agent Tester (GOAT) attacker persona and reasoning structure, based on
-  the GOAT paper: https://arxiv.org/abs/2410.01606. Intentional differences from the paper,
+  the GOAT paper [@pavlova2024goat]: https://arxiv.org/abs/2410.01606. Intentional differences from the paper,
   both inherited from reusing PyRIT's existing RedTeamingAttack executor rather than building a
   new one:
 
@@ -15,24 +15,35 @@ description: |
      objective is met. This technique keeps RedTeamingAttack's per-turn judging and early stopping
      rather than reproducing GOAT's fixed-turn, judge-free loop, since that is existing,
      already-tested PyRIT behavior and changing it would mean a new executor.
-  2. Judge feedback. RedTeamingAttack's AttackScoringConfig.use_score_as_feedback defaults to
-     True, so the objective judge's rationale is appended to the feedback the attacker sees each
-     turn. GOAT's own Chain-of-Attack-Thought loop (paper section 3.3) never sees judge output --
-     only the raw target response and its own prior reasoning. This technique keeps the
-     RedTeamingAttack default (judge feedback included) rather than adding a new per-technique
-     scoring-config override to the factory, which is a separate, more invasive change than a
-     prompt/schema swap; disabling it is a reasonable follow-up if a closer match is wanted.
-  3. Per-turn follow-up prompt. GOAT's follow-up prompt (paper Figure A.3) re-supplies the
+  2. Per-turn follow-up prompt. GOAT's follow-up prompt (paper Figure A.3) re-supplies the
      attacker's own previous prompt (P) as an explicit field, alongside the goal and the target's
      latest response. RedTeamingAttack's per-turn adversarial template only receives feedback_text
-     (the target's latest response, optionally with judge feedback) and objective -- the
+     (built from the target's latest response, without judge feedback) and objective -- the
      attacker's own previous prompt is not currently exposed to per-turn templates. This
      technique's follow-up prompt (goat_follow_up_prompt.yaml) omits that field rather than
      approximate it, since the attacker's full prior reasoning already stays in the adversarial
      chat's own conversation history regardless.
+
+  Judge feedback matches the paper: GOAT's Chain-of-Attack-Thought loop (paper section 3.3) never
+  sees judge output -- only the raw target response and its own prior reasoning. The technique
+  sets use_score_as_feedback=False, so the objective judge still scores every turn (keeping early
+  stopping) but its rationale is not appended to what the attacker sees.
+
+  Adapted for PyRIT by AI Red Team. The authors and groups below credit the original research.
+authors:
+  - Maya Pavlova
+  - Erik Brinkman
+  - Krithika Iyer
+  - Vítor Albiero
+  - Joanna Bitton
+  - Hailey Nguyen
+  - Joe Li
+  - Cristian Canton Ferrer
+  - Ivan Evtimov
+  - Aaron Grattafiori
 groups:
-  - AI Red Team
-source: AI Red Team
+  - Meta
+source: https://arxiv.org/abs/2410.01606
 parameters:
   - objective
 response_json_schema_name: goat_adversarial_chat

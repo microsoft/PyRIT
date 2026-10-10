@@ -10,7 +10,7 @@ import pytest
 
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.memory import MemoryInterface
-from pyrit.models import Message, MessagePiece, Score, ScoreStatus
+from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoreStatus, ScoringExpectation
 from pyrit.score import (
     AzureContentFilterScorer,
     FloatScaleScorer,
@@ -33,8 +33,8 @@ from pyrit.score import (
 def mock_harm_scorer():
     scorer = MagicMock(spec=FloatScaleScorer)
     scorer._memory = MagicMock(spec=MemoryInterface)
-    scorer._memory.add_message_to_memory = MagicMock()
-    scorer._memory.get_message_pieces.return_value = []
+    scorer._memory.add_message_to_memory_async = AsyncMock()
+    scorer._memory.get_message_pieces_async = AsyncMock(return_value=[])
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_456"
@@ -48,8 +48,8 @@ def mock_harm_scorer():
 def mock_objective_scorer():
     scorer = MagicMock(spec=TrueFalseScorer)
     scorer._memory = MagicMock(spec=MemoryInterface)
-    scorer._memory.add_message_to_memory = MagicMock()
-    scorer._memory.get_message_pieces.return_value = []
+    scorer._memory.add_message_to_memory_async = AsyncMock()
+    scorer._memory.get_message_pieces_async = AsyncMock(return_value=[])
     # Create a mock identifier with a controllable hash property
     mock_identifier = MagicMock()
     mock_identifier.hash = "test_hash_123"
@@ -95,13 +95,13 @@ async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[score] for score in entry_values])
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
-    assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
+    assert mock_harm_scorer._memory.add_message_to_memory_async.call_count == 2
     assert isinstance(metrics, HarmScorerMetrics)
     assert metrics.mean_absolute_error == 0.0
     assert metrics.mae_standard_error == 0.0
 
 
-def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_scorer):
+async def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_scorer):
     conversation_id = "conversation"
     user_message = Message(
         message_pieces=[
@@ -134,12 +134,145 @@ def test_validate_and_extract_harm_data_scores_only_assistant_message(mock_harm_
         harm_definition_version="1.0",
     )
 
-    responses, human_scores, objectives = HarmScorerEvaluator(mock_harm_scorer)._validate_and_extract_data(dataset)
+    responses, human_scores, objectives = await HarmScorerEvaluator(mock_harm_scorer)._validate_and_extract_data_async(
+        dataset
+    )
 
     assert responses == [assistant_message]
     assert human_scores == [[0.5]]
     assert objectives is None
-    assert mock_harm_scorer._memory.add_message_to_memory.call_count == 2
+    assert mock_harm_scorer._memory.add_message_to_memory_async.call_count == 2
+
+
+def _objective_conversation(conversation_id: str = "conversation") -> tuple[Message, Message]:
+    user_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="user",
+                original_value="Write a poem about the moon",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=0,
+            )
+        ]
+    )
+    assistant_message = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="Here is a poem about the moon.",
+                original_value_data_type="text",
+                conversation_id=conversation_id,
+                sequence=1,
+            )
+        ]
+    )
+    return user_message, assistant_message
+
+
+def _objective_dataset(entries: list[ObjectiveHumanLabeledEntry]) -> HumanLabeledDataset:
+    return HumanLabeledDataset(
+        name="test_dataset",
+        metrics_type=MetricsType.OBJECTIVE,
+        entries=entries,
+        version="1.0",
+    )
+
+
+async def test_validate_and_extract_objective_data_scores_only_assistant_message(
+    mock_objective_scorer: MagicMock,
+) -> None:
+    user_message, assistant_message = _objective_conversation()
+    dataset = _objective_dataset(
+        [ObjectiveHumanLabeledEntry([user_message, assistant_message], [True], "Test objective")]
+    )
+
+    responses, human_scores, objectives = await ObjectiveScorerEvaluator(
+        mock_objective_scorer
+    )._validate_and_extract_data_async(dataset)
+
+    assert responses == [assistant_message]
+    assert human_scores == [[1.0]]
+    assert objectives == ["Test objective"]
+    assert mock_objective_scorer._memory.add_message_to_memory_async.call_count == 2
+
+
+async def test_validate_and_extract_objective_data_keeps_one_row_per_entry(mock_objective_scorer: MagicMock) -> None:
+    first_user, first_assistant = _objective_conversation("first")
+    second_user, second_assistant = _objective_conversation("second")
+    dataset = _objective_dataset(
+        [
+            ObjectiveHumanLabeledEntry([first_user, first_assistant], [True], "First objective"),
+            ObjectiveHumanLabeledEntry([second_user, second_assistant], [False], "Second objective"),
+        ]
+    )
+
+    responses, human_scores, objectives = await ObjectiveScorerEvaluator(
+        mock_objective_scorer
+    )._validate_and_extract_data_async(dataset)
+
+    assert responses == [first_assistant, second_assistant]
+    assert human_scores == [[1.0], [0.0]]
+    assert objectives == ["First objective", "Second objective"]
+
+
+@pytest.mark.parametrize(
+    "conversation",
+    ["no_assistant", "two_assistants"],
+)
+async def test_validate_and_extract_objective_data_rejects_conversation_without_exactly_one_assistant_message(
+    mock_objective_scorer: MagicMock, conversation: str
+) -> None:
+    user_message, assistant_message = _objective_conversation()
+    second_assistant = Message(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="A second answer.",
+                original_value_data_type="text",
+                conversation_id="conversation",
+                sequence=2,
+            )
+        ]
+    )
+    messages = {"no_assistant": [user_message], "two_assistants": [user_message, assistant_message, second_assistant]}
+    dataset = _objective_dataset([ObjectiveHumanLabeledEntry(messages[conversation], [True], "Test objective")])
+
+    with pytest.raises(ValueError, match="exactly one assistant message"):
+        await ObjectiveScorerEvaluator(mock_objective_scorer)._validate_and_extract_data_async(dataset)
+
+
+async def test_evaluate_dataset_async_objective_scores_once_per_entry(mock_objective_scorer: MagicMock) -> None:
+    first_user, first_assistant = _objective_conversation("first")
+    second_user, second_assistant = _objective_conversation("second")
+    dataset = _objective_dataset(
+        [
+            ObjectiveHumanLabeledEntry([first_user, first_assistant], [True], "First objective"),
+            ObjectiveHumanLabeledEntry([second_user, second_assistant], [False], "Second objective"),
+        ]
+    )
+
+    mock_objective_scorer.get_chat_target.return_value = None
+    mock_objective_scorer.score_async = AsyncMock(return_value=[Score(score_type="true_false", score_value="true")])
+
+    metrics = await ObjectiveScorerEvaluator(mock_objective_scorer).evaluate_dataset_async(
+        labeled_dataset=dataset, num_scorer_trials=1, max_concurrency=1
+    )
+
+    assert mock_objective_scorer.score_async.await_count == 2
+    calls = mock_objective_scorer.score_async.await_args_list
+    assert [call.kwargs["scorable"] for call in calls] == [
+        MessageScorable.from_message(first_assistant),
+        MessageScorable.from_message(second_assistant),
+    ]
+    assert [call.kwargs["expectation"] for call in calls] == [
+        ScoringExpectation(objective="First objective"),
+        ScoringExpectation(objective="Second objective"),
+    ]
+    assert mock_objective_scorer._memory.add_message_to_memory_async.await_count == 4
+    assert metrics.num_responses == 2
+    assert metrics.accuracy == 0.5
+    assert metrics.trial_scores.shape == (1, 2)
 
 
 async def test_evaluate_dataset_async_objective(mock_objective_scorer):
@@ -154,7 +287,7 @@ async def test_evaluate_dataset_async_objective(mock_objective_scorer):
     evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
     evaluator._score_responses_grouped_async = AsyncMock(return_value=[[MagicMock(get_value=lambda: False)]])
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=mock_dataset, num_scorer_trials=2)
-    assert mock_objective_scorer._memory.add_message_to_memory.call_count == 1
+    assert mock_objective_scorer._memory.add_message_to_memory_async.call_count == 1
     assert isinstance(metrics, ObjectiveScorerMetrics)
     assert metrics.accuracy == 0.0
     assert metrics.accuracy_standard_error == 0.0
@@ -183,6 +316,8 @@ async def test_evaluate_dataset_async_excludes_undetermined_responses(mock_objec
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=2)
 
     assert metrics.accuracy == 1.0
+    assert metrics.num_responses == 1
+    assert metrics.num_input_responses == 2
     assert metrics.trial_scores.shape == (2, 1)
 
 
@@ -227,6 +362,7 @@ async def test_evaluate_dataset_async_selects_category_before_filtering_undeterm
     metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=1)
 
     assert metrics.num_responses == 1
+    assert metrics.num_input_responses == 2
     assert metrics.mean_absolute_error == 0.0
     assert metrics.trial_scores.tolist() == [[0.2]]
 

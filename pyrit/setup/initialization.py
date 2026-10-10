@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pyrit.common.apply_defaults import reset_default_values
 from pyrit.common.random_context import configure_random_seed
+from pyrit.common.singleton import Singleton
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.setup.environment_loading import (
     load_environment_async,
@@ -65,6 +66,7 @@ def validate_reinitialization_memory(*, memory_db_type: str, environment: dict[s
 def reset_setup_registries() -> None:
     """Discard only PyRIT's setup-owned registries, not persistence singletons."""
     from pyrit.registry import (
+        AttackRegistry,
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
@@ -77,6 +79,7 @@ def reset_setup_registries() -> None:
     reset_dynamic_technique_caches()
 
     for registry in (
+        AttackRegistry,
         AttackTechniqueRegistry,
         ConverterRegistry,
         InitializerRegistry,
@@ -205,61 +208,83 @@ async def initialize_pyrit_async(
     # (like prompt targets) that require central memory to be initialized
     memory: MemoryInterface
 
-    if memory_db_type == IN_MEMORY:
-        logger.info("Using in-memory SQLite database.")
-        memory = SQLiteMemory(db_path=":memory:", silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    elif memory_db_type == SQLITE:
-        logger.info("Using persistent SQLite database.")
-        memory = SQLiteMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    elif memory_db_type == AZURE_SQL:
-        logger.info("Using AzureSQL database.")
-        memory = AzureSQLMemory(silent=silent, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
-    else:
+    if memory_db_type not in get_args(MemoryDatabaseType):
         raise ValueError(
             f"Memory database type '{memory_db_type}' is not a supported type {get_args(MemoryDatabaseType)}"
         )
+    memory_class = AzureSQLMemory if memory_db_type == AZURE_SQL else SQLiteMemory
+    previous_memory = CentralMemory._memory_instance
+    cached_memory = Singleton._instances.get(memory_class)
+    if previous_memory is not None and previous_memory is not cached_memory:
+        raise ValueError("CentralMemory and the requested memory singleton disagree. Restart with one memory instance.")
+    if isinstance(cached_memory, SQLiteMemory) and (cached_memory.db_path == ":memory:") != (
+        memory_db_type == IN_MEMORY
+    ):
+        raise ValueError(
+            "Cannot switch between in-memory and persistent SQLite. Restart with the requested memory type."
+        )
 
+    if memory_db_type == IN_MEMORY:
+        logger.info("Using in-memory SQLite database.")
+        memory = SQLiteMemory(db_path=":memory:", silent=silent, _defer_initialization=True, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+    elif memory_db_type == SQLITE:
+        logger.info("Using persistent SQLite database.")
+        memory = SQLiteMemory(silent=silent, _defer_initialization=True, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+    else:
+        logger.info("Using AzureSQL database.")
+        memory = AzureSQLMemory(silent=silent, _defer_initialization=True, **memory_instance_kwargs)  # type: ignore[ty:invalid-assignment]
+
+    await memory.initialize_async()
     CentralMemory.set_memory_instance(memory)
 
-    # Combine directly provided initializers with those loaded from scripts.
-    all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
+    try:
+        # Combine directly provided initializers with those loaded from scripts.
+        all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
 
-    # Load additional initializers from scripts — the registry owns turning
-    # external script files into initializer instances.
-    if initialization_scripts:
-        from pyrit.registry import InitializerRegistry
+        # Load additional initializers from scripts — the registry owns turning
+        # external script files into initializer instances.
+        if initialization_scripts:
+            from pyrit.registry import InitializerRegistry
 
-        registry = InitializerRegistry.get_registry_singleton()
-        script_paths = [pathlib.Path(script_path) for script_path in initialization_scripts]
-        for script_path in script_paths:
+            registry = InitializerRegistry.get_registry_singleton()
+            script_paths = [pathlib.Path(script_path) for script_path in initialization_scripts]
+            for script_path in script_paths:
+                try:
+                    script_initializers = await asyncio.to_thread(
+                        registry.create_from_script_paths,
+                        script_paths=[script_path],
+                        strict=raise_on_initializer_error,
+                    )
+                    all_initializers.extend(script_initializers)
+                except Exception:
+                    logger.exception("Error loading initializers from script %s", script_path)
+                    if raise_on_initializer_error:
+                        raise
+
+        # When the caller supplies nothing, fall back to the default initializer set so a
+        # bare initialize_pyrit_async(...) yields a usable environment (core techniques +
+        # available default targets). Supplying any initializer/script means the caller owns
+        # setup, so defaults are skipped; load_defaults=False skips them even on a bare call.
+        if load_defaults and not all_initializers:
+            from pyrit.setup.initializers.targets import TargetInitializer
+            from pyrit.setup.initializers.techniques import TechniqueInitializer
+
+            all_initializers = [TechniqueInitializer(), TargetInitializer()]
+
+        # Execute all initializers in order
+        if all_initializers:
+            await _execute_initializers_async(
+                initializers=all_initializers,
+                raise_on_initializer_error=raise_on_initializer_error,
+            )
+    except BaseException:
+        if cached_memory is None:
             try:
-                script_initializers = await asyncio.to_thread(
-                    registry.create_from_script_paths,
-                    script_paths=[script_path],
-                    strict=raise_on_initializer_error,
-                )
-                all_initializers.extend(script_initializers)
-            except Exception:
-                logger.exception("Error loading initializers from script %s", script_path)
-                if raise_on_initializer_error:
-                    raise
-
-    # When the caller supplies nothing, fall back to the default initializer set so a
-    # bare initialize_pyrit_async(...) yields a usable environment (core techniques +
-    # available default targets). Supplying any initializer/script means the caller owns
-    # setup, so defaults are skipped; load_defaults=False skips them even on a bare call.
-    if load_defaults and not all_initializers:
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
-
-        all_initializers = [TechniqueInitializer(), TargetInitializer()]
-
-    # Execute all initializers in order
-    if all_initializers:
-        await _execute_initializers_async(
-            initializers=all_initializers,
-            raise_on_initializer_error=raise_on_initializer_error,
-        )
+                await memory.dispose_engine_async()
+            finally:
+                if CentralMemory._memory_instance is memory:
+                    CentralMemory._memory_instance = previous_memory
+        raise
 
 
 async def reinitialize_pyrit_async(

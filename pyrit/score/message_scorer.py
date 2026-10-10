@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
-import asyncio
+import copy
 import inspect
 import logging
+import uuid
 from abc import abstractmethod
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, cast
+from dataclasses import replace
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import (
     ComponentRole,
     PyritException,
@@ -39,8 +42,11 @@ from pyrit.score.llm_scoring import _validate_judgment_replay_compatibility
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
-    _observation_collection,
+    _collect_scores,
+    _get_current_scorable,
+    _get_current_scored_message_piece,
     _ObservationEvidence,
+    _scoring_collection,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
@@ -49,11 +55,11 @@ from pyrit.score.observation.execution import (
 from pyrit.score.scorer import LEGACY_SCORE_ASYNC_REMOVED_IN, Scorer
 
 if TYPE_CHECKING:
-    import uuid
-    from collections.abc import Awaitable, Sequence
+    from collections.abc import Sequence
 
     from pyrit.memory import MemoryInterface
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.observation.target_judge import JudgmentRequest
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 logger = logging.getLogger(__name__)
@@ -62,30 +68,55 @@ logger = logging.getLogger(__name__)
 MESSAGE_BATCH_REMOVED_IN = "1.3.0"
 
 
-async def _gather_score_tasks_cancel_on_error_async(
-    tasks: Sequence[Awaitable[list[Score]]],
-) -> list[list[Score]]:
-    scheduled_tasks = [asyncio.ensure_future(task) for task in tasks]
-    try:
-        return await asyncio.gather(*scheduled_tasks)
-    except BaseException:  # noqa: BLE001 - cancellation must cancel and drain every child task
-        for task in scheduled_tasks:
-            if not task.done():
-                task.cancel()
-        drain = asyncio.gather(*scheduled_tasks, return_exceptions=True)
-        outer_cancellation: asyncio.CancelledError | None = None
-        while not drain.done():
-            try:
-                await asyncio.shield(drain)
-            except asyncio.CancelledError as cancellation:
-                outer_cancellation = cancellation
-        drain.result()
-        if outer_cancellation:
-            raise outer_cancellation from None
-        raise
-
-
 def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInterface) -> str:
+    """
+    Read the text of the turn before an assistant message and use it as the objective.
+
+    .. deprecated::
+        This conflates scoring with building an expectation. What to look for belongs to
+        the caller that builds the ``ScoringExpectation``, not to the scorer. It exists only
+        to support the deprecated ``infer_objective_from_request`` parameter, and both are
+        removed in the next major release. Resolve the objective at the call site and pass
+        it on the expectation instead.
+
+    Args:
+        message (Message): The assistant message whose previous turn supplies the objective.
+        memory (MemoryInterface): Memory holding the conversation.
+
+    Returns:
+        str: The previous turn's text, or an empty string when there is none.
+    """
+    print_deprecation_message(
+        old_item="extract_objective_from_previous_turn",
+        new_item="extract_objective_from_previous_turn_async",
+        removed_in="1.4.0",
+    )
+    if not message.message_pieces:
+        return ""
+
+    scored_piece = message.get_piece()
+
+    if scored_piece.api_role != "assistant":
+        return ""
+
+    # The request is the turn before the response being scored, not before whatever the
+    # conversation has grown to since. Scoring an earlier response must not read the latest turn.
+    previous_sequence = scored_piece.sequence - 1
+    if previous_sequence < 0:
+        return ""
+
+    conversation = memory.get_message_pieces(conversation_id=scored_piece.conversation_id)
+
+    return "\n".join(
+        [
+            piece.original_value
+            for piece in conversation
+            if piece.sequence == previous_sequence and piece.original_value_data_type == "text"
+        ]
+    )
+
+
+async def extract_objective_from_previous_turn_async(*, message: Message, memory: MemoryInterface) -> str:
     """
     Read the text of the turn before an assistant message and use it as the objective.
 
@@ -117,7 +148,7 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     if previous_sequence < 0:
         return ""
 
-    conversation = memory.get_message_pieces(conversation_id=scored_piece.conversation_id)
+    conversation = await memory.get_message_pieces_async(conversation_id=scored_piece.conversation_id)
 
     return "\n".join(
         [
@@ -265,6 +296,9 @@ class MessageScorer(Scorer):
     Subclasses implement ``_score_async``, which still receives a ``Message``.
     """
 
+    # True when scoring needs other stored turns from the source conversation.
+    _REQUIRES_CONVERSATION_HISTORY: ClassVar[bool] = False
+
     #: When False, a blocked response from the scorer's own LLM produces an undetermined
     #: score instead of raising.
     raise_if_scorer_blocks: bool = True
@@ -291,7 +325,7 @@ class MessageScorer(Scorer):
 
         Args:
             validator (ScorerPromptValidator): Validator for message pieces.
-            chat_target (PromptTarget | None): Optional target used by the scorer.
+            chat_target (PromptTarget | None): Deprecated validation-only parameter, removed in 1.4.0.
             message_resolver (MessageScorableResolver | None): Evidence resolver.
 
         Raises:
@@ -314,6 +348,23 @@ class MessageScorer(Scorer):
         self._validator = validator
         self._message_resolver = message_resolver or MessageScorableResolver()
         super().__init__(chat_target=chat_target)
+
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Return this scorer carrying the given blocked-response policy.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply.
+
+        Returns:
+            Scorer: ``self`` when the policy already matches, otherwise a shallow copy that
+            keeps sharing the chat target and validator and differs only in the policy.
+        """
+        if self.raise_if_scorer_blocks == raise_if_scorer_blocks:
+            return self
+        scoped = copy.copy(self)
+        scoped.raise_if_scorer_blocks = raise_if_scorer_blocks
+        return scoped
 
     def _get_condition_type(self) -> type[Condition] | None:
         """Return the declared criterion, using the objective validator only for undeclared leaves."""
@@ -416,9 +467,11 @@ class MessageScorer(Scorer):
             ValueError: If neither a message nor a scorable is available.
         """
         context_scorable = (
-            self._context_scorable_from_message(message=message) if message is not None else cast("Scorable", scorable)
+            (await self._context_scorable_from_message_async(message=message))
+            if message is not None
+            else cast("Scorable", scorable)
         )
-        with _observation_collection() as collector:
+        with _scoring_collection() as collector:
             with _scoring_scorable_context(context_scorable):
                 # The deprecated parameter hands over the message itself, so scoring it must not
                 # round trip through a reference.
@@ -429,7 +482,7 @@ class MessageScorer(Scorer):
                         infer_objective_from_request=infer_objective_from_request,
                         anchor=self._scorable_from_message(
                             message,
-                            persisted_piece_ids=self._get_persisted_piece_ids(message=message),
+                            persisted_piece_ids=(await self._get_persisted_piece_ids_async(message=message)),
                         ),
                         role_filter=role_filter,
                         skip_on_error_result=skip_on_error_result,
@@ -446,10 +499,34 @@ class MessageScorer(Scorer):
                     )
             return await self._validate_and_persist_scores_async(
                 scores=scores,
-                observations=collector.referenced_by(scores=scores),
+                observations=collector.referenced_by(scores=[*scores, *collector.intermediate_scores]),
+                intermediate_scores=collector.intermediate_scores,
             )
 
-    def _context_scorable_from_message(self, *, message: Message) -> Scorable | None:
+    async def _score_nested_message_async(
+        self, *, message: Message, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        """
+        Score an in-hand child message without changing its role or committing results.
+
+        Returns:
+            list[Score]: Validated child results retained for the public caller to persist.
+        """
+        self._validate_expectation(expectation=expectation)
+        anchor = await self._context_scorable_from_message_async(message=message)
+        with _scoring_scorable_context(anchor), _scoring_expectation_context(expectation):
+            scores = await self._score_resolved_message_async(
+                message=message,
+                expectation=expectation,
+                anchor=anchor,
+                infer_objective_from_request=False,
+            )
+        if scores:
+            self.validate_return_scores(scores=scores)
+            _collect_scores(scores)
+        return scores
+
+    async def _context_scorable_from_message_async(self, *, message: Message) -> Scorable | None:
         """
         Build a durable observation anchor for the in-hand message API.
 
@@ -457,7 +534,7 @@ class MessageScorer(Scorer):
             Scorable | None: The durable message or content anchor, if one can be represented.
         """
         pieces = message.message_pieces
-        persisted = self._memory.get_message_pieces(prompt_ids=[piece.id for piece in pieces])
+        persisted = await self._memory.get_message_pieces_async(prompt_ids=[piece.id for piece in pieces])
         persisted_by_id = {str(piece.id): piece for piece in persisted}
         matches_storage = all(
             str(piece.id) in persisted_by_id
@@ -558,7 +635,7 @@ class MessageScorer(Scorer):
 
         if infer_objective_from_request:
             resolved_objectives = [
-                objective or extract_objective_from_previous_turn(message=message, memory=self._memory)
+                objective or (await extract_objective_from_previous_turn_async(message=message, memory=self._memory))
                 for message, objective in zip(messages, resolved_objectives, strict=True)
             ]
 
@@ -666,7 +743,7 @@ class MessageScorer(Scorer):
                 role_filter=role_filter,
                 skip_on_error_result=skip_on_error_result,
             )
-            aux_scores, obj_scores = await _gather_score_tasks_cancel_on_error_async([aux_task, obj_task])
+            aux_scores, obj_scores = await gather_with_cleanup_async([aux_task, obj_task])
             result["auxiliary_scores"] = aux_scores
             result["objective_scores"] = obj_scores
         else:
@@ -694,7 +771,7 @@ class MessageScorer(Scorer):
         Returns:
             list[Score]: The roots' scores, in input order.
         """
-        results = await _gather_score_tasks_cancel_on_error_async(
+        results = await gather_with_cleanup_async(
             [
                 MessageScorer._score_response_with_scorer_async(
                     scorer=scorer,
@@ -858,7 +935,7 @@ class MessageScorer(Scorer):
         Raises:
             TypeError: If the scorable is not message-shaped.
         """
-        message = self._message_resolver.resolve(scorable=scorable, memory=self._memory)
+        message = await self._message_resolver.resolve_async(scorable=scorable, memory=self._memory)
         return await self._score_resolved_message_async(
             message=message,
             expectation=expectation,
@@ -904,7 +981,7 @@ class MessageScorer(Scorer):
         objective = expectation.objective if expectation else None
 
         if infer_objective_from_request and (not objective):
-            objective = extract_objective_from_previous_turn(message=message, memory=self._memory)
+            objective = await extract_objective_from_previous_turn_async(message=message, memory=self._memory)
 
         effective_expectation = expectation
         if expectation is None and objective is not None:
@@ -935,11 +1012,10 @@ class MessageScorer(Scorer):
         scoring_message = self._build_scoring_message(message=message)
         if scoring_message is None:
             scores = self._build_fallback_score(message=message, objective=objective)
-            self._finalize_message_scores(
-                message=message,
-                scores=scores,
-                anchor=anchor,
-                expectation=effective_expectation,
+            (
+                await self._finalize_message_scores_async(
+                    message=message, scores=scores, anchor=anchor, expectation=effective_expectation
+                )
             )
             return scores
 
@@ -963,33 +1039,14 @@ class MessageScorer(Scorer):
                     expectation=effective_expectation,
                 )
         except ScorerLLMResponseBlockedException as e:
-            # The scorer's own LLM response was content-filtered. By default this is a real
-            # error and propagates; when raise_if_scorer_blocks is False, no verdict was
-            # reached, so the score is undetermined rather than a definitive negative. The
-            # decision lives here in the scorer, not the transport (see doc/code/framework.md).
-            if self.raise_if_scorer_blocks:
-                e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
-                e.args = (f"Status Code: {e.status_code}, Message: {e.message}",)
-                raise
-            logger.info(
-                "Scorer %s LLM response was blocked by content filtering; "
-                "returning an undetermined score (raise_if_scorer_blocks=False).",
-                self.__class__.__name__,
-            )
             first_piece = scoring_message.message_pieces[0]
             scores = [
-                self._build_undetermined_score(
-                    rationale=(
-                        "The scorer's own LLM response was blocked by content filtering "
-                        "(raise_if_scorer_blocks is False), so no verdict was reachable."
-                    ),
-                    description="Scorer response blocked; no verdict was reachable.",
+                self._handle_blocked_judge_response(
+                    error=e,
                     message_piece_id=first_piece.id or first_piece.original_prompt_id,
                     objective=objective,
                 )
             ]
-            if e.observation_id is not None:
-                scores[0].observation_ids.append(e.observation_id)
         except PyritException as e:
             # Re-raise PyRIT exceptions with enhanced context while preserving type for retry decorators
             e.message = f"Error in scorer {self.__class__.__name__}: {e.message}"
@@ -1002,14 +1059,54 @@ class MessageScorer(Scorer):
         if not scores and scoring_message.message_pieces and not self._get_supported_pieces(scoring_message):
             scores = self._build_fallback_score(message=message, objective=objective)
 
-        self._finalize_message_scores(
-            message=scoring_message,
-            scores=scores,
-            anchor=anchor if scoring_view_matches_acquired_message else None,
-            expectation=effective_expectation,
+        (
+            await self._finalize_message_scores_async(
+                message=scoring_message,
+                scores=scores,
+                anchor=anchor if scoring_view_matches_acquired_message else None,
+                expectation=effective_expectation,
+            )
         )
 
         return scores
+
+    def _handle_blocked_judge_response(
+        self,
+        *,
+        error: ScorerLLMResponseBlockedException,
+        message_piece_id: uuid.UUID | str | None = None,
+        objective: str | None = None,
+    ) -> Score:
+        """
+        Apply the scorer's blocked-judge policy and retain any error observation.
+
+        Returns:
+            Score: An undetermined score for the caller to anchor.
+
+        Raises:
+            ScorerLLMResponseBlockedException: If this scorer is configured to raise.
+        """
+        if self.raise_if_scorer_blocks:
+            error.message = f"Error in scorer {self.__class__.__name__}: {error.message}"
+            error.args = (f"Status Code: {error.status_code}, Message: {error.message}",)
+            raise error
+        logger.info(
+            "Scorer %s LLM response was blocked by content filtering; "
+            "returning an undetermined score (raise_if_scorer_blocks=False).",
+            self.__class__.__name__,
+        )
+        score = self._build_undetermined_score(
+            rationale=(
+                "The scorer's own LLM response was blocked by content filtering "
+                "(raise_if_scorer_blocks is False), so no verdict was reachable."
+            ),
+            description="Scorer response blocked; no verdict was reachable.",
+            message_piece_id=message_piece_id,
+            objective=objective,
+        )
+        if error.observation_id is not None:
+            score.observation_ids.append(error.observation_id)
+        return score
 
     def _validate_scoring_message(self, *, message: Message, objective: str | None) -> None:
         """
@@ -1021,7 +1118,7 @@ class MessageScorer(Scorer):
         """
         self._validator.validate(message, objective=objective)
 
-    def _finalize_message_scores(
+    async def _finalize_message_scores_async(
         self,
         *,
         message: Message,
@@ -1030,7 +1127,7 @@ class MessageScorer(Scorer):
         expectation: ScoringExpectation | None,
     ) -> None:
         """Apply legacy and canonical evidence anchors to completed message scores."""
-        persisted_piece_ids = self._get_persisted_piece_ids(message=message)
+        persisted_piece_ids = await self._get_persisted_piece_ids_async(message=message)
         self._drop_ephemeral_score_links(
             message=message,
             scores=scores,
@@ -1197,7 +1294,7 @@ class MessageScorer(Scorer):
             return []
 
         # Run all piece-level scorings concurrently
-        piece_score_lists = await asyncio.gather(*tasks)
+        piece_score_lists = await gather_with_cleanup_async(tasks)
 
         # Flatten list[list[Score]] -> list[Score]
         return [score for sublist in piece_score_lists for score in sublist]
@@ -1220,6 +1317,22 @@ class MessageScorer(Scorer):
         return await self._score_piece_async(
             message_piece=message_piece,
             objective=expectation.objective if expectation else None,
+        )
+
+    @staticmethod
+    def _capture_judgment_evidence(request: JudgmentRequest) -> JudgmentRequest:
+        """
+        Attach the message pipeline's evidence before sending a prepared judge request.
+
+        Returns:
+            JudgmentRequest: A request that retains the original piece, not its rendered prompt.
+        """
+        return replace(
+            request,
+            scorable=_get_current_scorable(),
+            scored_message_piece=_get_current_scored_message_piece(
+                scored_piece_id=uuid.UUID(str(request.scored_prompt_id))
+            ),
         )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
@@ -1329,14 +1442,14 @@ class MessageScorer(Scorer):
             piece for piece in message.message_pieces if self._validator.is_message_piece_supported(message_piece=piece)
         ]
 
-    def _get_persisted_piece_ids(self, *, message: Message) -> set[uuid.UUID]:
+    async def _get_persisted_piece_ids_async(self, *, message: Message) -> set[uuid.UUID]:
         """Return matching message IDs, allowing storage to change timestamp precision."""
         candidate_ids = [piece.id for piece in message.message_pieces if not piece.not_in_memory]
         if not candidate_ids:
             return set()
 
-        stored_pieces = self._memory.get_message_pieces(
-            prompt_ids=[str(piece_id) for piece_id in candidate_ids],
+        stored_pieces = await self._memory.get_message_pieces_async(
+            prompt_ids=[str(piece_id) for piece_id in candidate_ids]
         )
         supplied_by_id = {piece.id: piece for piece in message.message_pieces}
         return {

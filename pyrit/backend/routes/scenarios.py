@@ -13,9 +13,8 @@ Route structure:
 """
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from starlette.concurrency import run_in_threadpool
 
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
     ScenarioRunListResponse,
@@ -50,7 +49,7 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 )
 async def list_scenarios(  # pyrit-async-suffix-exempt
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
-    cursor: str | None = Query(None, description="Pagination cursor (scenario_name to start after)"),
+    cursor: CursorStr | None = Query(None, description="Pagination cursor (scenario_name to start after)"),
     include_estimates: bool = Query(True, description="Wait for default run-size estimates"),
 ) -> ListRegisteredScenariosResponse:
     """
@@ -77,7 +76,7 @@ async def list_scenarios(  # pyrit-async-suffix-exempt
         404: {"model": ProblemDetail, "description": "Scenario not found"},
     },
 )
-async def get_scenario(scenario_name: str) -> RegisteredScenario:  # pyrit-async-suffix-exempt
+async def get_scenario(scenario_name: IdentifierStr) -> RegisteredScenario:  # pyrit-async-suffix-exempt
     """
     Get details for a specific scenario.
 
@@ -109,7 +108,7 @@ async def get_scenario(scenario_name: str) -> RegisteredScenario:  # pyrit-async
 )
 async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
     *,
-    scenario_name: str,
+    scenario_name: IdentifierStr,
     request: ScenarioRunSizeEstimateRequest,
 ) -> ScenarioRunSizeEstimate:
     """
@@ -194,7 +193,7 @@ async def start_scenario_run(  # pyrit-async-suffix-exempt
         409: {"model": ProblemDetail, "description": "Run is ineligible or has no saved launch configuration"},
     },
 )
-async def resume_scenario_run_async(*, scenario_result_id: str) -> ScenarioRunSummary:
+async def resume_scenario_run_async(*, scenario_result_id: IdentifierStr) -> ScenarioRunSummary:
     """
     Resume a failed run using its complete saved launch configuration.
 
@@ -217,20 +216,23 @@ async def resume_scenario_run_async(*, scenario_result_id: str) -> ScenarioRunSu
 )
 async def list_scenario_runs(  # pyrit-async-suffix-exempt
     *,
-    scenario_names: list[str] | None = Query(
+    scenario_names: list[IdentifierStr] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="Registered or persisted scenario names; repeated values are OR-matched.",
     ),
     run_statuses: list[ScenarioRunState] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="Run states; repeated values are OR-matched.",
     ),
-    label: list[str] | None = Query(
+    label: list[LabelFilterStr] | None = Query(
         None,
+        max_length=MAX_ITEMS,
         description="key:value labels; OR within a key and AND across keys.",
     ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
-    cursor: str | None = Query(None, description="Opaque descending history cursor"),
+    cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
     """
     List tracked scenario runs (most recent first).
@@ -246,8 +248,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         ScenarioRunListResponse: Runs, most recent first.
     """
     service = get_scenario_run_service()
-    return await run_in_threadpool(
-        service.list_runs,
+    return await service.list_runs_async(
         scenario_names=scenario_names,
         statuses=run_statuses,
         labels=parse_label_query_params(label),
@@ -277,7 +278,7 @@ async def get_scenario_run_queue() -> ScenarioQueueSnapshot:  # pyrit-async-suff
         404: {"model": ProblemDetail, "description": "Run not found"},
     },
 )
-async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
+async def get_scenario_run(scenario_result_id: IdentifierStr) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
     """
     Get the current status and result of a scenario run.
 
@@ -288,14 +289,7 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # py
         ScenarioRunSummary: Current run status (and result if completed).
     """
     service = get_scenario_run_service()
-    active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
-    run = await run_in_threadpool(
-        service.get_run_from_storage,
-        scenario_result_id=scenario_result_id,
-        active_error=active_snapshot.error,
-        queue_position=active_snapshot.queue_position,
-        active_scenario_result_id=active_snapshot.active_scenario_result_id,
-    )
+    run = await service.get_run_async(scenario_result_id=scenario_result_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -314,8 +308,8 @@ async def get_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # py
 )
 async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
     *,
-    scenario_result_id: str,
-    since: str | None = Query(None, description="Opaque ascending progress cursor"),
+    scenario_result_id: IdentifierStr,
+    since: CursorStr | None = Query(None, description="Opaque ascending progress cursor"),
     limit: int = Query(100, ge=1, le=500),
 ) -> ScenarioRunProgress:
     """
@@ -325,16 +319,11 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
         ScenarioRunProgress: Backend-owned rollups, the run plan, and ascending result deltas.
     """
     service = get_scenario_run_service()
-    active_snapshot = service.snapshot_active_run(scenario_result_id=scenario_result_id)
     try:
-        progress = await run_in_threadpool(
-            service.get_run_progress_from_storage,
+        progress = await service.get_run_progress_async(
             scenario_result_id=scenario_result_id,
             since=since,
             limit=limit,
-            active_group_ids=active_snapshot.active_group_ids,
-            queue_position=active_snapshot.queue_position,
-            active_scenario_result_id=active_snapshot.active_scenario_result_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
@@ -354,7 +343,7 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
         409: {"model": ProblemDetail, "description": "Run already in terminal state"},
     },
 )
-async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
+async def cancel_scenario_run(scenario_result_id: IdentifierStr) -> ScenarioRunSummary:  # pyrit-async-suffix-exempt
     """
     Cancel a running scenario.
 
@@ -386,7 +375,7 @@ async def cancel_scenario_run(scenario_result_id: str) -> ScenarioRunSummary:  #
         409: {"model": ProblemDetail, "description": "Run not yet completed"},
     },
 )
-async def get_scenario_run_results(scenario_result_id: str) -> ScenarioResult:  # pyrit-async-suffix-exempt
+async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> ScenarioResult:  # pyrit-async-suffix-exempt
     """
     Get detailed results for a completed scenario run.
 
@@ -398,7 +387,7 @@ async def get_scenario_run_results(scenario_result_id: str) -> ScenarioResult:  
     """
     service = get_scenario_run_service()
     try:
-        result = service.get_run_results(scenario_result_id=scenario_result_id)
+        result = await service.get_run_results_async(scenario_result_id=scenario_result_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from None
 

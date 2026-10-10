@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { attacksApi, labelsApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
+import { attacksApi, labelsApi, runtimeApi, scenariosApi, targetsApi, versionApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RegisteredScenario } from '@/types'
 import { exportConversation } from '@/utils/conversationExport'
@@ -48,7 +48,8 @@ jest.mock('@/services/api', () => ({
     getConversations: jest.fn(),
     updateAttack: jest.fn(),
     createAttack: jest.fn(),
-    addMessage: jest.fn(),
+    submitMessageSend: jest.fn(),
+    getMessageSend: jest.fn(),
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
@@ -77,7 +78,14 @@ const SCENARIO: RegisteredScenario = {
   include_baseline_by_default: false,
   supported_parameters: [],
   uses_default_adversarial_target: false,
-  default_run_size: { estimated_attack_count: 1, components: [], datasets: [], note: null },
+  default_run_size: {
+    dataset_size: { kind: 'bounded', value: 1 },
+    dataset_limit: { state: 'scenario_default' },
+    estimated_attack_count: 1,
+    components: [],
+    datasets: [],
+    note: null,
+  },
 }
 const TARGET = makeTarget({ target_registry_name: 'test_target', identifier_hash: 'test_hash' })
 const DEFAULT_LABELS = { operator: 'config_user', operation: 'config_op', team: 'config_team' }
@@ -119,6 +127,8 @@ describe('Shared new run labels', () => {
     jest.clearAllMocks()
     window.localStorage.clear()
     mockGetActiveAccount.mockReturnValue(null)
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: '' })
+    jest.mocked(versionApi.getVersion).mockReset()
     jest.mocked(versionApi.getVersion).mockResolvedValue({ version: '1.0.0', default_labels: DEFAULT_LABELS })
     jest.mocked(labelsApi.getLabels).mockResolvedValue({ source: 'attacks', labels: {} })
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
@@ -318,7 +328,7 @@ describe('Shared new run labels', () => {
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     expect(attacksApi.updateAttack).not.toHaveBeenCalled()
     expect(attacksApi.createAttack).not.toHaveBeenCalled()
-    expect(attacksApi.addMessage).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
 
     const toolbar = within(currentLabels()).getByRole('group', { name: 'Chat controls' })
     expect(within(toolbar).getByLabelText('Active target: test_target')).toBeInTheDocument()
@@ -338,5 +348,160 @@ describe('Shared new run labels', () => {
     expect(await screen.findByRole('button', { name: 'New Attack' })).toBeDisabled()
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
     expect(within(currentLabels()).getByRole('button', { name: /currently future_op$/ })).toBeInTheDocument()
+  })
+
+  describe('runtime generation defaults', () => {
+    type VersionResponse = Awaited<ReturnType<typeof versionApi.getVersion>>
+
+    beforeEach(() => {
+      jest.useFakeTimers()
+      jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation: 'gen-1' })
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    async function pollGeneration(generation: string): Promise<void> {
+      jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: true, state: 'ready', generation })
+      await act(async () => { jest.advanceTimersByTime(2_000) })
+    }
+
+    it('keeps the app mounted when an unavailable runtime response omits its generation', async () => {
+      const mockGetReadiness = runtimeApi.getReadiness as jest.Mock
+      mockGetReadiness.mockResolvedValue({ ready: false, state: 'unavailable' })
+      renderApp('/')
+
+      await screen.findByText(/PyRIT runtime: unavailable/)
+      expect(screen.getByRole('button', { name: 'Home', exact: true })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Edit operation, currently config_op' }))
+        .not.toBeInTheDocument()
+
+      await pollGeneration('gen-1')
+      expect(await screen.findByRole('button', { name: 'Edit operation, currently config_op' }))
+        .toBeInTheDocument()
+    })
+
+    it('refetches once per generation and keeps user overrides on launch', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      renderApp()
+      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await chooseOperation(user, 'user_op')
+      const callsAfterFirstLoad = jest.mocked(versionApi.getVersion).mock.calls.length
+
+      jest.mocked(versionApi.getVersion).mockResolvedValue({
+        version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
+      })
+      await pollGeneration('gen-2')
+      await pollGeneration('gen-2')
+
+      expect(versionApi.getVersion).toHaveBeenCalledTimes(callsAfterFirstLoad + 1)
+      expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+      await launchScenario(user)
+      expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        labels: { ...DEFAULT_LABELS, operation: 'user_op' },
+      }))
+    })
+
+    it('blocks launches during refresh and records the refreshed default without an override', async () => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      let resolveVersion: (value: VersionResponse) => void = () => {}
+      renderApp()
+      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      await user.selectOptions(screen.getByRole('combobox', { name: 'Objective Target' }), 'test_target')
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+
+      jest.mocked(versionApi.getVersion).mockReturnValue(new Promise((resolve) => { resolveVersion = resolve }))
+      await pollGeneration('gen-2')
+
+      expect(screen.getByText(/Loading default labels/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+      expect(scenariosApi.startRun).not.toHaveBeenCalled()
+      await act(async () => {
+        resolveVersion({ version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' } })
+      })
+
+      expect(screen.getByRole('button', { name: 'Edit operation, currently config_op_v2' })).toBeInTheDocument()
+      await launchScenario(user)
+      expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' },
+      }))
+      const saved = await screen.findByRole('region', { name: 'Run configuration' })
+      expect(saved).toHaveTextContent('original_op')
+      expect(saved).not.toHaveTextContent('config_op_v2')
+    })
+
+    it.each(['initial load', 'generation refresh'])('recovers from a failed %s without another generation change', async (phase: string) => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      const failure = new Error('Version temporarily unavailable')
+      if (phase === 'initial load') {
+        jest.mocked(versionApi.getVersion).mockRejectedValue(failure)
+      }
+      renderApp()
+      if (phase === 'generation refresh') {
+        await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+        jest.mocked(versionApi.getVersion).mockRejectedValue(failure)
+        await pollGeneration('gen-2')
+      }
+      await screen.findByText(/Could not load default labels. Version temporarily unavailable/)
+      await chooseOperation(user, 'user_op')
+      const generation = phase === 'initial load' ? 'gen-1' : 'gen-2'
+      const callsAfterFailure = jest.mocked(versionApi.getVersion).mock.calls.length
+      await pollGeneration(generation)
+      expect(versionApi.getVersion).toHaveBeenCalledTimes(callsAfterFailure)
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+
+      let resolveVersion: (value: VersionResponse) => void = () => {}
+      jest.mocked(versionApi.getVersion).mockReturnValue(new Promise((resolve) => { resolveVersion = resolve }))
+      await user.click(screen.getByRole('button', { name: 'Retry default labels' }))
+      expect(screen.queryByRole('button', { name: 'Retry default labels' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+      expect(versionApi.getVersion).toHaveBeenCalledTimes(callsAfterFailure + 1)
+      await act(async () => {
+        resolveVersion({
+          version: '1.0.0',
+          default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2', team: 'new_team' },
+        })
+      })
+
+      expect(screen.queryByText(/Could not load default labels/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Edit operation, currently user_op' })).toBeInTheDocument()
+      await launchScenario(user)
+      expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        labels: { ...DEFAULT_LABELS, operation: 'user_op', team: 'new_team' },
+      }))
+    })
+
+    it.each(['success', 'failure'])('ignores an obsolete generation refresh that finishes with %s', async (outcome: string) => {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      let resolveVersion: (value: VersionResponse) => void = () => {}
+      let rejectVersion: (error: Error) => void = () => {}
+      renderApp()
+      await screen.findByRole('button', { name: 'Edit operation, currently config_op' })
+      jest.mocked(versionApi.getVersion).mockReturnValueOnce(new Promise((resolve, reject) => {
+        resolveVersion = resolve
+        rejectVersion = reject
+      }))
+      await pollGeneration('gen-2')
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+      jest.mocked(versionApi.getVersion).mockResolvedValue({
+        version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v3' },
+      })
+      await pollGeneration('gen-3')
+      await act(async () => {
+        if (outcome === 'success') {
+          resolveVersion({ version: '1.0.0', default_labels: { ...DEFAULT_LABELS, operation: 'config_op_v2' } })
+        } else {
+          rejectVersion(new Error('Obsolete refresh failed'))
+        }
+      })
+
+      expect(screen.getByRole('button', { name: 'Edit operation, currently config_op_v3' })).toBeInTheDocument()
+      expect(screen.queryByText(/Could not load default labels/)).not.toBeInTheDocument()
+      await launchScenario(user)
+      expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        labels: { ...DEFAULT_LABELS, operation: 'config_op_v3' },
+      }))
+    })
   })
 })

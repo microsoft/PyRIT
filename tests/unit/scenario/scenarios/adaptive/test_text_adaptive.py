@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import AttackSeedGroup, SeedObjective
+from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind, SeedObjective
 from pyrit.models.identifiers import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -135,66 +135,50 @@ class TestTextAdaptiveBasics:
     def test_required_datasets_non_empty(self):
         assert len(TextAdaptive.required_datasets()) > 0
 
-    async def test_targetless_run_size_exposes_attack_range(self, mock_objective_scorer):
-        """A targetless estimate exposes baseline-to-candidate bounds."""
-        selected_groups = {
-            "harmbench": [
-                _make_seed_group(value="objective-1"),
-                _make_seed_group(value="objective-2"),
-            ]
-        }
+    async def test_targetless_run_size_uses_configured_budget(self, mock_objective_scorer):
+        """A targetless estimate uses the budget without reading populations."""
         scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
         scenario.set_params_from_args(args={"include_baseline": True})
 
         with patch.object(
             scenario,
-            "_resolve_dataset_groups_for_estimate_async",
+            "_resolve_seed_groups_by_dataset_async",
             new_callable=AsyncMock,
-            return_value=(selected_groups, []),
+            side_effect=AssertionError("Preview resolved datasets"),
         ):
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
 
-        assert estimate.estimated_attack_count is None
-        assert estimate.minimum_attack_count == 2
-        assert estimate.maximum_attack_count == 4
+        assert estimate.estimated_attack_count == scenario._default_dataset_config.get_size_budget().value * 2
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count is None
 
-    async def test_binding_dataset_cap_exposes_attack_range(
+    async def test_dataset_cap_estimate_does_not_build_compatibility_dispatcher(
         self,
         mock_objective_scorer,
         mock_objective_target,
     ):
-        """A randomized cap exposes bounds when the exact compatibility mix is unknown."""
-        selected_groups = {
-            "harmbench": [
-                _make_seed_group(value="objective-1"),
-                _make_seed_group(value="objective-2"),
-            ]
-        }
+        """Seed compatibility is deferred until initialization."""
         scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
-        scenario.set_params_from_args(args={"include_baseline": True})
-        scenario._objective_target = mock_objective_target
-        scenario._include_baseline = True
-        scenario._estimate_target_is_configured = True
-        scenario._estimate_has_binding_size_cap = True
+        scenario.set_params_from_args(args={"include_baseline": True, "objective_target": mock_objective_target})
 
         with (
             patch.object(
                 scenario,
-                "_resolve_dataset_groups_for_estimate_async",
+                "_resolve_seed_groups_by_dataset_async",
                 new_callable=AsyncMock,
-                return_value=(selected_groups, []),
+                side_effect=AssertionError("Preview resolved datasets"),
             ),
             patch.object(scenario, "_build_techniques_dict", return_value={}),
             patch(
                 "pyrit.scenario.scenarios.adaptive.adaptive_scenario.AdaptiveTechniqueDispatcher"
             ) as mock_dispatcher_class,
         ):
-            mock_dispatcher_class.return_value.compatible_techniques.side_effect = [[], ["compatible"]]
-            estimate = await scenario._estimate_run_size_async()
+            estimate = await scenario.get_run_size_estimate_async()
+            mock_dispatcher_class.assert_not_called()
 
-        assert estimate.estimated_attack_count is None
-        assert estimate.minimum_attack_count == 2
-        assert estimate.maximum_attack_count == 4
+        assert estimate.estimated_attack_count == scenario._default_dataset_config.get_size_budget().value * 2
+        assert estimate.minimum_attack_count is None
+        assert estimate.maximum_attack_count is None
 
     def test_get_technique_class_is_cached(self):
         cls_a = TextAdaptive.get_technique_class()
@@ -714,3 +698,29 @@ class TestTextAdaptiveBaselinePolicy:
             assert scenario._atomic_attacks[0].atomic_attack_name == "baseline", (
                 f"baseline must be prepended at index 0; got {[a.atomic_attack_name for a in scenario._atomic_attacks]}"
             )
+
+    async def test_run_plan_records_baseline_and_adaptive_group_kinds(
+        self, mock_objective_target, mock_objective_scorer
+    ):
+        groups = {
+            "violence": [
+                _make_seed_group(value="obj-1", harm_categories=["violence"]),
+                _make_seed_group(value="obj-2", harm_categories=["violence"]),
+            ]
+        }
+        with patch.object(
+            CompoundDatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value=groups,
+        ):
+            scenario = TextAdaptive(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+            await scenario.initialize_async()
+
+        kinds = [group.kind for group in scenario._build_run_plan().atomic_groups]
+        assert kinds == [
+            ScenarioRunPlanGroupKind.BASELINE,
+            ScenarioRunPlanGroupKind.ADAPTIVE,
+            ScenarioRunPlanGroupKind.ADAPTIVE,
+        ]

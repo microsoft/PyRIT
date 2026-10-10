@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -217,6 +218,32 @@ class TestAtomicAttackInitialization:
 @pytest.mark.usefixtures("patch_central_database")
 class TestAtomicAttackExecution:
     """Tests for AtomicAttack execution methods."""
+
+    async def test_run_async_preserves_incomplete_result_ids(
+        self, mock_attack: AttackStrategy, sample_seed_groups: list[AttackSeedGroup]
+    ) -> None:
+        error = RuntimeError("execution failed")
+        executor_result = AttackExecutorResult(
+            completed_results=[],
+            incomplete_objectives=[("objective1", error), ("objective2", error)],
+            incomplete_result_ids=["confirmed-result-id", None],
+        )
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        with patch.object(
+            AttackExecutor,
+            "execute_attack_from_seed_groups_async",
+            new_callable=AsyncMock,
+            return_value=executor_result,
+        ):
+            result = await atomic_attack.run_async()
+
+        assert result.incomplete_objectives == executor_result.incomplete_objectives
+        assert result.incomplete_result_ids == executor_result.incomplete_result_ids
 
     async def test_run_async_with_valid_atomic_attack(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test successful execution of an atomic attack."""
@@ -1004,14 +1031,14 @@ class TestEnrichAtomicAttackIdentifiers:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
 
-            mock_memory = MagicMock()
-            mock_memory.update_attack_result_by_id.return_value = True
+            mock_memory = MagicMock(spec=MemoryInterface)
+            mock_memory.update_attack_result_by_id_async = AsyncMock(return_value=True)
             with patch("pyrit.scenario.core.atomic_attack.CentralMemory") as mock_cm:
                 mock_cm.get_memory_instance.return_value = mock_memory
                 await atomic.run_async()
 
-        mock_memory.update_attack_result_by_id.assert_called_once()
-        call_kwargs = mock_memory.update_attack_result_by_id.call_args.kwargs
+        mock_memory.update_attack_result_by_id_async.assert_called_once()
+        call_kwargs = mock_memory.update_attack_result_by_id_async.call_args.kwargs
         assert call_kwargs["attack_result_id"] == "00000000-0000-0000-0000-000000000001"
         assert "atomic_attack_identifier" in call_kwargs["update_fields"]
         # The persisted dict should have the AtomicAttack shape
@@ -1045,12 +1072,12 @@ class TestEnrichAtomicAttackIdentifiers:
         with patch.object(AttackExecutor, "execute_attack_from_seed_groups_async", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = wrap_results([attack_result])
 
-            mock_memory = MagicMock()
+            mock_memory = MagicMock(spec=MemoryInterface)
             with patch("pyrit.scenario.core.atomic_attack.CentralMemory") as mock_cm:
                 mock_cm.get_memory_instance.return_value = mock_memory
                 await atomic.run_async()
 
-        mock_memory.update_attack_result_by_id.assert_not_called()
+        mock_memory.update_attack_result_by_id_async.assert_not_called()
 
 
 @pytest.mark.usefixtures("patch_central_database")

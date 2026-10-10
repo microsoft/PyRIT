@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { buildAppliedConversions } from '@/utils/conversionResults'
 import { buildConverterInputs } from '@/components/Chat/converterTypes'
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
@@ -22,6 +23,7 @@ interface VersionedInput extends ConverterInputPiece {
 }
 
 interface ConversionState {
+  scopeKey?: string
   generation: string
   sourceInputs: ConverterInputPiece[]
   inputs: VersionedInput[]
@@ -154,11 +156,16 @@ function invalidatePiece(state: ConversionState, pieceId: string): ConversionSta
 }
 
 export function useChatConverters(text: string, attachments: MessageAttachment[]): ChatConverterController {
-  const { generation } = useRuntime()
   const inputs = useMemo(() => buildConverterInputs(text, attachments), [text, attachments])
+  return usePieceConverters(inputs)
+}
+
+export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: string): ChatConverterController {
+  const { generation } = useRuntime()
   const [state, setState] = useState<ConversionState>(() => ({
     generation,
     sourceInputs: inputs,
+    scopeKey,
     inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: 0 })),
     nextRevision: 0,
     workingInputs: {},
@@ -173,14 +180,20 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const nextRunId = useRef(0)
   const activeRun = useRef<number | null>(null)
 
-  if (state.generation !== generation) {
+  if (state.scopeKey !== scopeKey) {
     setState({
-      ...state,
+      ...reconcileInputs(state, inputs), scopeKey, generation, stageResults: {}, errors: {}, applied: {},
+      workingInputs: {}, runId: state.runId + 1, isConverting: false,
+    })
+  } else if (state.generation !== generation) {
+    // A runtime generation change invalidates every generated result. Working
+    // edits follow the same rule reconcileInputs applies: they survive only
+    // when their underlying piece is unchanged, so a stale edit can never be
+    // applied to text the user swapped in with the new generation.
+    const next = reconcileInputs(state, inputs)
+    setState({
+      ...next,
       generation,
-      sourceInputs: inputs,
-      inputs: inputs.map((input: ConverterInputPiece) => ({ ...input, revision: state.nextRevision + 1 })),
-      nextRevision: state.nextRevision + 1,
-      workingInputs: {},
       stageResults: {},
       errors: {},
       applied: {},
@@ -193,7 +206,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
 
   useEffect(() => {
     activeRun.current = null
-  }, [generation])
+  }, [generation, scopeKey])
 
   const setPipeline = useCallback((
     pieceType: string,
@@ -253,7 +266,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     afterStageId,
     includeIncomplete = false,
   }: ConversionScope): Promise<void> => {
-    if (activeRun.current !== null) return
+    if (activeRun.current !== null && activeRun.current === state.runId) return
     const completed = completedResults(state)
     const selected = state.inputs.flatMap((input: VersionedInput): ConversionJob[] => {
       if (
@@ -271,7 +284,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
       const start = boundary + 1
       const value = boundary < 0 ? state.workingInputs[input.id] ?? input.value : previous[boundary].value
       const dataType = boundary < 0 ? input.dataType : previous[boundary].generated.output_data_type
-      if (start >= pipeline.length || (boundary < 0 && !value.trim())) return []
+      if (start >= pipeline.length || (boundary < 0 && !value.trim() && !input.file)) return []
       return [{ input, pipeline, prefix: previous.slice(0, start), start, value, dataType }]
     })
     if (selected.length === 0) return
@@ -336,20 +349,7 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
   const apply = useCallback((): void => {
     setState((current: ConversionState) => {
       if (current.isConverting) return current
-      const applied: Record<string, PieceConversion> = {}
-      const results = completedResults(current)
-      for (const input of current.inputs) {
-        const result = results[input.id]
-        if (!result) continue
-        applied[input.id] = {
-          pieceId: input.id,
-          pieceType: input.pieceType,
-          converterInstanceIds: result.steps.map((step: ConverterPreviewStep) => step.converter_id),
-          originalValue: input.value,
-          convertedValue: result.converted_value,
-          convertedDataType: result.converted_value_data_type,
-        }
-      }
+      const applied = buildAppliedConversions(current.inputs, completedResults(current))
       return { ...current, applied }
     })
   }, [])
@@ -377,16 +377,24 @@ export function useChatConverters(text: string, attachments: MessageAttachment[]
     restoredText: string,
     restoredAttachments: MessageAttachment[],
     conversions: Record<string, PieceConversion>,
+    pipelines?: Record<string, ConverterPipelineStage[]>,
   ): void => {
     activeRun.current = null
-    const restoredPipelines: Record<string, ConverterPipelineStage[]> = {}
-    for (const conversion of Object.values(conversions)) {
-      restoredPipelines[conversion.pieceType] = conversion.converterInstanceIds.map((converterId: string) => ({
-        id: generateClientId(), converterId,
-      }))
+    const restoredPipelines: Record<string, ConverterPipelineStage[]> = { ...pipelines }
+    if (!pipelines) {
+      for (const conversion of Object.values(conversions)) {
+        restoredPipelines[conversion.pieceType] = conversion.converterInstanceIds.map((converterId: string) => ({
+          id: generateClientId(), converterId,
+        }))
+      }
     }
     setState((current: ConversionState) => {
       let next = reconcileInputs(current, buildConverterInputs(restoredText, restoredAttachments))
+      if (pipelines) {
+        for (const pieceType of Object.keys(next.pipelines)) {
+          if (!restoredPipelines[pieceType]) next = changePipeline(next, pieceType, [])
+        }
+      }
       for (const [pieceType, stages] of Object.entries(restoredPipelines)) {
         const previous = next.pipelines[pieceType] ?? []
         if (previous.length !== stages.length || previous.some(

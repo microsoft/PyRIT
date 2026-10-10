@@ -14,7 +14,15 @@ from typing import TYPE_CHECKING, ClassVar
 from pyrit.common import apply_defaults
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import (
+    AttackSeedGroup,
+    BoundedDatasetSize,
+    ScenarioDatasetSummary,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConfiguration
@@ -145,6 +153,7 @@ class PackageHallucination(Scenario):
     """
 
     VERSION: int = 3
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
@@ -185,7 +194,9 @@ class PackageHallucination(Scenario):
             known_packages=set(), ecosystem=default_spec.ecosystem
         )
 
-        self._max_prompts_per_language = max_prompts_per_language or self.DEFAULT_MAX_PROMPTS_PER_LANGUAGE
+        self._max_prompts_per_language = (
+            self.DEFAULT_MAX_PROMPTS_PER_LANGUAGE if max_prompts_per_language is None else max_prompts_per_language
+        )
         self._random_seed = random_seed if random_seed is not None else 42
         self._known_packages_by_technique: dict[str, set[str]] = {}
 
@@ -199,6 +210,39 @@ class PackageHallucination(Scenario):
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
+        )
+
+    USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
+
+    def _validate_runtime_configuration(self) -> None:
+        super()._validate_runtime_configuration()
+        if self._max_prompts_per_language < 1:
+            raise ValueError("max_prompts_per_language must be greater than zero")
+
+    def _get_run_size_budget(self) -> BoundedDatasetSize:
+        """Return the combined generated-prompt cap for the selected languages."""
+        return BoundedDatasetSize(value=self._max_prompts_per_language * len(self._scenario_techniques))
+
+    async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        """
+        Estimate generated prompts from the per-language cap without loading the corpus.
+
+        Returns:
+            ScenarioRunSizeEstimate: Combined budget for the selected languages.
+        """
+        assert isinstance(budget, BoundedDatasetSize)
+        return ScenarioRunSizeEstimate(
+            total_attack_count=budget.value,
+            components=[
+                ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
+                for technique in self._scenario_techniques
+            ],
+            datasets=[
+                ScenarioDatasetSummary(name=technique.value, kind="synthesized")
+                for technique in self._scenario_techniques
+            ],
+            effective_parameters={"max_prompts_per_language": self._max_prompts_per_language},
+            note="The generated-prompt cap applies per language. Dataset size limits do not apply.",
         )
 
     @staticmethod

@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import abc
-import asyncio
 import logging
+import uuid
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, final, overload
+from dataclasses import replace
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions import PyritException, execution_context, get_execution_context
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -32,19 +35,20 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS, TargetRequirements
 from pyrit.score.observation.execution import (
     NonReplayableObservationError,
-    _observation_collection,
+    _collect_scores,
     _ObservationEvidence,
     _ObservationEvidenceResolver,
+    _scoring_collection,
     _scoring_expectation_context,
     _scoring_message_context,
     _scoring_scorable_context,
 )
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Awaitable, Callable, Sequence
 
     from pyrit.exceptions import ComponentRole
@@ -60,6 +64,18 @@ logger = logging.getLogger(__name__)
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
 ConditionT = TypeVar("ConditionT", bound=Condition)
+
+
+class _SelfContainedJudgeTargetRequirements(TargetRequirements):
+    def validate(self, *, target: PromptTarget) -> None:
+        requirements = CHAT_TARGET_REQUIREMENTS
+        if not target.capabilities.supports_editable_history:
+            requirements = replace(
+                requirements,
+                required=requirements.required - {CapabilityName.EDITABLE_HISTORY},
+                native_required=requirements.native_required | {CapabilityName.SYSTEM_PROMPT},
+            )
+        requirements.validate(target=target)
 
 
 async def _legacy_score_scorable_async(
@@ -85,7 +101,7 @@ async def _legacy_score_scorable_async(
         expectation=expectation, replacement="a MessageScorer expectation-aware hook"
     )
     resolver = getattr(self, "_message_resolver", None) or MessageScorableResolver()
-    message = resolver.resolve(scorable=scorable, memory=self._memory)
+    message = await resolver.resolve_async(scorable=scorable, memory=self._memory)
     legacy_score_async = self._score_async  # type: ignore[ty:unresolved-attribute]
     with _scoring_message_context(message):
         scores: list[Score] = await legacy_score_async(
@@ -155,9 +171,7 @@ class Scorer(Identifiable, abc.ABC):
     evaluation_file_mapping: ScorerEvalDatasetFiles | None = None
 
     #: Capability requirements placed on the scorer's chat target (if any).
-    #: Subclasses that use a chat target should override this and pass the
-    #: target to ``super().__init__(chat_target=...)`` so the base class can
-    #: validate it.
+    #: Concrete target-backed scorers validate these through their target collaborator.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
 
     #: The single required criterion for a leaf, or None for constructor-configured scoring.
@@ -204,8 +218,8 @@ class Scorer(Identifiable, abc.ABC):
         Initialize the Scorer.
 
         Args:
-            chat_target (PromptTarget | None): Chat target used by the scorer, if any. When
-                provided, it is validated against ``TARGET_REQUIREMENTS``.
+            chat_target (PromptTarget | None): Deprecated validation-only compatibility parameter,
+                removed in 1.4.0. Does not store a target or create a judge.
             validator (ScorerPromptValidator | None): Deprecated. Message validation moved to
                 ``MessageScorer``; a value passed here is kept so pre-2.0 subclasses keep working.
         """
@@ -218,6 +232,11 @@ class Scorer(Identifiable, abc.ABC):
             if getattr(self, "_validator", None) is None:
                 self._validator = validator
         if chat_target is not None:
+            print_deprecation_message(
+                old_item="Scorer.__init__(chat_target=...)",
+                new_item="TargetJudge(target=..., requirements=...)",
+                removed_in="1.4.0",
+            )
             type(self).TARGET_REQUIREMENTS.validate(target=chat_target)
 
     @property
@@ -323,13 +342,36 @@ class Scorer(Identifiable, abc.ABC):
         Return the chat target used by this scorer, or None if it doesn't use one.
 
         Subclasses that wrap other scorers (e.g. inverters, composites) should
-        override to delegate to their inner scorer(s).
+        override to delegate to their inner scorer(s). Batch scoring and evaluation
+        use this target to validate rate-limit settings.
 
         Returns:
             PromptTarget | None: The chat target, or None if not applicable.
         """
         prompt_target: PromptTarget | None = getattr(self, "_prompt_target", None)
         return prompt_target
+
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Return a scorer whose LLM-backed leaves use the given blocked-response policy.
+
+        Scorers that never call an LLM cannot express the policy and return themselves.
+        Subclasses that wrap other scorers (e.g. inverters, composites) should override to
+        delegate, mirroring ``get_chat_target``, because the leaf that calls the LLM is the
+        one that has to decide whether a blocked scoring response raises or yields an
+        undetermined score.
+
+        Implementations return ``self`` when nothing changes so shared instances are not
+        copied needlessly, and otherwise return an independent scorer; callers may hold a
+        registry singleton that must not be mutated.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
+
+        Returns:
+            Scorer: ``self`` when already compliant, otherwise a scorer carrying the policy.
+        """
+        return self
 
     def get_identifier(self) -> ComponentIdentifier:
         """
@@ -443,7 +485,7 @@ class Scorer(Identifiable, abc.ABC):
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         expectation = self.prepare_expectation(expectation=expectation)
-        with _observation_collection() as collector:
+        with _scoring_collection() as collector:
             try:
                 with _scoring_scorable_context(scorable), _scoring_expectation_context(expectation):
                     scores = await self._score_scorable_async(scorable=scorable, expectation=expectation)
@@ -455,10 +497,11 @@ class Scorer(Identifiable, abc.ABC):
                 raise RuntimeError(f"Error in scorer {self.__class__.__name__}: {str(e)}") from e
 
             self._stamp_scored_expectation(scores=scores, expectation=expectation)
-            observations = collector.referenced_by(scores=scores)
+            observations = collector.referenced_by(scores=[*scores, *collector.intermediate_scores])
             return await self._validate_and_persist_scores_async(
                 scores=scores,
                 observations=observations,
+                intermediate_scores=collector.intermediate_scores,
             )
 
     @staticmethod
@@ -494,6 +537,8 @@ class Scorer(Identifiable, abc.ABC):
         Each root receives the original scorable and complete expectation through its public
         ``score_async`` method. Each root is validated independently before any scorer runs.
         This does not apply message-specific evidence policies.
+        If a root fails or is cancelled, unfinished roots are cancelled and drained before
+        the error propagates. Scores persisted by already-completed roots are retained.
 
         Args:
             scorable (Scorable): The evidence each scorer acquires.
@@ -515,13 +560,11 @@ class Scorer(Identifiable, abc.ABC):
         if len(roles) != len(roots):
             raise ValueError("scorer_roles must have one entry per scorer.")
         Scorer.validate_expectation_for_scorers(scorers=roots, expectation=expectation)
-        return await asyncio.gather(
-            *(
-                Scorer._score_with_context_async(
-                    scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
-                )
-                for scorer, role in zip(roots, roles, strict=True)
+        return await gather_with_cleanup_async(
+            Scorer._score_with_context_async(
+                scorer=scorer, scorable=scorable, expectation=expectation, component_role=role
             )
+            for scorer, role in zip(roots, roles, strict=True)
         )
 
     @staticmethod
@@ -680,37 +723,36 @@ class Scorer(Identifiable, abc.ABC):
         *,
         scores: list[Score],
         observations: Sequence[Observation] = (),
+        intermediate_scores: Sequence[Score] = (),
     ) -> list[Score]:
         """
         Validate and persist non-empty scorer output.
 
         Returns:
             list[Score]: The original scores.
+
+        Raises:
+            ValueError: If a wrapper reuses an intermediate result ID.
         """
         if not scores:
             return []
 
         self.validate_return_scores(scores=scores)
+        intermediate_ids = {str(score.id) for score in intermediate_scores}
+        if any(str(score.id) in intermediate_ids for score in scores):
+            raise ValueError("A wrapper must create a new result instead of reusing an intermediate score ID.")
         requires_file_copy = any(
             isinstance(score.scorable, ContentScorable) and score.scorable.data_type in MEDIA_PATH_DATA_TYPES
-            for score in scores
+            for score in [*scores, *intermediate_scores]
         )
         if requires_file_copy:
-            if observations:
-                await self._memory.add_scores_to_memory_async(
-                    scores=scores,
-                    observations=observations,
-                )
-            else:
-                await self._memory.add_scores_to_memory_async(scores=scores)
+            await self._memory.add_scores_to_memory_async(
+                scores=scores, observations=observations, intermediate_scores=intermediate_scores
+            )
         else:
-            if observations:
-                self._memory.add_scores_to_memory(
-                    scores=scores,
-                    observations=observations,
-                )
-            else:
-                self._memory.add_scores_to_memory(scores=scores)
+            await self._memory.add_scores_to_memory_async(
+                scores=scores, observations=observations, intermediate_scores=intermediate_scores
+            )
         return scores
 
     async def _score_nested_async(
@@ -723,7 +765,7 @@ class Scorer(Identifiable, abc.ABC):
         Score a scorable as a child in a scorer tree.
 
         The parent supplies only this child's supported conditions. The root scorer
-        owns persistence, so this path validates input and output without persisting.
+        owns persistence, so this path collects validated output without committing it.
 
         Args:
             scorable (Scorable): What to look at.
@@ -738,7 +780,24 @@ class Scorer(Identifiable, abc.ABC):
         self._stamp_scored_expectation(scores=scores, expectation=expectation)
         if scores:
             self.validate_return_scores(scores=scores)
+            _collect_scores(scores)
         return scores
+
+    def _create_wrapper_score(self, score: Score) -> Score:
+        """
+        Copy a child's judgment into a new wrapper-owned result without changing the child.
+
+        Returns:
+            Score: An independent result with a new ID, timestamp, and scorer identity.
+        """
+        return score.model_copy(
+            deep=True,
+            update={
+                "id": uuid.uuid4(),
+                "timestamp": datetime.now(UTC),
+                "scorer_class_identifier": self.get_identifier(),
+            },
+        )
 
     async def score_observation_async(
         self,
@@ -765,7 +824,7 @@ class Scorer(Identifiable, abc.ABC):
             NonReplayableObservationError: If this scorer or payload cannot replay.
         """
         expectation = self.prepare_expectation(expectation=expectation)
-        stored_observations = self._memory.get_observations(observation_ids=[observation.id])
+        stored_observations = await self._memory.get_observations_async(observation_ids=[observation.id])
         if not stored_observations:
             raise NonReplayableObservationError(f"Observation {observation.id} is not stored in memory.")
         stored_observation = stored_observations[0]
@@ -773,7 +832,7 @@ class Scorer(Identifiable, abc.ABC):
             raise NonReplayableObservationError(
                 f"Observation {observation.id} does not match its canonical stored evidence."
             )
-        evidence = _ObservationEvidenceResolver(memory=self._memory).resolve(observation=observation)
+        evidence = await _ObservationEvidenceResolver(memory=self._memory).resolve_async(observation=observation)
         scores = self._score_observation(
             observation=observation,
             evidence=evidence,
@@ -1156,11 +1215,10 @@ class Scorer(Identifiable, abc.ABC):
             return []
 
         # Some scorers do not have an associated prompt target; batch helper validates RPM only when present
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=task_func,
             task_arguments=["scorable", "expectation"],
-            prompt_target=cast("PromptTarget", prompt_target),
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[list(scorables), resolved_expectations],
             **task_kwargs,
@@ -1193,11 +1251,10 @@ class Scorer(Identifiable, abc.ABC):
         if len(image_paths) == 0:
             return []
 
-        prompt_target = getattr(self, "_prompt_target", None)
         results = await batch_task_async(
             task_func=self.score_image_async,
             task_arguments=["image_path", "objective"] if objectives is not None else ["image_path"],
-            prompt_target=prompt_target,
+            prompt_target=self.get_chat_target(),
             batch_size=batch_size,
             items_to_batch=[image_paths, objectives] if objectives is not None else [image_paths],
         )
@@ -1221,11 +1278,11 @@ class Scorer(Identifiable, abc.ABC):
 
         return (value - min_value) / (max_value - min_value)
 
-    def _extract_objective_from_response(self, response: Message) -> str:
+    async def _extract_objective_from_response_async(self, response: Message) -> str:
         """
         Read the objective from the turn before an assistant response.
 
-        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn``.
+        Deprecated: use ``pyrit.score.message_scorer.extract_objective_from_previous_turn_async``.
 
         Args:
             response (Message): The response to extract the objective from.
@@ -1233,11 +1290,11 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             str: The objective extracted from the response, or empty string if not found.
         """
-        from pyrit.score.message_scorer import extract_objective_from_previous_turn
+        from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 
         print_deprecation_message(
             old_item="Scorer._extract_objective_from_response",
-            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn",
+            new_item="pyrit.score.message_scorer.extract_objective_from_previous_turn_async",
             removed_in=LEGACY_SCORE_ASYNC_REMOVED_IN,
         )
-        return extract_objective_from_previous_turn(message=response, memory=self._memory)
+        return await extract_objective_from_previous_turn_async(message=response, memory=self._memory)

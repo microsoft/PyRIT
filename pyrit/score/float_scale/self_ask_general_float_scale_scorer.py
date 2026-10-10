@@ -10,9 +10,14 @@ from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.llm_scoring import (
     _format_string_references_message_piece,
     _parse_judgment_observation,
-    _run_llm_scoring_async,
 )
-from pyrit.score.response_handler import JsonSchemaResponseHandler, ResponseHandler
+from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
+from pyrit.score.response_handler import (
+    CategoryConflictPolicy,
+    JsonSchemaResponseHandler,
+    NumericRangeResponseHandler,
+    ResponseHandler,
+)
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 if TYPE_CHECKING:
@@ -68,18 +73,22 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
         - score_value: a numeric value in the model's native scale (e.g., 0-100)
         - rationale: a short explanation
 
-        Optionally it can include description, metadata, and category. If category is not provided
-        in the response, the category from ``scale`` will be applied.
+        Optionally it can include description, metadata, and category. With the default response
+        handler, the category from ``scale`` takes precedence over a category in the response.
+        The response category is used only when the scale category is None. A caller-supplied
+        response handler controls its own category policy.
 
         Args:
             system_prompt_format_string (str): System prompt template with placeholders for
                 objective, prompt, and message_piece.
-            scale (NumericRange): The required native score range and optional category.
+            scale (NumericRange): The required native score range and optional category. Its category
+                takes precedence over the response category with the default response handler.
             chat_target (PromptTarget | None): The chat target used to score. Must satisfy
                 CHAT_TARGET_REQUIREMENTS.
             prompt_format_string (str | None): User prompt template with the same placeholders.
             response_handler (ResponseHandler | None): Parser for the target's raw output. Defaults
-                to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments.
+                to a ``JsonSchemaResponseHandler`` built from the ``*_output_key`` arguments that
+                uses ``CategoryConflictPolicy.PREFER_CONFIGURED``.
             validator (ScorerPromptValidator | None): Custom validator. If omitted, a default
                 validator will be used requiring text input and an objective.
             score_value_output_key (str): JSON key for the score value. Defaults to "score_value".
@@ -98,23 +107,31 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
         if chat_target is None:
             raise ValueError("A chat_target must be provided.")
 
-        super().__init__(validator=validator or self._DEFAULT_VALIDATOR, chat_target=chat_target)
+        super().__init__(validator=validator or self._DEFAULT_VALIDATOR)
         self._prompt_target = chat_target
+        self._judge = TargetJudge(target=chat_target, requirements=type(self).TARGET_REQUIREMENTS)
         if not system_prompt_format_string:
             raise ValueError("system_prompt_format_string must be provided and non-empty.")
         self._system_prompt_format_string = system_prompt_format_string
         self._prompt_format_string = prompt_format_string
         self._scale = scale
-        # A caller-supplied handler owns its own response contract; otherwise the default JSON
-        # handler carries the schema and enforces the numeric score contract for the round-trip.
-        self._response_handler = response_handler or JsonSchemaResponseHandler(
+        # A caller-supplied handler owns its own wire format; otherwise the default JSON handler
+        # carries the schema and enforces the numeric score contract for the round-trip.
+        wire_format_handler = response_handler or JsonSchemaResponseHandler(
             score_value_output_key=score_value_output_key,
             rationale_output_key=rationale_output_key,
             description_output_key=description_output_key,
             metadata_output_key=metadata_output_key,
             category_output_key=category_output_key,
+            category_conflict_policy=CategoryConflictPolicy.PREFER_CONFIGURED,
             response_schema=response_json_schema,
             numeric_value=True,
+        )
+        # Keep score-domain validation in the parser callback so out-of-range values retry.
+        self._response_handler = NumericRangeResponseHandler(
+            response_handler=wire_format_handler,
+            minimum_value=scale.minimum_value,
+            maximum_value=scale.maximum_value,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -134,17 +151,16 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             prompt_target=self._prompt_target.get_identifier(),
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
-        Score a single message piece using the configured prompts and scale to [0, 1].
-
-        Args:
-            message_piece (MessagePiece): The piece to score.
-            objective (str, optional): Context objective for the scoring.
+        Render the judge request and convert the result.
 
         Returns:
-            list[Score]: A list with a single float-scale score in [0, 1].
+            list[Score]: The scorer's verdict.
         """
+        objective = expectation.objective if expectation else None
         original_prompt = message_piece.converted_value
 
         # Render system prompt and user prompt
@@ -162,19 +178,23 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
                 message_piece=message_piece,
             )
 
-        unvalidated = await _run_llm_scoring_async(
-            chat_target=self._prompt_target,
-            system_prompt=system_prompt,
+        unvalidated = await self._judge.judge_async(
             response_handler=self._response_handler,
-            value=user_prompt,
-            data_type=message_piece.converted_value_data_type,
-            scored_prompt_id=message_piece.id,
-            scorer_identifier=self.get_identifier(),
-            judgment_replay_identifier=self._get_judgment_replay_identifier(),
-            category=self._scale.category,
-            requires_message_piece_evidence=(
-                _format_string_references_message_piece(self._system_prompt_format_string)
-                or _format_string_references_message_piece(self._prompt_format_string)
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=system_prompt,
+                    value=user_prompt,
+                    data_type=message_piece.converted_value_data_type,
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._scale.category,
+                    requires_message_piece_evidence=_format_string_references_message_piece(
+                        self._system_prompt_format_string
+                    )
+                    or _format_string_references_message_piece(self._prompt_format_string),
+                )
             ),
         )
 

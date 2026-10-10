@@ -26,6 +26,10 @@
 # Q&A judge and `MatchesObjective` to the objective judge. Direct leaves reject extra
 # conditions. Missing criteria are errors, not skipped branches, even under `OR`.
 #
+# `ConversationSource` acquires the history; the wrapper filters roles and renders it for the child.
+# A message trigger still selects the full current history, including turns after that message.
+# Each score links to a fixed snapshot. New turns affect new acquisitions, not old snapshots.
+#
 # The [class hierarchy](0_scoring.ipynb#the-class-hierarchy) explains what each wrapper
 # *is*. This diagram instead shows runtime composition: what each wrapper may contain.
 # Solid arrows pass a scorer through `scorer=` or `scorers=`, while dashed arrows show
@@ -189,21 +193,27 @@ print(f"[threshold] independent -> {original.get_value()}")
 # criteria and, for float-scale scorers, comparable numeric meanings: matching types and
 # categories does not prove that two rubrics measure the same thing.
 #
-# With preconfigured scorers that meet these requirements:
-#
-# ```python
-# from pyrit.score import FloatScaleFallbackScorer, TrueFalseFallbackScorer
-#
-# harm_scorer = FloatScaleFallbackScorer(
-#     scorer=primary_harm_scorer,
-#     fallback_scorer=secondary_harm_scorer,
-# )
-# objective_scorer = TrueFalseFallbackScorer(
-#     scorer=primary_objective_scorer,
-#     fallback_scorer=secondary_objective_scorer,
-# )
-# ```
-#
+# These local examples use equivalent criteria in each pair. Both primary scorers return
+# a complete score, so neither fallback runs. In an application, use a second implementation
+# of the same criterion when the primary can return an undetermined result.
+# %%
+from pyrit.models import ContentScorable
+from pyrit.score import FloatScaleFallbackScorer, TrueFalseFallbackScorer
+
+overlap_scorer = FloatScaleFallbackScorer(
+    scorer=PlagiarismScorer(reference_text=reference),
+    fallback_scorer=PlagiarismScorer(reference_text=reference),
+)
+word_scorer = TrueFalseFallbackScorer(
+    scorer=SubStringScorer(substring="answer"),
+    fallback_scorer=SubStringScorer(substring="answer"),
+)
+for fallback_wrapper in (overlap_scorer, word_scorer):
+    score = (await fallback_wrapper.score_async(scorable=ContentScorable(value="The answer is here.")))[0]
+    assert score.score_metadata["resolved_by"] == "primary"
+    print(f"{type(fallback_wrapper).__name__}: {score.get_value()} ({score.score_metadata['resolved_by']})")
+
+# %% [markdown]
 # A non-applicable primary (`[]`) returns `[]` without calling the fallback. A non-applicable
 # fallback leaves the primary's undetermined judgment in place. If both abstain, the result
 # remains undetermined. Exceptions propagate; they are not treated as abstentions.
@@ -211,7 +221,11 @@ print(f"[threshold] independent -> {original.get_value()}")
 # Multiple child results are rejected rather than paired by position or discarded.
 # Aggregate them explicitly before using fallback if a single aggregate is meaningful.
 #
-# Only the root score is persisted. The wrapper creates a new score without modifying
+# The root call persists its result and the returned results of nested scorers in one transaction.
+# This does not retain temporary scores used only within a scorer's internal aggregation.
+# It returns only its own result. Default memory queries exclude intermediate scores;
+# use `include_intermediate=True` to include them, or retrieve a score by its ID.
+# No parent-child score links are stored. The wrapper creates a new score without modifying
 # either child result and retains their observation links. Metadata records `resolved_by`
 # as `"primary"` or `"fallback"`. Child metadata keys are prefixed with `primary.` and
 # `fallback.`, so duplicate keys and nested fallback details are not overwritten.
@@ -249,7 +263,7 @@ turns = [
     MessagePiece(role="assistant", original_value="Okay, yes I am AI.", conversation_id=conversation_id).to_message(),
 ]
 for turn in turns:
-    memory.add_message_to_memory(request=turn)
+    (await memory.add_message_to_memory_async(request=turn))
 
 persona_breach_scorer = SubStringScorer(substring="I am AI", categories=["persona_breach"])
 conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)
@@ -257,6 +271,22 @@ conversation_scorer = create_conversation_scorer(scorer=persona_breach_scorer)
 # Any message from the conversation works as the trigger.
 score = (await conversation_scorer.score_async(scorable=MessageScorable.from_message(turns[0])))[0]  # type: ignore
 print(f"[conversation] persona breach across turns -> {score.get_value()}")
+
+# %% [markdown]
+# To name the whole conversation directly, use `ConversationScorable`.
+# The following example uses the conversation stored above and a per-call text criterion.
+# %%
+from pyrit.models import Contains, ConversationScorable, OutputMatches, ScoringExpectation
+from pyrit.score import OutputMatchesScorer
+
+output_scorer = create_conversation_scorer(scorer=OutputMatchesScorer())
+scores = await output_scorer.score_async(
+    scorable=ConversationScorable(conversation_id=conversation_id),
+    expectation=ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="I am AI")),)),
+)
+assert scores[0].get_value() is True
+assert scores[0].scorable == ConversationScorable(conversation_id=conversation_id)
+print(f"[conversation output match] {scores[0].get_value()}")
 
 # %% [markdown]
 # For a richer, real-world example, wrap a `SelfAskLikertScorer` with the

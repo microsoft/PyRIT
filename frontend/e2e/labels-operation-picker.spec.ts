@@ -1,4 +1,6 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./_fixtures";
+import { mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 
 // ---------------------------------------------------------------------------
 // The operation picker's size and placement are decided by Fluent's floating
@@ -26,6 +28,7 @@ async function setupMocks(
     operatorLabels?: string[];
   } = {},
 ): Promise<void> {
+  let versionRequests = 0;
   // Everything the app calls while booting, so the run does not depend on a
   // dev-server proxy with no backend behind it.
   await page.route(/\/api\//, async (route) => {
@@ -37,15 +40,19 @@ async function setupMocks(
     if (path === "/auth/config") {
       return route.fulfill(json({ clientId: "", tenantId: "", allowedGroupIds: "" }));
     }
+    if (path === "/runtime") {
+      return route.fulfill(json(READY_RUNTIME));
+    }
     if (path === "/version") {
-      if (options.versionDelayMs) {
+      versionRequests += 1;
+      if (options.versionDelayMs && versionRequests > 1) {
         await new Promise((resolve) => setTimeout(resolve, options.versionDelayMs));
       }
-      return route.fulfill(json({
+      return route.fulfill(json(mockVersion({
         version: "picker-test",
         display: "picker-test",
         ...(options.defaultLabels ? { default_labels: options.defaultLabels } : {}),
-      }));
+      })));
     }
     if (path === "/labels") {
       return route.fulfill(json({

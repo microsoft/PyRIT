@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pyrit.exceptions import (
-    BadRequestException,
+    AdversarialChatRefusedException,
+    AdversarialChatResponseBlockedException,
     ComponentRole,
     EmptyResponseException,
     InvalidJsonException,
@@ -208,7 +209,8 @@ def _raise_for_adversarial_error(response: Message) -> None:
         response: The adversarial-chat response to inspect.
 
     Raises:
-        BadRequestException: If the response was blocked.
+        AdversarialChatRefusedException: If the adversarial model declined to answer.
+        AdversarialChatResponseBlockedException: If the response was blocked.
         EmptyResponseException: If the response was empty.
         PyritException: If the response carries another error category.
     """
@@ -223,7 +225,19 @@ def _raise_for_adversarial_error(response: Message) -> None:
     response_value = error_piece.converted_value
     if response_error == "blocked":
         status_code, message = _get_error_payload(response_value)
-        raise BadRequestException(status_code=status_code if status_code is not None else 400, message=message)
+        # An SDK-reported refusal and a provider content filter both surface as "blocked",
+        # but only the former is the adversarial model's own decision. Keep them distinct so
+        # callers can attribute the failure correctly.
+        structured_refusal = error_piece.structured_refusal
+        if structured_refusal is not None:
+            raise AdversarialChatRefusedException(
+                status_code=status_code if status_code is not None else 400,
+                message=structured_refusal,
+            )
+        raise AdversarialChatResponseBlockedException(
+            status_code=status_code if status_code is not None else 400,
+            message=message,
+        )
     if response_error == "empty":
         raise EmptyResponseException(message="The adversarial chat returned an empty response.")
 
@@ -610,7 +624,7 @@ class _AdversarialConversationManager:
         """The single response JSON schema every reply is validated against."""
         return self._response_json_schema
 
-    def set_adversarial_system_prompt(self, **extra_render_values: object) -> None:
+    async def set_adversarial_system_prompt_async(self, **extra_render_values: object) -> None:
         """
         Render and set the adversarial system prompt on this manager's conversation.
 
@@ -635,9 +649,10 @@ class _AdversarialConversationManager:
         )
         if not rendered:
             raise ValueError("Adversarial chat system prompt must be defined")
-        self._adversarial_target.set_system_prompt(
-            system_prompt=rendered,
-            conversation_id=self._conversation_id,
+        (
+            await self._adversarial_target.set_system_prompt_async(
+                system_prompt=rendered, conversation_id=self._conversation_id
+            )
         )
 
     def _render_first_message(self) -> str:

@@ -24,6 +24,7 @@ class AudioEchoConverter(Converter):
     into the original. The delay and decay parameters control the timing and
     loudness of the echo respectively. Sample rate, bit depth, and channel
     count are preserved.
+    Unsigned 8-bit PCM is mixed around its silence midpoint of 128.
     """
 
     SUPPORTED_INPUT_TYPES = ("audio_path",)
@@ -73,18 +74,21 @@ class AudioEchoConverter(Converter):
             numpy array with the echo applied, same length as input.
         """
         delay_samples = int(self._delay * sample_rate)
-        output = data.astype(np.float64).copy()
+        midpoint = 128 if data.dtype == np.uint8 else 0
+        centered_data = data.astype(np.float64) - midpoint
+        output = centered_data.copy()
 
         # Add the delayed, decayed copy
         if delay_samples < len(data):
-            output[delay_samples:] += self._decay * data[: len(data) - delay_samples].astype(np.float64)
+            output[delay_samples:] += self._decay * centered_data[: len(data) - delay_samples]
 
-        # Clip to the valid range for the original dtype
+        # Clip and quantize amplitudes before restoring an unsigned midpoint.
         if np.issubdtype(data.dtype, np.integer):
             info = np.iinfo(data.dtype)
-            output = np.clip(output, info.min, info.max)
+            output = np.clip(output, info.min - midpoint, info.max - midpoint)
+            output = np.trunc(output)
 
-        return output
+        return output + midpoint
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "audio_path") -> ConverterResult:
         """

@@ -15,6 +15,22 @@
 #
 # ## Translating from Seeds for Attack Parameters
 #
+# A seed can carry an explicit expected-output criterion. Use `OutputMatchesScorer` as the
+# attack's objective scorer; the existing seed-to-parameter path carries the condition:
+#
+# ```python
+# from pyrit.models import Contains, OutputMatches, SeedObjective
+#
+# objective = SeedObjective(
+#     value="Make the target include the marker",
+#     conditions=(OutputMatches(matcher=Contains(value="marker")),),
+# )
+# ```
+#
+# The same condition in seed YAML is
+# `conditions: [{condition_type: output_matches, matcher: {matcher_type: contains, value: marker}}]`.
+# Case-insensitive matching and edge-whitespace normalization are the defaults.
+#
 # Most [executors](../executor/0_executor.md) make use of several parameters.
 #
 # 1. An **objective** - what you're trying to achieve
@@ -33,7 +49,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.score.true_false.self_ask_refusal_scorer import SelfAskRefusalScorer
@@ -49,7 +65,10 @@ image_path = pathlib.Path(".") / ".." / ".." / ".." / "assets" / "pyrit_architec
 # this is typically stored in the database and not constructed like this
 seed_group = AttackSeedGroup(
     seeds=[
-        SeedObjective(value="Get the model to describe pyrit architecture based on the image"),
+        SeedObjective(
+            value="Get the model to describe pyrit architecture based on the image",
+            origin=SeedOrigin.USER,
+        ),
         SeedPrompt(value="You are a helpful assistant", role="system", sequence=0),
         SeedPrompt(value="Hello how are you?", data_type="text", role="user", sequence=1),
         SeedPrompt(value="I am fine, thank you!", data_type="text", role="assistant", sequence=2),

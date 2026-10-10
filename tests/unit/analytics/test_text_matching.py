@@ -101,6 +101,25 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=0.5, n=3)
         assert matcher.is_match(target="hello", text="") is False
 
+    def test_whitespace_only_target(self):
+        # A whitespace-only target is long enough to form n-grams, so it used to
+        # score a perfect overlap against any text containing the same run of
+        # spaces. `ExactTextMatching` rejects a blank target for the same reason.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.is_match(target="   ", text="hello world") is False
+        assert matcher.is_match(target="   ", text="x   y") is False
+        assert matcher.get_overlap_score(target="   ", text="x   y") == 0.0
+
+    def test_whitespace_only_target_with_zero_threshold(self):
+        matcher = ApproximateTextMatching(threshold=0.0, n=3)
+        assert matcher.is_match(target="   ", text="x   y") is False
+
+    def test_whitespace_only_target_is_not_confused_with_a_padded_real_target(self):
+        # Stripping only decides whether the target is blank; a target that has
+        # real content still matches, padding and all.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.is_match(target="  hello  ", text="say hello there") is True
+
     def test_approximate_detection(self):
         # Test detecting encoded/modified text
         original = "secretmessage"
@@ -138,7 +157,35 @@ class TestApproximateTextMatching:
         matcher = ApproximateTextMatching(threshold=threshold)
         assert matcher.is_match(target="hello", text="hello world") is True
 
+    @pytest.mark.parametrize("n", [0, -1, -5, 1.5, "3", None, True, False])
+    def test_invalid_n_rejected(self, n):
+        with pytest.raises(ValueError, match="n"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [1, 2, 5])
+    def test_valid_n_accepted(self, n):
+        matcher = ApproximateTextMatching(n=n)
+        assert matcher._n == n
+
     def test_default_parameters(self):
         matcher = ApproximateTextMatching()  # Default threshold=0.5, n=3, case_sensitive=False
         # Should work with defaults
         assert matcher.is_match(target="hello", text="hello world") is True
+
+
+class TestApproximateTextMatchingNValidation:
+    @pytest.mark.parametrize("n", [0, -1, -5])
+    def test_init_rejects_non_positive_n(self, n):
+        # n=0 makes the only n-gram the empty string, which every text contains, so the
+        # overlap is 1.0 for completely unrelated text. Reject rather than score garbage.
+        with pytest.raises(ValueError, match="n must be a positive integer"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [True, 2.5, "3", None])
+    def test_init_rejects_non_integer_n(self, n):
+        with pytest.raises(ValueError, match="n must be a positive integer"):
+            ApproximateTextMatching(n=n)
+
+    @pytest.mark.parametrize("n", [1, 3, 4, 50])
+    def test_init_accepts_positive_integer_n(self, n):
+        assert ApproximateTextMatching(n=n).get_overlap_score(target="abc", text="abc") >= 0.0

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Admission, fairness, and cleanup contracts for ordinary manual messages."""
+"""Admission, execution bounds, and cleanup contracts for ordinary manual messages."""
 
 import asyncio
 from collections.abc import Callable
@@ -55,17 +55,22 @@ def test_bounded_admission_and_conversation_ownership() -> None:
         assert scheduler._conversations == {"first"}
 
 
-@pytest.mark.parametrize("concurrency", [1, 3])
+@pytest.mark.parametrize("concurrency", [1, 3, 4])
 async def test_execution_budget_is_shared_async(concurrency: int) -> None:
     scheduler = ManualSendScheduler(max_concurrency=concurrency, max_operations=6)
+    all_attempted = asyncio.Event()
     full = asyncio.Event()
     release = asyncio.Event()
+    attempted = 0
     active = 0
     peak = 0
 
     async def execute_async(index: int) -> None:
-        nonlocal active, peak
+        nonlocal attempted, active, peak
         with scheduler.reserve(conversation_id=str(index)):
+            attempted += 1
+            if attempted == 6:
+                all_attempted.set()
             async with scheduler.operation_async():
                 active += 1
                 peak = max(peak, active)
@@ -77,74 +82,71 @@ async def test_execution_budget_is_shared_async(concurrency: int) -> None:
     tasks = [asyncio.create_task(execute_async(index)) for index in range(6)]
     try:
         await full.wait()
-        assert scheduler._active == concurrency
-        assert len(scheduler._queue) == 6 - concurrency
+        await all_attempted.wait()
+        assert active == concurrency
+        assert all(not task.done() for task in tasks)
     finally:
         release.set()
         await asyncio.gather(*tasks)
     assert peak == concurrency
-    assert scheduler._active == 0
-    assert not scheduler._conversations
+    assert active == 0
+    assert not scheduler.has_active_work()
 
 
-async def test_waiting_operations_enter_in_fifo_order_async() -> None:
-    scheduler = ManualSendScheduler(max_concurrency=1, max_operations=3)
-    order: list[str] = []
-    first_started = asyncio.Event()
-    release_first = asyncio.Event()
+async def test_cancellation_after_slot_release_preserves_capacity_async() -> None:
+    scheduler = ManualSendScheduler(max_concurrency=1, max_operations=1)
+    attempted = asyncio.Event()
+    entered = asyncio.Event()
 
-    async def first_async() -> None:
+    async def operation_async() -> None:
+        with scheduler.reserve(conversation_id="cancelled"):
+            attempted.set()
+            async with scheduler.operation_async():
+                entered.set()
+                await asyncio.Event().wait()
+
+    async with scheduler.operation_async():
+        operation = asyncio.create_task(operation_async())
+        await attempted.wait()
+        assert not entered.is_set()
+    # Cancel after the slot is released but before its waiting owner resumes.
+    operation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+    assert not entered.is_set()
+    assert not scheduler.has_active_work()
+    with scheduler.reserve(conversation_id="cancelled"):
         async with scheduler.operation_async():
-            order.append("first")
-            first_started.set()
-            await release_first.wait()
-
-    async def second_async() -> None:
-        async with scheduler.operation_async():
-            assert scheduler._active == 1
-            order.append("second")
-            await asyncio.sleep(0)
-
-    async def last_async() -> None:
-        async with scheduler.operation_async():
-            order.append("last")
-
-    first = asyncio.create_task(first_async())
-    await first_started.wait()
-    second = asyncio.create_task(second_async())
-    await asyncio.sleep(0)
-    last = asyncio.create_task(last_async())
-    await asyncio.sleep(0)
-    try:
-        assert order == ["first"]
-    finally:
-        release_first.set()
-        await asyncio.gather(first, second, last)
-    assert order == ["first", "second", "last"]
-    assert scheduler._active == 0
-    assert not scheduler._queue
+            assert scheduler.has_active_work()
+    assert not scheduler.has_active_work()
 
 
 @pytest.mark.parametrize("queued", [False, True])
-async def test_cancellation_releases_tickets_slots_and_ownership_async(queued: bool) -> None:
+async def test_cancellation_releases_slots_and_ownership_async(queued: bool) -> None:
     scheduler = ManualSendScheduler(max_concurrency=1, max_operations=2)
+    attempted = asyncio.Event()
     started = asyncio.Event()
     release = asyncio.Event()
 
     async def operation_async() -> None:
         with scheduler.reserve(conversation_id="cancelled"):
+            attempted.set()
             async with scheduler.operation_async():
                 started.set()
                 await release.wait()
 
     if queued:
         async with scheduler.operation_async():
-            operation = asyncio.create_task(operation_async())
-            await asyncio.sleep(0)
-            assert not started.is_set()
-            operation.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await operation
+            for _ in range(2):
+                attempted.clear()
+                operation = asyncio.create_task(operation_async())
+                await attempted.wait()
+                try:
+                    assert not started.is_set()
+                finally:
+                    operation.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await operation
     else:
         operation = asyncio.create_task(operation_async())
         await started.wait()
@@ -152,12 +154,11 @@ async def test_cancellation_releases_tickets_slots_and_ownership_async(queued: b
         with pytest.raises(asyncio.CancelledError):
             await operation
 
-    assert not scheduler._queue
-    assert not scheduler._conversations
-    assert scheduler._active == 0
+    assert not scheduler.has_active_work()
     with scheduler.reserve(conversation_id="cancelled"):
         async with scheduler.operation_async():
-            assert scheduler._active == 1
+            assert scheduler.has_active_work()
+    assert not scheduler.has_active_work()
 
 
 async def test_execution_failure_releases_capacity_async() -> None:
@@ -168,8 +169,8 @@ async def test_execution_failure_releases_capacity_async() -> None:
                 raise RuntimeError("provider")
     with scheduler.reserve(conversation_id="conversation"):
         async with scheduler.operation_async():
-            assert scheduler._active == 1
-    assert scheduler._active == 0
+            assert scheduler.has_active_work()
+    assert not scheduler.has_active_work()
 
 
 def test_default_scheduler_is_shared() -> None:

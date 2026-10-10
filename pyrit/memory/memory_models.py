@@ -16,6 +16,7 @@ from sqlalchemy import (
     INTEGER,
     JSON,
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     TypeDecorator,
     Unicode,
     UniqueConstraint,
+    column,
 )
 from sqlalchemy.dialects.sqlite import CHAR
 from sqlalchemy.orm import (
@@ -36,6 +38,8 @@ from sqlalchemy.types import Uuid
 
 import pyrit
 from pyrit.common.utils import to_sha256
+from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
+from pyrit.memory.analytics_sql import ResolvedAttackIdentifierHash
 from pyrit.models import (
     SEED_RESPONSE_JSON_SCHEMA_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
@@ -68,7 +72,9 @@ from pyrit.models import (
     Seed,
     SeedIdentifier,
     SeedObjective,
+    SeedOrigin,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
     SeedType,
     TargetIdentifier,
@@ -272,9 +278,7 @@ class PromptMemoryEntry(Base):
         {"extend_existing": True},
     )
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    role: Mapped[Literal["system", "user", "assistant", "simulated_assistant", "tool", "developer"]] = mapped_column(
-        String, nullable=False
-    )
+    role: Mapped[ChatMessageRole] = mapped_column(String, nullable=False)
     # Bounded so SQL Server accepts it as an index key. 128 rather than 36 because
     # conversation_id is a free-form caller-supplied string, not necessarily a UUID.
     conversation_id = mapped_column(String(128), nullable=False)
@@ -300,7 +304,13 @@ class PromptMemoryEntry(Base):
 
     scores: Mapped[list["ScoreEntry"]] = relationship(
         "ScoreEntry",
-        primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
+        primaryjoin="and_(ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id, "
+        "ScoreEntry.is_intermediate == False)",
+        viewonly=True,
+        foreign_keys="ScoreEntry.prompt_request_response_id",
+    )
+    all_scores: Mapped[list["ScoreEntry"]] = relationship(
+        "ScoreEntry",
         back_populates="prompt_request_piece",
         foreign_keys="ScoreEntry.prompt_request_response_id",
     )
@@ -841,6 +851,7 @@ class AttackIdentifierEntry(ComponentIdentifierEntry[AttackIdentifier]):
     adversarial_system_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     adversarial_seed_prompt: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     adversarial_prompt_template: Mapped[str | None] = mapped_column(Unicode, nullable=True)
+    use_score_as_feedback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     objective_target_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{TargetIdentifierEntry.__tablename__}.hash"), nullable=True
     )
@@ -1004,11 +1015,11 @@ class ConversationEntry(Base):
     """
     Conversation-scoped metadata, persisted once per ``conversation_id``.
 
-    Holds identifiers that belong to the conversation as a whole -- currently the
-    target identifier -- so they are not duplicated onto every ``PromptMemoryEntry``
-    row. The target is captured once when the conversation's pieces are written and
-    read back via ``MemoryInterface._get_conversation`` (it is not stamped
-    onto individual pieces).
+    Holds identifiers that belong to the conversation as a whole, namely the target
+    identifier and the owning attack execution's result ID, so they are not
+    duplicated onto every ``PromptMemoryEntry`` row. The target is captured once when
+    the conversation's pieces are written and read back via
+    ``MemoryInterface._get_conversation`` (it is not stamped onto individual pieces).
 
     The target is dual-written: the full identifier stays in the ``target_identifier``
     JSON column (still the read source), and ``target_identifier_hash`` references the
@@ -1030,6 +1041,11 @@ class ConversationEntry(Base):
     # this conversation). Nullable for backwards compatibility with existing databases.
     retries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
+    #: ID of the attack result whose execution owns this conversation. It matches
+    #: ``AttackResultEntries.id`` by value rather than by foreign key, because the result
+    #: row is written when the execution finishes. Null outside an attack execution.
+    attack_result_id: Mapped[uuid.UUID | None] = mapped_column(CustomUUID, nullable=True, index=True)
+
     # Version of PyRIT used when this entry was created. Nullable for backwards
     # compatibility with existing databases.
     pyrit_version = mapped_column(String, nullable=True)
@@ -1045,6 +1061,7 @@ class ConversationEntry(Base):
         self.target_identifier = conversation.target_identifier.model_dump() if conversation.target_identifier else None
         self.target_identifier_hash = conversation.target_identifier.hash if conversation.target_identifier else None
         self.retries = [retry.model_dump(mode="json") for retry in conversation.retries] or None
+        self.attack_result_id = uuid.UUID(conversation.attack_result_id) if conversation.attack_result_id else None
         self.pyrit_version = pyrit.__version__
 
     def get_conversation(self) -> Conversation:
@@ -1060,6 +1077,7 @@ class ConversationEntry(Base):
         return Conversation(
             conversation_id=self.conversation_id,
             target_identifier=target_id,
+            attack_result_id=str(self.attack_result_id) if self.attack_result_id else None,
             retries=retries,
         )
 
@@ -1241,6 +1259,8 @@ class ScoreEntry(Base):
 
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
     score_value = mapped_column(String, nullable=True)
+    # Marks nested scorer results, not the public call's returned results.
+    is_intermediate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     score_value_description = mapped_column(String, nullable=True)
     # "complete" or "undetermined"; an undetermined score carries no score_value.
     status = mapped_column(String(16), nullable=False, default=ScoreStatus.COMPLETE.value)
@@ -1267,7 +1287,7 @@ class ScoreEntry(Base):
     # Version of PyRIT used when this score was created
     # Nullable for backwards compatibility with existing databases
     pyrit_version = mapped_column(String, nullable=True)
-    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
+    prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="all_scores")
     observation_links: Mapped[list["ScoreObservationEntry"]] = relationship(
         "ScoreObservationEntry",
         back_populates="score",
@@ -1276,15 +1296,17 @@ class ScoreEntry(Base):
         lazy="selectin",
     )
 
-    def __init__(self, *, entry: Score) -> None:
+    def __init__(self, *, entry: Score, is_intermediate: bool = False) -> None:
         """
         Initialize a ScoreEntry from a Score object.
 
         Args:
             entry (Score): The score object to convert into a database entry.
+            is_intermediate (bool): Whether this result came from a nested scoring call.
         """
         entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
         self.id = entry.id
+        self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
         self.score_value_description = entry.score_value_description
         self.status = entry.status.value
@@ -1355,6 +1377,7 @@ class ScoreEntry(Base):
         """
         return {
             "id": str(self.id),
+            "is_intermediate": self.is_intermediate,
             "score_value": self.score_value,
             "score_value_description": self.score_value_description,
             "status": self.status,
@@ -1494,6 +1517,9 @@ class SeedEntry(Base):
     sequence: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
     role: Mapped[ChatMessageRole | None] = mapped_column(String, nullable=True)
     seed_type: Mapped[SeedType] = mapped_column(String, nullable=False, default="prompt")
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=SeedOrigin.UNKNOWN.value, server_default="unknown", index=True
+    )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
     def __init__(self, *, entry: Seed) -> None:
@@ -1527,6 +1553,7 @@ class SeedEntry(Base):
         self.prompt_metadata = self._pack_seed_metadata(entry)
         self.prompt_group_id = entry.prompt_group_id
         self.seed_type = seed_type
+        self.origin = entry.origin.value
         self.conditions = (
             entry.model_dump(mode="json", include={"conditions"})["conditions"] or None
             if isinstance(entry, SeedObjective)
@@ -1622,12 +1649,45 @@ class SeedEntry(Base):
             decoded = None
         return cleaned, decoded
 
-    def get_seed(self) -> Seed:
+    def get_seed_record(self) -> SeedRecord:
+        """
+        Project stored fields without reconstructing an executable seed.
+
+        Returns:
+            SeedRecord: Stored content, identifiers, and metadata, including raw configuration text.
+        """
+        metadata, response_json_schema = self._unpack_seed_metadata(self.prompt_metadata)
+        return SeedRecord(
+            id=self.id,
+            seed_type=self.seed_type,
+            value=self.value,
+            value_sha256=self.value_sha256,
+            data_type=self.data_type,
+            name=self.name,
+            dataset_name=self.dataset_name,
+            origin=SeedOrigin(self.origin),
+            harm_categories=self.harm_categories,
+            description=self.description,
+            authors=self.authors,
+            groups=self.groups,
+            source=self.source,
+            date_added=self.date_added,
+            added_by=self.added_by,
+            metadata=metadata,
+            prompt_group_id=self.prompt_group_id,
+            sequence=self.sequence,
+            role=self.role,
+            parameters=self.parameters,
+            conditions=self.conditions,
+            response_json_schema=response_json_schema,
+        )
+
+    def get_seed(self) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
         """
         Convert this database entry back into a Seed object.
 
         Returns:
-            Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
+            SeedPrompt | SeedObjective | SeedSimulatedConversation: The reconstructed seed object.
 
         Raises:
             ValueError: If persisted conditions are invalid or attached to a non-objective seed,
@@ -1640,6 +1700,7 @@ class SeedEntry(Base):
         if self.seed_type == "objective":
             return SeedObjective(
                 id=self.id,
+                origin=SeedOrigin(self.origin),
                 value=self.value,
                 value_sha256=self.value_sha256,
                 name=self.name,
@@ -1677,6 +1738,7 @@ class SeedEntry(Base):
             try:
                 return SeedSimulatedConversation(
                     id=self.id,
+                    origin=SeedOrigin(self.origin),
                     value_sha256=None if is_legacy_record else self.value_sha256,
                     name=self.name,
                     dataset_name=self.dataset_name,
@@ -1704,6 +1766,7 @@ class SeedEntry(Base):
                 ) from exc
         return SeedPrompt(
             id=self.id,
+            origin=SeedOrigin(self.origin),
             value=self.value,
             value_sha256=self.value_sha256,
             data_type=self.data_type,
@@ -1764,6 +1827,38 @@ class AttackResultEntry(Base):
 
     __tablename__ = "AttackResultEntries"
     __table_args__ = (
+        Index(
+            "ix_AttackResultEntries_objective_target_eval_v1",
+            "objective_target_eval_hash_v1",
+            "outcome",
+        ),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_sqlite",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "targeted_harm_categories",
+            "operation",
+            "operator",
+            info={"dialect": "sqlite"},
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_facts_mssql",
+            "resolved_atomic_attack_identifier_hash",
+            "outcome",
+            "operation",
+            "operator",
+            mssql_include=["targeted_harm_categories"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_sqlite", "operation", "labels", info={"dialect": "sqlite"}
+        ).ddl_if(dialect="sqlite"),
+        Index(
+            "ix_AttackResultEntries_analytics_labels_mssql",
+            "operation",
+            mssql_include=["labels"],
+            info={"dialect": "mssql"},
+        ).ddl_if(dialect="mssql"),
         # Serves the PARTITION BY conversation_id dedup window in _query_paginated_attack_results.
         Index(
             "ix_AttackResultEntries_conversation_timestamp_id",
@@ -1803,6 +1898,15 @@ class AttackResultEntry(Base):
     atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{AtomicAttackIdentifierEntry.__tablename__}.hash"), nullable=True
     )
+    resolved_atomic_attack_identifier_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        Computed(
+            ResolvedAttackIdentifierHash(column("atomic_attack_identifier_hash"), column("atomic_attack_identifier")),
+            persisted=False,
+        ),
+        nullable=True,
+    )
+    objective_target_eval_hash_v1: Mapped[str | None] = mapped_column(String(64), nullable=True)
     objective_sha256 = mapped_column(String, nullable=True)
     last_response_id: Mapped[uuid.UUID | None] = mapped_column(
         CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=True
@@ -1816,7 +1920,7 @@ class AttackResultEntry(Base):
     executed_turns = mapped_column(INTEGER, nullable=False, default=0)
     execution_time_ms = mapped_column(INTEGER, nullable=False, default=0)
     outcome: Mapped[Literal["success", "failure", "error", "undetermined"]] = mapped_column(
-        String, nullable=False, default="undetermined"
+        String(16), nullable=False, default="undetermined"
     )
     outcome_reason = mapped_column(String, nullable=True)
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
@@ -1884,17 +1988,10 @@ class AttackResultEntry(Base):
         self.id = uuid.UUID(entry.attack_result_id)
         self.conversation_id = entry.conversation_id
         self.objective = entry.objective
-        # Always recompute eval_hash before dumping so the stored JSON carries the
-        # freshly computed value for DB-level filtering (never a value from storage).
-        atomic_attack_identifier = None
-        if entry.atomic_attack_identifier:
-            atomic_attack_identifier = AtomicAttackIdentifier.from_component_identifier(entry.atomic_attack_identifier)
-            atomic_attack_identifier = atomic_attack_identifier.with_eval_hash(
-                AtomicAttackEvaluationIdentifier(atomic_attack_identifier).eval_hash
-            )
+        atomic_attack_identifier = self._prepare_atomic_attack_identifier(identifier=entry.atomic_attack_identifier)
+        self._set_atomic_attack_identifier(identifier=atomic_attack_identifier)
+        if atomic_attack_identifier is not None:
             entry.atomic_attack_identifier = atomic_attack_identifier
-        self.atomic_attack_identifier = atomic_attack_identifier.model_dump() if atomic_attack_identifier else None
-        self.atomic_attack_identifier_hash = atomic_attack_identifier.hash if atomic_attack_identifier else None
         self.objective_sha256 = to_sha256(entry.objective)
 
         # Use helper method for UUID conversions
@@ -1949,6 +2046,42 @@ class AttackResultEntry(Base):
         # an AttackResultAttribution is present on the AttackContext; otherwise None)
         self.attribution_parent_id = uuid.UUID(entry.attribution_parent_id) if entry.attribution_parent_id else None
         self.attribution_data = entry.attribution_data
+
+    @staticmethod
+    def _prepare_atomic_attack_identifier(
+        *, identifier: ComponentIdentifier | dict[str, Any] | None
+    ) -> ComponentIdentifier | None:
+        """
+        Validate an atomic identifier and recompute its stored evaluation hash.
+
+        Args:
+            identifier (ComponentIdentifier | dict[str, Any] | None): The replacement identifier or None.
+
+        Returns:
+            ComponentIdentifier | None: A normalized identifier with a fresh evaluation hash.
+        """
+        if identifier is None:
+            return None
+        atomic = (
+            AtomicAttackIdentifier.from_component_identifier(identifier)
+            if isinstance(identifier, ComponentIdentifier)
+            else AtomicAttackIdentifier.model_validate(identifier)
+        )
+        return atomic.with_eval_hash(AtomicAttackEvaluationIdentifier(atomic).eval_hash)
+
+    def _set_atomic_attack_identifier(self, *, identifier: ComponentIdentifier | None) -> None:
+        """
+        Set the stored identifier, normalized foreign key, and frozen target evaluation key together.
+
+        Args:
+            identifier (ComponentIdentifier | None): An identifier prepared by
+                ``_prepare_atomic_attack_identifier``, or None to clear the association.
+        """
+        self.atomic_attack_identifier = identifier.model_dump() if identifier is not None else None
+        self.atomic_attack_identifier_hash = identifier.hash if identifier is not None else None
+        self.objective_target_eval_hash_v1 = ObjectiveTargetAnalyticsIdentityV1.from_atomic_document(
+            document=self.atomic_attack_identifier
+        )
 
     @staticmethod
     def _get_id_as_uuid(obj: Any) -> uuid.UUID | None:

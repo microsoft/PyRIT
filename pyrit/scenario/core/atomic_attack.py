@@ -27,6 +27,7 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackResult,
     AttackSeedGroup,
+    ScenarioRunPlanGroupKind,
     config_hash,
 )
 
@@ -65,6 +66,7 @@ class AtomicAttack:
         adversarial_chat: PromptTarget | None = None,
         objective_scorer: TrueFalseScorer | None = None,
         memory_labels: dict[str, str] | None = None,
+        group_kind: ScenarioRunPlanGroupKind = ScenarioRunPlanGroupKind.ATTACK,
         **attack_execute_params: Any,
     ) -> None:
         """
@@ -88,6 +90,10 @@ class AtomicAttack:
             objective_scorer: Optional scorer for evaluating simulated
                 conversations.
             memory_labels: Additional labels to apply to prompts.
+            group_kind: What this group runs, recorded in the scenario's run plan.
+                ``build_baseline_atomic_attack`` passes ``BASELINE`` and Adaptive
+                scenarios pass ``ADAPTIVE``. It describes the group and does not
+                change its identity or what it executes.
             **attack_execute_params: Additional parameters to pass to the attack
                 execution method.
 
@@ -98,6 +104,7 @@ class AtomicAttack:
         self.atomic_attack_name = atomic_attack_name
         self.display_group = display_group or atomic_attack_name
         self._technique_name = technique_name
+        self._group_kind = group_kind
 
         self._attack_technique = attack_technique
 
@@ -186,6 +193,11 @@ class AtomicAttack:
     def technique_name(self) -> str | None:
         """Catalog name of the technique that built this attack."""
         return self._technique_name
+
+    @property
+    def group_kind(self) -> ScenarioRunPlanGroupKind:
+        """What this group runs, as recorded in the scenario's run plan."""
+        return self._group_kind
 
     @property
     def technique_eval_hash(self) -> str:
@@ -396,10 +408,11 @@ class AtomicAttack:
                 completed_results=completed_results,
                 incomplete_objectives=untyped_results.incomplete_objectives,
                 input_indices=untyped_results.input_indices,
+                incomplete_result_ids=untyped_results.incomplete_result_ids,
             )
 
             # Enrich atomic_attack_identifier with seed identifiers
-            self._enrich_atomic_attack_identifiers(results=results)
+            (await self._enrich_atomic_attack_identifiers_async(results=results))
 
             # Log completion status
             if results.has_incomplete:
@@ -418,7 +431,7 @@ class AtomicAttack:
             logger.error(f"Atomic attack '{self.atomic_attack_name}' execution failed: {str(e)}")
             raise ValueError(f"Failed to execute atomic attack '{self.atomic_attack_name}': {str(e)}") from e
 
-    def _enrich_atomic_attack_identifiers(self, *, results: AttackExecutorResult[AttackResult]) -> None:
+    async def _enrich_atomic_attack_identifiers_async(self, *, results: AttackExecutorResult[AttackResult]) -> None:
         """
         Enrich each AttackResult's atomic_attack_identifier with seed group and
         technique information, then persist the update to the database.
@@ -447,9 +460,9 @@ class AtomicAttack:
                 result.atomic_attack_identifier = identifier
 
                 if result.attack_result_id:
-                    memory.update_attack_result_by_id(
-                        attack_result_id=result.attack_result_id,
-                        update_fields={
-                            "atomic_attack_identifier": identifier.model_dump(),
-                        },
+                    (
+                        await memory.update_attack_result_by_id_async(
+                            attack_result_id=result.attack_result_id,
+                            update_fields={"atomic_attack_identifier": identifier.model_dump()},
+                        )
                     )

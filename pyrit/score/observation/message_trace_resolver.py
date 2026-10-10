@@ -7,14 +7,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pyrit.models import MessageScorable, RequestTraceContext, TraceScorable
+from pyrit.models import MessagePiece, MessageScorable, RequestTraceContext, TraceScorable
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
 
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
 
 
-def resolve_message_trace_scope(
+async def resolve_message_trace_scope_async(
     *, scorable: MessageScorable, memory: MemoryInterface
 ) -> tuple[TraceScorable | None, bool]:
     """
@@ -26,18 +26,18 @@ def resolve_message_trace_scope(
     Raises:
         ValueError: If the message is not stored or its request metadata is invalid.
     """
-    message = MessageScorableResolver().resolve(scorable=scorable, memory=memory)
+    message = await MessageScorableResolver().resolve_async(scorable=scorable, memory=memory)
     piece = message.message_pieces[0]
     if not piece.conversation_id or piece.sequence < 0:
         raise ValueError("Trace resolution requires a stored conversation and message sequence.")
     requests = [
         request
-        for request in memory.get_message_pieces(conversation_id=piece.conversation_id)
+        for request in await memory.get_message_pieces_async(conversation_id=piece.conversation_id)
         if request.sequence <= piece.sequence
         and (
             request.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
             or RequestTraceContext.METADATA_KEY in request.prompt_metadata
-            or request.role == "user"
+            or (request.role == "user" and not request.prompt_metadata.get(MessagePiece.PREPENDED_HISTORY_METADATA_KEY))
         )
     ]
     links = [RequestTraceContext.from_metadata(request.prompt_metadata) for request in requests]

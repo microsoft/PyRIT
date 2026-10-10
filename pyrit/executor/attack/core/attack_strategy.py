@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
 
+from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
 from pyrit.exceptions.retry_collector import (
     get_retry_collector,
@@ -32,6 +33,9 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
+    AttackResultRole,
+    AttackResultSelection,
     ComponentIdentifier,
     ConversationReference,
     ConverterIdentifier,
@@ -180,6 +184,8 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     _prepended_conversation_override: list[Message] | None = None
     _memory_labels_override: dict[str, str] | None = None
     _error_result_persistence_error: Exception | None = field(default=None, init=False, repr=False)
+    _error_result_metadata: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _persisted_attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
@@ -201,6 +207,15 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # and resume. Set by AttackExecutor per-task before scheduling. Stays None
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
+
+    # ID of the AttackResult this execution produces. Allocated when execution starts.
+    _attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    # Role of the AttackResult this execution produces. Copied from the strategy's
+    # ``RESULT_ROLE`` when execution starts, so success and error results both carry it.
+    _result_role: AttackResultRole = field(
+        default=AttackResultRole.TARGET_FACING, init=False, repr=False, compare=False
+    )
 
     _expectation: ScoringExpectation = field(init=False, repr=False)
 
@@ -226,6 +241,16 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     def expectation(self) -> ScoringExpectation:
         """The effective scoring question for this execution."""
         return self._expectation
+
+    @property
+    def attack_result_id(self) -> str | None:
+        """
+        The ID of the result this execution produces, or None before execution starts.
+
+        Conversations created while the attack runs are linked to it through
+        ``Conversation.attack_result_id``.
+        """
+        return self._attack_result_id
 
     @property
     def objective(self) -> str:
@@ -386,6 +411,8 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         end_time = time.perf_counter()
         execution_time_ms = int((end_time - event_data.context.start_time) * 1000)
         event_data.result.execution_time_ms = execution_time_ms
+        if event_data.context.attack_result_id is not None:
+            event_data.result.attack_result_id = event_data.context.attack_result_id
 
         # Attach collected retry events to the result
         collector = get_retry_collector()
@@ -395,7 +422,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         # Stamp attribution onto the result before persistence so the
         # AttackResultEntry row records its lineage. Outside an orchestrator
-        # _attribution is None and both attribution fields stay None.
+        # _attribution is None, so only the result role is recorded.
         event_data.result.related_conversations.update(event_data.context.related_conversations)
         self._apply_attribution(context=event_data.context, result=event_data.result)
         self._apply_targeted_harm_categories(context=event_data.context, result=event_data.result)
@@ -404,14 +431,31 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         self._log_attack_outcome(event_data.result)
 
-    def _persist_result(self, *, result: AttackStrategyResultT) -> None:
+    async def _persist_result_async(self, *, result: AttackStrategyResultT) -> None:
         """
         Persist a completed attack result.
 
         Args:
             result (AttackStrategyResultT): The completed result to persist.
         """
-        self._memory.add_attack_results_to_memory(attack_results=[result])
+        (await self._memory.add_attack_results_to_memory_async(attack_results=[result]))
+
+    async def _confirm_result_persistence_async(
+        self, *, context: AttackStrategyContextT, attack_result_id: str
+    ) -> None:
+        """Confirm an uncertain write by its allocated ID without retrying persistence."""
+        try:
+            stored = await self._memory.get_attack_results_async(
+                attack_result_ids=[attack_result_id],
+                result_selection=AttackResultSelection.ALL_RESULTS,
+            )
+        except Exception:
+            self._logger.exception(
+                "Unable to confirm persisted attack result %s after a failed write", attack_result_id
+            )
+        else:
+            if any(result.attack_result_id == attack_result_id for result in stored):
+                context._persisted_attack_result_id = attack_result_id
 
     @staticmethod
     def _apply_attribution(
@@ -422,23 +466,29 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         Copy attribution from the AttackContext onto the AttackResult.
 
-        Reads ``context._attribution`` (an ``AttackResultAttribution`` set by
-        the AttackExecutor when an upstream orchestrator supplied a factory).
-        When present, writes ``attribution_parent_id`` and a fixed-schema
-        ``attribution_data`` dict onto the result so they round-trip into
-        ``AttackResultEntry``.
+        Always writes a fixed-schema ``attribution_data`` dict recording
+        ``result_role``, the producing strategy's ``RESULT_ROLE``, so standalone
+        results are classified too. When ``context._attribution`` (an
+        ``AttackResultAttribution`` set by the AttackExecutor when an upstream
+        orchestrator supplied a factory) is present, also writes
+        ``attribution_parent_id`` and the parent linkage fields so they
+        round-trip into ``AttackResultEntry``. Without it,
+        ``attribution_parent_id`` stays None.
 
         Args:
             context: The per-task AttackContext.
             result: The AttackResult that is about to be persisted.
         """
         attribution = context._attribution
+        attribution_data = AttackResultMetadata(
+            result_role=context._result_role,
+            attempt_index=attribution.attempt_index if attribution is not None else None,
+        ).to_metadata()
         if attribution is None:
+            result.attribution_data = attribution_data
             return
         result.attribution_parent_id = attribution.parent_id
-        attribution_data: dict[str, Any] = {
-            "parent_collection": attribution.parent_collection,
-        }
+        attribution_data["parent_collection"] = attribution.parent_collection
         if attribution.parent_eval_hash is not None:
             attribution_data["parent_eval_hash"] = attribution.parent_eval_hash
         if attribution.seed_group_id is not None:
@@ -524,6 +574,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         error_result = AttackResult(
             conversation_id=conversation_id,
             objective=context.objective,
+            attack_result_id=context.attack_result_id or str(uuid.uuid4()),
             outcome=AttackOutcome.ERROR,
             outcome_reason=f"Exception: {type(error).__name__}: {str(error)}",
             labels=context.memory_labels,
@@ -533,6 +584,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             error_traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
             retry_events=retry_events,
             total_retries=len(retry_events),
+            metadata=dict(context._error_result_metadata),
         )
 
         end_time = time.perf_counter()
@@ -545,9 +597,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
         try:
-            self._memory.add_attack_results_to_memory(attack_results=[error_result])
+            (await self._memory.add_attack_results_to_memory_async(attack_results=[error_result]))
         except Exception as persistence_error:
             context._error_result_persistence_error = persistence_error
+            await self._confirm_result_persistence_async(
+                context=context, attack_result_id=error_result.attack_result_id
+            )
+        else:
+            context._persisted_attack_result_id = error_result.attack_result_id
 
         self._logger.error(f"Attack failed with {type(error).__name__}: {error}")
 
@@ -570,6 +627,10 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
     DELEGATES_SCORING: ClassVar[bool] = False
+
+    #: What this strategy's persisted results represent. Compound attacks that only coordinate
+    #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
+    RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -689,6 +750,12 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                 scoring_config.objective_scorer.get_identifier()
             )
 
+        # Disabled feedback changes what the adversarial chat sees, so it must change the eval hash.
+        # Enabled feedback is the default and is omitted to keep existing hashes stable.
+        use_score_as_feedback: bool | None = None
+        if scoring_config is not None and not scoring_config.use_score_as_feedback:
+            use_score_as_feedback = False
+
         # Add adversarial chat target and its effective prompts if present. The adversarial
         # target becomes a child (filtered to model params by the eval rule), while the
         # effective system/seed prompts land on the attack-strategy node so they are included
@@ -738,6 +805,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             adversarial_system_prompt=adversarial_system_prompt,
             adversarial_seed_prompt=adversarial_seed_prompt,
             adversarial_prompt_template=adversarial_prompt_template,
+            use_score_as_feedback=use_score_as_feedback,
         )
 
     @staticmethod
@@ -838,8 +906,12 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         Raises:
             ExceptionGroup: If attack execution and recording its error result both fail.
         """
-        self._validate_scoring_expectation(context=context)
         context._error_result_persistence_error = None
+        context._error_result_metadata.clear()
+        context._persisted_attack_result_id = None
+        self._validate_scoring_expectation(context=context)
+        context._attack_result_id = str(uuid.uuid4())
+        context._result_role = self.RESULT_ROLE
         lifecycle = _ObjectiveTargetConversationLifecycle(
             objective_target=self._objective_target,
             logger=self._logger,
@@ -848,7 +920,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         try:
             async with lifecycle:
                 try:
-                    result = await super().execute_with_context_async(context=context)
+                    with attack_result_id_scope(attack_result_id=context._attack_result_id):
+                        result = await super().execute_with_context_async(context=context)
                 except Exception as attack_error:
                     persistence_error = context._error_result_persistence_error
                     if persistence_error is not None:
@@ -861,7 +934,14 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             context._objective_target_conversation_lifecycle = None
 
         if context._persist_attack_result:
-            self._default_event_handler._persist_result(result=result)
+            try:
+                await self._default_event_handler._persist_result_async(result=result)
+            except Exception:
+                await self._default_event_handler._confirm_result_persistence_async(
+                    context=context, attack_result_id=result.attack_result_id
+                )
+                raise
+            context._persisted_attack_result_id = result.attack_result_id
         return result
 
     def _validate_scoring_expectation(self, *, context: AttackStrategyContextT) -> None:

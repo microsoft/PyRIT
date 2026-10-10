@@ -16,7 +16,7 @@ from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.models import MessageScorable, Score, ScoringExpectation, UndeterminedScoreError
 from pyrit.models.harm_category import HarmCategory, normalize_harm_category_key
 from pyrit.prompt_target.batch_helper import batch_task_async
-from pyrit.score.message_scorer import extract_objective_from_previous_turn
+from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 from pyrit.score.scorer_evaluation.human_labeled_dataset import (
     HarmHumanLabeledEntry,
     HumanLabeledDataset,
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pyrit.models import Message
-    from pyrit.prompt_target import PromptTarget
     from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
@@ -379,11 +378,13 @@ class ScorerEvaluator(abc.ABC):
             ValueError: If the labeled_dataset is invalid.
         """
         # Validate dataset and extract data
-        assistant_responses, human_scores_list, objectives = self._validate_and_extract_data(labeled_dataset)
+        assistant_responses, human_scores_list, objectives = await self._validate_and_extract_data_async(
+            labeled_dataset
+        )
 
         # Harm datasets carry no objective, so the previous turn stands in for one.
         resolved_objectives = objectives or [
-            extract_objective_from_previous_turn(message=response, memory=self.scorer._memory)
+            (await extract_objective_from_previous_turn_async(message=response, memory=self.scorer._memory))
             for response in assistant_responses
         ]
 
@@ -452,6 +453,7 @@ class ScorerEvaluator(abc.ABC):
         # Include trial scores for debugging and future mismatch analysis
         # (not persisted to registry - use returned metrics object for detailed analysis)
         metrics.trial_scores = all_model_scores
+        metrics.num_input_responses = len(assistant_responses)
         # Include average scoring time per item
         metrics.average_score_time_seconds = average_score_time
 
@@ -473,7 +475,7 @@ class ScorerEvaluator(abc.ABC):
         results = await batch_task_async(
             task_func=self.scorer.score_async,
             task_arguments=["scorable", "expectation"],
-            prompt_target=cast("PromptTarget", getattr(self.scorer, "_prompt_target", None)),
+            prompt_target=self.scorer.get_chat_target(),
             batch_size=max_concurrency,
             items_to_batch=[
                 [MessageScorable.from_message(response) for response in responses],
@@ -548,7 +550,7 @@ class ScorerEvaluator(abc.ABC):
         )
 
     @abc.abstractmethod
-    def _validate_and_extract_data(
+    async def _validate_and_extract_data_async(
         self,
         labeled_dataset: HumanLabeledDataset,
     ) -> tuple[list[Message], list[list[float]], list[str] | None]:
@@ -565,6 +567,7 @@ class ScorerEvaluator(abc.ABC):
         Raises:
             ValueError: If the dataset is invalid for this evaluator.
         """
+        raise NotImplementedError
 
     @abc.abstractmethod
     def _compute_metrics(
@@ -631,7 +634,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
     expected_metrics_type = MetricsType.HARM
 
-    def _validate_and_extract_data(
+    async def _validate_and_extract_data_async(
         self,
         labeled_dataset: HumanLabeledDataset,
     ) -> tuple[list[Message], list[list[float]], list[str] | None]:
@@ -661,7 +664,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             harm_entry = cast("HarmHumanLabeledEntry", entry)
             assistant_messages: list[Message] = []
             for message in harm_entry.conversation:
-                self.scorer._memory.add_message_to_memory(request=message)
+                (await self.scorer._memory.add_message_to_memory_async(request=message))
                 if message.api_role == "assistant":
                     assistant_messages.append(message)
             if len(assistant_messages) != 1:
@@ -781,17 +784,21 @@ class HarmScorerEvaluator(ScorerEvaluator):
 
 class ObjectiveScorerEvaluator(ScorerEvaluator):
     """
-    A class that evaluates an objective scorer against HumanLabeledDatasets of type OBJECTIVE.
+    Evaluate an objective scorer against single-assistant-response OBJECTIVE datasets.
     """
 
     expected_metrics_type = MetricsType.OBJECTIVE
 
-    def _validate_and_extract_data(
+    async def _validate_and_extract_data_async(
         self,
         labeled_dataset: HumanLabeledDataset,
     ) -> tuple[list[Message], list[list[float]], list[str] | None]:
         """
-        Validate objective dataset and extract evaluation data.
+        Validate the dataset and select one assistant scoring anchor per entry.
+
+        All conversation messages are stored for context, but each entry must contain
+        exactly one assistant message. Each entry contributes one response, one set of
+        human scores, and one objective to the evaluation.
 
         Args:
             labeled_dataset: The dataset to validate and extract from.
@@ -800,7 +807,8 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             Tuple of (assistant_responses, human_scores_list, objectives).
 
         Raises:
-            ValueError: If dataset is not OBJECTIVE type or contains invalid entries.
+            ValueError: If the dataset is not OBJECTIVE type or an entry does not
+                contain exactly one assistant message.
         """
         if labeled_dataset.metrics_type != MetricsType.OBJECTIVE:
             raise ValueError("The HumanLabeledDataset must be of type OBJECTIVE to evaluate an objective scorer.")
@@ -813,9 +821,17 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
 
         for entry in labeled_dataset.entries:
             objective_entry = cast("ObjectiveHumanLabeledEntry", entry)
+            assistant_messages: list[Message] = []
             for message in objective_entry.conversation:
-                self.scorer._memory.add_message_to_memory(request=message)
-                assistant_responses.append(message)
+                await self.scorer._memory.add_message_to_memory_async(request=message)
+                if message.api_role == "assistant":
+                    assistant_messages.append(message)
+            if len(assistant_messages) != 1:
+                raise ValueError(
+                    "Each ObjectiveHumanLabeledEntry must contain exactly one assistant message, "
+                    f"but found {len(assistant_messages)}."
+                )
+            assistant_responses.append(assistant_messages[0])
             human_scores_list.append([float(score) for score in objective_entry.human_scores])
             objectives.append(objective_entry.objective)
 

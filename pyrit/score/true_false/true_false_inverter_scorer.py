@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import uuid
-from typing import TYPE_CHECKING
+import copy
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pyrit.prompt_target import PromptTarget
@@ -13,6 +13,7 @@ from pyrit.models import (
     Score,
     ScoringExpectation,
 )
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
@@ -60,6 +61,26 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """
         return self._scorer.get_chat_target()
 
+    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
+        """
+        Apply the policy to the wrapped scorer.
+
+        Args:
+            raise_if_scorer_blocks (bool): The policy to apply to LLM-backed leaves.
+
+        Returns:
+            Scorer: ``self`` when the wrapped scorer is unchanged, otherwise a copy wrapping
+            the updated scorer.
+        """
+        scoped_inner = cast(
+            "TrueFalseScorer", self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
+        )
+        if scoped_inner is self._scorer:
+            return self
+        scoped = copy.copy(self)
+        scoped._scorer = scoped_inner
+        return scoped
+
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the scorer whose verdict is inverted."""
         return (self._scorer,)
@@ -98,7 +119,7 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         Returns:
             list[Score]: A list containing the single inverted score.
         """
-        inv_score = scores[0]
+        inv_score = self._create_wrapper_score(scores[0])
         scorer_type = self._scorer.get_identifier().class_name
 
         if inv_score.is_undetermined:
@@ -107,12 +128,16 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             )
         else:
             inv_score.score_value = str(True) if not inv_score.get_value() else str(False)
+            # The wrapped threshold score's float describes the uninverted verdict, and
+            # normalize_score_to_float would prefer it over this one.
+            if inv_score.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in inv_score.score_metadata:
+                inv_score.score_metadata = {
+                    k: v for k, v in inv_score.score_metadata.items() if k != ORIGINAL_FLOAT_VALUE_KEY
+                }
             inv_score.score_value_description = "Inverted score: " + str(inv_score.score_value_description)
             inv_score.score_rationale = (
                 f"Inverted score from {scorer_type} result: {inv_score.score_value}\n{inv_score.score_rationale}"
             )
-
-        inv_score.id = uuid.uuid4()
 
         inv_score.scorer_class_identifier = self.get_identifier()
 

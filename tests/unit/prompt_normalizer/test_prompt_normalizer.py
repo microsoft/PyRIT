@@ -2,10 +2,11 @@
 # Licensed under the MIT license.
 
 import asyncio
+import codecs
 import os
 import tempfile
 import wave
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,7 +19,11 @@ from pyrit.converter import (
     Base64Converter,
     Converter,
     ConverterResult,
+    ROT13Converter,
+    SelectiveTextConverter,
     StringJoinConverter,
+    SuffixAppendConverter,
+    TokenSelectionStrategy,
 )
 from pyrit.exceptions import (
     ComponentRole,
@@ -30,7 +35,7 @@ from pyrit.exceptions import (
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
     Message,
@@ -80,7 +85,7 @@ def seed_group() -> SeedGroup:
 @pytest.fixture
 def mock_memory_instance():
     """Fixture to mock CentralMemory.get_memory_instance"""
-    memory = MagicMock()
+    memory = MagicMock(spec=MemoryInterface)
     with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
         yield memory
 
@@ -110,12 +115,71 @@ class ContextFailingConverter(Converter):
         raise ValueError("conversion failed")
 
 
+@pytest.mark.parametrize(("start_token", "end_token"), [("", "⟫"), ("⟪", ""), ("", "")])
+def test_prompt_normalizer_rejects_empty_markers_before_memory_lookup(*, start_token: str, end_token: str) -> None:
+    with patch.object(CentralMemory, "get_memory_instance") as memory:
+        with pytest.raises(ValueError, match="tokens must be non-empty"):
+            PromptNormalizer(start_token=start_token, end_token=end_token)
+    memory.assert_not_called()
+
+
 def assert_message_piece_hashes_set(request: Message):
     assert request
     assert request.message_pieces
     for piece in request.message_pieces:
         assert piece.original_value_sha256
         assert piece.converted_value_sha256
+
+
+@pytest.mark.parametrize("split_configurations", [False, True])
+async def test_convert_values_nested_markers_async(
+    *, mock_memory_instance: MagicMock, split_configurations: bool
+) -> None:
+    converters = [Base64Converter(), ROT13Converter(), SuffixAppendConverter(suffix="tail")]
+    configurations = (
+        [ConverterConfiguration(converters=[converter]) for converter in converters]
+        if split_configurations
+        else [ConverterConfiguration(converters=converters)]
+    )
+    original = "keep ⟪⟪test⟫⟫ and ⟪⟪test2⟫⟫"
+    message = Message.from_prompt(prompt=original, role="user")
+    await PromptNormalizer().convert_values_async(converter_configurations=configurations, message=message)
+
+    assert message.message_pieces[0].original_value == original
+    assert message.message_pieces[0].converted_value == (
+        f"keep {codecs.encode('dGVzdA==', 'rot_13')} and {codecs.encode('dGVzdDI=', 'rot_13')} tail"
+    )
+    assert message.message_pieces[0].converted_value_data_type == "text"
+    assert mock_memory_instance.mock_calls == []
+
+
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+@pytest.mark.parametrize(("start_token", "end_token"), [("⟪", "⟫"), ("<<", ">>")])
+async def test_convert_values_token_selection_matches_direct_async(
+    *, mock_memory_instance: MagicMock, preserve_tokens: bool, start_token: str, end_token: str
+) -> None:
+    converter = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=TokenSelectionStrategy(),
+        preserve_tokens=preserve_tokens,
+        start_token=start_token,
+        end_token=end_token,
+    )
+    prompt = f"keep {start_token}{start_token}test{end_token}{end_token} / {start_token}test2{end_token}"
+    direct = await converter.convert_async(prompt=prompt)
+    message = Message.from_prompt(prompt=prompt, role="user")
+    normalizer = PromptNormalizer(start_token=start_token, end_token=end_token)
+    await normalizer.convert_values_async(
+        converter_configurations=[ConverterConfiguration(converters=[converter])], message=message
+    )
+    expected = (
+        f"keep {start_token}{start_token}dGVzdA=={end_token}{end_token} / {start_token}dGVzdDI={end_token}"
+        if preserve_tokens
+        else f"keep {start_token}dGVzdA=={end_token} / dGVzdDI="
+    )
+    assert direct.output_text == message.message_pieces[0].converted_value == expected
+    assert message.message_pieces[0].original_value == prompt
+    assert mock_memory_instance.mock_calls == []
 
 
 async def test_send_prompt_async_multiple_converters(mock_memory_instance, seed_group):
@@ -183,7 +247,7 @@ async def test_send_prompt_async_conversion_failure_does_not_call_target(mock_me
         )
 
     prompt_target.send_prompt_async.assert_not_awaited()
-    mock_memory_instance.add_message_to_memory.assert_not_called()
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
 
 
 async def test_send_prompt_async_target_failure_is_persisted(mock_memory_instance):
@@ -206,7 +270,7 @@ async def test_send_prompt_async_target_failure_is_persisted(mock_memory_instanc
         )
 
     assert target_context.target_invocation_count == 0
-    mock_memory_instance.add_message_to_memory.assert_not_called()
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
 
 
 async def test_child_task_target_failure_is_persisted(mock_memory_instance):
@@ -220,7 +284,7 @@ async def test_child_task_target_failure_is_persisted(mock_memory_instance):
     conversation_id = "prepended-conversation"
     seed = Message.from_prompt(prompt="seed", role="user")
     seed.get_piece().conversation_id = conversation_id
-    mock_memory_instance.get_conversation_messages.return_value = [seed]
+    mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=[seed])
     target_context = PrependedHistorySendContext(
         conversation_id=conversation_id,
         seed_message_ids=(seed.get_piece().id,),
@@ -237,9 +301,9 @@ async def test_child_task_target_failure_is_persisted(mock_memory_instance):
 
     assert target_context.target_invocation_count == 1
     assert not target_context.is_seed_consumed
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
     persisted_values = [
-        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory.call_args_list
+        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory_async.call_args_list
     ]
     assert "request" in persisted_values
 
@@ -248,7 +312,7 @@ async def test_concurrent_rejection_is_not_misclassified_as_target_invocation(mo
     conversation_id = "prepended-conversation"
     seed = Message.from_prompt(prompt="seed", role="user")
     seed.get_piece().conversation_id = conversation_id
-    mock_memory_instance.get_conversation_messages.return_value = [seed]
+    mock_memory_instance.get_conversation_messages_async = AsyncMock(return_value=[seed])
     target = MockPromptTarget()
     target._configuration = TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True))
     target_started = asyncio.Event()
@@ -284,12 +348,12 @@ async def test_concurrent_rejection_is_not_misclassified_as_target_invocation(mo
             send_context=target_context,
         )
 
-    mock_memory_instance.add_message_to_memory.assert_not_called()
+    mock_memory_instance.add_message_to_memory_async.assert_not_called()
     target_release.set()
     with pytest.raises(Exception, match="Error sending prompt"):
         await first_send
     persisted_values = [
-        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory.call_args_list
+        call.kwargs["request"].get_value() for call in mock_memory_instance.add_message_to_memory_async.call_args_list
     ]
     assert "concurrent request" not in persisted_values
 
@@ -306,7 +370,7 @@ async def test_send_prompt_async_empty_response_exception_is_persisted(mock_memo
     )
 
     assert response.get_piece().response_error == "empty"
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
 
 async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, seed_group):
@@ -318,9 +382,9 @@ async def test_send_prompt_async_no_response_adds_memory(mock_memory_instance, s
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
     response = await normalizer.send_prompt_async(message=message, target=prompt_target)
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
-    request = mock_memory_instance.add_message_to_memory.call_args[1]["request"]
+    request = mock_memory_instance.add_message_to_memory_async.call_args[1]["request"]
     assert_message_piece_hashes_set(request)
     assert response.message_pieces[0].response_error == "empty"
     assert response.message_pieces[0].original_value == ""
@@ -339,7 +403,7 @@ async def test_send_prompt_async_empty_response_exception_handled(mock_memory_in
 
     response = await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
     assert response.message_pieces[0].response_error == "empty"
     assert response.message_pieces[0].original_value == ""
@@ -362,20 +426,26 @@ async def test_send_prompt_async_request_response_added_to_memory(mock_memory_in
 
     await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
     seed_prompt_value = seed_group.prompts[0].value
     # Validate that first request is added to memory, then response is added to memory
     assert (
         seed_prompt_value
-        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+        == mock_memory_instance.add_message_to_memory_async.call_args_list[0][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
     assert (
-        mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        mock_memory_instance.add_message_to_memory_async.call_args_list[1][1]["request"]
+        .message_pieces[0]
+        .original_value
         == "test_response"
     )
 
-    assert mock_memory_instance.add_message_to_memory.call_args_list[1].called_after(prompt_target.send_prompt_async)
+    assert mock_memory_instance.add_message_to_memory_async.call_args_list[1].called_after(
+        prompt_target.send_prompt_async
+    )
 
 
 async def test_send_prompt_async_exception(mock_memory_instance, seed_group):
@@ -391,16 +461,20 @@ async def test_send_prompt_async_exception(mock_memory_instance, seed_group):
     with pytest.raises(Exception, match="Error sending prompt with conversation ID"):
         await normalizer.send_prompt_async(message=message, target=prompt_target)
 
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
     # Validate that first request is added to memory, then exception is added to memory
     assert (
         seed_prompt_value
-        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+        == mock_memory_instance.add_message_to_memory_async.call_args_list[0][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
     assert (
         "test_exception"
-        in mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        in mock_memory_instance.add_message_to_memory_async.call_args_list[1][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
 
 
@@ -447,7 +521,7 @@ async def test_send_prompt_async_adds_memory_twice(mock_memory_instance, seed_gr
     message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
 
     response = await normalizer.send_prompt_async(message=message, target=prompt_target)
-    assert mock_memory_instance.add_message_to_memory.call_count == 2
+    assert mock_memory_instance.add_message_to_memory_async.call_count == 2
 
 
 async def test_send_prompt_async_no_converters_response(mock_memory_instance, seed_group, response: Message):
@@ -671,7 +745,7 @@ async def test_converter_guard_covers_only_selected_conversions_async(
     send = target._send_prompt_to_target_async
 
     @asynccontextmanager
-    async def guard_async(value: Converter) -> AsyncIterator[None]:
+    async def guard_async(value: Converter) -> AsyncGenerator[None, None]:
         guarded.append(value)
         active.add(value)
         try:
@@ -715,7 +789,7 @@ async def test_converter_guard_releases_on_failure_async(
     converter = Base64Converter()
 
     @asynccontextmanager
-    async def guard_async(value: Converter) -> AsyncIterator[None]:
+    async def guard_async(value: Converter) -> AsyncGenerator[None, None]:
         nonlocal active
         assert value is converter
         active = True
@@ -746,11 +820,15 @@ async def test_send_prompt_async_exception_conv_id(mock_memory_instance, seed_gr
     # Validate that first request is added to memory, then exception is added to memory
     assert (
         seed_group.prompts[0].value
-        == mock_memory_instance.add_message_to_memory.call_args_list[0][1]["request"].message_pieces[0].original_value
+        == mock_memory_instance.add_message_to_memory_async.call_args_list[0][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
     assert (
         "Test Exception"
-        in mock_memory_instance.add_message_to_memory.call_args_list[1][1]["request"].message_pieces[0].original_value
+        in mock_memory_instance.add_message_to_memory_async.call_args_list[1][1]["request"]
+        .message_pieces[0]
+        .original_value
     )
 
 
@@ -893,7 +971,7 @@ async def test_add_prepended_conversation_to_memory(mock_memory_instance):
     assert result is not None
     assert len(result) == 1
     assert result[0].message_pieces[0].conversation_id == conv_id
-    mock_memory_instance.add_message_to_memory.assert_called_once()
+    mock_memory_instance.add_message_to_memory_async.assert_called_once()
 
 
 _AUDIO_SAMPLE_RATE_HZ = 24000

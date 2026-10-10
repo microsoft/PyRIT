@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -36,7 +36,7 @@ class TestDecodingScorer:
         user_piece, assistant_piece = sample_message_pieces
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
@@ -46,6 +46,9 @@ class TestDecodingScorer:
             assert score[0].get_value() is True
             assert score[0].score_type == "true_false"
             assert score[0].score_category == ["decoding"]
+            assert score[0].score_metadata == {
+                "text_matcher": "<class 'pyrit.analytics.text_matching.ExactTextMatching'>"
+            }
 
     async def test_decoding_scorer_converted_value_match(self, patch_central_database, sample_message_pieces):
         user_piece, assistant_piece = sample_message_pieces
@@ -53,7 +56,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
@@ -68,7 +71,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
@@ -83,7 +86,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
@@ -107,12 +110,13 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async.return_value = user_message
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
             score = await scorer._score_piece_async(assistant_piece)
 
+            memory.get_request_from_response_async.assert_awaited_once()
             assert len(score) == 1
             assert score[0].get_value() is False
 
@@ -122,7 +126,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = DecodingScorer(categories=["decoding"])
@@ -137,7 +141,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             text_matcher = ExactTextMatching(case_sensitive=True)
@@ -153,7 +157,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             text_matcher = ApproximateTextMatching(threshold=0.3, n=3, case_sensitive=False)
@@ -168,7 +172,7 @@ class TestDecodingScorer:
 
         memory = MagicMock(MemoryInterface)
         user_message = Message(message_pieces=[user_piece])
-        memory.get_request_from_response.return_value = user_message
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             text_matcher = ApproximateTextMatching(threshold=0.5, n=4, case_sensitive=False)

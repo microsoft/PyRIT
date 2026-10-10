@@ -4,12 +4,15 @@
 """Per-execution expectations reach real outcome scorers without becoming attack prompts."""
 
 import asyncio
+from collections.abc import Iterable
 from contextlib import nullcontext
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from unit.mocks import MockPromptTarget, store_message
+from aiosqlite import Cursor
+from sqlalchemy import event
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
     ComponentRole,
@@ -209,10 +212,10 @@ class TestExecutionExpectationTransport:
 
         effective = supplied.model_copy(update={"objective": "attack objective"})
         assert result.last_response is not None
-        [stored] = sqlite_instance.get_scores(score_type="true_false")
+        [stored] = await sqlite_instance.get_scores_async(score_type="true_false")
         assert stored.scored_expectation == effective
         assert stored.scorable == MessageScorable(message_piece_ids=(result.last_response.id,))
-        [stored_result] = sqlite_instance.get_attack_results(objective="attack objective")
+        [stored_result] = await sqlite_instance.get_attack_results_async(objective="attack objective")
         assert stored_result.automated_score is not None
         assert stored_result.automated_score.id == stored.id
         assert stored_result.automated_score.scored_expectation == effective
@@ -490,7 +493,7 @@ class TestExecutionExpectationTransport:
         assert all("attack objective" in prompt and "scoring objective" not in prompt for prompt in target.prompt_sent)
         assert objective.calls == [(ContentScorable(value="default\ndefault"), supplied)]
         assert auxiliary.calls == objective.calls
-        scores = sqlite_instance.get_scores(score_type="true_false")
+        scores = await sqlite_instance.get_scores_async(score_type="true_false")
         assert len(scores) == 2
         assert all(isinstance(score.scorable, ContentEntryScorable) for score in scores)
         assert all(score.scored_expectation == supplied and score.message_piece_id is None for score in scores)
@@ -588,6 +591,62 @@ class TestExecutionExpectationTransport:
         assert raised.value.__cause__.__cause__ is original
         assert get_execution_context() is None
 
+    async def test_attack_error_persists_after_cancelled_score_validation_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        objective, auxiliary = _RecordingScorer(), _RecordingScorer(value=False)
+        attack = PromptSendingAttack(
+            objective_target=MockPromptTarget(),
+            attack_scoring_config=AttackScoringConfig(objective_scorer=objective, auxiliary_scorers=[auxiliary]),
+        )
+        write_started, validation_started, release_read = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original = ValueError("scoring failed")
+
+        def record_write(*args: Any) -> None:
+            if args[2] == "BEGIN IMMEDIATE":
+                write_started.set()
+
+        async def fail_auxiliary_async(**_kwargs: Any) -> list[Score]:
+            await validation_started.wait()
+            raise original
+
+        fetchall = Cursor.fetchall
+
+        async def delayed_fetchall_async(cursor: Cursor) -> Iterable[Any]:
+            if write_started.is_set() and not validation_started.is_set():
+                validation_started.set()
+                await release_read.wait()
+            return await fetchall(cursor)
+
+        engine = sqlite_instance._get_async_engine()
+        event.listen(engine.sync_engine, "after_cursor_execute", record_write)
+        try:
+            with (
+                patch.object(auxiliary, "_score_scorable_async", side_effect=fail_auxiliary_async),
+                patch.object(Cursor, "fetchall", new=delayed_fetchall_async),
+            ):
+                task = asyncio.create_task(
+                    attack.execute_async(objective="attack objective", expectation=_expectation())
+                )
+                try:
+                    with pytest.raises(RuntimeError, match="Strategy execution failed for auxiliary_scorer") as raised:
+                        await asyncio.wait_for(task, timeout=5)
+                finally:
+                    release_read.set()
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+        finally:
+            event.remove(engine.sync_engine, "after_cursor_execute", record_write)
+
+        assert validation_started.is_set()
+        assert raised.value.__cause__.__cause__ is original
+        [stored] = await sqlite_instance.get_attack_results_async(objective="attack objective")
+        assert stored.outcome == AttackOutcome.ERROR
+        assert stored.error_message is not None
+        assert "scoring failed" in stored.error_message
+        assert await sqlite_instance.get_scores_async() == []
+
     @pytest.mark.parametrize("duplicate", [False, True], ids=["initial_node", "duplicated_node"])
     @pytest.mark.parametrize("explicit_expectation", [False, True], ids=["default_objective", "scoring_objective"])
     async def test_tap_node_preserves_execution_expectation_async(
@@ -615,10 +674,12 @@ class TestExecutionExpectationTransport:
         assert on_topic.call_args.args == ("attack objective",)
         await node.send_prompt_async(objective=context.objective)
         if duplicate:
-            child = node.duplicate()
+            child = await node.duplicate_async()
             response = Message.from_prompt(prompt="branch response", role="assistant")
             response.get_piece().conversation_id = child.objective_target_conversation_id
-            await child._score_response_async(response=store_message(response), objective=context.objective)
+            await child._score_response_async(
+                response=(await store_message_async(response)), objective=context.objective
+            )
             node = child
 
         assert node.objective_score is not None

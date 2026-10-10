@@ -676,7 +676,7 @@ describe('ScenarioHistory', () => {
 
   it('enables the single reset icon only when filters are active', () => {
     const history = renderHistory()
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
 
     history.rerender(
       <FluentProvider theme={webLightTheme}>
@@ -687,7 +687,7 @@ describe('ScenarioHistory', () => {
       </FluentProvider>,
     )
 
-    expect(screen.getByRole('button', { name: 'Reset all filters' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled')
   })
 
   it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {

@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+import sys
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
-import httpx
+import httpx2
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -21,7 +22,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pyrit.prompt_target.common.tool_provider import Tool
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from typing import TextIO
 
     from mcp.types import CallToolResult
     from mcp.types import Tool as MCPToolDefinition
@@ -96,7 +97,7 @@ class _MCPTool(Tool):
         super().__init__(
             name=definition.name,
             description=definition.description or "",
-            parameters=dict(definition.inputSchema),
+            parameters=dict(definition.input_schema),
         )
         self._provider = provider
 
@@ -232,14 +233,13 @@ class MCPToolProvider:
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     @asynccontextmanager
-    async def _create_session_async(self) -> AsyncIterator[ClientSession]:
+    async def _create_session_async(self) -> AsyncGenerator[ClientSession, None]:
         if isinstance(self._server_config, MCPStreamableHTTPServerConfig):
-            timeout = httpx.Timeout(self._HTTP_TIMEOUT_SECONDS, read=self._HTTP_READ_TIMEOUT_SECONDS)
-            async with httpx.AsyncClient(headers=self._server_config.headers, timeout=timeout) as http_client:
+            timeout = httpx2.Timeout(self._HTTP_TIMEOUT_SECONDS, read=self._HTTP_READ_TIMEOUT_SECONDS)
+            async with httpx2.AsyncClient(headers=self._server_config.headers, timeout=timeout) as http_client:
                 async with streamable_http_client(self._server_config.url, http_client=http_client) as (
                     read_stream,
                     write_stream,
-                    _,
                 ):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
@@ -252,13 +252,13 @@ class MCPToolProvider:
             env=self._server_config.env,
             cwd=self._server_config.cwd,
         )
-        async with stdio_client(server) as (read_stream, write_stream):
+        async with stdio_client(server, errlog=self._get_stdio_stderr()) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 yield session
 
     @asynccontextmanager
-    async def execution_scope_async(self) -> AsyncIterator[None]:
+    async def execution_scope_async(self) -> AsyncGenerator[None, None]:
         """Keep one MCP session open for a target send."""
         async with self._create_session_async() as session:
             token = self._active_session.set(session)
@@ -325,7 +325,7 @@ class MCPToolProvider:
         while True:
             result = await session.list_tools(params=PaginatedRequestParams(cursor=cursor))
             tools.extend(result.tools)
-            cursor = result.nextCursor
+            cursor = result.next_cursor
             if cursor is None:
                 return tools
 
@@ -339,11 +339,33 @@ class MCPToolProvider:
         return [_MCPTool(provider=self, definition=definition) for definition in await self.list_tools_async()]
 
     @staticmethod
+    def _get_stdio_stderr() -> TextIO:
+        """
+        Select a subprocess-compatible stderr without discarding server diagnostics.
+
+        Returns:
+            Current stderr, or the original stream when notebook capture has no file descriptor.
+
+        Raises:
+            RuntimeError: If neither stderr stream exposes a usable file descriptor.
+        """
+        streams: list[TextIO | None] = [sys.stderr, sys.__stderr__]
+        for stream in streams:
+            if stream is None:
+                continue
+            try:
+                stream.fileno()
+            except (OSError, ValueError):
+                continue
+            return stream
+        raise RuntimeError("MCP stdio requires a stderr stream with a file descriptor for server diagnostics.")
+
+    @staticmethod
     def _serialize_call_result(*, result: CallToolResult) -> dict[str, object]:
         serialized: dict[str, object] = {
             "content": [item.model_dump(mode="json", by_alias=True, exclude_none=True) for item in result.content],
-            "is_error": result.isError,
+            "is_error": result.is_error,
         }
-        if result.structuredContent is not None:
-            serialized["structured_content"] = result.structuredContent
+        if result.structured_content is not None:
+            serialized["structured_content"] = result.structured_content
         return serialized

@@ -64,6 +64,8 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
     uses_default_adversarial_target: true,
     supported_parameters: [],
     default_run_size: {
+      dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+      dataset_limit: { state: 'scenario_default' },
       estimated_attack_count: null,
       components: [],
       datasets: [],
@@ -105,6 +107,8 @@ function makeAdversarialTarget(name: string): TargetInstance {
 
 function makeEstimate(total: number | null): ScenarioRunSizeEstimateResponse {
   return {
+    dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
+    dataset_limit: { state: 'scenario_default' },
     estimated_attack_count: total,
     minimum_attack_count: total === null ? 8 : null,
     maximum_attack_count: total === null ? 12 : null,
@@ -158,6 +162,7 @@ function renderDetail(
     defaultObjectiveTarget: makeTarget('target-a'),
     defaultAdversarialTarget: null,
     labels: { operator: 'roakey' },
+    defaultsReady: true,
     onNavigate: jest.fn(),
   }
   const merged = { ...defaultProps, ...props }
@@ -569,6 +574,9 @@ describe('ScenarioDetail', () => {
   it('keeps the last good estimate and entered state after a transient preview failure', async () => {
     jest.useFakeTimers()
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: { ...makeEstimate(8), dataset_size: { kind: 'bounded', value: 5 }, dataset_limit: { state: 'value', value: 5 } },
+    }))
     mockEstimateRun
       .mockResolvedValueOnce(makeEstimate(8))
       .mockRejectedValueOnce({
@@ -604,7 +612,7 @@ describe('ScenarioDetail', () => {
 
     expect(mockEstimateRun).not.toHaveBeenCalled()
     expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
-    expect(within(screen.getByTestId('run-estimate')).getByText('Unavailable')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Unknown')).toBeInTheDocument()
   })
 
   it('renders a backend conditional estimate without inventing a total', async () => {
@@ -870,7 +878,7 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
-  it('omits the dataset override and max dataset size when left blank, sending default concurrency/retries', async () => {
+  it('preserves an unknown default limit when blank, with default concurrency/retries', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
@@ -890,6 +898,7 @@ describe('ScenarioDetail', () => {
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
         default_run_size: {
+          dataset_size: { kind: 'bounded', value: 8 }, dataset_limit: { state: 'value', value: 8 },
           estimated_attack_count: null,
           components: [],
           datasets: [
@@ -945,6 +954,77 @@ describe('ScenarioDetail', () => {
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
 
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('uses the configured default and labels the pre-run total as approximate', async () => {
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(10),
+        status: 'approximate',
+        dataset_size: { kind: 'bounded', value: 10 }, dataset_limit: { state: 'value', value: 5 },
+      },
+    }))
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(10),
+      status: 'approximate',
+      dataset_size: { kind: 'bounded', value: 10 }, dataset_limit: { state: 'value', value: 10 },
+    })
+
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    expect(await screen.findByTestId('max-dataset-size-input')).toHaveValue(5)
+    expect(await screen.findByText('Up to 10')).toBeInTheDocument()
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('does not use a combined population budget as an editable dataset limit', async () => {
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(40),
+        dataset_size: { kind: 'bounded', value: 20 },
+        dataset_limit: { state: 'scenario_default' },
+      },
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    expect(await screen.findByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(null)
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('does not expose a generated prompt budget as a dataset limit', async () => {
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(124),
+        dataset_size: { kind: 'bounded', value: 62 },
+        dataset_limit: { state: 'not_applicable' },
+      },
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+    expect(input).toBeDisabled()
+    expect(input).toHaveValue(null)
+    expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
+  })
+
+  it('keeps scenario defaults when the dataset-limit field is cleared', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(10),
+        dataset_size: { kind: 'bounded', value: 5 },
+        dataset_limit: { state: 'value', value: 5 },
+      },
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
+    expect(input).toHaveValue(5)
+    await user.clear(input)
+    expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
@@ -1101,6 +1181,8 @@ describe('ScenarioDetail', () => {
       }),
     )
     mockEstimateRun.mockResolvedValue({
+      dataset_size: { kind: 'bounded', value: 4 },
+      dataset_limit: { state: 'scenario_default' },
       estimated_attack_count: 8,
       components: [
         {
@@ -1297,5 +1379,39 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByText('crescendo')).toBeInTheDocument()
     expect(within(preview).getByText('harmbench')).toBeInTheDocument()
     expect(within(preview).getByText('attempts').parentElement).toHaveTextContent('attempts3')
+  })
+  describe('launch gating while generation defaults load', () => {
+    it('disables Launch scan while defaultsReady is false', async () => {
+      renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: false })
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      expect(launch).toBeDisabled()
+    })
+
+    it('enables Launch scan once defaults are ready', async () => {
+      renderDetail('/scanner/foundry.red_team_agent', { defaultsReady: true })
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      await waitFor(() => expect(launch).toBeEnabled())
+    })
+
+    it('gates an open preview and launches with refreshed labels without losing configuration', async () => {
+      const user = userEvent.setup()
+      const view = renderDetail('/scanner/foundry.red_team_agent')
+      await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'target-b')
+      await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+      const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+      const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
+
+      view.updateDefaults({ defaultsReady: false })
+      expect(confirm).toBeDisabled()
+      await user.click(confirm)
+      expect(mockStartRun).not.toHaveBeenCalled()
+      view.updateDefaults({ defaultsReady: true, labels: { operator: 'roakey', operation: 'config_op_v2' } })
+      expect(confirm).toBeEnabled()
+      await user.click(confirm)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        target_name: 'target-b',
+        labels: { operator: 'roakey', operation: 'config_op_v2' },
+      }))
+    })
   })
 })
