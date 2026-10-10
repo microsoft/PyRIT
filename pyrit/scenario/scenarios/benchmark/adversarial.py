@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.analytics import get_cached_results_for_technique_async
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH, SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
@@ -522,7 +523,8 @@ class AdversarialBenchmark(Scenario):
         # ``--adversarial-targets`` so per-model ASR rolls up naturally — not any internal
         # field on the PromptTarget instance (e.g. ``_model_name``). The builder's default
         # ``{technique}__{target}_{dataset}`` naming preserves the VERSION=2 cache key shape.
-        atomic_attacks = builder.build(
+        atomic_attacks = await run_legacy_sync_async(
+            builder.build,
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             adversarial_targets=resolved_targets,

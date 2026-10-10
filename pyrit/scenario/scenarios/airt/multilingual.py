@@ -9,6 +9,7 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import DATASETS_PATH
 from pyrit.converter import RandomTranslationConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack
@@ -306,6 +307,15 @@ class Multilingual(Scenario):
             )
 
         self._resolved_languages = await self._resolve_languages_async()
+        return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
+
+    def _build_atomic_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build the synchronous attack and converter matrix off-loop.
+
+        Returns:
+            list[AtomicAttack]: The attacks for the selected languages and translation methods.
+        """
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
         strategies = set(self.params.get("translation_strategies") or [_TRANSLATION, _RANDOM_TRANSLATION])
         technique_factories = resolve_technique_factories(

@@ -4,8 +4,9 @@
 """Offline resume coverage using real scenario persistence and harmless mocked targets."""
 
 import asyncio
-from collections.abc import AsyncIterator
-from typing import ClassVar
+import threading
+from collections.abc import AsyncIterator, Sequence
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -19,7 +20,8 @@ from pyrit.backend.services.scenario_run_service import (
     _PreparedRun,
 )
 from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
+from pyrit.executor.attack import AttackScoringConfig, ManyShotJailbreakAttack, PromptSendingAttack
+from pyrit.executor.attack.single_turn import many_shot_jailbreak
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -28,13 +30,23 @@ from pyrit.models import (
     Parameter,
     ScenarioResult,
     ScenarioRunState,
+    Seed,
     SeedObjective,
 )
 from pyrit.models.catalog.scenario import RunScenarioRequest
-from pyrit.registry import ScenarioRegistry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core import (
+    AtomicAttack,
+    AttackTechnique,
+    BaselineAttackPolicy,
+    Scenario,
+    ScenarioTechnique,
+    get_default_adversarial_target,
+)
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario_context import ScenarioContext
+from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
@@ -126,6 +138,107 @@ async def _wait_for_idle_async(service: ScenarioRunService) -> None:
             await asyncio.sleep(0.01)
 
     await asyncio.wait_for(wait_async(), timeout=10)
+
+
+async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
+    patch_central_database: object, sqlite_instance: SQLiteMemory
+) -> None:
+    loop = asyncio.get_running_loop()
+    backend_thread = threading.get_ident()
+    entered, heartbeat, stop = (asyncio.Event() for _ in range(3))
+    release = threading.Event()
+    original_load = many_shot_jailbreak.load_many_shot_jailbreaking_dataset
+    reads = 0
+    target = MockPromptTarget()
+    scorer = SubStringScorer(substring="hello")
+    dataset_names = [
+        "airt_hate",
+        "airt_fairness",
+        "airt_violence",
+        "airt_sexual",
+        "airt_harassment",
+        "airt_misinformation",
+        "airt_leakage",
+    ]
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Say hello", dataset_name=name) for name in dataset_names],
+        added_by="offline-test",
+    )
+
+    def load_examples() -> list[dict[str, str]]:
+        nonlocal reads
+        loop.call_soon_threadsafe(entered.set)
+        assert threading.get_ident() != backend_thread
+        assert get_default_adversarial_target() is target
+        reads += 1
+        if not release.wait(5):
+            raise TimeoutError("Many-shot disk read was not released.")
+        return original_load()
+
+    async def heartbeat_async() -> None:
+        while not stop.is_set():
+            await asyncio.sleep(0.005)
+            if entered.is_set():
+                heartbeat.set()
+
+    async def read_seeds_async(**kwargs: Any) -> Sequence[Seed]:
+        assert asyncio.get_running_loop() is loop
+        return await original_read(**kwargs)
+
+    original_read = sqlite_instance.get_seeds_async
+    _build_rapid_response_technique.cache_clear()
+    with patch.object(ScenarioRegistry, "_discover"), patch.object(TargetRegistry, "_discover"):
+        scenarios = ScenarioRegistry()
+        scenarios.register_class(RapidResponse, name="offline.matrix")
+        targets = TargetRegistry()
+        targets.instances.register(target, name=_TARGET_NAME)
+        techniques = AttackTechniqueRegistry()
+        techniques.register_from_factories(
+            [AttackTechniqueFactory(name="many_shot", attack_class=ManyShotJailbreakAttack, technique_tags=["light"])]
+        )
+        with (
+            patch.object(ScenarioRegistry, "get_registry_singleton", return_value=scenarios),
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=targets),
+            patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=techniques),
+            patch.object(RapidResponse, "_get_default_objective_scorer", return_value=scorer),
+            patch.object(many_shot_jailbreak, "load_many_shot_jailbreaking_dataset", side_effect=load_examples),
+            patch.object(sqlite_instance, "get_seeds_async", side_effect=read_seeds_async),
+        ):
+            service = ScenarioRunService()
+            pulse = asyncio.create_task(heartbeat_async())
+            launch = asyncio.create_task(
+                service.start_run_async(
+                    request=RunScenarioRequest(
+                        scenario_name="offline.matrix",
+                        target_name=_TARGET_NAME,
+                        adversarial_target_name=_TARGET_NAME,
+                        techniques=["many_shot"],
+                        max_concurrency=1,
+                        include_baseline=False,
+                    )
+                )
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                await asyncio.wait_for(heartbeat.wait(), 1)
+                assert not launch.done()
+                release.set()
+                response = await asyncio.wait_for(launch, 10)
+                await _wait_for_idle_async(service)
+                stored = await sqlite_instance.get_scenario_result_header_async(
+                    scenario_result_id=response.scenario_result_id
+                )
+                assert stored is not None and stored.scenario_run_state == ScenarioRunState.COMPLETED
+                assert reads == len(dataset_names)
+                assert len(target.prompt_sent) == len(dataset_names)
+            finally:
+                release.set()
+                stop.set()
+                try:
+                    await asyncio.gather(launch, pulse)
+                finally:
+                    await service.shutdown_async()
+                    _build_rapid_response_technique.cache_clear()
 
 
 async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) -> ScenarioResult:
