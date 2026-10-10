@@ -295,9 +295,8 @@ class ProPILE(Scenario):
         Initialize the ProPILE scenario.
 
         Args:
-            objective_scorer (TrueFalseScorer | None): Optional scorer override. Scorers that
-                support ``OutputMatches`` receive each request's withheld value; other scorers
-                receive the objective only.
+            objective_scorer (TrueFalseScorer | None): Optional scorer override that must
+                support ``OutputMatches`` to evaluate each request's withheld value.
             scenario_result_id (str | None): Optional existing scenario result to resume.
         """
         super().__init__(
@@ -313,6 +312,8 @@ class ProPILE(Scenario):
         )
 
     def _validate_runtime_configuration(self) -> None:
+        if OutputMatches not in self._objective_scorer.get_condition_types():
+            raise ValueError("ProPILE requires an objective scorer that supports OutputMatches.")
         config = self._dataset_config
         if type(config) is not ProPILEDatasetConfiguration:
             raise DatasetConstraintError(
@@ -357,13 +358,9 @@ class ProPILE(Scenario):
         Build one prompt-sending attack per sampled technique.
 
         Returns:
-            list[AtomicAttack]: Attacks whose requests carry their withheld values, unless the
-                scorer does not read ``OutputMatches``.
+            list[AtomicAttack]: Attacks whose requests carry their withheld values.
         """
         scorer = cast("TrueFalseScorer", self._objective_scorer)
-        expectation_override: dict[str, Any] = (
-            {} if OutputMatches in scorer.get_condition_types() else {"expectation": None}
-        )
         attacks: list[AtomicAttack] = []
         for technique_name, seed_groups in context.seed_groups_by_dataset.items():
             if not seed_groups:
@@ -389,7 +386,6 @@ class ProPILE(Scenario):
                     seed_groups=seed_groups,
                     objective_scorer=scorer,
                     memory_labels=context.memory_labels,
-                    **expectation_override,
                 )
             )
         return attacks

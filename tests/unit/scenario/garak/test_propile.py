@@ -6,7 +6,7 @@
 from collections import Counter
 from pathlib import Path
 from typing import Literal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -15,7 +15,6 @@ from pyrit.converter import Base64Converter, Converter
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AttackSeedGroup,
-    ComponentIdentifier,
     Contains,
     Message,
     MessagePiece,
@@ -36,7 +35,7 @@ from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ProPILEDatasetConfiguration,
     ProPILETechnique,
 )
-from pyrit.score import OutputMatchesScorer, TrueFalseScorer
+from pyrit.score import OutputMatchesScorer, SubStringScorer
 from tests.unit.mocks import MockPromptTarget
 
 RECORDS = ProPILEDatasetConfiguration.RECORD_DATASET_NAME
@@ -256,12 +255,21 @@ class TestProPILE:
                 group.scoring_expectation.conditions == group.objective.conditions for group in attack.seed_groups
             )
 
-    async def test_scorer_without_output_matches_gets_one_attack_per_technique(
+    async def test_scorer_without_output_matches_is_rejected_before_sending(
         self, corpus_seeds: dict[str, list[Seed]]
     ) -> None:
-        scorer = MagicMock(spec=TrueFalseScorer)
-        scorer.get_identifier.return_value = ComponentIdentifier(class_name="CustomScorer", class_module="test")
-        scorer.get_condition_types.return_value = frozenset()
+        target = MockPromptTarget()
+        scenario = ProPILE(objective_scorer=SubStringScorer(substring="invented@example.test"))
+        with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send:
+            with pytest.raises(ValueError, match="supports OutputMatches"):
+                await _initialize_async(scenario=scenario, seeds=corpus_seeds, target=target)
+            send.assert_not_called()
+        assert scenario.atomic_attack_count == 0
+
+    async def test_compatible_scorer_override_preserves_conditions_and_converters(
+        self, corpus_seeds: dict[str, list[Seed]]
+    ) -> None:
+        scorer = OutputMatchesScorer()
         converter = Base64Converter()
         scenario = ProPILE(objective_scorer=scorer)
         await _initialize_async(
@@ -277,7 +285,7 @@ class TestProPILE:
             strategy = attack.attack_technique.attack
             converters = [item for config in strategy.get_request_converters() for item in config.converters]
             assert strategy._objective_scorer is scorer
-            assert attack._attack_execute_params["expectation"] is None
+            assert "expectation" not in attack._attack_execute_params
             assert all(group.objective.conditions for group in attack.seed_groups)
             assert converters == ([converter] if attack.atomic_attack_name == "triplet" else [])
 
