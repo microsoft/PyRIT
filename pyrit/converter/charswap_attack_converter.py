@@ -58,8 +58,15 @@ class CharSwapConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        selection_params = dict(super()._build_identifier().params)
+        # Preserve the legacy identity for the default 20% selection.
+        if type(self._word_selection_strategy) is WordProportionSelectionStrategy and selection_params[
+            "word_selection_strategy_params"
+        ] == {"proportion": 0.2}:
+            selection_params = {}
         return self._create_identifier(
             params={
+                **selection_params,
                 "max_iterations": self._max_iterations,
                 "seed": self._seed,
             },

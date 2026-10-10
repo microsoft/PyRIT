@@ -37,13 +37,11 @@ class FirstLetterConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "letter_separator": self.letter_separator,
-            }
-        )
+        params = dict(super()._build_identifier().params)
+        if not params["word_selection_strategy_params"]:
+            del params["word_selection_strategy_params"]
+        params["letter_separator"] = self.letter_separator
+        return self._create_identifier(params=params)
 
     async def convert_word_async(self, word: str) -> str:
         """
