@@ -24,7 +24,7 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import initialize_from_config_async
 
@@ -53,7 +53,7 @@ objective_target = TargetRegistry.get_registry_singleton().instances.get("openai
 # | **Aggregates** | ALL, EASY, MODERATE, DIFFICULT |
 
 # %%
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
 
 scenario = RedTeamAgent()
 scenario.set_params_from_args(  # type: ignore

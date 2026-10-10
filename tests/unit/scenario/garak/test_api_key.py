@@ -4,6 +4,7 @@
 """Tests for the Garak API-key scenario."""
 
 from pathlib import Path
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -107,7 +108,7 @@ class TestApiKey:
             scenario=scenario,
             target=mock_objective_target,
             corpus_seeds=corpus_seeds,
-            dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=None),
+            dataset_config=ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size="all"),
         )
 
         assert {name: len(groups) for name, groups in _objectives(scenario).items()} == {
@@ -234,9 +235,12 @@ class TestApiKey:
                 scenario=ApiKey(), target=mock_objective_target, corpus_seeds=corpus_seeds, dataset_config=config
             )
 
-    @pytest.mark.parametrize("size", [1, 7, 20, 348, None])
+    @pytest.mark.parametrize("size", [1, 7, 20, 348, None, "all"])
     async def test_launch_and_estimate_use_standard_dataset_size(
-        self, size: int | None, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self,
+        size: int | Literal["all"] | None,
+        mock_objective_target: PromptTarget,
+        corpus_seeds: dict[str, list[Seed]],
     ) -> None:
         scenario = ApiKey()
         args = ScenarioConfigurationResolver.resolve_configuration(
@@ -255,10 +259,15 @@ class TestApiKey:
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
             await scenario.initialize_async()
 
-        expected = size or 20
-        assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-        assert estimate.total_attack_count == expected
-        assert estimate.estimated_attack_count == expected
+        total = None if size == "all" else size or 20
+        expected = 348 if total is None else total
+        assert estimate.status is (
+            ScenarioRunSizeEstimateStatus.Approximate
+            if total is not None
+            else ScenarioRunSizeEstimateStatus.Unavailable
+        )
+        assert estimate.total_attack_count == total
+        assert estimate.estimated_attack_count == total
         assert estimate.minimum_attack_count is None
         assert estimate.maximum_attack_count is None
         assert all(
@@ -274,12 +283,10 @@ class TestApiKey:
 
         for dataset in estimate.datasets:
             assert dataset.kind == "synthesized"
-            assert len(dataset.configured_caps) == 1
-            cap = dataset.configured_caps[0]
-            assert cap.label == "combined configuration cap"
-            assert cap.count == expected
-            assert cap.configured_on == "configuration"
-            assert cap.dataset_name == dataset.name
+            assert [(cap.label, cap.count, cap.configured_on) for cap in dataset.configured_caps] == (
+                [("combined configuration cap", total, "configuration")] if total is not None else []
+            )
+            assert all(cap.dataset_name == dataset.name for cap in dataset.configured_caps)
 
     @pytest.mark.parametrize("size", [None, 3])
     @pytest.mark.parametrize("technique", [ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey])

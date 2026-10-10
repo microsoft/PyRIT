@@ -576,7 +576,7 @@ class TestScenarioServiceListScenarios:
         assert second.default_run_size.datasets == estimate.datasets
         service._registry.create_instance.assert_called_once_with("test.scenario")
 
-    async def test_default_catalog_estimate_uses_read_only_dataset_resolution(self) -> None:
+    async def test_default_catalog_estimate_does_not_prepare_datasets(self) -> None:
         """Bulk catalog estimates do not auto-fetch datasets into memory."""
         metadata = _make_scenario_metadata()
         estimate = ScenarioRunSizeEstimate(
@@ -588,7 +588,7 @@ class TestScenarioServiceListScenarios:
 
         with (
             patch.object(ScenarioService, "__init__", lambda self: None),
-            patch("pyrit.backend.services.scenario_service.read_only_dataset_resolution") as read_only_resolution,
+            patch("pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async") as prepare,
         ):
             service = ScenarioService()
             service._registry = MagicMock()
@@ -597,7 +597,7 @@ class TestScenarioServiceListScenarios:
             result = await service._get_default_run_size_estimate_async(metadata=metadata)
 
         assert result == estimate
-        read_only_resolution.assert_called_once_with()
+        prepare.assert_not_awaited()
 
     async def test_concurrent_estimate_reads_share_one_task(self) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""
@@ -1513,6 +1513,54 @@ class TestScenarioServiceListScenarios:
 
 class TestScenarioServiceGetScenario:
     """Tests for ScenarioService.get_scenario_async."""
+
+    @pytest.mark.parametrize(
+        ("limit_args", "expected"),
+        [
+            ({}, 20),
+            ({"max_dataset_size": None}, 20),
+            ({"max_dataset_size": ""}, 20),
+            ({"max_dataset_size": "default"}, 20),
+            ({"max_dataset_size": "all"}, "all"),
+            ({"max_dataset_size": 7}, 7),
+        ],
+    )
+    async def test_estimate_resolves_total_limit_async(
+        self, *, limit_args: dict[str, int | str | None], expected: int | str
+    ) -> None:
+        original = DatasetAttackConfiguration(dataset_names=["harmbench"], max_total=20)
+        scenario_class = MagicMock()
+        scenario_class.return_value._default_dataset_config = original
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.get_registered_class_metadata.return_value = _make_scenario_metadata()
+            service._registry.get_class.return_value = scenario_class
+            service._registry.create_and_estimate_async = AsyncMock(return_value=ScenarioRunSizeEstimate())
+            await service.estimate_scenario_run_size_async(
+                scenario_name="test.scenario",
+                request=ScenarioRunSizeEstimateRequest(dataset_names=["harmbench"], **limit_args),
+            )
+        config = service._registry.create_and_estimate_async.await_args.kwargs["dataset_config"]
+        assert config.max_total == expected
+        assert config.max_per_dataset == 5
+        assert original.max_total == 20
+
+    def test_estimate_cache_normalizes_default_limits_but_preserves_all(self) -> None:
+        scenario_class = MagicMock()
+        keys = {
+            ScenarioService._build_configured_estimate_key(
+                scenario_name="test", scenario_class=scenario_class, request=ScenarioRunSizeEstimateRequest(**args)
+            )
+            for args in (
+                {},
+                {"max_dataset_size": None},
+                {"max_dataset_size": ""},
+                {"max_dataset_size": "all"},
+                {"max_dataset_size": 7},
+            )
+        }
+        assert len(keys) == 3
 
     async def test_configured_estimate_uses_shared_launch_resolution(self) -> None:
         """Configured estimates pass typed selections and parameters into the registry lifecycle."""

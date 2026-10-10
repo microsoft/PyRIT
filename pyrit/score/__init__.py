@@ -109,6 +109,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
+    from pyrit.score.true_false.regex.known_bad_signature_scorer import KnownBadSignatureScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
     from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
     from pyrit.score.true_false.regex.meth_keyword_scorer import MethKeywordScorer
@@ -207,6 +208,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",
     "TraceClient": "pyrit.score.observation.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
+    "KnownBadSignatureScorer": "pyrit.score.true_false.regex.known_bad_signature_scorer",
     "LocalRefusalClassifierScorer": "pyrit.score.true_false.local_refusal_classifier_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "LikertScaleEvalFiles": "pyrit.score.float_scale.self_ask_likert_scorer",
