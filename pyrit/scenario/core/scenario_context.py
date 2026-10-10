@@ -51,6 +51,8 @@ class ScenarioContext:
         seed_groups_by_dataset (Mapping[str, list[AttackSeedGroup]]): The same resolved
             seed groups keyed by originating dataset name, for scenarios that map datasets
             onto separate attacks or display groups.
+        scenario_result_id (str | None): The ``ScenarioResult`` id of this run: the stored id
+            on resume, or the id the new result will be created with on a fresh run.
     """
 
     objective_target: PromptTarget
@@ -60,3 +62,4 @@ class ScenarioContext:
     include_baseline: bool = False
     seed_groups: Sequence[AttackSeedGroup] = field(default_factory=tuple)
     seed_groups_by_dataset: Mapping[str, list[AttackSeedGroup]] = field(default_factory=dict)
+    scenario_result_id: str | None = None

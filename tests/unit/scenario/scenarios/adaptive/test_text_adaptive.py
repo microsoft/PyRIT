@@ -18,6 +18,7 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
+from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import TrueFalseScorer
 
@@ -291,6 +292,43 @@ class TestTextAdaptiveAtomicAttacks:
         # One dispatcher per dataset; all share the same selector identity.
         assert len(selectors_seen) == 2
         assert len({id(s) for s in selectors_seen}) == 1
+
+    async def test_selection_uses_this_run_id_and_resume_repeats_it(self, mock_objective_target, mock_objective_scorer):
+        groups = {"violence": [_make_seed_group(value=f"obj-{i}", harm_categories=["violence"]) for i in range(6)]}
+        seen: list[tuple[str | None, tuple[str, ...]]] = []
+        real_select = EpsilonGreedyTechniqueSelector.select_async
+
+        async def _spy_select(self, **kwargs):
+            picks = await real_select(self, **kwargs)
+            seen.append((kwargs.get("scenario_result_id"), tuple(picks)))
+            return picks
+
+        async def _initialize(scenario_result_id: str | None = None) -> TextAdaptive:
+            scenario = TextAdaptive(
+                objective_scorer=mock_objective_scorer,
+                selector=EpsilonGreedyTechniqueSelector(epsilon=0.5, random_seed=7),
+                scenario_result_id=scenario_result_id,
+            )
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target, "include_baseline": False})
+            await scenario.initialize_async()
+            return scenario
+
+        with (
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ),
+            patch.object(EpsilonGreedyTechniqueSelector, "select_async", _spy_select),
+        ):
+            fresh = await _initialize()
+            fresh_calls = list(seen)
+            seen.clear()
+            await _initialize(scenario_result_id=fresh._scenario_result_id)
+
+        assert {run_id for run_id, _ in fresh_calls} == {fresh._scenario_result_id}
+        assert [picks for _, picks in seen] == [picks for _, picks in fresh_calls]
 
     async def test_atomic_names_contain_dataset_and_objective_hash(self, mock_objective_target, mock_objective_scorer):
         groups = {
