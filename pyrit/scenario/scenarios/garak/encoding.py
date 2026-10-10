@@ -4,6 +4,7 @@
 
 import logging
 from collections.abc import Sequence
+from typing import ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.converter import (
@@ -163,6 +164,7 @@ class Encoding(Scenario):
     """
 
     VERSION: int = 2
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @apply_defaults
     def __init__(

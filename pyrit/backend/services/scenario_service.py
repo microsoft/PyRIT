@@ -21,6 +21,7 @@ from pyrit.models.catalog.scenario import (
     ScenarioRunSizeEstimateRequest,
 )
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.registry.resolution import reject_non_external_params
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
 from pyrit.scenario.core.dataset_configuration import read_only_dataset_resolution
 
@@ -68,7 +69,11 @@ def _metadata_to_registered_scenario(
         all_techniques=list(metadata.all_techniques),
         technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
-        supported_parameters=list(metadata.supported_parameters),
+        supported_parameters=[
+            parameter.for_external_catalog()
+            for parameter in metadata.supported_parameters
+            if parameter.is_external_input
+        ],
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
         uses_default_adversarial_target=metadata.uses_default_adversarial_target,
@@ -193,6 +198,12 @@ class ScenarioService:
             scenario_class = self._registry.get_class(scenario_name)
         except KeyError:
             return None
+        if request.scenario_params:
+            reject_non_external_params(
+                params=request.scenario_params,
+                declared=scenario_class.supported_parameters(),
+                owner=scenario_name,
+            )
 
         estimate_key = self._build_configured_estimate_key(
             scenario_name=scenario_name, scenario_class=scenario_class, request=request

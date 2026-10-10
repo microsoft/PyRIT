@@ -801,8 +801,8 @@ class AttackTechniqueFactory(Identifiable):
                 into the factory or supplied via
                 ``attack_converter_config_override``).  Unlike
                 ``attack_converter_config_override`` these are additive and never
-                replace the existing converters.  Only forwarded if the attack
-                class constructor accepts ``attack_converter_config``.
+                replace the existing converters.  Requires the attack class
+                constructor to accept ``attack_converter_config``.
 
         Returns:
             A fresh AttackTechnique with a newly-constructed attack technique.
@@ -811,9 +811,18 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If a create-time adversarial chat is supplied while the
                 factory already baked one, if ``scorer_override_policy`` is RAISE
                 and the scenario scorer is incompatible with the attack's type annotation,
-                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack.
+                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack,
+                or if ``extra_request_converters`` is non-empty but the attack class doesn't
+                accept ``attack_converter_config``.
         """
         create_time_target: PromptTarget | None = adversarial_chat
+
+        if extra_request_converters and "attack_converter_config" not in self._compatibility_helper.accepted_params:
+            # These come from the caller's technique_converters, so dropping them would run a different setup.
+            raise ValueError(
+                f"Factory '{self._name}': {self._attack_class.__name__} does not accept 'attack_converter_config', "
+                f"so the extra request converters can't be applied."
+            )
 
         if create_time_target is not None and self._adversarial_chat is not None:
             raise ValueError(
