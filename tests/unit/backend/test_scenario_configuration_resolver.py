@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedObjective
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit
@@ -105,8 +106,18 @@ async def test_total_override_preserves_source_limits_async(
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("total", [None, 7])
-def test_name_override_retains_source_options_and_adds_defaults_for_new_names(total: int | None) -> None:
-    retained = DatasetSource(name="retained", max_size=2, fetch=DatasetFetchPolicy.NEVER)
+@pytest.mark.parametrize("configured_provider", [False, True], ids=["registered", "configured"])
+def test_name_override_retains_source_options_and_adds_defaults_for_new_names(
+    *, total: int | None, configured_provider: bool
+) -> None:
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "retained"
+    retained = DatasetSource(
+        name="retained",
+        max_size=2,
+        fetch=DatasetFetchPolicy.NEVER,
+        provider=provider if configured_provider else None,
+    )
     original = DatasetAttackConfiguration(
         sources=[retained, DatasetSource(name="removed")], max_per_dataset=4, max_total=20
     )
@@ -120,6 +131,7 @@ def test_name_override_retains_source_options_and_adds_defaults_for_new_names(to
     )["dataset_config"]
     assert resolved.sources == (DatasetSource(name="new"), retained)
     assert resolved.sources[1] is retained
+    assert resolved.sources[1].provider is retained.provider
     assert resolved.source_limit("new") == 4
     assert resolved.source_limit("retained") == 2
     assert resolved.max_total == (20 if total is None else total)

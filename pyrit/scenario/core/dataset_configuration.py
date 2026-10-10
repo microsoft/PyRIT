@@ -19,7 +19,7 @@ flags such as ``--objectives`` -- restrict which datasets it will resolve from, 
 particular seed type (e.g. ``require_seed_type(SeedObjective)``).
 
 Memory is the source of truth. ``prepare_async`` checks all sources before fetching
-missing registered datasets. Read methods never fetch or write. Selection applies each
+missing configured or registered datasets. Read methods never fetch or write. Selection applies each
 source's limit before the combined ``max_total`` limit. Inline configurations never
 touch memory.
 """
@@ -51,6 +51,7 @@ from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, norma
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
@@ -67,7 +68,7 @@ class _Unset(Enum):
 
 
 class DatasetFetchPolicy(str, Enum):
-    """When preparation may load a registered dataset into memory."""
+    """When preparation may load a provider's dataset into memory."""
 
     NEVER = "never"
     IF_MISSING = "if_missing"
@@ -91,18 +92,26 @@ def _deprecated_argument(*, old: str, new: str) -> None:
 
 @dataclass(frozen=True, kw_only=True)
 class DatasetSource:
-    """A named dataset, with optional overrides for its selection limit and fetch policy."""
+    """
+    A named dataset, with an optional provider, selection limit, and fetch policy.
+
+    A configured provider must use the source name. Preparation uses it only when data
+    is missing and fetching is allowed; stored data wins even if the provider changes.
+    Generation count and selection limits are independent. Use one writer per dataset
+    name: concurrent runs can otherwise generate and store different batches.
+    """
 
     name: str
     max_size: DatasetLimit = "default"
     fetch: DatasetFetchPolicy | None = None
+    provider: SeedDatasetProvider | None = None
 
     def __post_init__(self) -> None:
         """
-        Validate source options without reading memory or providers.
+        Validate source options without reading memory or fetching data.
 
         Raises:
-            DatasetConstraintError: If the name, limit, or policy is invalid.
+            DatasetConstraintError: If the name, limit, policy, or provider is invalid.
         """
         if not isinstance(self.name, str) or not self.name.strip():
             raise DatasetConstraintError("Dataset source names must be non-empty strings.")
@@ -112,6 +121,17 @@ class DatasetSource:
             raise DatasetConstraintError(f"'max_size': {exc}") from exc
         if self.fetch is not None and not isinstance(self.fetch, DatasetFetchPolicy):
             raise DatasetConstraintError("'fetch' must be a DatasetFetchPolicy.")
+        self._validate_provider()
+
+    def _validate_provider(self) -> None:
+        if self.provider is None:
+            return
+        from pyrit.datasets import SeedDatasetProvider
+
+        if not isinstance(self.provider, SeedDatasetProvider):
+            raise DatasetConstraintError("'provider' must be a SeedDatasetProvider instance.")
+        if self.provider.dataset_name != self.name:
+            raise DatasetConstraintError(f"Provider dataset name must match source '{self.name}'.")
 
 
 class DatasetSourceKind(Enum):
@@ -410,6 +430,8 @@ class DatasetConfiguration:
         names = [source.name for source in self.sources]
         if len(names) != len(set(names)):
             raise DatasetConstraintError("Duplicate dataset source names are not allowed.")
+        for source in self.sources:
+            source._validate_provider()
 
     @property
     def max_total(self) -> ResolvedDatasetLimit:
@@ -496,12 +518,12 @@ class DatasetConfiguration:
         """Whether this configuration can select a subset of its groups."""
         return self.max_total != "all" or any(self.source_limit(source.name) != "all" for source in self.sources)
 
-    def _preparation_sources(self) -> list[tuple[str, DatasetFetchPolicy]]:
-        return [(source.name, source.fetch or self.fetch) for source in self.sources]
+    def _preparation_sources(self) -> list[tuple[DatasetSource, DatasetFetchPolicy]]:
+        return [(source, source.fetch or self.fetch) for source in self.sources]
 
     async def prepare_async(self) -> None:
         """
-        Check all sources, then populate missing registered datasets in memory.
+        Check all sources, then populate missing datasets from configured or registered providers.
 
         Raises:
             DatasetConstraintError: If a missing source cannot be fetched or provider data is invalid.
@@ -510,10 +532,15 @@ class DatasetConfiguration:
         if self.source_kind is DatasetSourceKind.INLINE:
             return
         policies: dict[str, DatasetFetchPolicy] = {}
-        for name, policy in self._preparation_sources():
+        configured_providers: dict[str, SeedDatasetProvider | None] = {}
+        for source, policy in self._preparation_sources():
+            name = source.name
             if name in policies and policies[name] is not policy:
                 raise DatasetConstraintError(f"Dataset '{name}' has conflicting fetch policies.")
+            if name in configured_providers and configured_providers[name] is not source.provider:
+                raise DatasetConstraintError(f"Dataset '{name}' has conflicting providers.")
             policies[name] = policy
+            configured_providers[name] = source.provider
         if not policies:
             return
         stored_names = set(await self._memory.get_seed_dataset_names_async())
@@ -528,7 +555,10 @@ class DatasetConfiguration:
             return
         from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 
-        providers = await SeedDatasetProvider.get_providers_by_name_async(dataset_names=missing)
+        providers = {name: provider for name in missing if (provider := configured_providers[name]) is not None}
+        unresolved = [name for name in missing if name not in providers]
+        if unresolved:
+            providers.update(await SeedDatasetProvider.get_providers_by_name_async(dataset_names=unresolved))
         unavailable = [name for name in missing if name not in providers]
         if unavailable:
             raise DatasetConstraintError(f"Datasets {unavailable} are missing and have no provider. Import them first.")
@@ -1002,7 +1032,7 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
         """Whether this compound or any child can select a subset."""
         return super().has_sampling_limits or any(child.has_sampling_limits for child in self._configurations)
 
-    def _preparation_sources(self) -> list[tuple[str, DatasetFetchPolicy]]:
+    def _preparation_sources(self) -> list[tuple[DatasetSource, DatasetFetchPolicy]]:
         return [source for child in self._configurations for source in child._preparation_sources()]
 
     def with_overrides(
