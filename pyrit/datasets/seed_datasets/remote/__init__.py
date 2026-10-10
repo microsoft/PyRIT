@@ -23,6 +23,10 @@ if TYPE_CHECKING:
         ATRVariationType,
         _AgentThreatRulesDataset,
     )
+    from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
+        AnthropicModelWrittenEvalCategory,
+        _AnthropicModelWrittenEvalsDataset,
+    )
     from pyrit.datasets.seed_datasets.remote.aya_redteaming_dataset import _AyaRedteamingDataset
     from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import _BabelscapeAlertDataset
     from pyrit.datasets.seed_datasets.remote.beaver_tails_dataset import _BeaverTailsDataset
@@ -158,6 +162,7 @@ if TYPE_CHECKING:
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AegisHarmCategory": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
+    "AnthropicModelWrittenEvalCategory": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "CoCoNotCategory": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "CoCoNotSplit": "pyrit.datasets.seed_datasets.remote.coconot_dataset",
     "DecodingTrustToxicitySubset": "pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset",
@@ -186,6 +191,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "WildGuardMixPromptHarmLabel": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
     "WildGuardMixSplit": "pyrit.datasets.seed_datasets.remote.wildguardmix_dataset",
     "_AegisContentSafetyDataset": "pyrit.datasets.seed_datasets.remote.aegis_ai_content_safety_dataset",
+    "_AnthropicModelWrittenEvalsDataset": "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset",
     "ATRCategory": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRDetectionField": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
     "ATRVariationType": "pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset",
