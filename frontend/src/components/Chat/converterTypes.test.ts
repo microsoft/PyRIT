@@ -40,6 +40,21 @@ function makeConversion(
 }
 
 describe('converter draft mapping', () => {
+  it('requires applying private settings before independent repeated conversion', () => {
+    const inputs = buildConverterInputs('text', [])
+    const pipelines = {
+      text: [{
+        id: 'private', converterId: 'registered',
+        temporary: { source_name: 'registered', source_hash: 'source', params: { language: 'French' } },
+      }],
+    }
+    expect(() => buildRequestConverterConfigurations(inputs, ['text'], pipelines, {}))
+      .toThrow('Apply temporary converter settings with Add converted value')
+    expect(buildRequestConverterConfigurations(inputs, ['text'], pipelines, {
+      text: makeConversion('text', ['private']),
+    })).toEqual([])
+  })
+
   it('builds repeat pipelines in piece and stage order without rerunning applied previews', () => {
     const inputs = buildConverterInputs('text', [
       { draftId: 'first', type: 'image', name: 'first.png', url: 'first.png', mimeType: 'image/png' },

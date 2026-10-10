@@ -86,6 +86,10 @@ class Converter(Identifiable):
         from pyrit.common.brick_contract import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Converter")
+        if "__init__" in cls.__dict__:
+            from pyrit.common.constructor_capture import capture_constructor_parameters
+
+            type.__setattr__(cls, "__init__", capture_constructor_parameters(cls.__init__))
         # Only validate concrete (non-abstract) classes
         if not inspect.isabstract(cls):
             if not cls.SUPPORTED_INPUT_TYPES:
@@ -138,6 +142,23 @@ class Converter(Identifiable):
         super().__init__()
         if converter_target is not None:
             type(self).TARGET_REQUIREMENTS.validate(target=converter_target)
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only constructor inputs for a separate converter.
+
+        Returns:
+            dict[str, object]: Inputs retained when the source was constructed.
+
+        Raises:
+            ValueError: If the constructor did not retain its inputs.
+        """
+        parameters = getattr(self, "_reconstruction_parameters", None)
+        if parameters is None:
+            if type(self).__init__ is Converter.__init__:
+                return {}
+            raise ValueError(f"{type(self).__name__} cannot be reconstructed")
+        return dict(parameters)
 
     @abc.abstractmethod
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:

@@ -6,6 +6,9 @@ import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
   TargetInstance,
+  UnregisteredTarget,
+  UnregisteredConverter,
+  SourceInstanceSpec,
   TargetListResponse,
   TargetTypeListResponse,
   ConverterTypeListResponse,
@@ -253,6 +256,10 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+  buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {
+    const response = await apiClient.post<UnregisteredTarget>('/targets', { type, source, register: false })
+    return response.data
+  },
 }
 
 export const convertersApi = {
@@ -273,6 +280,10 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {
+    const response = await apiClient.post<UnregisteredConverter>('/converters', { type, source, register: false })
     return response.data
   },
 

@@ -25,10 +25,15 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
     TargetTypeEntry,
     TargetTypeResponse,
+    UnregisteredTarget,
 )
+from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
 from pyrit.common import REQUIRED_VALUE
+from pyrit.models import TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.models.parameter import Parameter
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -219,7 +224,32 @@ class TargetService:
         ]
         return TargetTypeResponse(items=items)
 
-    async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
+    async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
+        """
+        Rebuild a private target and verify its saved effective identity.
+
+        Returns:
+            PromptTarget: The caller-owned target.
+        """
+        source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
+        target = await construct_component_async(
+            self._registry.recreate_instance, source=source, params=spec.params, external_input=True
+        )
+        if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
+            await release_component_async(target)
+            raise ValueError("The saved target configuration cannot be reconstructed")
+        return target
+
+    async def resolve_binding_async(self, binding: TargetBinding) -> PromptTarget:
+        """
+        Rebuild an attack-owned configuration from its current source.
+
+        Returns:
+            PromptTarget: The caller-owned target.
+        """
+        return await self.build_from_source_async(binding.to_spec())
+
+    async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
 
@@ -271,11 +301,40 @@ class TargetService:
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        self._registry.instances.validate_name_available(target_registry_name)
-        target_obj = self._registry.create_instance_from_external_input(request.type, params=params)
-        target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-        self._registry.instances.register(target_obj, name=target_registry_name)
-        return target
+        if request.register:
+            self._registry.instances.validate_name_available(target_registry_name)
+        if (
+            request.source
+            and type(
+                self._registry.resolve_source(
+                    name=request.source.source_name, identifier_hash=request.source.source_hash
+                )
+            )
+            is not target_cls
+        ):
+            raise ValueError("The source target type does not match the requested type")
+        target_obj = (
+            await self.build_from_source_async(request.source)
+            if request.source
+            else await construct_component_async(
+                self._registry.create_instance_from_external_input, request.type, params=params
+            )
+        )
+        if not request.register:
+            try:
+                return UnregisteredTarget(
+                    identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
+                    capabilities=target_obj.capabilities,
+                )
+            finally:
+                await release_component_async(target_obj)
+        try:
+            target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+            self._registry.instances.register(target_obj, name=target_registry_name)
+            return target
+        except Exception:
+            await release_component_async(target_obj)
+            raise
 
 
 @lru_cache(maxsize=1)

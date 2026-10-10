@@ -15,7 +15,10 @@ Converters can be:
 import asyncio
 import base64
 import binascii
+import hashlib
+import hmac
 import mimetypes
+import secrets
 import uuid
 from contextlib import suppress
 from functools import lru_cache
@@ -36,13 +39,16 @@ from pyrit.backend.models.converters import (
     ConverterTypeResponse,
     CreateConverterRequest,
     PreviewStep,
+    UnregisteredConverter,
 )
+from pyrit.backend.services.component_lifecycle import construct_component_async
 from pyrit.backend.services.media_persistence import persist_media_value_async
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
-from pyrit.models import MessagePiece, PromptDataType
+from pyrit.models import ConverterIdentifier, MessagePiece, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
+from pyrit.registry.registry import Reconstructable
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
 _DEFAULT_UPLOAD_EXTENSION = ".bin"
@@ -61,6 +67,7 @@ class ConverterService:
         self._registry = ConverterRegistry.get_registry_singleton()
         self._upload_directory = TemporaryDirectory(prefix="pyrit-registry-uploads-")
         self._upload_path = Path(self._upload_directory.name).resolve()
+        self._provenance_key = secrets.token_bytes(32)
 
     def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
         """
@@ -73,12 +80,19 @@ class ConverterService:
         """
         metadata = self._registry.get_registered_class_metadata(converter_obj.__class__.__name__)
         description = metadata.class_description or None if metadata else None
-        return converter_object_to_instance(
+        result = converter_object_to_instance(
             converter_id=converter_id,
             converter_obj=converter_obj,
             is_llm_based=metadata.is_llm_based if metadata else False,
             description=description,
         )
+        if isinstance(converter_obj, Reconstructable):
+            try:
+                self._registry.get_reconstruction_parameters(converter_obj)
+                result.reconstructable = True
+            except ValueError as exc:
+                result.reconstruction_error = str(exc)
+        return result
 
     # ========================================================================
     # Public API Methods
@@ -174,7 +188,9 @@ class ConverterService:
         await self._remove_owned_artifacts_async(paths=owned_paths)
         return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
 
-    async def create_converter_async(self, *, request: CreateConverterRequest) -> ConverterInstance:
+    async def create_converter_async(
+        self, *, request: CreateConverterRequest
+    ) -> ConverterInstance | UnregisteredConverter:
         """
         Create a new converter instance from API request.
 
@@ -194,15 +210,48 @@ class ConverterService:
         """
         if request.type not in self._registry:
             raise ValueError(f"Converter type '{request.type}' not found")
-        self._registry.instances.validate_name_available(request.name)
+        if request.register:
+            if request.name is None:
+                raise ValueError("name is required when register=true")
+            self._registry.instances.validate_name_available(request.name)
+        source = (
+            self._registry.resolve_source(name=request.source.source_name, identifier_hash=request.source.source_hash)
+            if request.source
+            else None
+        )
+        if source is not None and type(source) is not self._registry.get_class(request.type):
+            raise ValueError("The source converter type does not match the requested type")
         params, owned_paths = await self._persist_data_uri_params_async(
             converter_type=request.type,
-            params=request.params,
+            params=request.source.params if request.source else request.params,
         )
         try:
             # Uploads may have yielded to another request that took the name.
-            self._registry.instances.validate_name_available(request.name)
-            converter_obj = self._registry.create_instance_from_external_input(request.type, params=params)
+            if request.register:
+                if request.name is None:
+                    raise ValueError("name is required when register=true")
+                self._registry.instances.validate_name_available(request.name)
+            converter_obj = (
+                await construct_component_async(
+                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                )
+                if source is not None
+                else await construct_component_async(
+                    self._registry.create_instance_from_external_input, request.type, params=params
+                )
+            )
+            if not request.register:
+                if (
+                    request.source
+                    and request.source.effective_hash
+                    and (converter_obj.get_identifier().hash != request.source.effective_hash)
+                ):
+                    raise ValueError("Temporary converter configuration has changed")
+                return UnregisteredConverter(
+                    identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
+                )
+            if request.name is None:
+                raise ValueError("name is required when register=true")
             converter = self._build_instance_from_object(converter_id=request.name, converter_obj=converter_obj)
             self._registry.instances.register(
                 converter_obj,
@@ -210,8 +259,12 @@ class ConverterService:
                 metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
             )
         except (Exception, asyncio.CancelledError):
-            await self._remove_owned_artifacts_async(paths=owned_paths)
+            if request.register:
+                await self._remove_owned_artifacts_async(paths=owned_paths)
             raise
+        finally:
+            if not request.register:
+                await self._remove_owned_artifacts_async(paths=owned_paths)
 
         return converter
 
@@ -243,14 +296,41 @@ class ConverterService:
             )
             original_value = result.value
 
-        converters = self._gather_converters(converter_ids=request.converter_ids)
-        steps, final_value, final_type = await self._apply_converters_async(
-            converters=converters,
-            initial_value=original_value,
-            initial_type=data_type,
-            start_token=request.start_token,
-            end_token=request.end_token,
-        )
+        converters: list[tuple[str, str, Any]] = []
+        owned_paths: list[Path] = []
+        specs = request.converter_specs or [None] * len(request.converter_ids)
+        try:
+            for converter_id, spec in zip(request.converter_ids, specs, strict=True):
+                if spec is None:
+                    converters.extend(self._gather_converters(converter_ids=[converter_id]))
+                    continue
+                if spec.source_name != converter_id:
+                    raise ValueError("A converter specification must match its pipeline source")
+                source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
+                params, paths = await self._persist_data_uri_params_async(
+                    converter_type=type(source).__name__, params=spec.params
+                )
+                owned_paths.extend(paths)
+                obj = await construct_component_async(
+                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                )
+                if spec.effective_hash and obj.get_identifier().hash != spec.effective_hash:
+                    raise ValueError("Temporary converter configuration has changed")
+                converters.append((converter_id, type(obj).__name__, obj))
+            steps, final_value, final_type = await self._apply_converters_async(
+                converters=converters,
+                initial_value=original_value,
+                initial_type=data_type,
+                start_token=request.start_token,
+                end_token=request.end_token,
+            )
+            for step, spec, (_, _, obj) in zip(steps, specs, converters, strict=True):
+                if spec is not None:
+                    step.source = spec
+                    step.identifier = ConverterIdentifier.from_component_identifier(obj.get_identifier())
+                    step.provenance = self._sign_identifier(step.identifier)
+        finally:
+            await self._remove_owned_artifacts_async(paths=owned_paths)
 
         return ConverterPreviewResponse(
             original_value=request.original_value,
@@ -259,6 +339,28 @@ class ConverterService:
             converted_value_data_type=final_type,
             steps=steps,
         )
+
+    def _sign_identifier(self, identifier: ConverterIdentifier) -> str:
+        payload = identifier.model_dump_json().encode()
+        signature = hmac.new(self._provenance_key, payload, hashlib.sha256).hexdigest()
+        return f"{signature}.{base64.urlsafe_b64encode(payload).decode()}"
+
+    def read_provenance(self, token: str) -> ConverterIdentifier:
+        """
+        Validate preview-issued evidence without retaining a converter object.
+
+        Returns:
+            ConverterIdentifier: The preview's actual component identity.
+        """
+        try:
+            signature, encoded = token.split(".", 1)
+            payload = base64.b64decode(encoded, altchars=b"-_", validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("Invalid converter provenance") from exc
+        expected = hmac.new(self._provenance_key, payload, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("Converter provenance is invalid or belongs to an earlier runtime; convert again")
+        return ConverterIdentifier.model_validate_json(payload)
 
     def get_converter_objects_for_ids(self, *, converter_ids: list[str]) -> list[Any]:
         """

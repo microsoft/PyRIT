@@ -66,6 +66,7 @@ export interface PieceConversion {
   pieceId: string
   pieceType: string
   converterInstanceIds: string[]
+  converterProvenance?: Array<string | null>
   convertedValue: string
   originalValue: string
   convertedDataType: string
@@ -74,6 +75,8 @@ export interface PieceConversion {
 export interface ConverterPipelineStage {
   readonly id: string
   readonly converterId: string
+  readonly temporary?: SourceInstanceSpec
+  readonly identifier?: ConverterIdentifier
 }
 
 export interface ConverterStageResult {
@@ -95,6 +98,7 @@ export interface ChatConverterController {
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
   retainConverters: (availableIds: Set<string>) => void
+  discardTemporarySettings?: () => void
   convert: (pieceType: string) => Promise<void>
   convertRemaining: (pieceId: string, stageId: string) => Promise<void>
   editInput: (pieceId: string, value: string) => void
@@ -273,6 +277,10 @@ export interface TargetIdentifier {
 
 export interface TargetInstance {
   target_registry_name: string
+  reconstructable?: boolean
+  reconstruction_error?: string | null
+  supports_temperature_override?: boolean
+  binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
@@ -351,6 +359,8 @@ export interface ConverterIdentifier {
 
 export interface ConverterInstance {
   converter_id: string
+  reconstructable?: boolean
+  reconstruction_error?: string | null
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
@@ -364,6 +374,30 @@ export interface CreateConverterRequest {
   name: string
   type: string
   params?: Record<string, unknown>
+}
+
+export interface SourceInstanceSpec {
+  source_name: string
+  source_hash: string
+  params: Record<string, unknown>
+  effective_hash?: string
+}
+
+export interface TargetBinding {
+  version: 1
+  source_name: string
+  source_hash: string
+  temperature: number
+  effective_hash: string
+}
+
+export interface UnregisteredTarget {
+  identifier: TargetIdentifier
+  capabilities: TargetCapabilities
+}
+
+export interface UnregisteredConverter {
+  identifier: ConverterIdentifier
 }
 
 export interface Parameter {
@@ -402,6 +436,7 @@ export interface ConverterTypeListResponse {
 export interface ConverterPreviewRequest {
   original_value: string
   converter_ids: string[]
+  converter_specs?: Array<SourceInstanceSpec | null>
   original_value_data_type?: string
   start_token?: string
   end_token?: string
@@ -414,6 +449,9 @@ export interface ConverterPreviewStep {  converter_id: string
   input_data_type: string
   output_value: string
   output_data_type: string
+  source?: SourceInstanceSpec | null
+  identifier?: ConverterIdentifier | null
+  provenance?: string | null
 }
 
 export interface ConverterPreviewResponse {
@@ -443,6 +481,7 @@ export interface TargetInfo {
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
+  binding?: TargetBinding | null
 }
 
 export type AttackTargetResolutionStatus =
@@ -489,6 +528,7 @@ export interface AttackSummary {
 
 export interface CreateAttackRequest {
   target_registry_name?: string
+  target_binding?: TargetBinding
   name?: string
   operator?: string
   operation?: string
@@ -551,6 +591,7 @@ export interface SaveConversationRequest {
   expected_objective?: string
   objective?: string
   target_registry_name?: string
+  target_binding?: TargetBinding
   operator?: string
   operation?: string
   labels?: Record<string, string>
@@ -655,6 +696,7 @@ export interface MessagePieceRequest {
   converted_value?: string
   converted_value_data_type?: string
   applied_converter_ids?: string[]
+  applied_converter_provenance?: Array<string | null>
   mime_type?: string
   original_prompt_id?: string
   source_piece_id?: string
@@ -682,6 +724,7 @@ export interface ConverterConfigurationRequest {
 export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
+  target_binding?: TargetBinding
   converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]

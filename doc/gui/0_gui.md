@@ -102,7 +102,7 @@ The Chat view is the primary workspace for running interactive attacks against c
 
 #### Sending Messages
 
-For a new chat, your default objective target is preselected if it is available. Click the target badge in the shared toolbar beside the label controls to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
+For a new chat, your default objective target is preselected if it is available. Click the target badge in the chat ribbon below the common labels and above the objective to open the target dropdown. If no target is selected, click **Select a target** in the same place. Your choice applies to this chat without changing the default. Saved chats keep their original target. An attack saved without a target uses this dropdown until its first send binds the selected target.
 
 Clicking **Chat** while already in a new chat keeps its target and draft. Starting
 a new attack resets both. Default changes in another tab apply to the next new
@@ -121,6 +121,22 @@ After a reload or runtime change, converter choices cannot be restored.
 A warning beside the recovered draft tells you to select and apply converters again before sending.
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
+
+#### Temperature
+
+Select a target, then set **Temperature** before the first send. Leave it empty
+to keep the source setting. The supported range is 0 to 2. This creates a private
+target configuration for the attack; it does not add or change a registered target.
+Temperature is read-only after the attack is bound. In the conversation editor,
+a temperature change requires **New attack**, not **Same attack**.
+Hover over or click the read-only field to see why it cannot be changed.
+
+Saved attacks retain the source name, source identity, temperature, and effective
+identity, but not credentials. After a restart, the backend tries to reconstruct
+the target from a matching registered source. If reconstruction fails, sending
+is blocked rather than using the source's default temperature. OpenAI-family
+targets with a temperature parameter support this control. Externally owned HTTP
+clients and temperature set through `extra_body_parameters` are not supported.
 
 #### Repeating a Message
 
@@ -171,6 +187,20 @@ messages endpoint and `send=false` context storage are unchanged.
 
 Open **Converters** and use the picker above the working input to add registered
 converters in the order you want them to run.
+For a stage that supports reconstruction, open **... > Settings** to change its
+constructor settings. Changes create a private converter for that stage. Other
+stages and the registered source keep their settings. **Reset to registered
+converter** removes the stage's overrides. **Use default / not set** clears a
+structured setting's override and restores the registered source's value.
+Changing settings invalidates that stage and its downstream results.
+
+Closing the converter pane discards temporary settings, but keeps content that
+you already applied and the identifiers of the converters that produced it.
+Temporary converters are built for each preview operation, not retained in a
+second registry. A runtime change clears temporary settings and preview results.
+Apply temporary converter results with **Add converted value** before repeating
+a message. Independent repeated conversion supports registered stages only.
+
 The top text box is an editable working copy: changing it does not change the original
 chat message. The top **Convert** button runs the active tab's configured pipeline
 and any configured inputs that do not have results yet. After every configured input
@@ -258,6 +288,15 @@ message piece. The backend resolves the IDs through the registry. An empty list
 represents a manual conversion. `request_converter_configurations` controls
 conversion of pieces without a preconverted value; it does not describe which
 converters already ran.
+
+For temporary stages, preview requests provide `converter_specs`, aligned with
+`converter_ids`; use `null` for a registered stage. Preview responses include the
+actual temporary identifier and a signed `provenance` token. Pass these tokens
+as `applied_converter_provenance`, aligned with `applied_converter_ids`, when
+sending or saving the converted content. Tokens remain valid after the pane
+closes, without retaining converter objects. A restart invalidates tokens for
+unsaved content; convert it again. Stored messages retain their converter
+identifiers and do not depend on those tokens.
 
 #### Attachments
 
@@ -381,7 +420,7 @@ Export stays available for read-only historical conversations, and is disabled w
 
 The labels bar above the page content is available across the GUI, including scanner setup, Home, Chat, and History. It shows the active labels for future attacks and scans, not the attribution of a historical run you are viewing. Click the labels icon to open **Default Labels** and add, edit, or remove custom labels. The required `operator` and `operation` controls remain in the bar, outside this popover, and cannot be removed. A signed-in operator is read-only.
 
-In Chat, the active target, Markdown toggle, export menu, conversations panel toggle, and **New Attack** button share the right side of this bar. They wrap below the labels on narrow screens.
+In Chat, a separate ribbon below the labels contains the target, temperature, and **Edit Conversation** controls on the left. The Markdown toggle, export menu, conversations panel toggle, and **New Attack** button are on the right.
 
 Clicking the `operation` label opens a picker listing the operations already recorded in memory, so you can choose one without typing it from memory. Typing a name that doesn't exist yet offers to create it. Very long lists show the first 200 and say how many are left, so type to narrow them. On narrow screens, use the labels icon to view or edit labels that do not fit inline.
 

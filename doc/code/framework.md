@@ -403,6 +403,8 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
+- Construction does not require registration. The caller owns temporary instances
+  and their cleanup; the registry does not retain them.
 - The registry accepts only explicitly supported external inputs, permits opaque Python objects only for in-process callers, and leaves component validation to constructors.
 
 ## [Setup](./setup/0_setup)

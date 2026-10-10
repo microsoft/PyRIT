@@ -63,6 +63,23 @@ def init_parameters_are_forwarded(init: Callable[..., object]) -> bool:
     return bool(getattr(init, _FORWARD_INIT_PARAMETERS_ATTRIBUTE, False))
 
 
+def get_constructor_owners(cls: type) -> list[type]:
+    """
+    Get the constructor owners that define the class's build contract.
+
+    Returns:
+        list[type]: Owners in child-to-parent order, including explicitly forwarded parents.
+    """
+    owners: list[type] = []
+    for owner in cls.__mro__:
+        if "__init__" not in owner.__dict__:
+            continue
+        owners.append(owner)
+        if not init_parameters_are_forwarded(owner.__dict__["__init__"]):
+            break
+    return owners
+
+
 def enforce_keyword_only_init(cls: type, *, base_name: str) -> None:
     """
     Validate that ``cls.__init__`` only accepts keyword-only parameters.

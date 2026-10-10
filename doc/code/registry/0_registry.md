@@ -75,6 +75,62 @@ creation can build more than one component for the same name, but only one
 registration succeeds unless replacement is requested. The backend does not
 need a separate registration lock.
 
+### Construction without registration
+
+Use `create_instance(type_name, **params)` to build an object without adding it
+to `.instances`. The caller owns that object and its cleanup.
+`create_named_instance(...)` remains the build-and-register operation.
+
+The existing `POST /api/targets`, `POST /api/converters`, and `POST /api/scorers`
+endpoints accept `register: false`. Registration defaults to `true`, so existing
+clients keep their behavior. For example:
+
+```json
+{
+  "type": "CaesarConverter",
+  "register": false,
+  "params": { "caesar_offset": 3 }
+}
+```
+
+The response contains an `identifier` and, for targets, `capabilities`. It does
+not contain a registry name or a reusable object handle. The backend discards
+the built object after returning its descriptor.
+
+Targets and converters can also use a registered source that supports
+reconstruction:
+
+```json
+{
+  "type": "OpenAIChatTarget",
+  "register": false,
+  "source": {
+    "source_name": "objective",
+    "source_hash": "<source identifier hash>",
+    "params": { "temperature": 0.7 }
+  }
+}
+```
+
+Use `source.params` for overrides; do not also supply `params`. The backend
+keeps the source's other constructor inputs, including authentication, on the
+server. It does not change the source. Missing, changed, or ambiguous sources
+produce an error. If a source was renamed, a unique matching hash can resolve it.
+An optional `effective_hash` checks the reconstructed object's identity.
+Registered descriptors report `reconstructable` and, for targets,
+`supports_temperature_override`. Unsupported inputs can also report
+`reconstruction_error`.
+Constructor inputs that are not in the registry's build contract are not
+discarded silently: reconstruction is rejected. Such sources can still be used
+as registered objects.
+Reconstruction retains resolved defaults from the declared constructor chain,
+including explicitly forwarded parent parameters. Arguments generated inside a
+constructor are not treated as extra inputs from its caller.
+
+This REST flag applies to targets, converters, and scorers. `AttackRegistry`
+remains a class catalog, not a store of attack instances, and has no new REST
+endpoint.
+
 Constructor annotations define parameter metadata and coercion. Enum parameters
 accept member names or values. Types that inherit `StructuredParameterValue` declare their
 allowed variants through `get_registry_input_variants()`; the registry

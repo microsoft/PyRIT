@@ -50,6 +50,64 @@ function makePreviewResponse() {
 }
 
 describe('useChatConverters across runtime generation changes', () => {
+  const privateSpec = {
+    source_name: 'base64-default', source_hash: 'source-hash', params: { example: 3 },
+  }
+
+  it('sends aligned private recipes and preserves applied provenance after the pane closes', async () => {
+    mockedPreview.mockResolvedValue({
+      ...makePreviewResponse(),
+      converted_value: 'private output', converted_value_data_type: 'text',
+      steps: [{ ...makePreviewResponse().steps[0], output_value: 'private output', provenance: 'signed-evidence' }],
+    })
+    const { result } = renderHook(() => useChatConverters('original text', NO_ATTACHMENTS))
+    act(() => result.current.setPipeline('text', () => [
+      { id: 'first', converterId: 'base64-default', temporary: privateSpec },
+    ]))
+    await act(async () => { await result.current.convert('text') })
+    expect(mockedPreview.mock.calls[0][0].converter_specs).toEqual([privateSpec])
+    act(() => result.current.apply())
+    expect(result.current.applied.text.converterProvenance).toEqual(['signed-evidence'])
+    act(() => result.current.discardTemporarySettings?.())
+    expect(result.current.pipelines.text).toEqual([{ id: 'first', converterId: 'base64-default' }])
+    expect(result.current.applied.text.convertedValue).toBe('private output')
+    expect(result.current.applied.text.converterProvenance).toEqual(['signed-evidence'])
+    expect(result.current.stageResults.text).toEqual([])
+  })
+
+  it('discards private settings on runtime replacement and rejects stale preview results', async () => {
+    let finish: (value: ReturnType<typeof makePreviewResponse>) => void = () => {}
+    mockedPreview.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    const { result, rerender } = renderHook(() => useChatConverters('original text', NO_ATTACHMENTS))
+    act(() => result.current.setPipeline('text', () => [
+      { id: 'first', converterId: 'base64-default', temporary: privateSpec },
+    ]))
+    let conversion: Promise<void> | undefined
+    act(() => { conversion = result.current.convert('text') })
+    runtime.generation = 'gen-2'
+    rerender()
+    await act(async () => { finish(makePreviewResponse()); await conversion })
+    expect(result.current.pipelines.text).toEqual([{ id: 'first', converterId: 'base64-default' }])
+    expect(result.current.stageResults.text).toBeUndefined()
+    expect(result.current.isConverting).toBe(false)
+  })
+
+  it('changes only the selected duplicate stage and invalidates its downstream results', async () => {
+    mockedPreview.mockResolvedValue({
+      ...makePreviewResponse(), steps: [makePreviewResponse().steps[0], makePreviewResponse().steps[0]],
+    })
+    const { result } = renderHook(() => useChatConverters('original text', NO_ATTACHMENTS))
+    act(() => result.current.setPipeline('text', () => [
+      { id: 'first', converterId: 'base64-default' }, { id: 'second', converterId: 'base64-default' },
+    ]))
+    await act(async () => { await result.current.convert('text') })
+    act(() => result.current.setPipeline('text', (stages) => stages.map((stage) =>
+      stage.id === 'second' ? { ...stage, temporary: privateSpec } : stage)))
+    expect(result.current.pipelines.text[0].temporary).toBeUndefined()
+    expect(result.current.pipelines.text[1].temporary).toEqual(privateSpec)
+    expect(result.current.stageResults.text).toHaveLength(1)
+  })
+
   it('restores repeat pipelines and exact applied values without retaining unrelated selections', () => {
     const { result } = renderHook(() => useChatConverters('original text', NO_ATTACHMENTS))
     const pipelines = {
