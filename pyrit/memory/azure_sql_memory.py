@@ -348,9 +348,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         are_label_parts: list[str] = []
         are_bindparams: dict[str, str] = {}
 
-        for key, value in memory_labels.items():
-            are_param = f"are_ml_{key}"
-            are_label_parts.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') = :{are_param}")
+        for key_index, (key, value) in enumerate(memory_labels.items()):
+            path_param = f"are_ml_path_{key_index}"
+            are_param = f"are_ml_{key_index}"
+            are_label_parts.append(f'JSON_VALUE("AttackResultEntries".labels, :{path_param}) = :{are_param}')
+            are_bindparams[path_param] = f'$."{key}"'
             are_bindparams[are_param] = str(value)
 
         combined_are = " AND ".join(are_label_parts)
@@ -545,17 +547,19 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         are_label_conditions: list[str] = []
         are_bindparams: dict[str, str] = {}
 
-        for key, raw_value in labels.items():
+        for key_index, (key, raw_value) in enumerate(labels.items()):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
+            path_param = f"are_label_path_{key_index}"
+            are_bindparams[path_param] = f'$."{key}"'
             are_placeholders = []
             for idx, v in enumerate(values):
-                are_param = f"are_label_{key}_{idx}"
+                are_param = f"are_label_{key_index}_{idx}"
                 are_placeholders.append(f":{are_param}")
                 are_bindparams[are_param] = str(v)
             are_in = ", ".join(are_placeholders)
-            are_label_conditions.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') IN ({are_in})")
+            are_label_conditions.append(f'JSON_VALUE("AttackResultEntries".labels, :{path_param}) IN ({are_in})')
 
         are_parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
         if are_label_conditions:

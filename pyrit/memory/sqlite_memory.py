@@ -368,18 +368,23 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[Any]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by memory labels.
-        For SQLite, we use JSON_EXTRACT function to handle JSON fields.
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
-        Matches if labels are on the PromptMemoryEntry itself OR on any
-        AttackResultEntry that shares the same conversation_id.
+        All labels must match one AttackResultEntry that shares the same conversation_id.
 
         Returns:
             list: A list of SQLAlchemy conditions.
         """
         per_key_are_conditions = []
+        label_entries = func.json_each(AttackResultEntry.labels).table_valued("key", "value")
         for key, value in memory_labels.items():
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
-            per_key_are_conditions.append(are_col == str(value))
+            per_key_are_conditions.append(
+                select(1)
+                .select_from(label_entries)
+                .where(label_entries.c.key == key, label_entries.c.value == str(value))
+                .correlate(AttackResultEntry)
+                .exists()
+            )
         return [
             exists().where(
                 and_(
@@ -626,7 +631,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            are_col = func.json_extract(AttackResultEntry.labels, f'$."{key}"')
             per_key_are_conditions.append(are_col.in_(values))
 
         return and_(
