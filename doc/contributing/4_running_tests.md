@@ -33,6 +33,11 @@ prints the 25 slowest test phases. Override the report path with
 CI uploads JUnit reports for every OS, Python version, and extras combination,
 including failed test runs, with those dimensions in each artifact name.
 
+LiteLLM unit tests mock the SDK and do not need tokenizer data or a local HTTP
+server, including when the `litellm` or `all` extra is installed. Real adapter
+and outgoing-header checks run separately as
+[loopback integration tests](./6_integration_tests.md#litellm-loopback-integration-tests).
+
 ## Running a subset while iterating
 
 For a narrower run, invoke `pytest` directly. You can invoke pytest if it's in your path or via python; either `pytest` or `python -m pytest`. For the following examples, we will use `pytest`.

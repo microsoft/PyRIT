@@ -866,6 +866,7 @@ def test_probe_removes_nested_and_legacy_tool_settings(target_type: type[PromptT
         model_name="unknown",
         endpoint="https://example.invalid",
         api_key="not-a-key",
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities()),
         extra_body_parameters=body,
     )
     with _permissive_configuration(target=target):
