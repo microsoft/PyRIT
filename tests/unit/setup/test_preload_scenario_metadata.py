@@ -3,6 +3,7 @@
 
 """Tests for the PreloadScenarioMetadata initializer."""
 
+from threading import get_ident
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,11 +19,13 @@ class TestPreloadScenarioMetadata:
         initializer = PreloadScenarioMetadata()
 
         mock_registry = MagicMock()
-        mock_registry.get_all_registered_class_metadata.return_value = [
-            MagicMock(),
-            MagicMock(),
-            MagicMock(),
-        ]
+        backend_thread = get_ident()
+
+        def get_metadata() -> list[MagicMock]:
+            assert get_ident() != backend_thread
+            return [MagicMock(), MagicMock(), MagicMock()]
+
+        mock_registry.get_all_registered_class_metadata.side_effect = get_metadata
 
         with patch(
             "pyrit.setup.initializers.preload_scenario_metadata.ScenarioRegistry.get_registry_singleton",
