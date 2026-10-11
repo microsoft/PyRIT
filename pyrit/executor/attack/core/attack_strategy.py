@@ -553,15 +553,15 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             context (AttackStrategyContextT): The failed attack's context.
 
         Returns:
-            AtomicAttackIdentifier | None: The identity, or None if it can't be built. The error
-                result is still saved without it.
+            AtomicAttackIdentifier | None: The identity, or None if it cannot be built.
+                Build failures are logged, and the error result is saved without an identity.
         """
         if context._error_result_identifier_builder is None:
             return None
         try:
             return context._error_result_identifier_builder()
         except Exception:
-            self._logger.debug("Could not build the attack identifier for the error result.", exc_info=True)
+            self._logger.warning("Could not build the attack identifier for the error result.", exc_info=True)
             return None
 
     async def _on_error_async(
@@ -933,13 +933,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
-        # Same identity the completed paths record, so class, eval-hash and technique-stat
-        # queries also see a run that ends in an error.
+        context._persisted_attack_result_id = None
+        self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(
             attack_identifier=self.get_identifier()
         )
-        context._persisted_attack_result_id = None
-        self._validate_scoring_expectation(context=context)
         context._attack_result_id = str(uuid.uuid4())
         context._result_role = self.RESULT_ROLE
         lifecycle = _ObjectiveTargetConversationLifecycle(
@@ -962,6 +960,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                     raise
         finally:
             context._objective_target_conversation_lifecycle = None
+            context._error_result_identifier_builder = None
 
         if context._persist_attack_result:
             try:
