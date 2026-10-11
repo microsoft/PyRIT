@@ -145,6 +145,9 @@ class Scenario(ABC):
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
 
+    #: Maximum number of resolved concrete techniques; None leaves the selection unrestricted.
+    MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = None
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Enforce the keyword-only constructor contract on subclasses.
@@ -838,6 +841,15 @@ class Scenario(ABC):
         self._scenario_techniques = self._resolve_scenario_techniques(
             scenario_techniques=params.get("scenario_techniques")
         )
+        limit = self.MAX_CONCRETE_TECHNIQUES
+        if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+                raise ValueError(f"{type(self).__name__}.MAX_CONCRETE_TECHNIQUES must be a positive integer")
+            if len(self._scenario_techniques) > limit:
+                raise ValueError(
+                    f"{type(self).__name__} accepts at most {limit} concrete technique(s); "
+                    f"received {[technique.value for technique in self._scenario_techniques]}."
+                )
         self._technique_converters = params.get("technique_converters") or {}
         self._validate_runtime_configuration()
 

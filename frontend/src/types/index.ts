@@ -771,6 +771,8 @@ export interface ChangeMainConversationResponse {
 // --- Scenarios ---
 
 export interface RegisteredScenario {
+  /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
+  max_concrete_techniques?: number | null
   scenario_name: string
   scenario_type: string
   scenario_version: number

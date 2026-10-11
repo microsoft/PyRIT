@@ -360,6 +360,11 @@ class RegisteredScenario(BaseModel):
         description="Concrete ordered technique expansion for every aggregate selector",
     )
     all_techniques: list[str] = Field(..., description="All available concrete technique names")
+    max_concrete_techniques: int | None = Field(
+        None,
+        ge=1,
+        description="Maximum resolved concrete techniques per run; None means unrestricted. Excludes baseline.",
+    )
     technique_summaries: list[ScenarioTechniqueSummary] = Field(
         default_factory=list,
         description="Descriptions and tags for the available concrete techniques",

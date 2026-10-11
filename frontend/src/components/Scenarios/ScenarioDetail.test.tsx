@@ -654,6 +654,88 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Backend-resolved preset members')).not.toBeInTheDocument()
   })
 
+  it('uses one radio selection when the backend limits the scenario to one technique', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const selected = await screen.findByRole('radio', { name: 'default_technique' })
+    const other = screen.getByRole('radio', { name: 'crescendo' })
+    expect(selected).toBeChecked()
+    expect(other).not.toBeChecked()
+    expect(screen.queryByRole('button', { name: /Multi-turn techniques/ })).not.toBeInTheDocument()
+    await user.click(other)
+    expect(selected).not.toBeChecked()
+    expect(other).toBeChecked()
+    await user.click(other)
+    expect(other).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo'])
+    expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(true)
+  })
+
+  it('allows keyboard changes to a single technique without changing baseline', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await user.click(await screen.findByRole('radio', { name: 'default_technique' }))
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'default_technique' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
+  })
+
+  it('blocks estimates and launch for an over-limit selection until the user selects one technique', async () => {
+    jest.useFakeTimers()
+    const timedUser = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      default_techniques: ['default_technique', 'crescendo'],
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByRole('radio', { name: 'crescendo' })
+    await advanceTimers(300)
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(screen.getAllByRole('alert').some(
+      (alert) => alert.textContent === 'Select at most 1 concrete technique(s).',
+    )).toBe(true)
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await timedUser.click(screen.getByRole('radio', { name: 'default_technique' }))
+    await advanceTimers(300)
+    expect(mockEstimateRun).toHaveBeenCalledWith(
+      'foundry.red_team_agent',
+      expect.objectContaining({ techniques: ['default_technique'] }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('enforces larger limits on both individual and tag selections without counting baseline', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 2,
+      all_techniques: ['default_technique', 'crescendo', 'many_shot'],
+      technique_summaries: [
+        { name: 'default_technique', tags: ['single_turn'] },
+        { name: 'crescendo', tags: ['multi_turn'] },
+        { name: 'many_shot', tags: ['multi_turn'] },
+      ],
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByRole('checkbox', { name: 'crescendo' })
+    expect(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0]).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: 'crescendo' }))
+    expect(screen.getByRole('checkbox', { name: 'many_shot' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeEnabled()
+    await user.click(screen.getByRole('checkbox', { name: 'default_technique' }))
+    await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
+    expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'many_shot' })).toBeChecked()
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo', 'many_shot'])
+    expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(true)
+  })
+
   it('shows technique descriptions and tags', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({

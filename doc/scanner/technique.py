@@ -27,6 +27,10 @@
 # opt-in `extra` catalog is registered. The `crescendo_*` core techniques use simulated
 # conversations; they are not the plain multi-turn Crescendo attack.
 #
+# The catalog declares `max_concrete_techniques=1`. CoPyRIT uses a single-selection
+# technique picker. The backend enforces this limit after aggregate expansion and
+# deduplication. Baseline comparison is separate and does not count toward the limit.
+#
 # Dataset inputs are not supported. Do not set dataset names or size limits. The generic
 # GUI can still show these controls. More than one concrete technique causes an error.
 # This scenario does not add a "continue from conversation" button.

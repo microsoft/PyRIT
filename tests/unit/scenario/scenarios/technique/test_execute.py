@@ -117,6 +117,7 @@ class TestExecute:
             metadata = registry.get_class_metadata(Execute)
             scenario = Execute()
         assert metadata.default_techniques == ("red_teaming",)
+        assert metadata.max_concrete_techniques == 1
         assert not metadata.include_baseline_by_default
         assert metadata.uses_default_adversarial_target
         assert metadata.default_datasets == ()
@@ -136,12 +137,62 @@ class TestExecute:
         ] == ["red_teaming"]
 
     @pytest.mark.parametrize("selection", [["red_teaming", "prompt_sending"], ["MULTI_TURN"], ["ALL"]])
-    def test_multiple_techniques_rejected(self, scorer: MagicMock, selection: list[str]) -> None:
-        scenario = Execute(objective_scorer=scorer)
-        with pytest.raises(ValueError, match="exactly one concrete technique"):
-            scenario._resolve_scenario_techniques(
-                scenario_techniques=[scenario._technique_class[name] for name in selection]
-            )
+    @pytest.mark.parametrize("preview", [True, False])
+    async def test_multiple_techniques_rejected_async(
+        self, *, scorer: MagicMock, selection: list[str], preview: bool
+    ) -> None:
+        scenario = _scenario(scorer=scorer, scenario_techniques=selection)
+        with pytest.raises(ValueError, match="at most 1 concrete technique"):
+            if preview:
+                await scenario.get_run_size_estimate_async()
+            else:
+                await scenario.initialize_async()
+
+    async def test_technique_limit_counts_expanded_unique_members_not_baseline_async(self, scorer: MagicMock) -> None:
+        scenario = _scenario(
+            scorer=scorer,
+            scenario_techniques=["red_teaming", "DEFAULT", "red_teaming"],
+            include_baseline=True,
+        )
+        await scenario.initialize_async()
+        assert len(scenario._scenario_techniques) == 1
+        assert len(scenario._atomic_attacks) == 2
+
+    async def test_catalog_exposes_technique_count_constraint_async(self, scorer: MagicMock) -> None:
+        from pyrit.backend.services.scenario_service import ScenarioService
+        from pyrit.models.catalog.scenario import ScenarioRunSizeEstimateRequest
+
+        with patch.object(Execute, "_get_default_objective_scorer", return_value=scorer):
+            service = ScenarioService()
+            metadata = service._registry._build_metadata("technique.execute", Execute)
+            try:
+                with patch.object(service._registry, "get_registered_class_metadata", return_value=metadata):
+                    catalog = await service.get_scenario_async(scenario_name="technique.execute")
+                assert catalog.max_concrete_techniques == 1
+                with pytest.raises(ValueError, match="at most 1 concrete technique"):
+                    await service.estimate_scenario_run_size_async(
+                        scenario_name="technique.execute",
+                        request=ScenarioRunSizeEstimateRequest(techniques=["red_teaming", "crescendo"]),
+                    )
+                estimate = await service.estimate_scenario_run_size_async(
+                    scenario_name="technique.execute",
+                    request=ScenarioRunSizeEstimateRequest(techniques=["default"], include_baseline=True),
+                )
+                assert estimate.total_attack_count == 2
+            finally:
+                await service.close_async()
+
+    @pytest.mark.parametrize("limit", [0, -1, True])
+    async def test_invalid_declared_technique_limit_rejected_async(self, *, scorer: MagicMock, limit: int) -> None:
+        scenario = _scenario(scorer=scorer)
+        with patch.object(Execute, "MAX_CONCRETE_TECHNIQUES", limit):
+            with pytest.raises(ValueError, match="must be a positive integer"):
+                await scenario.get_run_size_estimate_async()
+
+    def test_technique_limit_is_unrestricted_for_existing_scenarios(self) -> None:
+        from pyrit.scenario.airt import Jailbreak
+
+        assert Jailbreak.MAX_CONCRETE_TECHNIQUES is None
 
     def test_fallback_default_is_single_and_deterministic(self, scorer: MagicMock) -> None:
         AttackTechniqueRegistry.reset_registry_singleton()

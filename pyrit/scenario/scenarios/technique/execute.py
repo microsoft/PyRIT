@@ -81,6 +81,7 @@ class Execute(Scenario):
     VERSION: int = 1
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
+    MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = 1
     PREPENDED_CONVERSATION_HASH_KEY: ClassVar[str] = "prepended_conversation_hash"
 
     @apply_defaults
@@ -143,15 +144,6 @@ class Execute(Scenario):
                 default=None,
             ),
         ]
-
-    def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
-        techniques = super()._resolve_scenario_techniques(scenario_techniques=scenario_techniques)
-        if len(techniques) != 1:
-            raise ValueError(
-                "technique.execute requires exactly one concrete technique; "
-                f"received {[technique.value for technique in techniques]}."
-            )
-        return techniques
 
     def _validate_runtime_configuration(self) -> None:
         super()._validate_runtime_configuration()

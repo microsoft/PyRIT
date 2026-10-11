@@ -45,6 +45,7 @@ class _MetadataScenario:
     """Minimal scenario-shaped metadata source."""
 
     BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Enabled
+    MAX_CONCRETE_TECHNIQUES = None
     uses_default_adversarial_target = False
 
     @classmethod
@@ -88,6 +89,7 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
     metadata = ScenarioRegistry()._build_metadata("sample", _MetadataScenario)
 
     assert metadata.default_technique == "default"
+    assert metadata.max_concrete_techniques is None
     assert metadata.uses_default_adversarial_target is False
     assert metadata.default_techniques == ("one", "two")
     assert metadata.technique_summaries[0].model_dump() == {
