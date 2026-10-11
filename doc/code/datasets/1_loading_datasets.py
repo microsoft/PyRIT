@@ -76,6 +76,7 @@
 # (`prompt_inject_contexts`, `prompt_inject_techniques`), API-key probe corpora (`garak_api_key_services`,
 # `garak_api_key_templates`, `garak_api_key_partial_keys`, `garak_api_key_safe_placeholders`),
 # the API-key service-to-pattern map (`garak_api_key_service_patterns`),
+# ProPILE PII records and prompt templates (`garak_propile_pii`, `garak_propile_templates`),
 # an audio jailbreak set
 # (`garak_audio_achilles_heel`), and visual jailbreak sets (`figstep`, `figstep_pro`).
 

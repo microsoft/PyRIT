@@ -202,12 +202,31 @@ class UTCDateTime(TypeDecorator[datetime]):
     A DateTime type that returns timezone-aware UTC datetimes.
 
     Databases such as SQLite store datetimes without timezone information and return naive
-    ``datetime`` objects. This decorator attaches UTC tzinfo on read so callers always receive
-    aware datetimes, removing the need to normalize at every read site.
+    ``datetime`` objects. This decorator stores every value as naive UTC and attaches UTC tzinfo
+    on read, so callers always receive aware datetimes, removing the need to normalize at every
+    read site.
     """
 
     impl = DateTime
     cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
+        """
+        Convert an aware datetime to naive UTC before it is stored or compared.
+
+        The column has no timezone, so an aware value with another offset would otherwise be
+        stored as its local wall-clock time and read back as UTC. Naive values are taken as UTC.
+
+        Args:
+            value (datetime | None): The value being written or compared.
+            dialect (Any): The database dialect being used.
+
+        Returns:
+            datetime | None: The value as naive UTC, or unchanged if it was naive or None.
+        """
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
 
     def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
         """
