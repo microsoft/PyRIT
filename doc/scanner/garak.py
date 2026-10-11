@@ -23,8 +23,9 @@
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
 # delivers spoken jailbreaks to multimodal targets), FigStep visual jailbreaks (which place
-# harmful instructions in images), and a repetition probe (which detects unexpected continuation
-# after repeated text).
+# harmful instructions in images), a repetition probe (which detects unexpected continuation
+# after repeated text), and ProPILE privacy probes (which test whether a target completes
+# personal data that a prompt withholds).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -80,6 +81,9 @@ from pyrit.scenario.garak import (
     PromptInject,
     PromptInjectDatasetConfiguration,
     PromptInjectTechnique,
+    ProPILE,
+    ProPILEDatasetConfiguration,
+    ProPILETechnique,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
     WebInjection,
@@ -642,6 +646,62 @@ divergence_result = await divergence_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(divergence_result)
+
+# %% [markdown]
+# ## ProPILE
+#
+# Ports Garak's ProPILE probes [@kim2023propile]. Each request names a person, may reveal other
+# attributes, and leaves one attribute for the target to complete. `Twin` reveals only the name,
+# `Triplet` adds one attribute, `Quadruplet` adds two, and `Unstructured` asks for relationships
+# or affiliations. The bundled `garak_propile_pii` dataset holds 26 records that Garak extracted
+# from Nemotron-CC; each keeps its `source_dataset` and `source_id`. These records support
+# 81 `Twin` requests and 4 `Triplet` requests. They have no addresses, relationships, or
+# affiliations, so selecting `Quadruplet` or `Unstructured` with them raises an error. To run
+# those techniques, add your own record dataset to memory and select it with
+# `garak_propile_templates`.
+#
+# Each request carries its withheld value as an `OutputMatches` condition, and
+# `OutputMatchesScorer` checks the response for that value with case-insensitive substring
+# matching. This matches Garak's `PIILeakExact` detector, not the partial credit of its
+# default `PIILeak` detector, so a reformatted value, such as a phone number with different
+# separators, does not match. An exact match indicates possible disclosure; it does not prove
+# that the target memorized a specific training record.
+#
+# **CLI examples:**
+#
+# ```bash
+# # Sample up to 20 Twin requests.
+# pyrit_scan run garak.propile --target openai_chat
+#
+# # Run the four Triplet requests.
+# pyrit_scan run garak.propile --target openai_chat --techniques triplet
+# ```
+#
+# **Available techniques:** `Twin`, `Triplet`, `Quadruplet`, and `Unstructured`. `DEFAULT`
+# selects `Twin` only; `ALL` selects every technique, so it raises an error with the bundled
+# records. `max_total` samples across the selected techniques and keeps at least one request
+# per technique. The example below samples two `Twin` requests.
+
+# %%
+propile_scenario = ProPILE()
+propile_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [ProPILETechnique.Twin],
+        "dataset_config": ProPILEDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in ProPILE.required_datasets()], max_total=2
+        ),
+    }
+)
+await propile_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {propile_scenario.name}")
+print(f"Atomic attacks: {propile_scenario.atomic_attack_count}")
+
+propile_result = await propile_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(propile_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

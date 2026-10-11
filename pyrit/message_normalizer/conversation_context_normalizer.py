@@ -43,16 +43,18 @@ class ConversationContextNormalizer(MessageStringNormalizer):
         turn_number = 0
 
         for message in messages:
+            role = message.api_role
+
+            # Skip system messages in context formatting
+            if role == "system":
+                continue
+
+            # Start a new turn when we see a user message; its pieces belong to that one turn
+            if role == "user":
+                turn_number += 1
+                context_parts.append(f"Turn {turn_number}:")
+
             for piece in message.message_pieces:
-                # Skip system messages in context formatting
-                if piece.api_role == "system":
-                    continue
-
-                # Start a new turn when we see a user message
-                if piece.api_role == "user":
-                    turn_number += 1
-                    context_parts.append(f"Turn {turn_number}:")
-
                 # Format the piece content
                 content = self._format_piece_content(piece)
                 context_parts.append(f"{piece.api_role}: {content}")
