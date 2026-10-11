@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import SearchReplaceConverter
@@ -20,10 +20,14 @@ from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPr
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import (
+    DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
+)
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.scenarios.garak._prompt_injection import sample_with_coverage
 from pyrit.score import (
     SubStringScorer,
     TrueFalseCompositeScorer,
@@ -58,7 +62,6 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         self,
         *,
         goal_texts: Sequence[str] | None = None,
-        max_dataset_size: int | None = DEFAULT_MAX_DATASET_SIZE,
         **kwargs: Any,
     ) -> None:
         """
@@ -66,15 +69,20 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
 
         Args:
             goal_texts (Sequence[str] | None): Text that the target is asked to return.
-            max_dataset_size (int | None): Maximum selected groups. Defaults to 12; None selects all groups.
             **kwargs (Any): Arguments for ``DatasetAttackConfiguration``.
 
         Raises:
             ValueError: If goal texts are empty or duplicated.
         """
-        super().__init__(max_dataset_size=max_dataset_size, **kwargs)
+        super().__init__(**kwargs)
         goal_texts = _DEFAULT_GOAL_TEXTS if goal_texts is None else goal_texts
         self._set_goal_texts(goal_texts=goal_texts)
+
+    def _default_max_total(self) -> int:
+        return self.DEFAULT_MAX_DATASET_SIZE
+
+    def _default_max_per_dataset(self) -> Literal["all"]:
+        return "all"
 
     def _set_goal_texts(self, *, goal_texts: Sequence[str]) -> None:
         """
@@ -113,9 +121,9 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
         """
         return sample_with_coverage(
             groups_by_dataset=groups_by_dataset,
-            cap=self.max_dataset_size,
+            cap=self.max_total,
             required_keys=self._goal_texts,
-            key=lambda group: (group.objective.metadata or {})["goal_text"],
+            key=lambda _, group: (group.objective.metadata or {})["goal_text"],
         )
 
     def validate_configuration(self) -> None:
@@ -126,6 +134,8 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             DatasetConstraintError: If the sources are unsupported or the cap cannot cover all goals.
         """
         super().validate_configuration()
+        if any(self.source_limit(source.name) != "all" for source in self.sources):
+            raise DatasetConstraintError("PromptInject ingredient sources must be uncapped; use max_total.")
         if not self.dataset_names:
             raise DatasetConstraintError(
                 "PromptInject requires the prompt_inject_contexts dataset; inline seeds are not supported."
@@ -135,8 +145,8 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
             raise DatasetConstraintError(
                 f"PromptInject requires exactly these datasets: {sorted(required_dataset_names)}."
             )
-        cap = self.max_dataset_size
-        if cap is not None and cap < len(self._goal_texts):
+        cap = self.max_total
+        if cap != "all" and cap < len(self._goal_texts):
             raise DatasetConstraintError(
                 f"PromptInject max_dataset_size ({cap}) must be at least the number of goal_texts "
                 f"({len(self._goal_texts)})."
@@ -259,8 +269,9 @@ class PromptInject(Scenario):
             version=self.VERSION,
             technique_class=PromptInjectTechnique,
             default_dataset_config=PromptInjectDatasetConfiguration(
-                dataset_names=self.required_datasets(),
-                max_dataset_size=PromptInjectDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
+                sources=[DatasetSource(name=name) for name in self.required_datasets()],
+                max_per_dataset="all",
+                max_total=PromptInjectDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
                 goal_texts=self.DEFAULT_GOAL_TEXTS,
             ),
             objective_scorer=objective_scorer,

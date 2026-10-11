@@ -44,9 +44,7 @@ def __getattr__(name: str) -> object:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
 
     builder = getattr(import_module(module_name), builder_name)
-    value = builder()
-    globals()[name] = value
-    return value
+    return builder()
 
 
 def reset_dynamic_technique_caches() -> None:

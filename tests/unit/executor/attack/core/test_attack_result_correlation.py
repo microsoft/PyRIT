@@ -3,7 +3,9 @@
 
 import asyncio
 import json
+import logging
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from unit.mocks import MockPromptTarget
@@ -21,8 +23,11 @@ from pyrit.executor.attack import (
     SingleTurnAttackContext,
 )
 from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialChildAttack
+from pyrit.executor.attack.core.attack_strategy import _DefaultAttackStrategyEventHandler
+from pyrit.executor.core import Strategy
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackResultMetadata,
@@ -105,6 +110,22 @@ class _BranchingAttack(PromptSendingAttack):
             await self._branch_memory.duplicate_conversation_async(conversation_id=context.conversation_id)
         )
         return result
+
+
+class _FailingStrategy(Strategy[SingleTurnAttackContext[AttackParameters], AttackResult]):
+    """A generic strategy with an attack context but no component identifier."""
+
+    def _validate_context(self, *, context: SingleTurnAttackContext[AttackParameters]) -> None:
+        pass
+
+    async def _setup_async(self, *, context: SingleTurnAttackContext[AttackParameters]) -> None:
+        pass
+
+    async def _perform_async(self, *, context: SingleTurnAttackContext[AttackParameters]) -> AttackResult:
+        raise ValueError("strategy failed")
+
+    async def _teardown_async(self, *, context: SingleTurnAttackContext[AttackParameters]) -> None:
+        pass
 
 
 async def _owned_ids_async(memory: SQLiteMemory, attack_result_id: str) -> set[str]:
@@ -276,11 +297,10 @@ async def test_standalone_sequential_results_record_their_roles_without_a_parent
 ) -> None:
     target = _RecordingTarget(fail=fail)
     seed_group = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+    child = PromptSendingAttack(objective_target=target)
     sequential = SequentialAttack(
         objective_target=target,
-        child_attacks=[
-            SequentialChildAttack(strategy=PromptSendingAttack(objective_target=target), seed_group=seed_group)
-        ],
+        child_attacks=[SequentialChildAttack(strategy=child, seed_group=seed_group)],
     )
 
     if fail:
@@ -299,6 +319,14 @@ async def test_standalone_sequential_results_record_their_roles_without_a_parent
         AttackResultRole.ORCHESTRATION,
         AttackResultRole.TARGET_FACING,
     }
+    if fail:
+        for result in stored:
+            assert result.atomic_attack_identifier is not None
+            assert result.atomic_attack_identifier.eval_hash is not None
+            expected = sequential if result.attribution_data["result_role"] == "orchestration" else child
+            technique = result.atomic_attack_identifier.get_child("attack_technique")
+            assert technique is not None
+            assert technique.get_child("attack") == expected.get_identifier()
 
 
 async def test_history_from_an_earlier_execution_is_copied_into_a_new_conversation_async(
@@ -378,3 +406,108 @@ async def test_child_attack_conversations_link_to_the_child_async(sqlite_instanc
     for child in children:
         assert await _owned_ids_async(sqlite_instance, child.attack_result_id) == {child.conversation_id}
     assert await _owned_ids_async(sqlite_instance, result.attack_result_id) == set()
+
+
+async def test_error_result_records_the_attack_identity_async(sqlite_instance: SQLiteMemory) -> None:
+    attack = PromptSendingAttack(objective_target=_RecordingTarget(fail=True))
+    context = SingleTurnAttackContext(params=AttackParameters(objective="objective"))
+
+    with pytest.raises(RuntimeError):
+        await attack.execute_with_context_async(context=context)
+
+    [stored] = await sqlite_instance.get_attack_results_async(attack_classes=["PromptSendingAttack"])
+    assert stored.outcome == AttackOutcome.ERROR
+    assert stored.atomic_attack_identifier is not None
+    technique = stored.atomic_attack_identifier.get_child("attack_technique")
+    assert technique is not None
+    assert technique.get_child("attack") == attack.get_identifier()
+    assert stored.atomic_attack_identifier.eval_hash is not None
+    assert context._error_result_identifier_builder is None
+
+
+@pytest.mark.parametrize("builder_stage", ["get_identifier", "build"])
+async def test_error_identifier_failure_preserves_original_error_and_result_async(
+    sqlite_instance: SQLiteMemory, caplog: pytest.LogCaptureFixture, builder_stage: str
+) -> None:
+    attack = PromptSendingAttack(objective_target=_RecordingTarget())
+    context = SingleTurnAttackContext(params=AttackParameters(objective="objective"))
+    original_error = ValueError("attack failed")
+    builder_error = RuntimeError("identifier failed")
+    builder_owner = attack if builder_stage == "get_identifier" else AtomicAttackIdentifier
+
+    with (
+        patch.object(attack, "_perform_async", new_callable=AsyncMock, side_effect=original_error),
+        patch.object(builder_owner, builder_stage, side_effect=builder_error) as builder,
+        caplog.at_level(logging.WARNING),
+        pytest.raises(RuntimeError, match="attack failed") as raised,
+    ):
+        await attack.execute_with_context_async(context=context)
+
+    assert raised.value.__cause__ is original_error
+    builder.assert_called_once()
+    [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[context.attack_result_id])
+    assert stored.outcome is AttackOutcome.ERROR
+    assert stored.error_type == "ValueError"
+    assert stored.error_message == "attack failed"
+    assert stored.atomic_attack_identifier is None
+    assert context._error_result_persistence_error is None
+    assert context._persisted_attack_result_id == stored.attack_result_id
+    assert context._error_result_identifier_builder is None
+    [record] = [record for record in caplog.records if "Could not build the attack identifier" in record.message]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is not None
+    assert record.exc_info[1] is builder_error
+
+
+async def test_generic_strategy_error_result_does_not_require_an_identifier_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    strategy = _FailingStrategy(
+        context_type=SingleTurnAttackContext,
+        event_handler=_DefaultAttackStrategyEventHandler(),
+    )
+    context = SingleTurnAttackContext(params=AttackParameters(objective="objective"))
+
+    with pytest.raises(RuntimeError, match="strategy failed") as raised:
+        await strategy.execute_with_context_async(context=context)
+
+    assert isinstance(raised.value.__cause__, ValueError)
+    [stored] = await sqlite_instance.get_attack_results_async(objective="objective")
+    assert stored.outcome is AttackOutcome.ERROR
+    assert stored.error_message == "strategy failed"
+    assert stored.atomic_attack_identifier is None
+    assert context._persisted_attack_result_id == stored.attack_result_id
+
+
+@pytest.mark.parametrize("first_fails", [False, True])
+async def test_reused_context_records_the_current_attack_identity_async(
+    sqlite_instance: SQLiteMemory, first_fails: bool
+) -> None:
+    first = PromptSendingAttack(objective_target=_RecordingTarget(fail=first_fails))
+    second = PromptSendingAttack(
+        objective_target=_RecordingTarget(fail=True),
+        attack_converter_config=AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[_RecordingConverter()])
+        ),
+    )
+    context = SingleTurnAttackContext(params=AttackParameters(objective="objective"))
+
+    if first_fails:
+        with pytest.raises(RuntimeError, match="target unavailable"):
+            await first.execute_with_context_async(context=context)
+    else:
+        await first.execute_with_context_async(context=context)
+    first_id = context.attack_result_id
+    assert context._error_result_identifier_builder is None
+
+    with pytest.raises(RuntimeError, match="target unavailable"):
+        await second.execute_with_context_async(context=context)
+
+    assert context.attack_result_id != first_id
+    assert context._error_result_identifier_builder is None
+    for result_id, attack in ((first_id, first), (context.attack_result_id, second)):
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[result_id])
+        assert stored.atomic_attack_identifier is not None
+        assert stored.atomic_attack_identifier == AtomicAttackIdentifier.build(
+            attack_identifier=attack.get_identifier()
+        )

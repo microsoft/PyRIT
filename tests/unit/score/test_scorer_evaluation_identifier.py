@@ -101,7 +101,14 @@ class TestScorerEvaluationIdentifierEvalHash:
 class TestCompositeEvaluationOrder:
     @pytest.mark.parametrize(
         "aggregator",
-        [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND, TrueFalseScoreAggregator.MAJORITY],
+        [
+            TrueFalseScoreAggregator.OR,
+            TrueFalseScoreAggregator.AND,
+            TrueFalseScoreAggregator.MAJORITY,
+            TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY,
+            TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY,
+            TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY,
+        ],
     )
     def test_permutations_preserve_eval_identity_and_content_order(self, aggregator: TrueFalseAggregatorFunc) -> None:
         children = [SubStringScorer(substring=value) for value in ("a", "b", "c")]
@@ -120,15 +127,25 @@ class TestCompositeEvaluationOrder:
             assert restored.hash == identifier.hash
             assert ScorerEvaluationIdentifier(restored).eval_hash == identifier.eval_hash
 
-    def test_nested_permutations_preserve_eval_identity(self) -> None:
+    @pytest.mark.parametrize(
+        "outer_aggregator, inner_aggregator",
+        [
+            (TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND),
+            (TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY, TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY),
+            (TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY, TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY),
+        ],
+    )
+    def test_nested_permutations_preserve_eval_identity(
+        self, *, outer_aggregator: TrueFalseAggregatorFunc, inner_aggregator: TrueFalseAggregatorFunc
+    ) -> None:
         a, b, c = [SubStringScorer(substring=value) for value in ("a", "b", "c")]
         first = TrueFalseCompositeScorer(
-            aggregator=TrueFalseScoreAggregator.OR,
-            scorers=[TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[a, b]), c],
+            aggregator=outer_aggregator,
+            scorers=[TrueFalseCompositeScorer(aggregator=inner_aggregator, scorers=[a, b]), c],
         )
         second = TrueFalseCompositeScorer(
-            aggregator=TrueFalseScoreAggregator.OR,
-            scorers=[c, TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[b, a])],
+            aggregator=outer_aggregator,
+            scorers=[c, TrueFalseCompositeScorer(aggregator=inner_aggregator, scorers=[b, a])],
         )
         assert first.get_identifier().eval_hash == second.get_identifier().eval_hash
         assert first.get_identifier().hash != second.get_identifier().hash
@@ -142,6 +159,12 @@ class TestCompositeEvaluationOrder:
             (TrueFalseScoreAggregator.MAJORITY, [a, b]),
             (TrueFalseScoreAggregator.MAJORITY, [a, a, b]),
             (TrueFalseScoreAggregator.MAJORITY, [a, b, b]),
+            (TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY, [a, b]),
+            (TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY, [a, c]),
+            (TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY, [a, b]),
+            (TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY, [a, b]),
+            (TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY, [a, a, b]),
+            (TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY, [a, b, b]),
         ]
         hashes = {
             TrueFalseCompositeScorer(aggregator=aggregator, scorers=scorers).get_identifier().eval_hash
@@ -149,15 +172,26 @@ class TestCompositeEvaluationOrder:
         }
         assert len(hashes) == len(configurations)
 
-    def test_custom_aggregator_with_builtin_name_remains_ordered(self) -> None:
+    @pytest.mark.parametrize(
+        "aggregator",
+        [
+            TrueFalseScoreAggregator.OR,
+            TrueFalseScoreAggregator.AND,
+            TrueFalseScoreAggregator.MAJORITY,
+            TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY,
+            TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY,
+            TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY,
+        ],
+    )
+    def test_custom_aggregator_with_builtin_name_remains_ordered(self, aggregator: TrueFalseAggregatorFunc) -> None:
         def first_score(scores: Iterable[Score]) -> ScoreAggregatorResult:
             return TrueFalseScoreAggregator.OR([next(iter(scores))])
 
-        first_score.__name__ = TrueFalseScoreAggregator.OR.__name__
+        first_score.__name__ = aggregator.__name__
         a, b = [SubStringScorer(substring=value) for value in ("a", "b")]
         first = TrueFalseCompositeScorer(aggregator=first_score, scorers=[a, b]).get_identifier()
         second = TrueFalseCompositeScorer(aggregator=first_score, scorers=[b, a]).get_identifier()
-        builtin = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.OR, scorers=[a, b]).get_identifier()
+        builtin = TrueFalseCompositeScorer(aggregator=aggregator, scorers=[a, b]).get_identifier()
 
         assert "sub_scorers_order_independent" not in first.params
         assert first.eval_hash != second.eval_hash
