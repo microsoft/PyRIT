@@ -916,7 +916,12 @@ class Scenario(ABC):
         else:
             await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
-        context = self._build_scenario_context(seed_groups_by_dataset=seed_groups_by_dataset)
+        # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
+        new_result_id = uuid.uuid4()
+        context = self._build_scenario_context(
+            seed_groups_by_dataset=seed_groups_by_dataset,
+            scenario_result_id=self._scenario_result_id or str(new_result_id),
+        )
         self._atomic_attacks = await self._build_atomic_attacks_async(context=context)
 
         # Build the canonical scenario identifier once params/techniques/datasets
@@ -958,6 +963,7 @@ class Scenario(ABC):
         }
 
         result = ScenarioResult(
+            id=new_result_id,
             scenario_identifier=scenario_identifier,
             scenario_description=self._description,
             labels=self._memory_labels,
@@ -1385,7 +1391,12 @@ class Scenario(ABC):
         """
         return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
 
-    def _build_scenario_context(self, *, seed_groups_by_dataset: dict[str, list[AttackSeedGroup]]) -> ScenarioContext:
+    def _build_scenario_context(
+        self,
+        *,
+        seed_groups_by_dataset: dict[str, list[AttackSeedGroup]],
+        scenario_result_id: str | None = None,
+    ) -> ScenarioContext:
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
@@ -1398,6 +1409,7 @@ class Scenario(ABC):
             seed_groups_by_dataset (dict[str, list[AttackSeedGroup]]): Seed groups already
                 resolved once (see ``_resolve_seed_groups_by_dataset_async``). The flat
                 ``context.seed_groups`` is derived from these so both views share one sample.
+            scenario_result_id (str | None): The id of the ``ScenarioResult`` this run writes to.
 
         Returns:
             ScenarioContext: The immutable inputs for atomic-attack construction.
@@ -1420,6 +1432,7 @@ class Scenario(ABC):
             include_baseline=self._include_baseline,
             seed_groups=seed_groups,
             seed_groups_by_dataset=seed_groups_by_dataset,
+            scenario_result_id=scenario_result_id,
         )
 
     @abstractmethod
