@@ -366,6 +366,53 @@ export interface CreateConverterRequest {
   params?: Record<string, unknown>
 }
 
+export interface TechniqueInstance {
+  name: string
+  description?: string | null
+  attack_type: string
+  tags: string[]
+  uses_adversarial: boolean
+  uses_default_adversarial_target: boolean
+  /** Supplied factory creation inputs, with live component credentials omitted. */
+  creation_statement: string
+}
+
+export interface TechniqueTypeEntry {
+  attack_type: string
+  description: string
+  parameters: Parameter[]
+  supports_adversarial: boolean
+  supports_converters: boolean
+}
+
+export interface TechniqueListResponse {
+  items: TechniqueInstance[]
+  pagination: PaginationInfo
+}
+
+export interface TechniqueTypeResponse {
+  items: TechniqueTypeEntry[]
+}
+
+export interface CreateTechniqueRequest {
+  name: string
+  description?: string
+  tags: string[]
+  type: string
+  params: Record<string, unknown>
+  request_converters?: string[]
+  response_converters?: string[]
+  adversarial_chat?: string
+  adversarial_system_prompt?: string
+  adversarial_seed_prompt?: string
+  adversarial_prompt_template?: string
+}
+
+export interface RegistryReferenceOption {
+  name: string
+  type: string
+}
+
 export interface Parameter {
   name: string
   type_name: string

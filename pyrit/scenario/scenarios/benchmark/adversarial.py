@@ -69,7 +69,7 @@ def _get_benchmark_adversarial_guidance() -> str:
     return SeedPrompt.from_yaml_file(EXECUTOR_SEED_PROMPT_PATH / "benchmark" / "adversarial_guidance.yaml").value
 
 
-@cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_benchmark_technique() -> type[ScenarioTechnique]:
     """
     Build the ``BenchmarkTechnique`` enum from the registered factory catalog.
@@ -100,7 +100,7 @@ def _build_benchmark_technique() -> type[ScenarioTechnique]:
         for factory in registry.get_factories_or_raise().values()
         if factory.uses_adversarial and factory.adversarial_chat is None
     ]
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="BenchmarkTechnique",
         factories=factories,
         default_names={"role_play_video_game", "crescendo_simulated", "tap"},

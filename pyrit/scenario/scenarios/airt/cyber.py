@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import logging
-from functools import cache
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _CYBER_DEFAULT_TECHNIQUE_NAMES = {"red_teaming"}
 
 
-@cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_cyber_technique() -> type[ScenarioTechnique]:
     """
     Build the Cyber technique class dynamically from the registered technique factories.
@@ -45,12 +45,10 @@ def _build_cyber_technique() -> type[ScenarioTechnique]:
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-
     registry = AttackTechniqueRegistry.get_registry_singleton()
     factories = list(registry.get_factories_or_raise().values())
 
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="CyberTechnique",
         factories=factories,
         default_names=_CYBER_DEFAULT_TECHNIQUE_NAMES,
