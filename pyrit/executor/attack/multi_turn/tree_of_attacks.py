@@ -216,14 +216,31 @@ class _TAPAttackConfiguration:
         Raises:
             ValueError: If a search limit is less than one.
         """
-        validations = (
-            (self.tree_depth, "The tree depth must be at least 1."),
-            (self.tree_width, "The tree width must be at least 1."),
-            (self.branching_factor, "The branching factor must be at least 1."),
-            (self.batch_size, "The batch size must be at least 1."),
+        self.validate_limits(
+            {
+                "tree_depth": self.tree_depth,
+                "tree_width": self.tree_width,
+                "branching_factor": self.branching_factor,
+                "batch_size": self.batch_size,
+            }
         )
-        for value, message in validations:
-            if value < 1:
+
+    @staticmethod
+    def validate_limits(params: dict[str, Any]) -> None:
+        """
+        Validate supplied search limits without constructing attack components.
+
+        Raises:
+            ValueError: If a search limit is less than one.
+        """
+        validations = (
+            ("tree_depth", "The tree depth must be at least 1."),
+            ("tree_width", "The tree width must be at least 1."),
+            ("branching_factor", "The branching factor must be at least 1."),
+            ("batch_size", "The batch size must be at least 1."),
+        )
+        for name, message in validations:
+            if name in params and params[name] < 1:
                 raise ValueError(message)
 
 
@@ -1554,6 +1571,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     DEFAULT_ADVERSARIAL_SEED_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
     )
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """Validate TAP search limits without constructing an attack."""
+        super().validate_constructor_parameters(params)
+        _TAPAttackConfiguration.validate_limits(params)
 
     @apply_defaults
     def __init__(

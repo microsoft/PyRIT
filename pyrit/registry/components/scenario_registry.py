@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
+from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -88,6 +89,25 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
     """
 
     _DISCOVERY_PACKAGE = "pyrit.scenario.scenarios"
+
+    def _ensure_metadata(self) -> dict[str, ScenarioMetadata]:
+        """
+        Refresh the bounded metadata snapshot when the factory pool changes.
+
+        Returns:
+            dict[str, ScenarioMetadata]: The current metadata snapshot.
+        """
+        with self._metadata_build_lock:
+            while True:
+                revision = AttackTechniqueRegistry.get_registry_singleton().catalog_revision
+                with self._catalog_lock:
+                    if getattr(self, "_technique_revision", None) != revision:
+                        self._metadata_cache = None
+                        self._catalog_version += 1
+                        self._technique_revision = revision
+                metadata = super()._ensure_metadata()
+                if revision == AttackTechniqueRegistry.get_registry_singleton().catalog_revision:
+                    return metadata
 
     def _discover(self) -> None:
         """Materialize every built-in scenario before subclass discovery."""

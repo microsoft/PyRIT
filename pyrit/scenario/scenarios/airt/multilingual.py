@@ -108,21 +108,26 @@ def _extra_default_factories() -> dict[str, AttackTechniqueFactory]:
     return {_PROMPT_SENDING: _prompt_sending_factory()}
 
 
-@cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_multilingual_technique() -> type[ScenarioTechnique]:
     """
     Build the Multilingual technique class from text-compatible registered factories.
+
+    Scenario-local factories override registered factories before compatibility
+    filtering, as they do during execution.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
+    pool = registry.get_factories_or_raise()
+    pool.update(_extra_default_factories())
     factories = [
         factory
-        for factory in list(registry.get_factories_or_raise().values()) + list(_extra_default_factories().values())
+        for factory in pool.values()
         if factory.can_append_request_converter(converter_type=TranslationConverter)
     ]
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="MultilingualTechnique",
         factories=factories,
         default_names={_PROMPT_SENDING},

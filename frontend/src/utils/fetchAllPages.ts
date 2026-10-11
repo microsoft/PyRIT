@@ -17,11 +17,14 @@ const DEFAULT_MAX_PAGES = 50
  * Guards against a server bug that repeats the same cursor (which would
  * otherwise loop forever) by stopping as soon as a cursor is seen twice, and
  * against an unbounded loop via `maxPages`.
+ * Set `requireComplete` to reject invalid cursors or the page limit instead of
+ * returning a partial list.
  */
 export async function fetchAllPages<T>(
   fetchPage: (cursor: string | undefined) => Promise<CursorPage<T>>,
   maxPages: number = DEFAULT_MAX_PAGES,
   getKey?: (item: T) => string,
+  requireComplete = false,
 ): Promise<T[]> {
   const items: T[] = []
   let cursor: string | undefined
@@ -41,16 +44,18 @@ export async function fetchAllPages<T>(
         items.push(item)
       }
     }
-    if (!response.pagination.has_more || !response.pagination.next_cursor) {
-      break
+    if (!response.pagination.has_more) {
+      return items
     }
     const nextCursor = response.pagination.next_cursor
-    if (seenCursors.has(nextCursor)) {
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      if (requireComplete) throw new Error('The registry returned an invalid page cursor.')
       break
     }
     seenCursors.add(nextCursor)
     cursor = nextCursor
   }
 
+  if (requireComplete) throw new Error('The registry exceeded the page limit.')
   return items
 }

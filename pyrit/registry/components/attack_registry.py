@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.models.identifiers import AttackIdentifier
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -47,3 +48,19 @@ class AttackRegistry(Registry["AttackStrategy", RegistryMetadata]):
     def _metadata_class(self) -> type[RegistryMetadata]:
         """Return the shared constructor metadata type."""
         return RegistryMetadata
+
+    def validate_constructor_parameters(self, *, attack_class: type[AttackStrategy], params: dict[str, Any]) -> None:
+        """
+        Validate attack-owned constraints with constructor defaults, without constructing an attack.
+
+        Execution targets and scorers stay deferred. Validation must not use them.
+
+        Raises:
+            ValueError: If the attack rejects its supplied configuration.
+        """
+        effective = resolve_constructor_defaults(
+            class_type=attack_class,
+            arguments=params,
+            excluded_parameters={"objective_target", "attack_adversarial_config", "attack_scoring_config"},
+        )
+        attack_class.validate_constructor_parameters(effective)
