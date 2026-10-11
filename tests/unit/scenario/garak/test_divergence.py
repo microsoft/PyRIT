@@ -5,6 +5,7 @@
 
 from collections import Counter
 from pathlib import Path
+from typing import Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -124,7 +125,9 @@ class TestDivergence:
         await _initialize_async(
             scenario=scenario,
             corpus=corpus,
-            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=None),
+            config=DivergenceDatasetConfiguration(
+                dataset_names=["garak_divergence"], max_per_dataset="all", max_total="all"
+            ),
             techniques=techniques,
         )
         assert len(_groups(scenario)) == 36
@@ -144,8 +147,8 @@ class TestDivergence:
             assert all(group.prompts[0].metadata["repeat_word"] == condition.text for group in attack.seed_groups)
             assert attack.attack_technique.attack._objective_scorer is scenario._objective_scorer
 
-    @pytest.mark.parametrize("size", [None, 1, 7, 36])
-    async def test_runtime_budget_matches_estimate(self, corpus: list[Seed], size: int | None) -> None:
+    @pytest.mark.parametrize("size", [None, 1, 7, 36, "all"])
+    async def test_runtime_budget_matches_estimate(self, corpus: list[Seed], size: int | Literal["all"] | None) -> None:
         scenario = Divergence()
         args = ScenarioConfigurationResolver.resolve_configuration(
             scenario_name="garak.divergence",
@@ -162,8 +165,9 @@ class TestDivergence:
         ):
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
             await scenario.initialize_async()
-        assert estimate.estimated_attack_count == (size or 10)
-        assert len(_groups(scenario)) == (size or 10)
+        total = None if size == "all" else size or 10
+        assert estimate.estimated_attack_count == total
+        assert len(_groups(scenario)) == (total if total is not None else 36)
 
     async def test_resume_preserves_sample_and_group_identity(self, corpus: list[Seed]) -> None:
         scenario = Divergence()
@@ -266,7 +270,9 @@ class TestDivergence:
             scenario=scenario,
             corpus=corpus,
             target=target,
-            config=DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=None),
+            config=DivergenceDatasetConfiguration(
+                dataset_names=["garak_divergence"], max_per_dataset="all", max_total="all"
+            ),
         )
         word_by_prompt = {seed.value: seed.metadata["repeat_word"] for seed in corpus}
 

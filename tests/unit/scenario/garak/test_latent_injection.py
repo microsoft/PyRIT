@@ -90,18 +90,27 @@ class TestLatentDefaults:
     @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     @pytest.mark.parametrize(
         ("kwargs", "expected_cap"),
-        [({}, 92), ({"max_dataset_size": None}, None), ({"max_dataset_size": 23}, 23)],
+        [
+            ({}, 92),
+            ({"max_dataset_size": None}, 92),
+            ({"max_total": "default"}, 92),
+            ({"max_total": ""}, 92),
+            ({"max_dataset_size": "all"}, "all"),
+            ({"max_total": "all"}, "all"),
+            ({"max_dataset_size": 23}, 23),
+        ],
     )
     async def test_configuration_defaults_resolve_with_family_coverage_async(
-        self, *, kwargs: dict[str, int | None], expected_cap: int | None
+        self, *, kwargs: dict[str, int | str | None], expected_cap: int | str
     ) -> None:
         config = _config(**kwargs)
+        await config.prepare_async()
         groups = await config.get_attack_seed_groups_async()
         assert config.max_dataset_size == expected_cap
         assert len(config.coverage_keys) == 23
         assert {config._coverage_key(group) for group in groups} == set(config.coverage_keys)
         full = await config.get_attack_seed_groups_async(apply_sampling=False)
-        assert len(groups) == (min(expected_cap, len(full)) if expected_cap is not None else len(full))
+        assert len(groups) == (min(expected_cap, len(full)) if isinstance(expected_cap, int) else len(full))
         assert len(full) > 92
 
     @pytest.mark.usefixtures("mock_garak_dataset_fetch")
@@ -122,9 +131,10 @@ class TestLatentDefaults:
     async def test_all_families_and_separators_async(self) -> None:
         # The dataset tests fingerprint the full population; this test covers each family/trigger and separator.
         cap = LatentInjectionDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE
-        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES, max_dataset_size=cap)
+        config = _config(families=LatentInjectionDatasetConfiguration.FAMILIES, max_total=cap)
         scenario = LatentInjection(harm_scorer=SubStringScorer(substring="harm"))
         await _initialize_async(scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.ALL])
+        config = scenario._dataset_config
         assert {key[0] for key in config.coverage_keys} == set(config.FAMILIES)
         assert len(scenario._atomic_attacks) == len(config.coverage_keys) * 14
         assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == cap * 14
@@ -148,8 +158,10 @@ class TestLatentDefaults:
 
     async def test_auto_fetch_false_and_wrong_configs_async(self) -> None:
         config = _config(auto_fetch=False)
-        with patch.object(config, "_fetch_dataset_async") as fetch:
-            with pytest.raises(DatasetConstraintError, match="auto_fetch is disabled"):
+        with patch(
+            "pyrit.datasets.seed_datasets.seed_dataset_provider.SeedDatasetProvider.get_providers_by_name_async"
+        ) as fetch:
+            with pytest.raises(DatasetConstraintError, match="fetch is 'never'"):
                 await _initialize_async(LatentInjection(), dataset_config=config)
         fetch.assert_not_called()
         with pytest.raises(DatasetConstraintError, match="only supports"):
@@ -167,7 +179,7 @@ class TestLatentDefaults:
 
     @pytest.mark.parametrize("cap", [0, -1])
     def test_invalid_constructor_budget(self, cap: int) -> None:
-        with pytest.raises(ValueError, match="max_dataset_size"):
+        with pytest.raises(ValueError, match="max_total"):
             _config(max_dataset_size=cap)
 
     @pytest.mark.parametrize(("family", "cap"), [("fact_eiffel", 20), ("fact_legal", 20), ("whois_snippet", 10)])
@@ -186,9 +198,9 @@ class TestLatentDefaults:
 class TestLatentPopulation:
     async def test_budget_coverage_and_full_resolution_async(self) -> None:
         config = _config(families=["whois", "resume"], max_dataset_size=4)
-        with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(3)):
+        with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(3)):
             flat = await config.get_attack_seed_groups_async()
-        with patch("pyrit.scenario.scenarios.garak._prompt_injection.random", random.Random(3)):
+        with patch("pyrit.scenario.core.dataset_sampling.random", random.Random(3)):
             grouped = await config.get_attack_groups_by_dataset_async()
         assert [group.logical_id for group in flat] == [
             group.logical_id for groups in grouped.values() for group in groups
@@ -197,7 +209,7 @@ class TestLatentPopulation:
         assert {config._coverage_key(group) for group in flat} == set(config.coverage_keys)
         full = await config.get_attack_seed_groups_async(apply_sampling=False)
         assert len(full) == 12
-        config.max_dataset_size = None
+        config.max_dataset_size = "all"
         assert len(await config.get_attack_seed_groups_async()) == 12
         for group in full:
             assert group.prompts[0].source == "https://example.test/context"
@@ -210,8 +222,8 @@ class TestLatentPopulation:
     )
     async def test_runtime_budget_is_validated_without_sampling_async(self, cap: int, message: str) -> None:
         config = _config(families=["whois", "resume"])
-        config.max_dataset_size = cap
         with pytest.raises(DatasetConstraintError, match=message):
+            config.max_total = cap
             await config.get_attack_seed_groups_async(apply_sampling=False)
 
     async def test_filters_validators_and_config_identity_async(self, seeded_memory_async: MemoryInterface) -> None:
@@ -230,7 +242,8 @@ class TestLatentPopulation:
             await _initialize_async(
                 scenario, dataset_config=config, scenario_techniques=[LatentInjectionTechnique.Bare]
             )
-        assert scenario._dataset_config is config
+        assert scenario._dataset_config is not config
+        assert type(scenario._dataset_config) is type(config)
         assert config.families == ["whois"]
         assert len(seen) == 1
         assert len(seen[0].seeds) == 24

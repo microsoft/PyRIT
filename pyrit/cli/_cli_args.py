@@ -21,7 +21,7 @@ import logging
 import shlex
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
 
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
@@ -156,6 +156,21 @@ def validate_integer(value: str, *, name: str = "value", min_value: int | None =
         raise ValueError(f"{name} must be at least {min_value}, got: {int_value}")
 
     return int_value
+
+
+def parse_dataset_limit(value: str) -> int | Literal["all", "default"]:
+    """
+    Parse a positive total limit, ``default``, or ``all``.
+
+    Returns:
+        int | Literal["all", "default"]: The requested total limit.
+
+    Raises:
+        ValueError: If the value is not a supported dataset limit.
+    """
+    from pyrit.models.dataset_limit import normalize_dataset_limit
+
+    return normalize_dataset_limit(value)
 
 
 # ---------------------------------------------------------------------------
@@ -412,9 +427,9 @@ ARG_HELP = {
     "database": "Database type to use for memory storage",
     "log_level": "Logging level",
     "dataset_names": "List of dataset names to use instead of scenario defaults (e.g., harmbench advbench). "
-    "Creates a new dataset config; fetches all items unless --max-dataset-size is also specified",
-    "max_dataset_size": "Maximum number of items to use from the dataset (must be >= 1). "
-    "Limits new datasets if --dataset-names provided, otherwise overrides scenario's default limit",
+    "Retains source settings for names already selected by the scenario",
+    "max_dataset_size": "Total attack-group limit (positive integer, 'default', or 'all' for no total limit). "
+    "Omit to retain the scenario default. Per-dataset limits still apply",
     "dataset_filters": "Dataset seed filters as KEY=VALUE tokens "
     "(e.g., harm_categories=cyber data_types=text). Keys filter seeds before sizing. "
     "List values may be comma-separated, but semantics differ per key: "
@@ -625,7 +640,7 @@ _DATASET_NAMES_ARG = _ArgSpec(
 _MAX_DATASET_SIZE_ARG = _ArgSpec(
     flags=["--max-dataset-size"],
     result_key="max_dataset_size",
-    parser=lambda v: validate_integer(v, name="--max-dataset-size", min_value=1),
+    parser=parse_dataset_limit,
 )
 _DATASET_FILTERS_ARG = _ArgSpec(
     flags=["--dataset-filters"],
@@ -674,8 +689,7 @@ def _parse_shell_arguments(*, parts: list[str], arg_specs: list[_ArgSpec]) -> di
         arg_specs: Argument specifications that this command accepts.
 
     Returns:
-        Dictionary mapping each spec's ``result_key`` to its parsed value,
-        defaulting to ``None`` for arguments not present in *parts*.
+        Dictionary mapping supplied arguments to their parsed values. Absent arguments are omitted.
 
     Raises:
         ValueError: On unknown flags or missing values.
@@ -686,8 +700,7 @@ def _parse_shell_arguments(*, parts: list[str], arg_specs: list[_ArgSpec]) -> di
         for flag in spec.flags:
             flag_to_spec[flag] = spec
 
-    # Initialise result with None defaults
-    result: dict[str, Any] = {spec.result_key: None for spec in arg_specs}
+    result: dict[str, Any] = {}
 
     i = 0
     while i < len(parts):
@@ -731,8 +744,8 @@ def parse_run_arguments(*, args_string: str, declared_params: list[Parameter] | 
             ``scenario__<name>`` in the result dict.
 
     Returns:
-        Dictionary mapping built-in result_keys (and ``scenario__*`` keys for
-        any declared params) to their parsed values. ``scenario_name`` is
+        Dictionary mapping supplied built-in result_keys (and ``scenario__*`` keys for
+        supplied declared params) to their parsed values. ``scenario_name`` is
         always populated from the first positional token.
 
     Raises:
@@ -762,9 +775,9 @@ def parse_list_targets_arguments(*, args_string: str) -> dict[str, Any]:
         args_string: Space-separated argument string (e.g., "--initializers target").
 
     Returns:
-        Dictionary with parsed arguments:
-            - initializers: list[str | dict[str, Any]] | None
-            - initialization_scripts: list[str] | None
+        Dictionary containing only supplied arguments:
+            - initializers: list[str | dict[str, Any]]
+            - initialization_scripts: list[str]
 
     Raises:
         ValueError: If parsing or validation fails.

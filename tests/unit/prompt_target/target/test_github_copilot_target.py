@@ -1506,30 +1506,41 @@ async def test_normalizer_surfaces_lifecycle_failures_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("startup_delay_seconds", [0.0, 2.1])
 async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay_async(
     *,
     sdk: Any,
     client: NonCallableMagicMock,
+    startup_delay_seconds: float,
 ) -> None:
     session = client.create_session.return_value
     target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=0.01)
+    send_entered = asyncio.Event()
+
+    async def start_async() -> None:
+        await asyncio.sleep(startup_delay_seconds)
+
+    client.start.side_effect = start_async
 
     async def stall_send_async(*_args: Any, **_kwargs: Any) -> None:
+        send_entered.set()
         await asyncio.Event().wait()
 
     session.send.side_effect = stall_send_async
     session.send_and_wait.side_effect = partial(sdk.CopilotSession.send_and_wait, session)
-    with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
-        # A bare watchdog TimeoutError must not satisfy the normalizer-wrapped failure.
-        await asyncio.wait_for(
-            _send_normalized_async(target=target, original_value="Reply exactly HELLO."),
-            timeout=2.0,
-        )
-    assert isinstance(exc_info.value.__cause__, TimeoutError)
-    session.send.assert_awaited_once()
-    client.delete_session.assert_awaited_once_with("sdk-session-id")
-    client.stop.assert_not_awaited()
-    await target.cleanup_target_async()
+    send_task = asyncio.create_task(_send_normalized_async(target=target, original_value="Reply exactly HELLO."))
+    try:
+        await asyncio.wait_for(send_entered.wait(), timeout=10.0)
+        with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
+            # A bare watchdog TimeoutError must not satisfy the normalizer-wrapped failure.
+            await asyncio.wait_for(send_task, timeout=10.0)
+        assert isinstance(exc_info.value.__cause__, TimeoutError)
+        session.send.assert_awaited_once()
+        client.delete_session.assert_awaited_once_with("sdk-session-id")
+        client.stop.assert_not_awaited()
+    finally:
+        await _cancel_tasks_async(send_task)
+        await target.cleanup_target_async()
     client.stop.assert_awaited_once()
 
 
@@ -2122,7 +2133,7 @@ async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(
             await asyncio.wait_for(target.cleanup_target_async(), timeout=2.0)
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 async def test_normalizer_stops_owned_client_when_startup_is_cancelled_async(
     *,
     sdk: Any,

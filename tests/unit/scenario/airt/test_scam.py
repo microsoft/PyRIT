@@ -54,6 +54,9 @@ def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
     attack_seed_groups = list(mock_memory_seed_groups)
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=attack_seed_groups)
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_scam": attack_seed_groups})
     mock_config.dataset_names = ["airt_scam"]
@@ -231,7 +234,7 @@ class TestScamInitialization:
         # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups.
         # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching.
         with patch(
-            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async",
             new_callable=AsyncMock,
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})

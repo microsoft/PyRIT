@@ -8,7 +8,7 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable  # noqa: TC003 - registry annotation resolution
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -31,8 +31,6 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from a2a.client import Client
     from a2a.types import a2a_pb2
 

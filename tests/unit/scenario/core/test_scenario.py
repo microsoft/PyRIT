@@ -12,6 +12,7 @@ import pytest
 from unit.mocks import make_scenario_identifier, make_scenario_result
 
 from pyrit.analytics import compute_scenario_statistics
+from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -23,6 +24,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioRunPlanGroupKind,
     ScenarioRunState,
+    SeedDataset,
     SeedObjective,
     SeedPrompt,
 )
@@ -31,6 +33,7 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetSource,
     ScenarioIdentifier,
     ScenarioResult,
 )
@@ -992,6 +995,9 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [
                 AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")]),
@@ -1025,6 +1031,9 @@ class TestScenarioBaselineOnlyExecution:
 
         # Create a mock dataset config with seed groups
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective 1")])]
         }
@@ -1060,6 +1069,9 @@ class TestScenarioBaselineOnlyExecution:
         )
 
         mock_dataset_config = MagicMock(spec=DatasetConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
 
         # None techniques with no baseline: _get_atomic_attacks_async returns []
         scenario.set_params_from_args(
@@ -1099,6 +1111,9 @@ class TestScenarioBaselineOnlyExecution:
         ]
 
         mock_dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        mock_dataset_config.with_overrides.return_value = mock_dataset_config
+        mock_dataset_config.sources = ()
+        mock_dataset_config.max_total = "all"
         mock_dataset_config.get_attack_groups_by_dataset_async.return_value = {"default": expected_seeds}
 
         scenario.set_params_from_args(
@@ -1407,6 +1422,58 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         return DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
 
+    @pytest.mark.parametrize("resume_state", ["valid", "missing-id", "missing-dataset", "incompatible"])
+    async def test_named_source_preparation_and_resume(self, mock_objective_target, resume_state: str) -> None:
+        config = DatasetAttackConfiguration(sources=[DatasetSource(name="fixture", max_size=3)])
+        provider = MagicMock(spec=SeedDatasetProvider)
+        provider.fetch_dataset_async.return_value = SeedDataset(
+            dataset_name="fixture",
+            seeds=[SeedObjective(value=f"fixture-{index}", dataset_name="fixture") for index in range(10)],
+        )
+        scenario = self._StrategyScenario(name="Named sources", version=1)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        with (
+            patch.object(config, "prepare_async", wraps=config.prepare_async) as prepare,
+            patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fixture": provider}),
+        ):
+            await scenario.initialize_async()
+        prepare.assert_awaited_once()
+        provider.fetch_dataset_async.assert_awaited_once()
+        baseline, strategy = scenario._atomic_attacks
+        assert baseline.seed_groups == strategy.seed_groups
+        assert len(strategy.seed_groups) == 3
+        original_plan = scenario._build_run_plan()
+
+        if resume_state == "missing-dataset":
+            await scenario._memory.remove_seeds_from_memory_async(dataset_name="fixture")
+        result_id = (
+            "00000000-0000-0000-0000-000000000000" if resume_state == "missing-id" else scenario._scenario_result_id
+        )
+        resumed = self._StrategyScenario(
+            name="Named sources",
+            version=2 if resume_state == "incompatible" else 1,
+            scenario_result_id=result_id,
+        )
+        resumed.set_params_from_args(args={"objective_target": mock_objective_target, "dataset_config": config})
+        with (
+            patch.object(config, "prepare_async", side_effect=AssertionError("Resume must not prepare")) as prepare,
+            patch.object(
+                SeedDatasetProvider, "get_providers_by_name_async", side_effect=AssertionError("No lookup")
+            ) as lookup,
+            patch(
+                "pyrit.scenario.core.dataset_configuration.random.sample", side_effect=AssertionError("No resampling")
+            ) as sample,
+        ):
+            if resume_state == "valid":
+                await resumed.initialize_async()
+                assert resumed._build_run_plan() == original_plan
+            else:
+                with pytest.raises(ValueError):
+                    await resumed.initialize_async()
+        prepare.assert_not_awaited()
+        lookup.assert_not_awaited()
+        sample.assert_not_called()
+
     async def test_resume_reconstructs_persisted_subset_without_resampling(self, mock_objective_target):
         config = self._make_config()
 
@@ -1691,6 +1758,9 @@ class TestScenarioResumption:
             aggregator=aggregator, scorers=[SubStringScorer(substring=value) for value in ("a", "b")]
         )
         dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        dataset_config.with_overrides.return_value = dataset_config
+        dataset_config.sources = ()
+        dataset_config.max_total = "all"
         dataset_config.get_attack_groups_by_dataset_async.return_value = {
             "default": [AttackSeedGroup(seeds=[SeedObjective(value="test objective")])]
         }

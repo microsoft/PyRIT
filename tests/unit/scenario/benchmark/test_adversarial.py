@@ -78,7 +78,13 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, CompoundDatasetAttackConfiguration
+from pyrit.scenario.core import (
+    AtomicAttack,
+    BaselineAttackPolicy,
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetSource,
+)
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.scenarios.benchmark.adversarial import (
@@ -119,6 +125,37 @@ _DEFAULT_BENCHMARK_TECHNIQUE_NAMES = {
     "crescendo_simulated",
     "tap",
 }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_named_source_limits_keep_benchmark_selection_stable() -> None:
+    bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+    bench._dataset_config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="a", max_size=2), DatasetSource(name="b", max_size=3)],
+        max_total=4,
+    )
+    groups = {
+        name: [
+            AttackSeedGroup(seeds=[SeedObjective(value=f"{name}-{index}", harm_categories=[str(index % 2)])])
+            for index in range(8)
+        ]
+        for name in ("a", "b")
+    }
+    with patch.object(
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        side_effect=lambda **_: {name: list(items) for name, items in groups.items()},
+    ) as read:
+        first = await bench._resolve_seed_groups_by_dataset_async()
+        second = await bench._resolve_seed_groups_by_dataset_async()
+        full = await bench._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+    assert first == second
+    assert sum(map(len, first.values())) == 4
+    assert len(first.get("a", [])) <= 2
+    assert len(first.get("b", [])) <= 3
+    assert sum(map(len, full.values())) == 16
+    assert all(call.kwargs == {"apply_sampling": False} for call in read.await_args_list)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -234,12 +271,15 @@ async def test_compound_estimate_uses_initialization_cap_async(
         assert estimate.estimated_attack_count == outer_limit
 
     expected_count = outer_limit if outer_limit is not None else 6
-    assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit)
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(outer_limit if outer_limit is not None else "all")
     assert all(
         [cap.count for cap in dataset.configured_caps] == ([] if outer_limit is None else [outer_limit])
         for dataset in estimate.datasets
     )
-    with patch.object(bench._memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds:
+    with (
+        patch.object(bench._memory, "get_seed_dataset_names_async", return_value=list(seeds_by_dataset)),
+        patch.object(bench._memory, "get_seeds_async", new_callable=AsyncMock, side_effect=get_seeds) as read_seeds,
+    ):
         await bench.initialize_async()
     read_seeds.assert_awaited()
     plan = bench._build_run_plan()
@@ -255,9 +295,9 @@ async def test_compound_estimate_uses_initialization_cap_async(
 class TestAdversarialBenchmarkMetadata:
     """Tests for class-level metadata that doesn't depend on any runtime state."""
 
-    def test_version_is_5(self):
-        """VERSION 6 identifies runs using shared benchmark guidance and task-achievement scoring."""
-        assert AdversarialBenchmark.VERSION == 6
+    def test_version_is_7(self) -> None:
+        """VERSION 7 identifies runs using independent named-source and total limits."""
+        assert AdversarialBenchmark.VERSION == 7
 
     def test_baseline_attack_policy_is_forbidden(self):
         """A baseline contributes no signal to a model-comparison benchmark, so it is forbidden."""
@@ -577,6 +617,7 @@ class TestAdversarialBenchmarkInit:
         )
 
         with (
+            patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
             patch.object(bench, "_resolve_seed_groups_by_dataset_async", new_callable=AsyncMock, return_value={}),
             patch.object(bench, "_build_atomic_attacks_async", new_callable=AsyncMock, return_value=[]),
         ):
@@ -918,8 +959,9 @@ class TestGetAtomicAttacksCrossProduct:
 
         # Dataset config: one dataset with one real seed group (AtomicAttack hashes objectives).
         seed_group = AttackSeedGroup(seeds=[SeedObjective(value="benchmark_objective_1")])
-        bench._dataset_config = MagicMock()
-        bench._dataset_config.max_dataset_size = None
+        bench._dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        bench._dataset_config.sources = ()
+        bench._dataset_config.max_total = "all"
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         return bench
@@ -929,6 +971,18 @@ class TestGetAtomicAttacksCrossProduct:
         bench = self._make_bench_with_targets(target_names=["adv_a", "adv_b"])
         result = await _build_atomic_attacks(bench)
         assert len(result) == 2
+
+    async def test_technique_converters_are_passed_to_the_builder(self):
+        bench = self._make_bench_with_targets(target_names=["adv_a"])
+        converters = {"red_teaming": [MagicMock()]}
+        bench._technique_converters = converters
+
+        with patch(
+            "pyrit.scenario.scenarios.benchmark.adversarial.MatrixAtomicAttackBuilder.build", return_value=[]
+        ) as build:
+            await _build_atomic_attacks(bench)
+
+        assert build.call_args.kwargs["technique_converters"] is converters
 
     async def test_atomic_attack_name_format_is_technique__target_dataset(self):
         """Name format: ``{technique}__{target}_{dataset}`` (preserves VERSION=2 cache key shape)."""
@@ -966,8 +1020,9 @@ class TestGetAtomicAttacksCrossProduct:
         bench._scenario_techniques = [red_teaming_technique]
 
         seed_group = AttackSeedGroup(seeds=[SeedObjective(value="display_group_regression_objective")])
-        bench._dataset_config = MagicMock()
-        bench._dataset_config.max_dataset_size = None
+        bench._dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        bench._dataset_config.sources = ()
+        bench._dataset_config.max_total = "all"
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         result = await _build_atomic_attacks(bench)
@@ -1404,8 +1459,9 @@ class TestSkipCachedFilter:
         bench._scenario_techniques = [red_teaming_technique]
 
         seed_group = AttackSeedGroup(seeds=[SeedObjective(value="skip_cached_objective")])
-        bench._dataset_config = MagicMock()
-        bench._dataset_config.max_dataset_size = None
+        bench._dataset_config = MagicMock(spec=DatasetAttackConfiguration)
+        bench._dataset_config.sources = ()
+        bench._dataset_config.max_total = "all"
         bench._dataset_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"harmbench": [seed_group]})
 
         return bench
@@ -1417,7 +1473,7 @@ class TestSkipCachedFilter:
 
     async def test_sampling_is_stable_across_fresh_runs(self):
         bench = self._make_bench(use_cached=False)
-        bench._dataset_config.max_dataset_size = 1
+        bench._dataset_config.max_total = 1
         group_a = AttackSeedGroup(seeds=[SeedObjective(value="objective a")])
         group_b = AttackSeedGroup(seeds=[SeedObjective(value="objective b")])
 
@@ -1438,7 +1494,7 @@ class TestSkipCachedFilter:
 
     async def test_sampling_balances_single_harm_categories_without_cache(self) -> None:
         bench = self._make_bench(use_cached=False)
-        bench._dataset_config.max_dataset_size = 24
+        bench._dataset_config.max_total = 24
         categories = [
             "election_critical_information",
             "hate_v3",
