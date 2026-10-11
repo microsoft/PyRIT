@@ -1,0 +1,775 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Real factory projections, REST shapes, and revision-aware scenario caches."""
+
+import ast
+import asyncio
+import threading
+from collections.abc import Iterator
+from enum import Enum
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from pyrit.backend.main import app
+from pyrit.backend.mappers.technique_mappers import technique_to_instance
+from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scenario_service import ScenarioService
+from pyrit.backend.services.service_lifecycle import close_services_async
+from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.models import (
+    AttackSeedGroup,
+    ScenarioRunSizeEstimate,
+    ScenarioRunSizeEstimateRequest,
+    SeedObjective,
+    SeedPrompt,
+    SeedSimulatedConversation,
+)
+from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, ScenarioRegistry, TargetRegistry
+from pyrit.scenario import Scenario
+from pyrit.scenario.core import AttackTechniqueFactory
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.scenarios import airt
+from pyrit.scenario.scenarios.airt.leakage import Leakage
+from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+from pyrit.score import SubStringScorer
+from pyrit.setup.initializers.techniques import build_technique_factories
+from unit.mocks import MockPromptTarget
+
+
+class _Mode(Enum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
+
+class _ModeAttack(PromptSendingAttack):
+    def __init__(self, *, objective_target: MockPromptTarget, modes: list[_Mode]) -> None:
+        super().__init__(objective_target=objective_target)
+        self.modes = modes
+        self.mode_values = [mode.value for mode in modes]
+
+
+@pytest.fixture
+def registry(patch_central_database: Any) -> Iterator[AttackTechniqueRegistry]:
+    get_technique_service.cache_clear()
+    with patch.dict(Registry._singletons, {}, clear=True):
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registry.register_from_factories(build_technique_factories())
+        yield registry
+    get_technique_service.cache_clear()
+
+
+async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackTechniqueRegistry) -> None:
+    service = TechniqueService()
+    response = await service.list_async()
+    assert {entry.name for entry in response.items} == set(registry.instances.get_names())
+    item = await service.get_async(response.items[0].name)
+    assert item == response.items[0]
+    assert item is not None
+    assert set(item.model_dump()) == {
+        "name",
+        "description",
+        "attack_type",
+        "tags",
+        "uses_adversarial",
+        "uses_default_adversarial_target",
+        "creation_statement",
+    }
+    assert await service.get_async("missing") is None
+    AttackRegistry.get_registry_singleton().register_class(PromptSendingAttack, name="alias")
+    metadata = await service.types_async()
+    assert "alias" in {entry.attack_type for entry in metadata.items}
+    assert set(metadata.model_dump()) == {"items"}
+    assert all(
+        parameter.name
+        not in {"objective_target", "attack_adversarial_config", "attack_scoring_config", "attack_converter_config"}
+        for entry in metadata.items
+        for parameter in entry.parameters
+    )
+    assert metadata.model_dump_json()
+    created = await service.create_async(CreateTechniqueRequest(name="from_alias", type="alias"))
+    assert created.attack_type == "PromptSendingAttack"
+
+
+@pytest.mark.parametrize("modes", [["enabled", "disabled", "enabled"], []])
+def test_rest_enum_list_metadata_create_and_construction(
+    *,
+    registry: AttackTechniqueRegistry,
+    compatibility_headers: dict[str, str],
+    modes: list[str],
+) -> None:
+    from pyrit.executor.attack import AttackScoringConfig
+
+    AttackRegistry.get_registry_singleton().register_class(_ModeAttack, name="mode_attack")
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques/types")
+    assert response.status_code == 200, response.text
+    metadata = next(item for item in response.json()["items"] if item["attack_type"] == "mode_attack")
+    parameter = next(item for item in metadata["parameters"] if item["name"] == "modes")
+    assert parameter["is_list"]
+    assert parameter["choices"] == ["enabled", "disabled"]
+    response = client.post(
+        "/api/techniques", json={"name": "enum_list", "type": "mode_attack", "params": {"modes": modes}}
+    )
+    assert response.status_code == 201, response.text
+    factory = registry.instances.get("enum_list")
+    assert factory is not None
+    target = MockPromptTarget()
+    technique = factory.create(objective_target=target, attack_scoring_config=AttackScoringConfig())
+    assert isinstance(technique.attack, _ModeAttack)
+    assert technique.attack.modes == [_Mode(mode) for mode in modes]
+    assert technique.attack.mode_values == modes
+    assert target.prompt_sent == []
+    revision = registry.catalog_revision
+    response = client.post(
+        "/api/techniques",
+        json={"name": "bad_enum_list", "type": "mode_attack", "params": {"modes": ["enabled", "missing"]}},
+    )
+    assert response.status_code == 400, response.text
+    assert registry.catalog_revision == revision
+    assert registry.instances.get("bad_enum_list") is None
+
+
+@pytest.mark.parametrize("limit", [1, 3, 200])
+async def test_list_paginates_and_only_projects_requested_factories_async(
+    *, registry: AttackTechniqueRegistry, limit: int
+) -> None:
+    names = registry.instances.get_names()
+    service = TechniqueService()
+    with patch(
+        "pyrit.backend.services.technique_service.technique_to_instance", wraps=technique_to_instance
+    ) as project:
+        first = await service.list_async(limit=limit)
+    assert [item.name for item in first.items] == names[:limit]
+    assert project.call_count == min(limit, len(names))
+    assert first.pagination.limit == limit
+    assert first.pagination.has_more is (len(names) > limit)
+    assert first.pagination.next_cursor == (names[limit - 1] if len(names) > limit else None)
+    assert first.pagination.prev_cursor is None
+    if first.pagination.next_cursor is not None:
+        second = await service.list_async(limit=limit, cursor=first.pagination.next_cursor)
+        assert [item.name for item in second.items] == names[limit : limit * 2]
+        assert second.pagination.prev_cursor == first.pagination.next_cursor
+        assert second.pagination.has_more is (len(names) > limit * 2)
+
+
+async def test_list_empty_and_terminal_pages_async(registry: AttackTechniqueRegistry) -> None:
+    service = TechniqueService()
+    cursor = registry.instances.get_names()[-1]
+    terminal = await service.list_async(limit=3, cursor=cursor)
+    assert terminal.items == []
+    assert terminal.pagination.model_dump() == {
+        "limit": 3,
+        "has_more": False,
+        "next_cursor": None,
+        "prev_cursor": cursor,
+    }
+    with patch.object(registry.instances, "get_all_instances", return_value=[]):
+        empty = await service.list_async()
+    assert empty.items == []
+    assert not empty.pagination.has_more
+    assert empty.pagination.next_cursor is None
+
+
+async def test_list_unknown_cursor_starts_at_first_page_like_targets_async(registry: AttackTechniqueRegistry) -> None:
+    page = await TechniqueService().list_async(limit=3, cursor="missing")
+    assert [item.name for item in page.items] == registry.instances.get_names()[:3]
+    assert page.pagination.prev_cursor == "missing"
+
+
+def test_rest_list_follows_all_pages_with_default_limit(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    for index in range(51):
+        registry.instances.register_runtime(
+            AttackTechniqueFactory(name=f"page_{index:03}", attack_class=PromptSendingAttack)
+        )
+    client = TestClient(app, headers=compatibility_headers)
+    response = client.get("/api/techniques")
+    assert response.status_code == 200, response.text
+    first = response.json()
+    assert len(first["items"]) == 50
+    assert first["pagination"] == {
+        "limit": 50,
+        "has_more": True,
+        "next_cursor": first["items"][-1]["name"],
+        "prev_cursor": None,
+    }
+    response = client.get("/api/techniques", params={"cursor": first["pagination"]["next_cursor"]})
+    assert response.status_code == 200, response.text
+    last = response.json()
+    assert not last["pagination"]["has_more"]
+    assert last["pagination"]["next_cursor"] is None
+    assert [item["name"] for item in first["items"] + last["items"]] == registry.instances.get_names()
+
+
+@pytest.mark.parametrize(
+    "params", [{"limit": 0}, {"limit": 201}, {"limit": -1}, {"limit": "bad"}, {"cursor": "x" * 1025}]
+)
+def test_rest_list_rejects_invalid_pagination(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], params: dict[str, Any]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    assert client.get("/api/techniques", params=params).status_code == 422
+
+
+@pytest.mark.parametrize("name", ["tap", "crescendo_simulated", "role_play_video_game"])
+def test_factory_creation_statement_uses_supplied_inputs_without_creating_attacks(
+    *, registry: AttackTechniqueRegistry, name: str
+) -> None:
+    factory = registry.get_factories_or_raise()[name]
+    identifier = factory.get_identifier()
+    with (
+        patch.object(factory, "create", side_effect=AssertionError("Listing must not construct an attack")),
+        patch.object(factory, "get_identifier", side_effect=AssertionError("Listing does not need identity")),
+    ):
+        item = technique_to_instance(name=name, factory=factory)
+
+    assert factory.get_identifier() == identifier
+    assert item.creation_statement.startswith(factory.get_creation_calls()[0][0] + "(")
+    call = ast.parse(item.creation_statement, mode="eval").body
+    assert isinstance(call, ast.Call)
+    arguments = {keyword.arg for keyword in call.keywords}
+    assert {"name", "description", "technique_tags"} <= arguments
+    assert not {"seed_technique", "uses_adversarial", "scorer_override_policy"} & arguments
+    if name == "tap":
+        assert isinstance(call.func, ast.Name)
+        assert call.func.id == "AttackTechniqueFactory"
+        assert arguments == {"name", "attack_class", "description", "technique_tags"}
+    else:
+        assert isinstance(call.func, ast.Attribute)
+        assert call.func.attr == "with_simulated_conversation"
+    if name == "crescendo_simulated":
+        assert arguments == {"name", "description", "technique_tags"}
+    if name == "role_play_video_game":
+        assert factory.seed_technique is not None
+        seed = factory.seed_technique.seeds[0]
+        assert isinstance(seed, SeedSimulatedConversation)
+        assert isinstance(seed.adversarial_chat_system_prompt, SeedPrompt)
+        assert isinstance(seed.next_message_system_prompt, SeedPrompt)
+        assert item.creation_statement.count(repr(seed.adversarial_chat_system_prompt.value)) == 1
+        assert item.creation_statement.count(repr(seed.next_message_system_prompt.value)) == 1
+
+
+def test_factory_creation_statement_does_not_expose_target_credentials(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    target = OpenAIChatTarget(endpoint="https://local.invalid/v1", model_name="local", api_key="private-test-key")
+    factory = registry.create_factory(name="private_target", attack_type="RedTeamingAttack", adversarial_chat=target)
+    item = technique_to_instance(name=factory.name, factory=factory)
+    assert "adversarial_chat=OpenAIChatTarget(...)" in item.creation_statement
+    assert "private-test-key" not in item.model_dump_json()
+
+
+def test_factory_creation_display_does_not_call_unknown_object_repr(registry: AttackTechniqueRegistry) -> None:
+    class PrivateSettings:
+        def __repr__(self) -> str:
+            raise AssertionError("Display must not inspect private object contents")
+
+    factory = AttackTechniqueFactory(
+        name="private",
+        attack_class=PromptSendingAttack,
+        attack_kwargs={"max_attempts_on_failure": PrivateSettings()},
+    )
+    item = technique_to_instance(name=factory.name, factory=factory)
+    assert "'max_attempts_on_failure': PrivateSettings(...)" in item.creation_statement
+
+
+def test_rest_create_detail_types_and_errors(
+    registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    assert client.get("/api/techniques/types").status_code == 200
+    created = client.post(
+        "/api/techniques",
+        json={
+            "name": "rest_example",
+            "description": "A basic technique",
+            "tags": ["custom"],
+            "type": "PromptSendingAttack",
+            "params": {"max_attempts_on_failure": 0},
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert "'max_attempts_on_failure': 0" in created.json()["creation_statement"]
+    assert client.get("/api/techniques/rest_example").json() == created.json()
+    assert client.get("/api/techniques/missing").status_code == 404
+    assert (
+        client.post("/api/techniques", json={"name": "rest_example", "type": "PromptSendingAttack"}).status_code == 400
+    )
+    assert client.post("/api/techniques", json={"name": "unknown", "type": "missing"}).status_code == 400
+    assert client.post("/api/techniques", json={"name": "bad-name", "type": "PromptSendingAttack"}).status_code == 422
+    assert "unknown" not in registry.instances.get_names()
+
+
+@pytest.mark.parametrize("name", ["get_all_techniques", "get_aggregate_tags", "resolve", "expand", "tags", "mro"])
+def test_rest_rejects_inherited_enum_names_without_changing_scenarios(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], name: str
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    scenario_registry = ScenarioRegistry.get_registry_singleton()
+    scorer = SubStringScorer(substring="yes")
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+        patch.object(scenario_registry, "_discover"),
+    ):
+        scenario_registry.register_class(RapidResponse, name="airt.rapid_response")
+        before = scenario_registry.get_registered_class_metadata("airt.rapid_response")
+        revision = registry.catalog_revision
+        response = client.post("/api/techniques", json={"name": name, "type": "PromptSendingAttack"})
+        assert response.status_code == 400, response.text
+        assert "inherited ScenarioTechnique attribute" in response.json()["detail"]
+        assert registry.catalog_revision == revision
+        assert name not in registry.instances.get_names()
+        assert scenario_registry.get_registered_class_metadata("airt.rapid_response") is before
+
+
+@pytest.mark.parametrize("name", ["first_letter", "image", "prompt_sending"])
+def test_rest_accepts_scenario_local_names(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str], name: str
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    created = client.post(
+        "/api/techniques",
+        json={"name": name, "type": "PromptSendingAttack", "description": "Runtime configuration"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["description"] == "Runtime configuration"
+    assert registry.instances.get(name) is not None
+    assert name in {technique.value for technique in airt.RapidResponseTechnique.get_all_techniques()}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"name": "LEAKAGE", "type": "PromptSendingAttack"},
+        {"name": "local_collision", "type": "PromptSendingAttack", "tags": ["LEAKAGE"]},
+    ],
+)
+def test_rest_rejects_local_selector_collisions_and_preserves_whole_catalog(
+    *,
+    registry: AttackTechniqueRegistry,
+    compatibility_headers: dict[str, str],
+    payload: dict[str, Any],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    scenarios = ScenarioRegistry.get_registry_singleton()
+    scorer = SubStringScorer(substring="yes")
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+        patch.object(scenarios, "_discover"),
+    ):
+        scenarios.register_class(RapidResponse, name="airt.rapid_response")
+        scenarios.register_class(Leakage, name="airt.leakage")
+        before = {name: client.get(f"/api/scenarios/catalog/{name}").json() for name in scenarios.get_class_names()}
+        revision = registry.catalog_revision
+        enum = airt.RapidResponseTechnique
+        response = client.post("/api/techniques", json=payload)
+        assert response.status_code == 400, response.text
+        assert "LeakageTechnique" in response.json()["detail"]
+        assert registry.catalog_revision == revision
+        assert registry.instances.get(payload["name"]) is None
+        assert airt.RapidResponseTechnique is enum
+        for name, metadata in before.items():
+            response = client.get(f"/api/scenarios/catalog/{name}")
+            assert response.status_code == 200, response.text
+            assert response.json() == metadata
+
+
+async def test_candidate_pool_is_not_visible_to_concurrent_catalog_reads_async(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    started = threading.Event()
+    finish = threading.Event()
+    preview = registry.create_factory(name="preview_only", attack_type="PromptSendingAttack")
+    before = airt.RapidResponseTechnique
+    revision = registry.catalog_revision
+
+    @AttackTechniqueRegistry.cache_scenario_technique_class
+    def build_technique() -> type[ScenarioTechnique]:
+        factories = registry.get_factories()
+        if "preview_only" in factories:
+            started.set()
+            if not finish.wait(timeout=10):
+                raise TimeoutError("Candidate validation did not finish")
+        return registry.build_technique_class_from_factories(
+            class_name="ConcurrentTechnique", factories=list(factories.values())
+        )
+
+    validation = asyncio.create_task(
+        asyncio.to_thread(registry.validate_scenario_pools, {**registry.get_factories(), preview.name: preview})
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        assert registry.instances.get("preview_only") is None
+        assert "preview_only" not in registry.get_factories()
+        assert registry.catalog_revision == revision
+        assert airt.RapidResponseTechnique is before
+        assert "preview_only" not in {item.value for item in build_technique().get_all_techniques()}
+    finally:
+        finish.set()
+        await validation
+    assert "preview_only" not in {item.value for item in build_technique().get_all_techniques()}
+
+
+def test_imported_selection_rebinds_only_unchanged_same_catalog_factories(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    registry.register_from_factories([AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack)])
+    imported = airt.RapidResponseTechnique
+    old_values = {item.value for item in imported.get_all_techniques()}
+    selected = next(item for item in imported.get_all_techniques() if item.value == "base")
+    registry.instances.register_runtime(registry.create_factory(name="unrelated", attack_type="PromptSendingAttack"))
+    current = airt.RapidResponseTechnique
+    assert current.resolve([selected], default=current.default()) == [current("base")]
+    assert {item.value for item in current.resolve([imported.ALL], default=current.default())} == old_values
+    assert "unrelated" not in old_values
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.LeakageTechnique.resolve([selected], default=airt.LeakageTechnique.default())
+    registry.instances.unregister("base")
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.RapidResponseTechnique.resolve([selected], default=airt.RapidResponseTechnique.default())
+    registry.instances.register(AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack), name="base")
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.RapidResponseTechnique.resolve([selected], default=airt.RapidResponseTechnique.default())
+    AttackTechniqueRegistry.reset_registry_singleton()
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
+    with pytest.raises(ValueError, match="unsupported techniques"):
+        airt.RapidResponseTechnique.resolve([selected], default=airt.RapidResponseTechnique.default())
+
+
+async def test_launch_survives_registration_between_resolution_and_construction_async(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    registry.register_from_factories([AttackTechniqueFactory(name="base", attack_class=PromptSendingAttack)])
+    scorer = SubStringScorer(substring="yes")
+    target = MockPromptTarget()
+    scenarios = ScenarioRegistry.get_registry_singleton()
+    TargetRegistry.get_registry_singleton().instances.register(target, name="local")
+    service = ScenarioRunService()
+    initialize = service._initialize_scenario_async
+
+    async def register_then_initialize_async(*, request: RunScenarioRequest, init_kwargs: dict[str, Any]) -> Scenario:
+        await TechniqueService().create_async(CreateTechniqueRequest(name="during_launch", type="PromptSendingAttack"))
+        return await initialize(request=request, init_kwargs=init_kwargs)
+
+    try:
+        with (
+            patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+            patch.object(scenarios, "_discover"),
+            patch.object(service, "_initialize_scenario_async", side_effect=register_then_initialize_async),
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
+            ),
+        ):
+            scenarios.register_class(RapidResponse, name="airt.rapid_response")
+            prepared = await service._prepare_run_async(
+                request=RunScenarioRequest(
+                    scenario_name="airt.rapid_response",
+                    target_name="local",
+                    techniques=["base"],
+                    include_baseline=False,
+                )
+            )
+        assert len(prepared.scenario._atomic_attacks) == 1
+        assert isinstance(prepared.scenario._atomic_attacks[0].attack_technique.attack, PromptSendingAttack)
+        assert "during_launch" in registry.instances.get_names()
+        assert target.prompt_sent == []
+    finally:
+        await service.close_async()
+
+
+@pytest.mark.parametrize(
+    ("attack_type", "params"),
+    [
+        ("PromptSendingAttack", {"max_attempts_on_failure": -1}),
+        ("ManyShotJailbreakAttack", {"max_attempts_on_failure": -1}),
+        ("ManyShotJailbreakAttack", {"example_count": 0}),
+        ("ManyShotJailbreakAttack", {"many_shot_examples": []}),
+        ("CrescendoAttack", {"max_backtracks": -1}),
+        ("CrescendoAttack", {"max_turns": 0}),
+        ("RedTeamingAttack", {"max_turns": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"tree_depth": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"tree_width": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"branching_factor": 0}),
+        ("TreeOfAttacksWithPruningAttack", {"batch_size": 0}),
+        ("ChunkedRequestAttack", {"chunk_size": 0}),
+        ("ChunkedRequestAttack", {"total_length": 49}),
+        ("ChunkedRequestAttack", {"chunk_size": 201}),
+        ("ChunkedRequestAttack", {"request_template": "{objective}"}),
+    ],
+)
+async def test_rest_attack_constraints_reject_without_constructing_or_mutating_async(
+    *, registry: AttackTechniqueRegistry, attack_type: str, params: dict[str, Any]
+) -> None:
+    revision = registry.catalog_revision
+    attack_class = AttackRegistry.get_registry_singleton().get_class(attack_type)
+    with patch.object(attack_class, "__init__", autospec=True, side_effect=AssertionError("Must stay deferred")):
+        with pytest.raises(ValueError):
+            await TechniqueService().create_async(
+                CreateTechniqueRequest(name="bad_bounds", type=attack_type, params=params)
+            )
+    assert registry.catalog_revision == revision
+    assert registry.instances.get("bad_bounds") is None
+
+
+async def test_rest_create_and_initialize_numeric_boundary_async(registry: AttackTechniqueRegistry) -> None:
+    service = TechniqueService()
+    revision = registry.catalog_revision
+    with pytest.raises(ValueError, match="non-negative"):
+        await service.create_async(
+            CreateTechniqueRequest(
+                name="bad_attempts", type="PromptSendingAttack", params={"max_attempts_on_failure": -1}
+            )
+        )
+    assert registry.catalog_revision == revision
+    await service.create_async(
+        CreateTechniqueRequest(name="zero_attempts", type="PromptSendingAttack", params={"max_attempts_on_failure": 0})
+    )
+    scorer = SubStringScorer(substring="yes")
+    target = MockPromptTarget()
+    scenario = RapidResponse(objective_scorer=scorer)
+    scenario.set_params_from_args(
+        args={
+            "objective_target": target,
+            "scenario_techniques": [scenario._technique_class("zero_attempts")],
+            "include_baseline": False,
+        }
+    )
+    with patch.object(
+        DatasetAttackConfiguration,
+        "get_attack_groups_by_dataset_async",
+        new_callable=AsyncMock,
+        return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
+    ):
+        await scenario.initialize_async()
+    assert len(scenario._atomic_attacks) == 1
+    attack = scenario._atomic_attacks[0].attack_technique.attack
+    assert isinstance(attack, PromptSendingAttack)
+    assert attack._max_attempts_on_failure == 0
+    assert target.prompt_sent == []
+
+
+def test_rest_numeric_constraint_error_preserves_catalog(
+    *, registry: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    before = client.get("/api/techniques").json()
+    revision = registry.catalog_revision
+    response = client.post(
+        "/api/techniques",
+        json={"name": "bad_attempts", "type": "PromptSendingAttack", "params": {"max_attempts_on_failure": -1}},
+    )
+    assert response.status_code == 400, response.text
+    assert "non-negative integer" in response.json()["detail"]
+    assert registry.catalog_revision == revision
+    assert client.get("/api/techniques").json() == before
+
+
+async def test_warm_catalog_estimates_and_summaries_refresh_without_changing_snapshot_async(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    scorer = SubStringScorer(substring="yes")
+    scenario_registry = ScenarioRegistry.get_registry_singleton()
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=scorer),
+        patch.object(scenario_registry, "_discover"),
+    ):
+        scenario_registry.register_class(RapidResponse, name="airt.rapid_response")
+        old = RapidResponse(objective_scorer=scorer)
+        old_class = airt.RapidResponseTechnique
+        metadata = scenario_registry.get_registered_class_metadata("airt.rapid_response")
+        assert metadata is not None
+        service = ScenarioService()
+        run_service = ScenarioRunService()
+        try:
+            before_estimate = await service._get_default_run_size_estimate_async(metadata=metadata)
+            before_summaries = run_service._get_scenario_technique_summaries(scenario_name="airt.rapid_response")
+            request = ScenarioRunSizeEstimateRequest(techniques=["all"], max_dataset_size=1, include_baseline=False)
+            before_key = service._build_configured_estimate_key(
+                scenario_name="airt.rapid_response", scenario_class=RapidResponse, request=request
+            )
+            before_configured = await service.estimate_scenario_run_size_async(
+                scenario_name="airt.rapid_response", request=request
+            )
+            await TechniqueService().create_async(
+                CreateTechniqueRequest(name="runtime_new", type="PromptSendingAttack", tags=["user_group"])
+            )
+            after_metadata = scenario_registry.get_registered_class_metadata("airt.rapid_response")
+            assert after_metadata is not None
+            assert "runtime_new" in after_metadata.all_techniques
+            assert "runtime_new" not in metadata.all_techniques
+            assert old._technique_class is old_class
+            assert "runtime_new" not in {technique.value for technique in old._technique_class.get_all_techniques()}
+            assert "runtime_new" in {technique.value for technique in airt.RapidResponseTechnique.get_all_techniques()}
+            assert "runtime_new" in run_service._get_scenario_technique_summaries(scenario_name="airt.rapid_response")
+            assert "runtime_new" not in before_summaries
+            await service._get_default_run_size_estimate_async(metadata=after_metadata)
+            assert len(service._estimate_cache) == 2
+            assert before_estimate is not None
+            assert (
+                service._build_configured_estimate_key(
+                    scenario_name="airt.rapid_response", scenario_class=RapidResponse, request=request
+                )
+                != before_key
+            )
+            after_configured = await service.estimate_scenario_run_size_async(
+                scenario_name="airt.rapid_response", request=request
+            )
+            assert before_configured is not None and after_configured is not None
+            assert after_configured.estimated_attack_count > before_configured.estimated_attack_count
+            target = MockPromptTarget()
+            current = RapidResponse(objective_scorer=scorer)
+            current.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "scenario_techniques": [current._technique_class("runtime_new")],
+                    "include_baseline": False,
+                }
+            )
+            with patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value={"local": [AttackSeedGroup(seeds=[SeedObjective(value="local objective")])]},
+            ):
+                await current.initialize_async()
+            assert len(current._atomic_attacks) == 1
+            assert isinstance(current._atomic_attacks[0].attack_technique.attack, PromptSendingAttack)
+            assert target.prompt_sent == []
+        finally:
+            await service.close_async()
+            await run_service.close_async()
+
+
+def test_direct_registration_and_registry_replacement_refresh_exports(registry: AttackTechniqueRegistry) -> None:
+    before = airt.RapidResponseTechnique
+    registry.instances.register(
+        AttackTechniqueFactory(name="direct_new", attack_class=PromptSendingAttack), name="direct_new"
+    )
+    after = airt.RapidResponseTechnique
+    assert after is not before
+    assert "direct_new" in {item.value for item in after.get_all_techniques()}
+    AttackTechniqueRegistry.reset_registry_singleton()
+    replacement = AttackTechniqueRegistry.get_registry_singleton()
+    replacement.register_from_factories(build_technique_factories())
+    current = airt.RapidResponseTechnique
+    assert current is not after
+    assert "direct_new" not in {item.value for item in current.get_all_techniques()}
+
+
+def test_filtered_and_fixed_catalogs_keep_existing_pool_rules(registry: AttackTechniqueRegistry) -> None:
+    from pyrit.scenario.scenarios.airt.jailbreak import _build_jailbreak_technique
+    from pyrit.scenario.scenarios.benchmark.adversarial import _build_benchmark_technique
+
+    fixed = _build_jailbreak_technique()
+    filtered = _build_benchmark_technique()
+    registry.instances.register_runtime(registry.create_factory(name="plain_user", attack_type="PromptSendingAttack"))
+    registry.instances.register_runtime(
+        registry.create_factory(name="adversarial_user", attack_type="RedTeamingAttack")
+    )
+    current = _build_benchmark_technique()
+    names = {item.value for item in current.get_all_techniques()}
+    assert current is not filtered
+    assert "adversarial_user" in names and "plain_user" not in names
+    assert _build_jailbreak_technique() is fixed
+    assert "adversarial_user" not in {item.value for item in fixed.get_all_techniques()}
+
+
+async def test_mutation_does_not_cancel_active_estimate_async(registry: AttackTechniqueRegistry) -> None:
+    service = ScenarioService()
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def pending_async(**kwargs: Any) -> Any:
+        started.set()
+        await finish.wait()
+        return ScenarioRunSizeEstimate.unavailable()
+
+    with patch.object(
+        service, "_run_configured_estimate_with_capacity_async", new=AsyncMock(side_effect=pending_async)
+    ):
+        task = asyncio.create_task(
+            service.estimate_scenario_run_size_async(
+                scenario_name="airt.rapid_response",
+                request=ScenarioRunSizeEstimateRequest(techniques=["all"]),
+            )
+        )
+        await started.wait()
+        registry.instances.register(
+            AttackTechniqueFactory(name="while_running", attack_class=PromptSendingAttack), name="while_running"
+        )
+        assert not task.cancelled()
+        assert all(not work.cancelled() for work in service._configured_estimate_tasks.values())
+        finish.set()
+        assert await task == ScenarioRunSizeEstimate.unavailable()
+    await service.close_async()
+
+
+async def test_lifecycle_clears_technique_binding_async(registry: AttackTechniqueRegistry) -> None:
+    service = get_technique_service()
+    await close_services_async()
+    AttackTechniqueRegistry.reset_registry_singleton()
+    assert get_technique_service() is not service
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"max_attempts_on_failure": False},
+        {"max_attempts_on_failure": "2"},
+        {"max_attempts_on_failure": None},
+        {"attack_converter_config": {"type": "AttackConverterConfig"}},
+        {"prepended_conversation_config": {}},
+    ],
+)
+async def test_rest_parameter_checks_do_not_change_registry_async(
+    registry: AttackTechniqueRegistry, params: dict[str, Any]
+) -> None:
+    before = registry.catalog_revision
+    with pytest.raises(ValueError):
+        await TechniqueService().create_async(
+            CreateTechniqueRequest(name="invalid", type="PromptSendingAttack", params=params)
+        )
+    assert registry.catalog_revision == before
+    assert registry.instances.get("invalid") is None
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"name": "all"},
+        {"name": "types"},
+        {"name": "DEFAULT"},
+        {"name": "bad-name"},
+        {"tags": ["all"]},
+        {"tags": ["alpha", "Alpha"]},
+        {"tags": ["bad-tag"]},
+        {"seed_technique": {"seeds": []}},
+        {"factory_options": {}},
+        {"attack_args": {}},
+        {"adversarial_system_prompt": {"type": "SeedPrompt", "parameters": {"value": "x"}}},
+        {"params": {"number": float("inf")}},
+        {"request_converters": [False]},
+    ],
+)
+def test_request_rejects_invalid_selectors_and_removed_inputs(
+    registry: AttackTechniqueRegistry, extra: dict[str, Any]
+) -> None:
+    from pydantic import ValidationError
+
+    before = registry.catalog_revision
+    with pytest.raises(ValidationError):
+        CreateTechniqueRequest.model_validate({"name": "new", "type": "PromptSendingAttack", **extra})
+    assert registry.catalog_revision == before

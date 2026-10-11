@@ -7,19 +7,26 @@ from __future__ import annotations
 
 import uuid
 import warnings
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind, SeedObjective
-from pyrit.models.identifiers import ComponentIdentifier
+from pyrit.models.identifiers import ComponentIdentifier, ScenarioEvaluationIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration
+from pyrit.scenario.core import AttackTechniqueFactory
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
+from pyrit.scenario.scenarios.adaptive.selectors import EpsilonGreedyTechniqueSelector, SelectorScope
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import TrueFalseScorer
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _MOCK_MANY_SHOT_EXAMPLES = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(100)]
 
@@ -128,8 +135,9 @@ class TestTextAdaptiveBasics:
 
     def test_default_dataset_config(self):
         config = TextAdaptive.default_dataset_config()
-        assert isinstance(config, CompoundDatasetAttackConfiguration)
-        assert all(child.max_dataset_size == 4 for child in config._configurations)
+        assert isinstance(config, DatasetAttackConfiguration)
+        assert config.max_per_dataset == 4
+        assert config.max_total == "all"
         assert config.dataset_names == TextAdaptive.required_datasets()
 
     def test_required_datasets_non_empty(self):
@@ -180,10 +188,18 @@ class TestTextAdaptiveBasics:
         assert estimate.minimum_attack_count is None
         assert estimate.maximum_attack_count is None
 
-    def test_get_technique_class_is_cached(self):
+    def test_get_technique_class_is_cached_across_runtime_catalog_changes(self) -> None:
         cls_a = TextAdaptive.get_technique_class()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registry.instances.register(
+            AttackTechniqueFactory(name="runtime_only", attack_class=PromptSendingAttack),
+            name="runtime_only",
+        )
         cls_b = TextAdaptive.get_technique_class()
         assert cls_a is cls_b
+        assert "runtime_only" not in {technique.value for technique in cls_b.get_all_techniques()}
+        AttackTechniqueRegistry.reset_registry_singleton()
+        assert TextAdaptive.get_technique_class() is cls_a
 
     def test_get_default_technique(self):
         strat = TextAdaptive.get_technique_class().default()
@@ -216,7 +232,7 @@ class TestTextAdaptiveAtomicAttacks:
         **scenario_kwargs,
     ):
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=seed_groups,
@@ -271,7 +287,7 @@ class TestTextAdaptiveAtomicAttacks:
             "hate": [_make_seed_group(value="obj-h1", harm_categories=["hate"])],
         }
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -290,6 +306,77 @@ class TestTextAdaptiveAtomicAttacks:
         # One dispatcher per dataset; all share the same selector identity.
         assert len(selectors_seen) == 2
         assert len({id(s) for s in selectors_seen}) == 1
+
+    async def test_selection_uses_this_run_id_and_resume_repeats_it_async(
+        self, *, mock_objective_target: MagicMock, mock_objective_scorer: MagicMock
+    ) -> None:
+        groups = {"violence": [_make_seed_group(value=f"obj-{i}", harm_categories=["violence"]) for i in range(6)]}
+        seen: list[tuple[str | None, tuple[str, ...]]] = []
+        real_select = EpsilonGreedyTechniqueSelector.select_async
+
+        async def _spy_select_async(
+            self: EpsilonGreedyTechniqueSelector,
+            *,
+            technique_identifiers: Sequence[str],
+            objective: str,
+            num_top_techniques: int = 1,
+            scenario_result_id: str | None = None,
+        ) -> Sequence[str]:
+            picks = await real_select(
+                self,
+                technique_identifiers=technique_identifiers,
+                objective=objective,
+                num_top_techniques=num_top_techniques,
+                scenario_result_id=scenario_result_id,
+            )
+            seen.append((scenario_result_id, tuple(picks)))
+            return picks
+
+        async def _initialize_async(scenario_result_id: str | None = None) -> TextAdaptive:
+            scenario = TextAdaptive(
+                objective_scorer=mock_objective_scorer,
+                selector=EpsilonGreedyTechniqueSelector(epsilon=0.5, random_seed=7, scope=SelectorScope.current_run()),
+                scenario_result_id=scenario_result_id,
+            )
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target, "include_baseline": False})
+            await scenario.initialize_async()
+            return scenario
+
+        with (
+            patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock) as mock_prepare,
+            patch.object(
+                DatasetAttackConfiguration,
+                "get_attack_groups_by_dataset_async",
+                new_callable=AsyncMock,
+                return_value=groups,
+            ) as mock_groups,
+            patch.object(EpsilonGreedyTechniqueSelector, "select_async", _spy_select_async),
+        ):
+            fresh = await _initialize_async()
+            fresh_calls = list(seen)
+            seen.clear()
+            resumed = await _initialize_async(scenario_result_id=fresh._scenario_result_id)
+            resume_calls = list(seen)
+            seen.clear()
+            second = await _initialize_async()
+            stored_results = await fresh._memory.get_scenario_results_async(
+                scenario_result_ids=[fresh._scenario_result_id, second._scenario_result_id]
+            )
+
+        assert len(fresh_calls) == len(resume_calls) == len(seen) == 6
+        assert fresh._scenario_result_id is not None
+        assert resumed._scenario_result_id == fresh._scenario_result_id
+        assert second._scenario_result_id is not None
+        assert second._scenario_result_id != fresh._scenario_result_id
+        assert {run_id for run_id, _ in fresh_calls} == {fresh._scenario_result_id}
+        assert resume_calls == fresh_calls
+        assert {run_id for run_id, _ in seen} == {second._scenario_result_id}
+        assert {str(result.id) for result in stored_results} == {fresh._scenario_result_id, second._scenario_result_id}
+        assert (
+            len({ScenarioEvaluationIdentifier(result.scenario_identifier).eval_hash for result in stored_results}) == 1
+        )
+        assert mock_prepare.await_count == 2
+        assert [call.kwargs["apply_sampling"] for call in mock_groups.await_args_list] == [True, False, True]
 
     async def test_atomic_names_contain_dataset_and_objective_hash(self, mock_objective_target, mock_objective_scorer):
         groups = {
@@ -323,7 +410,7 @@ class TestTextAdaptiveAtomicAttacks:
     async def test_no_usable_techniques_raises(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj")]}
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -351,7 +438,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -398,7 +485,7 @@ class TestTextAdaptiveAtomicAttacks:
         # Only the plain factory (no seed_technique) is compatible.
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -452,7 +539,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -498,7 +585,7 @@ class TestTextAdaptiveAtomicAttacks:
         narrow_factory = _make_fake_factory(scoring_config_type=NarrowScoringConfig)
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -548,7 +635,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -594,7 +681,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -631,7 +718,7 @@ class TestTextAdaptiveAtomicAttacks:
 
         with (
             patch.object(
-                CompoundDatasetAttackConfiguration,
+                DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",
                 new_callable=AsyncMock,
                 return_value=groups,
@@ -661,7 +748,7 @@ class TestTextAdaptiveBaselinePolicy:
     async def test_initialize_async_accepts_explicit_baseline(self, mock_objective_target, mock_objective_scorer):
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -683,7 +770,7 @@ class TestTextAdaptiveBaselinePolicy:
         """
         groups = {"violence": [_make_seed_group(value="obj", harm_categories=["violence"])]}
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,
@@ -709,7 +796,7 @@ class TestTextAdaptiveBaselinePolicy:
             ]
         }
         with patch.object(
-            CompoundDatasetAttackConfiguration,
+            DatasetAttackConfiguration,
             "get_attack_groups_by_dataset_async",
             new_callable=AsyncMock,
             return_value=groups,

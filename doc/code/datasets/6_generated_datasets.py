@@ -76,11 +76,11 @@ for index, seed in enumerate(dataset.seeds, start=1):
 
 # %%
 from pyrit.output import output_scenario_async, output_scenario_attacks_async
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource
 from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
 from pyrit.score import SelfAskTrueFalseScorer
 
-dataset_config = DatasetAttackConfiguration(dataset_names=[dataset_name], auto_fetch=False)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name=dataset_name)], fetch=DatasetFetchPolicy.NEVER)
 scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
 scenario.set_params_from_args(
     args={

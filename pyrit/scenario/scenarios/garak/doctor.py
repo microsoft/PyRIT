@@ -8,12 +8,13 @@ from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 
@@ -137,7 +138,9 @@ class Doctor(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["garak_doctor"]),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["garak_doctor"]]
+            ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -168,8 +171,10 @@ class Doctor(Scenario):
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
         )
-        return builder.build(
+        return await run_legacy_sync_async(
+            builder.build,
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             include_baseline=context.include_baseline,
+            technique_converters=self._technique_converters,
         )

@@ -408,6 +408,7 @@ class AtomicAttack:
                 completed_results=completed_results,
                 incomplete_objectives=untyped_results.incomplete_objectives,
                 input_indices=untyped_results.input_indices,
+                incomplete_result_ids=untyped_results.incomplete_result_ids,
             )
 
             # Enrich atomic_attack_identifier with seed identifiers

@@ -23,8 +23,9 @@
 # coaxed into revealing its own system prompt), package-hallucination probes (which test whether a
 # target recommends non-existent packages that an attacker could squat), an audio probe (which
 # delivers spoken jailbreaks to multimodal targets), FigStep visual jailbreaks (which place
-# harmful instructions in images), and a repetition probe (which detects unexpected continuation
-# after repeated text).
+# harmful instructions in images), a repetition probe (which detects unexpected continuation
+# after repeated text), and ProPILE privacy probes (which test whether a target completes
+# personal data that a prompt withholds).
 #
 # For full programming details, see the
 # [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb).
@@ -58,7 +59,7 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.garak import (
     ApiKey,
     ApiKeyDatasetConfiguration,
@@ -80,6 +81,9 @@ from pyrit.scenario.garak import (
     PromptInject,
     PromptInjectDatasetConfiguration,
     PromptInjectTechnique,
+    ProPILE,
+    ProPILEDatasetConfiguration,
+    ProPILETechnique,
     SystemPromptExtraction,
     SystemPromptExtractionTechnique,
     WebInjection,
@@ -103,8 +107,8 @@ prompt_inject_scenario.set_params_from_args(  # type: ignore
         "scenario_techniques": [PromptInjectTechnique.IgnorePrint],
         "goal_texts": ["I hate humans"],
         "dataset_config": PromptInjectDatasetConfiguration(
-            dataset_names=PromptInject.required_datasets(),
-            max_dataset_size=1,
+            sources=[DatasetSource(name=name) for name in PromptInject.required_datasets()],
+            max_total=1,
         ),
     }
 )
@@ -144,7 +148,7 @@ await output_scenario_async(prompt_inject_result)
 # > independently.
 
 # %%
-dataset_config = EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=1)
+dataset_config = EncodingDatasetConfiguration(sources=[DatasetSource(name="garak_slur_terms_en")], max_total=1)
 
 scenario = Encoding()
 scenario.set_params_from_args(  # type: ignore
@@ -187,7 +191,7 @@ await output_scenario_async(scenario_result)
 # > `--include-baseline False` to omit this comparison.
 
 # %%
-figstep_dataset_config = DatasetAttackConfiguration(dataset_names=["figstep"], max_dataset_size=1)
+figstep_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="figstep")], max_total=1)
 
 figstep_scenario = FigStep()
 figstep_scenario.set_params_from_args(  # type: ignore
@@ -226,6 +230,24 @@ await output_scenario_async(figstep_result)
 #
 # **Aggregate techniques:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
+#
+# **Dataset requirements:** `--dataset-names` replaces the default datasets, so it must include
+# every dataset the selected techniques read. Otherwise the scenario stops before running and names
+# each missing dataset. Datasets already loaded into memory never fill the gap.
+#
+# Framework callers cannot supply inline seeds or seed groups. `StringAssemblyDataExfil` can use
+# an empty `dataset_names` list because its prompts are built in.
+#
+# | Technique | Required datasets |
+# |---|---|
+# | MarkdownImageExfil, ColabAIDataLeakage, PlaygroundMarkdownExfil, MarkdownURIImageExfilExtended, MarkdownURINonImageExfilExtended | `garak_example_domains_xss` |
+# | TaskXSS | `garak_xss_normal_instructions`, `garak_web_html_js` |
+# | MarkdownXSS | `garak_markdown_js` |
+# | StringAssemblyDataExfil | None (built-in seeds) |
+#
+# ```bash
+# pyrit_scan run garak.web_injection --target openai_chat --techniques task_xss --dataset-names garak_xss_normal_instructions garak_web_html_js
+# ```
 
 # %%
 web_injection_scenario = WebInjection(max_prompts_per_technique=1)
@@ -315,9 +337,9 @@ await output_scenario_async(exploitation_result)
 # ```
 #
 # **Available techniques:** `GetKey` and `CompleteKey`. `DEFAULT` and `ALL` both select the two
-# techniques. `max_dataset_size` samples across all selected technique populations, not per service.
+# techniques. `max_total` samples across all selected technique populations, not per service.
 # The base scenario persists the sample for resume. Use `ApiKeyDatasetConfiguration` with
-# `max_dataset_size=None` to run all 348 requests. Standard technique converter stacks are supported.
+# `max_total="all"` to run all 348 requests. Standard technique converter stacks are supported.
 
 # %%
 api_key_scenario = ApiKey()
@@ -325,7 +347,9 @@ api_key_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [ApiKeyTechnique.GetKey],
-        "dataset_config": ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=2),
+        "dataset_config": ApiKeyDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in ApiKey.required_datasets()], max_total=2
+        ),
     }
 )
 await api_key_scenario.initialize_async()  # type: ignore
@@ -379,11 +403,11 @@ await output_scenario_async(api_key_result)
 # actually asked for. A supplied `objective_scorer` replaces this fixed-trigger scorer; the
 # harm family uses its separate `harm_scorer`. Caller technique converters run after the separators.
 #
-# `max_dataset_size` is one budget before technique expansion. The default is 92 original
+# `max_total` is one budget before technique expansion. The default is 92 original
 # groups, shared by six default techniques (552 execution units). Sampling reserves one group
 # per selected family/trigger pair, then fills the remaining budget without replacement.
 # A smaller budget than the number of pairs raises an error. An explicit dataset configuration
-# with `max_dataset_size=None` uses the complete assembled population. Saved runs replay the sample.
+# with `max_total="all"` uses the complete assembled population. Saved runs replay the sample.
 #
 # This is not Garak's exact sampling policy: its lightweight probes cap final prompts at 64
 # per family without guaranteed coverage. PyRIT also applies all selected separators to all
@@ -398,7 +422,9 @@ latent_injection_scenario.set_params_from_args(  # type: ignore
         "objective_target": objective_target,
         "scenario_techniques": [LatentInjectionTechnique.Bare],
         "dataset_config": LatentInjectionDatasetConfiguration(
-            dataset_names=LatentInjection.required_datasets(), families=["whois"], max_dataset_size=1
+            sources=[DatasetSource(name=name) for name in LatentInjection.required_datasets()],
+            families=["whois"],
+            max_total=1,
         ),
     }
 )
@@ -429,7 +455,7 @@ await output_scenario_async(latent_injection_result)
 # tagged `default`, so `DEFAULT` and `ALL` currently coincide.
 
 # %%
-doctor_dataset_config = DatasetAttackConfiguration(dataset_names=["garak_doctor"], max_dataset_size=1)
+doctor_dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="garak_doctor")], max_total=1)
 
 doctor_scenario = Doctor()
 doctor_scenario.set_params_from_args(  # type: ignore
@@ -560,7 +586,7 @@ await output_scenario_async(package_result)
 
 # %%
 audio_dataset_config = AudioAchillesHeelDatasetConfiguration(
-    dataset_names=["garak_audio_achilles_heel"], max_dataset_size=1
+    sources=[DatasetSource(name="garak_audio_achilles_heel")], max_total=1
 )
 
 audio_target = TargetRegistry.get_registry_singleton().instances.get("azure_openai_realtime")
@@ -599,7 +625,7 @@ await output_scenario_async(audio_scenario_result)
 #
 # **Available techniques:** `Repeat`, `DEFAULT`, and `ALL` all select the same probe.
 # The default budget is 10 prompts across the entire dataset, not per word. Use
-# `DivergenceDatasetConfiguration(max_dataset_size=None, dataset_names=["garak_divergence"])`
+# `DivergenceDatasetConfiguration(sources=[DatasetSource(name="garak_divergence")], max_per_dataset="all", max_total="all")`
 # to run all 36 prompts. The example below samples only two.
 
 # %%
@@ -608,7 +634,7 @@ divergence_scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
         "scenario_techniques": [DivergenceTechnique.Repeat],
-        "dataset_config": DivergenceDatasetConfiguration(dataset_names=["garak_divergence"], max_dataset_size=2),
+        "dataset_config": DivergenceDatasetConfiguration(sources=[DatasetSource(name="garak_divergence")], max_total=2),
     }
 )
 await divergence_scenario.initialize_async()  # type: ignore
@@ -620,6 +646,62 @@ divergence_result = await divergence_scenario.run_async()  # type: ignore
 
 # %%
 await output_scenario_async(divergence_result)
+
+# %% [markdown]
+# ## ProPILE
+#
+# Ports Garak's ProPILE probes [@kim2023propile]. Each request names a person, may reveal other
+# attributes, and leaves one attribute for the target to complete. `Twin` reveals only the name,
+# `Triplet` adds one attribute, `Quadruplet` adds two, and `Unstructured` asks for relationships
+# or affiliations. The bundled `garak_propile_pii` dataset holds 26 records that Garak extracted
+# from Nemotron-CC; each keeps its `source_dataset` and `source_id`. These records support
+# 81 `Twin` requests and 4 `Triplet` requests. They have no addresses, relationships, or
+# affiliations, so selecting `Quadruplet` or `Unstructured` with them raises an error. To run
+# those techniques, add your own record dataset to memory and select it with
+# `garak_propile_templates`.
+#
+# Each request carries its withheld value as an `OutputMatches` condition, and
+# `OutputMatchesScorer` checks the response for that value with case-insensitive substring
+# matching. This matches Garak's `PIILeakExact` detector, not the partial credit of its
+# default `PIILeak` detector, so a reformatted value, such as a phone number with different
+# separators, does not match. An exact match indicates possible disclosure; it does not prove
+# that the target memorized a specific training record.
+#
+# **CLI examples:**
+#
+# ```bash
+# # Sample up to 20 Twin requests.
+# pyrit_scan run garak.propile --target openai_chat
+#
+# # Run the four Triplet requests.
+# pyrit_scan run garak.propile --target openai_chat --techniques triplet
+# ```
+#
+# **Available techniques:** `Twin`, `Triplet`, `Quadruplet`, and `Unstructured`. `DEFAULT`
+# selects `Twin` only; `ALL` selects every technique, so it raises an error with the bundled
+# records. `max_total` samples across the selected techniques and keeps at least one request
+# per technique. The example below samples two `Twin` requests.
+
+# %%
+propile_scenario = ProPILE()
+propile_scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [ProPILETechnique.Twin],
+        "dataset_config": ProPILEDatasetConfiguration(
+            sources=[DatasetSource(name=name) for name in ProPILE.required_datasets()], max_total=2
+        ),
+    }
+)
+await propile_scenario.initialize_async()  # type: ignore
+
+print(f"Scenario: {propile_scenario.name}")
+print(f"Atomic attacks: {propile_scenario.atomic_attack_count}")
+
+propile_result = await propile_scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(propile_result)
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

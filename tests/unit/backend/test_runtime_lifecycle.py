@@ -23,9 +23,13 @@ from pyrit.backend.routes import configuration, health
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scenario_run_service import ScenarioRunService, _PreparedRun
 from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.models import ScenarioRunState
+from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.scenario import Scenario
 from pyrit.setup.configuration_loader import ConfigurationLoader
+from unit.mocks import make_scenario_result
 
 
 @pytest.fixture
@@ -287,6 +291,168 @@ async def test_background_estimates_reject_apply(runtime: RuntimeLifecycle) -> N
     assert runtime.state == "ready"
     assert runtime.outcome == "busy"
     lifecycle_module.close_services_async.assert_not_awaited()
+
+
+async def test_http_disconnect_retains_scenario_launch_async(runtime: RuntimeLifecycle) -> None:
+    """HTTP cancellation leaves the middleware-owned service waiter alive."""
+    memory = MagicMock(spec=MemoryInterface)
+    record = make_scenario_result(attack_results={}, scenario_run_state=ScenarioRunState.CREATED)
+    memory.get_scenario_results_async.return_value = [record]
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        service = ScenarioRunService()
+    scenario = MagicMock(spec=Scenario)
+    scenario._scenario_result_id = str(record.id)
+    scenario.active_atomic_group_ids = set()
+    entered, release, executed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def prepare_async(*, request: RunScenarioRequest) -> _PreparedRun:
+        entered.set()
+        await release.wait()
+        return _PreparedRun(scenario=scenario)
+
+    async def run_async() -> None:
+        executed.set()
+        record.scenario_run_state = ScenarioRunState.COMPLETED
+
+    scenario.run_async = AsyncMock(side_effect=run_async)
+
+    @runtime.app.post("/api/scenarios/runs")
+    async def launch_async(request: RunScenarioRequest) -> dict[str, str]:
+        result = await service.start_run_async(request=request)
+        return {"scenario_result_id": result.scenario_result_id}
+
+    with (
+        patch.object(service, "_prepare_run_async", side_effect=prepare_async),
+        patch.object(lifecycle_module, "peek_scenario_run_service", return_value=service),
+    ):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+            request = asyncio.create_task(
+                client.post("/api/scenarios/runs", json={"scenario_name": "test", "target_name": "test"})
+            )
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(request, 5)
+                assert runtime.operations
+                assert service.has_active_work()
+                assert not service._abandoned_prepare_tasks
+                await apply_async(runtime)
+                assert runtime.outcome == "busy"
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*runtime.operations), 5)
+                await asyncio.wait_for(executed.wait(), 5)
+                scenario.run_async.assert_awaited_once()
+                assert not service._abandoned_prepare_tasks
+            finally:
+                release.set()
+                await asyncio.gather(request, *runtime.operations, return_exceptions=True)
+                await asyncio.wait_for(service.shutdown_async(), 5)
+
+
+@pytest.mark.parametrize("phase", ["preparation", "cleanup"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+@pytest.mark.parametrize("cancel_shutdown", [False, True])
+async def test_runtime_retains_abandoned_preparation_until_memory_shutdown_async(
+    *, runtime: RuntimeLifecycle, phase: str, cleanup_fails: bool, cancel_shutdown: bool
+) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+        service = ScenarioRunService()
+    scenario = MagicMock(spec=Scenario)
+    scenario._scenario_result_id = "abandoned"
+    entered, release, cleanup_entered, cleanup_release, stopped = (asyncio.Event() for _ in range(5))
+    order: list[str] = []
+    original_stop = service.stop_admission
+
+    def stop() -> None:
+        original_stop()
+        stopped.set()
+
+    async def prepare_async(*, request: RunScenarioRequest) -> _PreparedRun:
+        entered.set()
+        await release.wait()
+        order.append("prepared")
+        return _PreparedRun(scenario=scenario)
+
+    async def cleanup_async(**kwargs: object) -> bool:
+        assert kwargs["expected_states"] == {
+            ScenarioRunState.CREATED,
+            ScenarioRunState.IN_PROGRESS,
+            ScenarioRunState.QUEUED,
+        }
+        cleanup_entered.set()
+        await cleanup_release.wait()
+        order.append("cleaned")
+        if cleanup_fails:
+            raise RuntimeError("cleanup persistence failed")
+        return True
+
+    async def dispose_async() -> None:
+        assert not service.has_active_work()
+        order.append("memory-closed")
+
+    memory.try_update_scenario_run_state_async.side_effect = cleanup_async
+    memory.dispose_engine_async.side_effect = dispose_async
+    with (
+        patch.object(service, "_prepare_run_async", side_effect=prepare_async) as prepare,
+        patch.object(service, "stop_admission", side_effect=stop),
+        patch.object(lifecycle_module, "peek_scenario_run_service", return_value=service),
+        patch.object(CentralMemory, "_memory_instance", memory),
+        patch.object(CentralMemory, "get_memory_instance", return_value=memory),
+    ):
+        start = asyncio.create_task(
+            service.start_run_async(request=RunScenarioRequest(scenario_name="test", target_name="test"))
+        )
+        shutdown: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            await apply_async(runtime)
+            assert runtime.outcome == "busy"
+            start.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(start, 5)
+            if phase == "cleanup":
+                release.set()
+                await asyncio.wait_for(cleanup_entered.wait(), 5)
+            await apply_async(runtime)
+            assert runtime.outcome == "busy"
+            lifecycle_module.close_services_async.assert_not_awaited()
+            shutdown = asyncio.create_task(runtime.shutdown_async())
+            await asyncio.wait_for(stopped.wait(), 5)
+            assert service._stopping
+            assert not shutdown.done()
+            memory.dispose_engine_async.assert_not_awaited()
+            with pytest.raises(RuntimeError, match="scheduling is stopping"):
+                await service.start_run_async(request=RunScenarioRequest(scenario_name="test", target_name="test"))
+            prepare.assert_awaited_once()
+            if cancel_shutdown:
+                shutdown.cancel()
+                barrier = asyncio.Event()
+                asyncio.get_running_loop().call_soon(barrier.set)
+                await asyncio.wait_for(barrier.wait(), 5)
+                assert not shutdown.done()
+                assert all(task.cancelling() == 0 for task in service._preparations)
+            release.set()
+            await asyncio.wait_for(cleanup_entered.wait(), 5)
+            assert not shutdown.done()
+            memory.dispose_engine_async.assert_not_awaited()
+            cleanup_release.set()
+            if cleanup_fails:
+                with pytest.raises(ExceptionGroup, match="shutdown transitions") as error:
+                    await asyncio.wait_for(shutdown, 5)
+                assert str(error.value.exceptions[0]) == "cleanup persistence failed"
+            elif cancel_shutdown:
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(shutdown, 5)
+            else:
+                await asyncio.wait_for(shutdown, 5)
+            assert order == ["prepared", "cleaned", "memory-closed"]
+            scenario.run_async.assert_not_called()
+        finally:
+            release.set()
+            cleanup_release.set()
+            await asyncio.gather(start, *([shutdown] if shutdown else []), return_exceptions=True)
 
 
 async def test_apply_denies_writes_but_allows_repair_reads(runtime: RuntimeLifecycle) -> None:

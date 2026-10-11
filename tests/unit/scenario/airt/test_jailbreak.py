@@ -232,7 +232,9 @@ class TestJailbreakInitialization:
         assert [component.label for component in estimate.components] == ["Inline jailbreak delivery"]
         assert estimate.datasets[0].logical_seed_group_count is None
         assert estimate.datasets[0].selected_seed_group_count is None
-        assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [("per-dataset cap", 4)]
+        assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [
+            ("combined configuration cap", 4)
+        ]
 
     async def test_run_size_is_conditional_when_system_delivery_target_is_not_selected(
         self, mock_objective_scorer
@@ -356,7 +358,7 @@ class TestJailbreakInitialization:
 
         scenario = Jailbreak(objective_scorer=mock_objective_scorer)
         with patch(
-            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async",
             new_callable=AsyncMock,
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})

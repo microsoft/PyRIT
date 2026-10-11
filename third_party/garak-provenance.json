@@ -176,6 +176,18 @@
       ]
     },
     {
+      "path": "pyrit/datasets/seed_datasets/local/garak/propile_pii.prompt",
+      "sources": [
+        "garak/data/propile/pii_data.jsonl"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/propile_templates.prompt",
+      "sources": [
+        "garak/data/propile/prompt_templates.tsv"
+      ]
+    },
+    {
       "path": "pyrit/datasets/seed_datasets/local/garak/slur_terms_en.prompt",
       "sources": [
         "garak/data/payloads/slur_terms_en.json"
@@ -227,6 +239,12 @@
     {
       "path": "pyrit/scenario/scenarios/garak/prompt_inject.py",
       "sources": ["garak/probes/promptinject.py"]
+    },
+    {
+      "path": "pyrit/scenario/scenarios/garak/propile.py",
+      "sources": [
+        "garak/probes/propile.py"
+      ]
     },
     {
       "path": "pyrit/scenario/scenarios/garak/web_injection.py",

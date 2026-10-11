@@ -62,6 +62,9 @@ def mock_attack_seed_groups(mock_memory_seeds):
 def mock_dataset_config(mock_attack_seed_groups):
     """Create a mock dataset config that returns the seed attack groups."""
     mock_config = MagicMock(spec=EncodingDatasetConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_attack_seed_groups)
     mock_config.dataset_names = ["garak_slur_terms_en", "garak_web_html_js"]
     return mock_config
@@ -137,7 +140,7 @@ class TestEncodingInitialization:
         # Disable the provider fallback so memory stays empty and the scenario raises.
         scenario = Encoding(objective_scorer=mock_objective_scorer)
 
-        with patch.object(EncodingDatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock):
+        with patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock):
             # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed prompts
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
             with pytest.raises(DatasetConstraintError, match="could not be loaded"):
@@ -675,7 +678,7 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
             max_dataset_size=5,
         )
 
-        assert config._dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
+        assert config.dataset_names == ["garak_slur_terms_en", "garak_web_html_js"]
         assert config.max_dataset_size == 5
 
 
