@@ -187,11 +187,22 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
         self._conversation_manager = ConversationManager(prompt_normalizer=self._prompt_normalizer)
 
         # set the maximum number of turns for the attack
-        if max_turns <= 0:
-            raise ValueError("Maximum turns must be a positive integer.")
+        RedTeamingAttack.validate_constructor_parameters({"max_turns": max_turns})
 
         self._max_turns = max_turns
         self._score_last_turn_only = score_last_turn_only
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the turn bound without constructing an attack.
+
+        Raises:
+            ValueError: If turns are not positive.
+        """
+        super().validate_constructor_parameters(params)
+        if "max_turns" in params and params["max_turns"] <= 0:
+            raise ValueError("Maximum turns must be a positive integer.")
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
