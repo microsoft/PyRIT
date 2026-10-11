@@ -166,6 +166,22 @@ class ScenarioDatasetSummary(BaseModel):
     selection_note: str | None = None
 
 
+class ScenarioProducerCategoryCounts(BaseModel):
+    """Raw attempt totals for one specific producer role."""
+
+    attempts: int = Field(default=0, ge=0)
+    errors: int = Field(default=0, ge=0)
+    retries: int = Field(default=0, ge=0)
+
+
+class ScenarioProducerCounts(BaseModel):
+    """Raw attempts grouped by their recorded producer role."""
+
+    target_facing: ScenarioProducerCategoryCounts = Field(default_factory=ScenarioProducerCategoryCounts)
+    orchestration: ScenarioProducerCategoryCounts = Field(default_factory=ScenarioProducerCategoryCounts)
+    unknown: ScenarioProducerCategoryCounts = Field(default_factory=ScenarioProducerCategoryCounts)
+
+
 class ScenarioTechniqueSummary(BaseModel):
     """One concrete attack technique available to a scenario."""
 
@@ -586,6 +602,7 @@ class ScenarioRunSummary(BaseModel):
         default_factory=list,
         description="Bounded recent HTTP 429 and 5xx retry evidence grouped by component role",
     )
+    producer_counts: ScenarioProducerCounts | None = Field(None, description="Raw producer attempts")
 
 
 class ScenarioRunListItem(BaseModel):
@@ -628,6 +645,7 @@ class ScenarioRunListItem(BaseModel):
         True,
         description="Whether failed_attacks and attack_retries contain per-attempt details",
     )
+    producer_counts: ScenarioProducerCounts | None = Field(None, description="Raw producer attempts")
 
 
 class ScenarioTargetSummary(BaseModel):

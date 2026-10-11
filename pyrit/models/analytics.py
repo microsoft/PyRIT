@@ -5,19 +5,24 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import ClassVar, Self
+from math import isclose, isfinite
+from typing import Annotated, Any, ClassVar, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic.dataclasses import dataclass as validated_dataclass
 
 from pyrit.models.results.attack_result import AttackOutcome
+
+_OutcomeCount = Annotated[int, Field(strict=True, ge=0)]
+_OutcomeRate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
 
 
 @dataclass
 class AttackStats:
-    """Statistics for attack analysis results."""
+    """Compatible six-field statistics for attack analysis results."""
 
     success_rate: float | None
     total_decided: int
@@ -26,21 +31,140 @@ class AttackStats:
     undetermined: int
     errors: int
 
+    @property
+    def success_rate_decided(self) -> float | None:
+        """The decided-only rate, exposed without changing the legacy dataclass fields."""
+        return self.success_rate
 
-@dataclass
+
+@validated_dataclass(config=ConfigDict(revalidate_instances="always", extra="forbid"))
 class AttackAnalyticsStatistics(AttackStats):
     """
-    Outcome statistics for one cohort, group, or heatmap cell.
+    Shared outcome statistics for saved results or selected scenario execution units.
 
-    ``success_rate`` uses successes / decided results; errors and undetermined
-    outcomes do not enter that denominator. ``decided_share`` and ``outcome_shares``
-    instead use all results. Rates with no applicable denominator are ``None``;
-    shares for an empty cohort are zero. All proportions are in the range 0 through 1.
+    ``success_rate_decided`` (also available as ``success_rate``) uses successes /
+    decided results; errors and undetermined outcomes do not enter that denominator.
+    ``success_rate_all`` instead includes
+    every outcome in its denominator, as do ``decided_share`` and ``outcome_shares``.
+    Rates with no applicable denominator are ``None``; shares for an empty cohort
+    are zero. All proportions are in the range 0 through 1.
+
+    Analytics calculates these values after selecting the counted population.
+    ``total_results`` can therefore describe distinct saved IDs or latest scenario
+    units. The model does not select attempts or infer a counting policy.
+    Construction and explicit revalidation reject contradictory supplied values.
+    The nullable all-outcome rate preserves older payloads that omit that field.
     """
 
-    total_results: int
-    decided_share: float | None
-    outcome_shares: dict[AttackOutcome, float]
+    success_rate: _OutcomeRate | None
+    total_decided: _OutcomeCount
+    successes: _OutcomeCount
+    failures: _OutcomeCount
+    undetermined: _OutcomeCount
+    errors: _OutcomeCount
+    total_results: _OutcomeCount
+    decided_share: _OutcomeRate | None
+    outcome_shares: dict[AttackOutcome, _OutcomeRate]
+    success_rate_all: _OutcomeRate | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        """Validate the supplied statistics without recalculating or replacing fields."""
+        self.validate_consistency()
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def success_rate_decided(self) -> float | None:
+        """The explicit decided-only rate; a read-only alias of ``success_rate``."""
+        return self.success_rate
+
+    def validate_consistency(self) -> None:
+        """
+        Check supplied counts, totals, rates, and shares without replacing any of them.
+
+        This also validates mutable instances at analytics input boundaries.
+        Analytics remains responsible for calculating statistics from counts.
+
+        Raises:
+            ValueError: If a count is invalid or a derived value contradicts its counts.
+        """
+        counts = {
+            AttackOutcome.SUCCESS: self.successes,
+            AttackOutcome.FAILURE: self.failures,
+            AttackOutcome.UNDETERMINED: self.undetermined,
+            AttackOutcome.ERROR: self.errors,
+        }
+        if any(
+            type(count) is not int or count < 0 for count in (*counts.values(), self.total_decided, self.total_results)
+        ):
+            raise ValueError("Outcome counts and totals must be nonnegative integers.")
+        if self.total_decided != self.successes + self.failures:
+            raise ValueError("total_decided must equal successes plus failures.")
+        if self.total_results != sum(counts.values()):
+            raise ValueError("total_results must equal the sum of all outcome counts.")
+        self._validate_rate(
+            name="success_rate", value=self.success_rate, numerator=self.successes, denominator=self.total_decided
+        )
+        self._validate_rate(
+            name="decided_share", value=self.decided_share, numerator=self.total_decided, denominator=self.total_results
+        )
+        if self.success_rate_all is not None:
+            self._validate_rate(
+                name="success_rate_all",
+                value=self.success_rate_all,
+                numerator=self.successes,
+                denominator=self.total_results,
+            )
+        if set(self.outcome_shares) != set(AttackOutcome):
+            raise ValueError("outcome_shares must contain each supported outcome exactly once.")
+        for outcome, count in counts.items():
+            self._validate_rate(
+                name=f"outcome_shares.{outcome.value}",
+                value=self.outcome_shares[outcome],
+                numerator=count,
+                denominator=self.total_results,
+                empty=0.0,
+            )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_success_rate_alias(cls, value: Any) -> Any:
+        """
+        Accept either rate name in validated payloads, rejecting disagreeing aliases.
+
+        Returns:
+            Any: The payload with one stored decided-rate value.
+
+        Raises:
+            ValueError: If both rate names are supplied with different values.
+        """
+        if isinstance(value, dict) and "success_rate_decided" in value:
+            value = dict(value)
+            rate = value.pop("success_rate_decided")
+            if "success_rate" in value and value["success_rate"] != rate:
+                raise ValueError("success_rate and success_rate_decided must agree.")
+            value["success_rate"] = rate
+        return value
+
+    @staticmethod
+    def _validate_rate(
+        *, name: str, value: float | None, numerator: int, denominator: int, empty: float | None = None
+    ) -> None:
+        if denominator == 0 and value is None and empty is None:
+            return
+        if (
+            value is None
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not isfinite(value)
+            or not 0 <= value <= 1
+            or (denominator == 0 and value != empty)
+            or (denominator > 0 and not isclose(value, numerator / denominator, rel_tol=1e-12, abs_tol=0.0))
+        ):
+            raise ValueError(f"{name} must agree with its outcome counts.")
+
+
+# Preserve the existing class/constructor identity while sharing it beyond attack reports.
+OutcomeStatistics = AttackAnalyticsStatistics
 
 
 class AttackResultSelection(str, Enum):

@@ -267,19 +267,16 @@ class ScenarioProgressReadModel:
         *,
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
-    ) -> tuple[int, int, int, int]:
+    ) -> ScenarioProgressCounts:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
 
         Delegates to ``pyrit.analytics.scenario_statistics`` so run details match the SDK and reports.
 
         Returns:
-            tuple[int, int, int, int]: Total, completed, success-rate percentage,
-                and successful-unit count.
+            ScenarioProgressCounts: The calculated progress counts.
         """
-        overall = compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
-        total = overall.planned if overall.planned is not None else overall.completed
-        return total, overall.completed, overall.success_percentage or 0, overall.succeeded
+        return compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
 
     @staticmethod
     def total_retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:

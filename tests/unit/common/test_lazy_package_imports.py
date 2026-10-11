@@ -23,6 +23,36 @@ _EAGER_PACKAGE_EXCEPTIONS = frozenset(
 
 _LAZY_IMPORT_SPOT_CHECKS = [
     (
+        "pyrit.analytics",
+        "compute_technique_stats_async",
+        "pyrit.analytics.technique_analysis",
+        "pyrit.analytics.attack_result_analytics",
+    ),
+    (
+        "pyrit.analytics",
+        "compute_outcome_statistics",
+        "pyrit.analytics.outcome_statistics",
+        "pyrit.memory.attack_analytics",
+    ),
+    (
+        "pyrit.models",
+        "OutcomeStatistics",
+        "pyrit.models.analytics",
+        "pyrit.analytics.outcome_statistics",
+    ),
+    (
+        "pyrit.analytics",
+        "AttackResultAnalytics",
+        "pyrit.analytics.attack_result_analytics",
+        "pyrit.analytics.conversation_analytics",
+    ),
+    (
+        "pyrit.analytics",
+        "AttackStats",
+        "pyrit.analytics.result_analysis",
+        "pyrit.analytics.attack_result_analytics",
+    ),
+    (
         "pyrit.registry",
         "AttackRegistry",
         "pyrit.registry.components.attack_registry",
@@ -405,11 +435,13 @@ def test_analytics_foundations_do_not_load_higher_layers() -> None:
             name for name, module in pyrit.models._LAZY_EXPORTS.items()
             if module == "pyrit.models.analytics"
         ]
-        assert len(names) == 21
+        assert len(names) == 22
+        assert "OutcomeStatistics" in names
         for name in names:
             exported = getattr(pyrit.models, name)
             assert exported is getattr(importlib.import_module("pyrit.models.analytics"), name)
             assert pyrit.models.__dict__[name] is exported
+        assert pyrit.models.OutcomeStatistics is pyrit.models.AttackAnalyticsStatistics
 
         forbidden = (
             "pyrit.analytics", "pyrit.backend", "pyrit.memory", "pyrit.executor",

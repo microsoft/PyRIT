@@ -5,11 +5,17 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary  # noqa: TC001
+from pyrit.models.analytics import OutcomeStatistics
+from pyrit.models.catalog.scenario import (
+    ScenarioOverloadSummary,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
+    ScenarioTargetSummary,
+)  # noqa: TC001
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -183,7 +189,18 @@ class ScenarioProgressResult(BaseModel):
 
 
 class ScenarioProgressCounts(BaseModel):
-    """Canonical progress counts for a set of scenario execution units."""
+    """
+    Canonical progress counts for a set of scenario execution units.
+
+    ``outcomes`` describes only the selected latest attempts and supplies both
+    decided-only and all-outcome success rates. ``errors`` and ``retries`` retain
+    their historical-attempt meaning and must not be used as outcome denominators.
+    None preserves older count-only payloads whose outcome breakdown is unknown.
+    Supplied totals must agree with the outcome breakdown; mutable values are
+    revalidated when they are passed back into analytics.
+    """
+
+    model_config = ConfigDict(revalidate_instances="always")
 
     completed: int = Field(..., ge=0)
     planned: int | None = Field(default=None, ge=0)
@@ -191,6 +208,34 @@ class ScenarioProgressCounts(BaseModel):
     success_percentage: int | None = Field(default=None, ge=0, le=100)
     errors: int = Field(..., ge=0)
     retries: int = Field(..., ge=0)
+    producer_counts: ScenarioProducerCounts = Field(default_factory=ScenarioProducerCounts)
+    outcomes: OutcomeStatistics | None = None
+
+    @model_validator(mode="after")
+    def _validate_statistics(self) -> Self:
+        """
+        Reject contradictory progress totals instead of presenting two success rates for different counts.
+
+        Returns:
+            Self: The unchanged consistent counts, including legacy count-only payloads.
+
+        Raises:
+            ValueError: If successes exceed completed units, a supplied percentage is inconsistent,
+                or the nested latest-outcome counts disagree with progress totals.
+        """
+        if self.succeeded > self.completed:
+            raise ValueError("succeeded must not exceed completed.")
+        if self.success_percentage is not None:
+            expected = int((self.succeeded / self.completed) * 100) if self.completed else 0
+            if self.success_percentage != expected:
+                raise ValueError("success_percentage must agree with succeeded and completed.")
+        if self.outcomes is not None:
+            self.outcomes.validate_consistency()
+            if self.completed != self.outcomes.total_results:
+                raise ValueError("completed must equal outcomes.total_results.")
+            if self.succeeded != self.outcomes.successes:
+                raise ValueError("succeeded must equal outcomes.successes.")
+        return self
 
 
 class ScenarioExecutionUnit(BaseModel):
