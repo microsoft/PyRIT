@@ -18,6 +18,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -291,6 +292,8 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
 
         Prefer this over manually chaining ``create_instance`` +
         ``set_params_from_args`` + ``initialize_async``.
+        Synchronous construction and configuration run off-loop; async
+        initialization runs on the caller's event loop.
 
         Args:
             name (str): The registry name of the scenario (e.g. ``"foundry.red_team_agent"``).
@@ -311,7 +314,9 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             constructor_kwargs["scenario_result_id"] = scenario_result_id
 
         merged_args = {**(scenario_params or {}), **initialize_kwargs}
-        scenario = self._create_and_configure(name, params=merged_args, constructor_kwargs=constructor_kwargs)
+        scenario = await run_legacy_sync_async(
+            self._create_and_configure, name, params=merged_args, constructor_kwargs=constructor_kwargs
+        )
         scenario.set_scenario_registry_name(scenario_registry_name=name)
         if initial_metadata:
             scenario.set_initial_metadata(metadata=initial_metadata)

@@ -228,7 +228,7 @@ class TestResumeScenarioRunRoute:
             service = _svc_mod.ScenarioRunService()
         with (
             patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service),
-            patch.object(service, "_prepare_run_blocking") as prepare,
+            patch.object(service, "_prepare_run_async") as prepare,
         ):
             response = client.post(f"/api/scenarios/runs/{stored.id}/resume")
             prepare.assert_not_called()
