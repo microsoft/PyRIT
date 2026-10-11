@@ -265,7 +265,7 @@ def test_registry_accepts_distinct_word_selections(encoding_func: BinAsciiConver
     assert instances.get(second.get_identifier().unique_name) is second
 
 
-async def test_identifier_normalizes_equivalent_indices_async() -> None:
+async def test_identifier_preserves_index_order_async() -> None:
     first = BinAsciiConverter(word_selection_strategy=WordIndexSelectionStrategy(indices=[0, 1]))
     second = BinAsciiConverter(word_selection_strategy=WordIndexSelectionStrategy(indices=[1, 0]))
 
@@ -273,7 +273,7 @@ async def test_identifier_normalizes_equivalent_indices_async() -> None:
     second_result = await second.convert_async(prompt="ab cd", input_type="text")
 
     assert first_result.output_text == second_result.output_text == "6162 6364"
-    assert first.get_identifier().hash == second.get_identifier().hash
+    assert first.get_identifier().hash != second.get_identifier().hash
 
 
 @pytest.mark.parametrize("explicit_all_words", [False, True])

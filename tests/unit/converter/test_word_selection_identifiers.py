@@ -1,8 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Callable, Iterator
+from functools import partial
+
 import pytest
 
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.converter import (
     AllWordsSelectionStrategy,
     CharSwapConverter,
@@ -24,7 +28,20 @@ from pyrit.registry import ConverterRegistry
     ids=lambda converter: converter.__name__,
 )
 def converter_type(request: pytest.FixtureRequest) -> type[WordLevelConverter]:
-    return request.param
+    converter = request.param
+    assert isinstance(converter, type)
+    assert issubclass(converter, WordLevelConverter)
+    return converter
+
+
+@pytest.fixture
+def seeded_randomness() -> Iterator[None]:
+    previous_seed = get_configured_random_seed()
+    configure_random_seed(seed=123)
+    try:
+        yield
+    finally:
+        configure_random_seed(seed=previous_seed)
 
 
 @pytest.mark.parametrize(
@@ -84,11 +101,40 @@ def test_identifier_distinguishes_selection_settings(
     assert first.get_identifier().hash != second.get_identifier().hash
 
 
-def test_identifier_normalizes_equivalent_indices(converter_type: type[WordLevelConverter]) -> None:
+def test_identifier_preserves_index_order(converter_type: type[WordLevelConverter]) -> None:
     first = converter_type(word_selection_strategy=WordIndexSelectionStrategy(indices=[0, 1]))
     second = converter_type(word_selection_strategy=WordIndexSelectionStrategy(indices=[1, 0]))
 
-    assert first.get_identifier().hash == second.get_identifier().hash
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
+@pytest.mark.usefixtures("seeded_randomness")
+@pytest.mark.parametrize(
+    "converter_factory",
+    [
+        pytest.param(partial(CharSwapConverter, max_iterations=1, seed=123), id="charswap"),
+        pytest.param(partial(ZalgoConverter, seed=123), id="zalgo"),
+        pytest.param(partial(LeetspeakConverter, deterministic=False), id="leetspeak"),
+    ],
+)
+async def test_reordered_indices_distinguish_stochastic_outputs_async(
+    converter_factory: Callable[..., WordLevelConverter],
+) -> None:
+    first = converter_factory(word_selection_strategy=WordIndexSelectionStrategy(indices=[0, 1]))
+    second = converter_factory(word_selection_strategy=WordIndexSelectionStrategy(indices=[1, 0]))
+
+    first_result = await first.convert_async(prompt="alpha beta")
+    second_result = await second.convert_async(prompt="alpha beta")
+    assert (await first.convert_async(prompt="alpha beta")).output_text == first_result.output_text
+    assert (await second.convert_async(prompt="alpha beta")).output_text == second_result.output_text
+    assert first_result.output_text != second_result.output_text
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+    instances = ConverterRegistry().instances
+    instances.register(first)
+    instances.register(second)
+    assert instances.get(first.get_identifier().unique_name) is first
+    assert instances.get(second.get_identifier().unique_name) is second
 
 
 @pytest.mark.parametrize("explicit_default", [False, True])

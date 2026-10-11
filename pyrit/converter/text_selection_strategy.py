@@ -551,7 +551,7 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
         Initialize the word index selection strategy.
 
         Args:
-            indices (list[int]): The list of word indices to select.
+            indices (list[int]): The list of word indices in conversion order.
 
         Raises:
             ValueError: If an index is negative.
@@ -562,12 +562,12 @@ class WordIndexSelectionStrategy(WordSelectionStrategy):
 
     def get_identifier_params(self) -> dict[str, Any]:
         """
-        Return the selected indices in sorted order.
+        Return the selected indices in conversion order.
 
         Returns:
-            dict[str, Any]: The sorted index list.
+            dict[str, Any]: The ordered index list.
         """
-        return {"indices": sorted(self._indices)}
+        return {"indices": list(self._indices)}
 
     def select_words(self, *, words: list[str]) -> list[int]:
         """
