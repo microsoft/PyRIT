@@ -1280,7 +1280,8 @@ async def test_construct_message_from_response(target: OpenAIChatTarget, dummy_t
 # Tests for underlying_model parameter and get_identifier
 
 
-def test_get_identifier_distinguishes_extra_body_parameters(patch_central_database):
+@pytest.mark.usefixtures("patch_central_database")
+def test_get_identifier_distinguishes_extra_body_parameters() -> None:
     def build(**kwargs: Any) -> OpenAIChatTarget:
         return OpenAIChatTarget(model_name="o4-mini", endpoint="https://mock.azure.com/", api_key="k", **kwargs)
 
