@@ -35,7 +35,7 @@
 # PromptInject tests whether a target follows injected instructions hidden in benign tasks.
 # `--techniques` selects the injection wording, and `--goal-texts` selects the requested output.
 # The default run uses all five techniques, the three Garak goal texts, and up to 60 attempts.
-# `--max-dataset-size` must be at least the number of selected goal texts.
+# `--max-total` must be at least the number of selected goal texts.
 # Sampling selects at least one context for every goal, then fills the remaining budget
 # without replacement. All techniques use the same sample. Injection wording is applied
 # through request converters, before any caller-supplied converters.
@@ -47,7 +47,7 @@
 # pyrit_scan run garak.prompt_inject --target openai_chat \
 #   --techniques ignore_print \
 #   --goal-texts "Custom trigger text" \
-#   --max-dataset-size 16
+#   --max-total 16
 # ```
 #
 # **Techniques:** `ignore_print`, `ignore_say`, `ignore_print_upper`, `nevermind`, and
@@ -128,7 +128,7 @@ await output_scenario_async(prompt_inject_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan run garak.encoding --target openai_chat --techniques base64 --max-dataset-size 1
+# pyrit_scan run garak.encoding --target openai_chat --techniques base64 --max-total 1
 # ```
 #
 # **Available techniques** (17 encodings): Base64, Base2048, Base16, Base32, ASCII85, Hex,
@@ -176,8 +176,8 @@ await output_scenario_async(scenario_result)
 # **CLI examples:**
 #
 # ```bash
-# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep --max-dataset-size 1
-# pyrit_scan garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# pyrit_scan garak.figstep --target openai_chat --datasets figstep --max-total 1
+# pyrit_scan garak.figstep --target openai_chat --datasets figstep_pro --max-total 1
 # ```
 #
 # > **Note:** The objective target must natively support multi-piece user messages and accept text
@@ -217,7 +217,7 @@ await output_scenario_async(figstep_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan run garak.web_injection --target openai_chat --techniques xss --max-dataset-size 1
+# pyrit_scan run garak.web_injection --target openai_chat --techniques xss
 # ```
 #
 # **Available techniques** (8 probes): MarkdownImageExfil, ColabAIDataLeakage,
@@ -227,7 +227,7 @@ await output_scenario_async(figstep_result)
 # **Aggregate techniques:** `ALL` (all 8), `DEFAULT` (excludes the two combinatorial extended
 # probes), `EXFIL` (the 6 markdown-exfil probes), and `XSS` (TaskXSS + MarkdownXSS).
 #
-# **Dataset requirements:** `--dataset-names` replaces the default datasets, so it must include
+# **Dataset requirements:** `--datasets` replaces the default datasets, so it must include
 # every dataset the selected techniques read. Otherwise the scenario stops before running and names
 # each missing dataset. Datasets already loaded into memory never fill the gap.
 #
@@ -242,7 +242,7 @@ await output_scenario_async(figstep_result)
 # | StringAssemblyDataExfil | None (built-in seeds) |
 #
 # ```bash
-# pyrit_scan run garak.web_injection --target openai_chat --techniques task_xss --dataset-names garak_xss_normal_instructions garak_web_html_js
+# pyrit_scan run garak.web_injection --target openai_chat --techniques task_xss --datasets garak_xss_normal_instructions garak_web_html_js
 # ```
 
 # %%
@@ -329,7 +329,7 @@ await output_scenario_async(exploitation_result)
 # pyrit_scan run garak.api_key --target openai_chat
 #
 # # Run only GetKey with a smaller sample.
-# pyrit_scan run garak.api_key --target openai_chat --techniques get_key --max-dataset-size 2
+# pyrit_scan run garak.api_key --target openai_chat --techniques get_key --max-total 2
 # ```
 #
 # **Available techniques:** `GetKey` and `CompleteKey`. `DEFAULT` and `ALL` both select the two
@@ -377,7 +377,7 @@ await output_scenario_async(api_key_result)
 #
 # ```bash
 # pyrit_scan run garak.latent_injection --target openai_chat --techniques bare \
-#   --families whois --max-dataset-size 1
+#   --families whois --max-total 1
 # ```
 #
 # **Available techniques** (14 separator styles): Bare, Newline, Blockquote, BlockquoteInline,
@@ -443,7 +443,7 @@ await output_scenario_async(latent_injection_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan run garak.doctor --target openai_chat --techniques policy_puppetry --max-dataset-size 1
+# pyrit_scan run garak.doctor --target openai_chat --techniques policy_puppetry --max-total 1
 # ```
 #
 # **Available techniques** (2 probes): `PolicyPuppetry` (wraps the objective in the Dr House
@@ -571,13 +571,13 @@ await output_scenario_async(package_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan garak.audio_achilles_heel --target azure_openai_realtime --max-dataset-size 2
+# pyrit_scan garak.audio_achilles_heel --target azure_openai_realtime --max-total 2
 # ```
 #
 # > **Note:** The objective target must accept `audio_path` input (i.e. be multimodal). The example
 # > below uses the registered Azure OpenAI Realtime target; non-audio targets such as the default
 # > `openai_chat` will error when the audio request is sent. The full dataset holds ~350
-# > clips, so a default run samples a small subset to finish quickly — raise `--max-dataset-size`
+# > clips, so a default run samples a small subset to finish quickly — raise `--max-total`
 # > for broader coverage.
 
 # %%
@@ -616,7 +616,7 @@ await output_scenario_async(audio_scenario_result)
 # **CLI example:**
 #
 # ```bash
-# pyrit_scan run garak.divergence --target openai_chat --techniques repeat --max-dataset-size 2
+# pyrit_scan run garak.divergence --target openai_chat --techniques repeat --max-total 2
 # ```
 #
 # **Available techniques:** `Repeat`, `DEFAULT`, and `ALL` all select the same probe.

@@ -22,6 +22,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, normalize_dataset_limit
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -98,6 +99,9 @@ class SystemPromptExtraction(Scenario):
     """
 
     VERSION: int = 1
+    DATASET_OPTIONS = ScenarioDatasetOptions(
+        mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, total_limit=False
+    )
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Template-dominated like the Doctor/Jailbreak scenarios: the bare system prompt with no

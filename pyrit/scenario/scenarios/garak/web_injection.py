@@ -23,6 +23,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
@@ -104,6 +105,21 @@ class WebInjection(Scenario):
     """
 
     VERSION: int = 2
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """
+        Describe approved ingredient sources subject to technique coverage validation.
+
+        Returns:
+            ScenarioDatasetOptions: Approved sources with ingredient limits disabled.
+        """
+        return ScenarioDatasetOptions(
+            mode=DatasetSelectionMode.SUBSET,
+            allowed_names=self._default_dataset_config.dataset_names,
+            per_dataset_limit=False,
+            total_limit=False,
+        )
+
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled

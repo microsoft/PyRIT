@@ -103,6 +103,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "target_name",
     "adversarial_target_name",
     "techniques",
+    "datasets",
     "dataset_names",
     "max_dataset_size",
     "dataset_filters",
@@ -110,6 +111,8 @@ _LAUNCH_REQUEST_FIELDS = (
     "max_retries",
     "include_baseline",
 )
+# Fields added after the first saved launch records; older records omit them.
+_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size"})
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -324,13 +327,15 @@ class ScenarioRunService:
             raw_request = {"adversarial_target_name": None, **raw_request}
         if (
             not isinstance(raw_request, dict)
-            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size")
+            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name not in _OPTIONAL_LAUNCH_FIELDS)
             or raw_request["include_baseline"] is None
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
-            request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}, strict=True
+            # JSON validation accepts saved enum values as strings while keeping strict type checks.
+            request = RunScenarioRequest.model_validate_json(
+                json.dumps({name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}),
+                strict=True,
             )
         except ValidationError as exc:
             raise ScenarioRunConflictError(
@@ -340,7 +345,7 @@ class ScenarioRunService:
             raise ScenarioRunConflictError("The saved scenario or target registration name is empty.")
         identifier = stored.scenario_identifier
         if (request.techniques is None and identifier.techniques is None) or (
-            request.dataset_names is None and identifier.datasets is None
+            request.dataset_request is None and identifier.datasets is None
         ):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
@@ -348,6 +353,8 @@ class ScenarioRunService:
             for name, value in identifier.params.items()
             if name not in {"version", "techniques", "datasets"}
         }
+        # Dataset names are not copied from the identity: the saved request reproduces them, and the
+        # stored-identity check on initialization rejects any difference.
         return request.model_copy(
             update={
                 "scenario_result_id": str(stored.id),
@@ -355,7 +362,6 @@ class ScenarioRunService:
                 "initializer_args": None,
                 "scenario_params": custom_params,
                 "techniques": request.techniques if request.techniques is not None else identifier.techniques,
-                "dataset_names": request.dataset_names if request.dataset_names is not None else identifier.datasets,
                 "labels": dict(stored.labels),
             },
             deep=True,
@@ -643,9 +649,7 @@ class ScenarioRunService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
+                datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency,
                 max_retries=request.max_retries,
@@ -1231,7 +1235,7 @@ class ScenarioRunService:
             The fully initialized Scenario instance ready for run_async.
         """
         scenario_registry = ScenarioRegistry.get_registry_singleton()
-        launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
+        launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
         if launch_request["include_baseline"] is None:
             scenario_class = scenario_registry.get_class(request.scenario_name)
             baseline_parameter = next(

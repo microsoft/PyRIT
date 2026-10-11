@@ -397,7 +397,8 @@ class TestAdversarialEstimateScope:
                     for name in ("first", "second")
                 )
             )
-            assert introspected == estimated == [first, second]
+            assert introspected == []
+            assert estimated == [first, second]
             assert get_default_adversarial_target() is fallback
             assert dict(service._estimate_cache) == cache_before
             assert await service.get_scenario_async(scenario_name=metadata.registry_name) == before
@@ -1541,7 +1542,11 @@ class TestScenarioServiceGetScenario:
                 scenario_name="test.scenario",
                 request=ScenarioRunSizeEstimateRequest(dataset_names=["harmbench"], **limit_args),
             )
-        config = service._registry.create_and_estimate_async.await_args.kwargs["dataset_config"]
+        from pyrit.models.scenario_dataset import ScenarioDatasetOptions
+        from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
+
+        mapped = service._registry.create_and_estimate_async.await_args.kwargs["dataset_overrides"]
+        config = apply_dataset_overrides(config=original, request=mapped, options=ScenarioDatasetOptions())
         assert config.max_total == expected
         assert config.max_per_dataset == 5
         assert original.max_total == 20
@@ -1619,11 +1624,11 @@ class TestScenarioServiceGetScenario:
         assert call.kwargs["scenario_techniques"] == [_EstimateTechnique.PROMPT_SENDING]
         assert call.kwargs["include_baseline"] is True
         assert call.kwargs["objective_target"] is objective_target
-        dataset_config = call.kwargs["dataset_config"]
-        assert type(dataset_config) is DatasetAttackConfiguration
-        assert dataset_config.dataset_names == ["harmbench"]
-        assert dataset_config.max_dataset_size == 3
-        assert dataset_config.filters == {"harm_categories": ["violence"]}
+        overrides = call.kwargs["dataset_overrides"]
+        assert "dataset_config" not in call.kwargs
+        assert [source.name for source in overrides.sources] == ["harmbench"]
+        assert overrides.max_total == 3
+        assert overrides.filters == {"harm_categories": ["violence"]}
 
     async def test_configured_estimate_rejects_incompatible_v4_jailbreak_technique(self) -> None:
         """Request previews reject techniques omitted by Jailbreak's v4 compatibility policy."""

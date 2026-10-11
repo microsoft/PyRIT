@@ -490,7 +490,29 @@ Defaults are saved in this browser, separately for each signed-in account. They 
 
 A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
 
-Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Dataset override**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Datasets**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+
+### Scenario datasets
+
+The **Datasets** table shows each selected name, stored seed origins (including mixed
+origins), stored example count, source limit, and fetch policy. Unknown counts for
+provider-only datasets are not zero. Provider availability is separate from stored origin.
+**Reload dataset metadata** refreshes the page-scoped catalog without fetching seed data.
+Runtime changes and launches also invalidate this catalog.
+
+Use **Add dataset** for allowed alternatives or named memory datasets, **Remove** to
+change the selection, and **Use default sources** to restore parameter-aware defaults.
+FigStep allows one of `figstep` or `figstep_pro`; ingredient and compound sources are fixed.
+Unavailable limit/source controls are not submitted. Parameter and technique changes
+refresh resolved defaults without discarding edits; invalid selections display an error.
+
+**Max per dataset**, source limits, and **Max total** accept positive integers, `all`,
+or `default`/blank. Source caps apply before the total; `all` removes only that cap.
+Name-only selection retains existing explicit source settings. Fetch is `never` or
+`if_missing`: only a new run may prepare missing registered datasets. Preview and launch
+send the same edit-only dataset object, with harm/category filters preserved. Resume uses
+the saved request and the original seed selection; a different dataset selection is
+rejected. Resume never prepares datasets.
 
 #### Core Adversarial Default Override
 

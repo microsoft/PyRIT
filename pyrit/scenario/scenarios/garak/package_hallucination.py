@@ -23,6 +23,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -139,6 +140,9 @@ class PackageHallucination(Scenario):
     """
 
     VERSION: int = 3
+    DATASET_OPTIONS = ScenarioDatasetOptions(
+        mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, total_limit=False
+    )
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
@@ -203,15 +207,18 @@ class PackageHallucination(Scenario):
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = False
 
-    def _validate_runtime_configuration(self) -> None:
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        techniques = self._resolve_scenario_techniques(scenario_techniques=self.params.get("scenario_techniques"))
         names = [
             *_CORPUS_DATASETS,
-            *(_LANGUAGE_SPECS[technique.value].dataset_name for technique in self._scenario_techniques),
+            *(_LANGUAGE_SPECS[technique.value].dataset_name for technique in techniques),
         ]
-        by_name = {source.name: source for source in self._dataset_config.sources}
-        self._dataset_config = self._dataset_config.with_overrides(
+        by_name = {source.name: source for source in self._default_dataset_config.sources}
+        return self._default_dataset_config.with_overrides(
             sources=[by_name.get(name, DatasetSource(name=name)) for name in dict.fromkeys(names)]
         )
+
+    def _validate_runtime_configuration(self) -> None:
         super()._validate_runtime_configuration()
         if self._max_prompts_per_language < 1:
             raise ValueError("max_prompts_per_language must be greater than zero")

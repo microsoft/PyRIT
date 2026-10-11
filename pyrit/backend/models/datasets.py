@@ -30,6 +30,7 @@ class DatasetInfo(BaseModel):
     )
     loaded: bool = Field(..., description="Whether this dataset currently has seeds in memory")
     provider_available: bool = Field(..., description="Whether a registered provider can load this dataset")
+    origins: list[str] = Field(default_factory=list, description="Distinct origins of stored seeds, not providers")
     logical_examples: int | None = Field(
         None, description="Number of logical examples represented by stored seed groups"
     )

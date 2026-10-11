@@ -11,7 +11,9 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedObjective
+from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit
+from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource, Scenario
@@ -20,6 +22,7 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
     scenario_target_defaults,
 )
+from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
@@ -28,16 +31,22 @@ from pyrit.score import TrueFalseScorer
 from unit.mocks import MockPromptTarget
 
 
+def _datasets(**fields: object) -> ScenarioDatasetRequest | None:
+    return RunScenarioRequest.model_validate({"scenario_name": "s", "target_name": "t", **fields}).dataset_request
+
+
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(("limit", "expected"), [(None, 20), ("", 20), ("default", 20), ("all", "all"), (7, 7)])
 def test_dataset_name_override_applies_explicit_total(*, limit: DatasetLimit, expected: ResolvedDatasetLimit) -> None:
     resolved = ScenarioConfigurationResolver.resolve_configuration(
         scenario_name="garak.api_key",
         scenario_class=ApiKey,
-        dataset_names=ApiKey.required_datasets(),
-        max_dataset_size=limit,
+        datasets=_datasets(dataset_names=ApiKey.required_datasets(), max_dataset_size=limit),
     )
-    assert resolved["dataset_config"].max_dataset_size == expected
+    scenario = ApiKey()
+    scenario.set_params_from_args(args=resolved)
+    scenario._resolve_runtime_configuration(require_objective_target=False)
+    assert scenario._dataset_config.max_total == expected
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -51,10 +60,13 @@ def test_dataset_overrides_preserve_subclass_state_and_default() -> None:
     resolved = ScenarioConfigurationResolver.resolve_configuration(
         scenario_name="garak.prompt_inject",
         scenario_class=MagicMock(return_value=scenario),
-        dataset_names=PromptInject.required_datasets(),
-        max_dataset_size=7,
-        dataset_filters={"data_types": ["text"]},
-    )["dataset_config"]
+        datasets=_datasets(
+            dataset_names=PromptInject.required_datasets(),
+            max_dataset_size=7,
+            dataset_filters={"data_types": ["text"]},
+        ),
+    )["dataset_overrides"]
+    resolved = apply_dataset_overrides(config=original, request=resolved, options=ScenarioDatasetOptions())
     assert type(resolved) is PromptInjectDatasetConfiguration
     assert resolved._goal_texts == ["first goal", "second goal"]
     assert resolved.max_total == 7
@@ -83,8 +95,9 @@ async def test_total_override_preserves_source_limits_async(
     resolved = ScenarioConfigurationResolver.resolve_configuration(
         scenario_name="test",
         scenario_class=MagicMock(return_value=scenario),
-        max_dataset_size=total,
-    )["dataset_config"]
+        datasets=_datasets(max_dataset_size=total),
+    )["dataset_overrides"]
+    resolved = apply_dataset_overrides(config=original, request=resolved, options=ScenarioDatasetOptions())
     populations = {
         name: [SeedObjective(value=f"{name}-{index}", dataset_name=name) for index in range(20)]
         for name in original.dataset_names
@@ -115,9 +128,9 @@ def test_name_override_retains_source_options_and_adds_defaults_for_new_names(to
     resolved = ScenarioConfigurationResolver.resolve_configuration(
         scenario_name="test",
         scenario_class=MagicMock(return_value=scenario),
-        dataset_names=["new", "retained"],
-        max_dataset_size=total,
-    )["dataset_config"]
+        datasets=_datasets(dataset_names=["new", "retained"], max_dataset_size=total),
+    )["dataset_overrides"]
+    resolved = apply_dataset_overrides(config=original, request=resolved, options=ScenarioDatasetOptions())
     assert resolved.sources == (DatasetSource(name="new"), retained)
     assert resolved.sources[1] is retained
     assert resolved.source_limit("new") == 4
@@ -130,9 +143,14 @@ def test_name_override_retains_source_options_and_adds_defaults_for_new_names(to
 @pytest.mark.usefixtures("patch_central_database")
 def test_omitted_total_retains_default() -> None:
     resolved = ScenarioConfigurationResolver.resolve_configuration(
-        scenario_name="garak.api_key", scenario_class=ApiKey, dataset_names=ApiKey.required_datasets()
+        scenario_name="garak.api_key",
+        scenario_class=ApiKey,
+        datasets=_datasets(dataset_names=ApiKey.required_datasets()),
     )
-    assert resolved["dataset_config"].max_total == 20
+    scenario = ApiKey()
+    scenario.set_params_from_args(args=resolved)
+    scenario._resolve_runtime_configuration(require_objective_target=False)
+    assert scenario._dataset_config.max_total == 20
 
 
 @pytest.mark.usefixtures("patch_central_database")

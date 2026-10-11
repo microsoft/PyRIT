@@ -13,6 +13,7 @@ import pytest
 from pyrit.backend.services.scenario_run_service import (
     _LAUNCH_REQUEST_FIELDS,
     _LAUNCH_REQUEST_METADATA_KEY,
+    _OPTIONAL_LAUNCH_FIELDS,
     ScenarioRunConflictError,
     ScenarioRunNotFoundError,
     ScenarioRunService,
@@ -24,8 +25,11 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
+    DatasetFetchPolicy,
+    DatasetSourceInput,
     Message,
     Parameter,
+    ScenarioDatasetRequest,
     ScenarioResult,
     ScenarioRunState,
     SeedObjective,
@@ -448,9 +452,7 @@ async def test_resume_missing_scenario_registration_is_explicit_async(
             await service.resume_run_async(scenario_result_id=str(stored.id))
 
 
-@pytest.mark.parametrize(
-    "missing", [name for name in _LAUNCH_REQUEST_FIELDS if name not in {"adversarial_target_name", "max_dataset_size"}]
-)
+@pytest.mark.parametrize("missing", [name for name in _LAUNCH_REQUEST_FIELDS if name not in _OPTIONAL_LAUNCH_FIELDS])
 async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
     *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
 ) -> None:
@@ -493,6 +495,28 @@ async def test_saved_total_limit_round_trips_async(
     )[0]
     restored = service._restore_launch_request(stored=stored)
     assert restored.max_dataset_size == (limit_args.get("max_dataset_size") or "default")
+
+
+async def test_saved_dataset_request_round_trips_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, _ = resume_environment
+    datasets = ScenarioDatasetRequest(
+        sources=[DatasetSourceInput(name=_DATASET_NAME, max_size=1, fetch=DatasetFetchPolicy.NEVER)],
+        max_total=1,
+        filters={"data_types": ["text"]},
+    )
+    prepared = await service._prepare_run_async(
+        request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, datasets=datasets)
+    )
+    stored = (
+        await CentralMemory.get_memory_instance().get_scenario_results_async(
+            scenario_result_ids=[prepared.scenario._scenario_result_id]
+        )
+    )[0]
+    restored = service._restore_launch_request(stored=stored)
+    assert restored.dataset_request == datasets
+    assert restored.dataset_names is None
 
 
 async def test_resume_older_launch_record_without_adversarial_selection_async(

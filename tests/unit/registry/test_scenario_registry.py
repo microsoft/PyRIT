@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.models import DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
 from pyrit.scenario.core import BaselineAttackPolicy, ScenarioTechnique
 
@@ -62,6 +63,14 @@ class _MetadataScenario:
         """Resolve the concrete defaults."""
         return _MetadataTechnique.resolve(scenario_techniques, default=self._default_technique)
 
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """Return fixed dataset options."""
+        return ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED)
+
+    def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
+        """Return default dataset settings."""
+        return ScenarioDatasetSettings(max_total=4)
+
 
 class _MarkdownMetadataScenario(_MetadataScenario):
     """
@@ -104,6 +113,8 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "all": ("one", "two"),
         "default": ("one", "two"),
     }
+    assert metadata.dataset_options.mode is DatasetSelectionMode.FIXED
+    assert metadata.dataset_defaults.max_total == 4
 
 
 def test_build_metadata_reports_scenario_owned_adversarial_usage() -> None:

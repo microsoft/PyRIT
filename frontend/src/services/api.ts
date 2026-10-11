@@ -5,6 +5,7 @@ import { toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  DatasetInfo,
   TargetInstance,
   TargetListResponse,
   TargetTypeListResponse,
@@ -459,6 +460,15 @@ export const labelsApi = {
       },
     })
     return response.data
+  },
+}
+
+export const datasetsApi = {
+  list: async (signal?: AbortSignal): Promise<DatasetInfo[]> => {
+    const response = await apiClient.get<{ items: DatasetInfo[] }>('/datasets', {
+      params: { loaded_only: false }, signal,
+    })
+    return response.data.items
   },
 }
 

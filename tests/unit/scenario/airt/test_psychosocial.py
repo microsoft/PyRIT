@@ -24,6 +24,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
+from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.core.dataset_configuration import (
@@ -188,7 +189,9 @@ async def test_total_estimate_uses_initialization_cap_async(
         return list(seeds_by_dataset[dataset_name])
 
     config = DatasetAttackConfiguration(
-        sources=[DatasetSource(name=name) for name in seeds_by_dataset],
+        sources=[
+            DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS if sub_harm == "all" or harm.name == sub_harm
+        ],
         max_per_dataset="all",
         max_total=outer_limit,
     )
@@ -253,9 +256,9 @@ async def test_backend_total_one_rejects_both_sub_harms_before_reads_async(
         scenario_name="airt.psychosocial",
         scenario_class=MagicMock(return_value=scenario),
         objective_target=mock_objective_target,
-        max_dataset_size=1,
+        datasets=ScenarioDatasetRequest(max_total=1),
     )
-    assert args["dataset_config"].max_total == 1
+    assert args["dataset_overrides"].max_total == 1
     scenario.set_params_from_args(args=args)
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
@@ -310,7 +313,7 @@ async def test_backend_total_one_allows_one_selected_sub_harm_async(mock_objecti
         scenario_name="airt.psychosocial",
         scenario_class=MagicMock(return_value=scenario),
         objective_target=mock_objective_target,
-        max_dataset_size=1,
+        datasets=ScenarioDatasetRequest(max_total=1),
     )
     scenario.set_params_from_args(
         args={**args, "sub_harm": "imminent_crisis", "scenario_techniques": [PsychosocialTechnique.NoConverter]}

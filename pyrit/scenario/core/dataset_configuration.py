@@ -47,6 +47,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -64,13 +65,6 @@ _ItemT = TypeVar("_ItemT")
 
 class _Unset(Enum):
     VALUE = "unset"
-
-
-class DatasetFetchPolicy(str, Enum):
-    """When preparation may load a registered dataset into memory."""
-
-    NEVER = "never"
-    IF_MISSING = "if_missing"
 
 
 def _resolve_limit(*, name: str, value: DatasetLimit | _Unset, default: ResolvedDatasetLimit) -> ResolvedDatasetLimit:
@@ -996,6 +990,11 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             max_total=max_total, max_dataset_size=max_dataset_size, max_per_dataset="all", validators=validators
         )
         self._configurations = list(configurations)
+
+    @property
+    def configurations(self) -> tuple[DatasetAttackConfiguration, ...]:
+        """The child configurations, in order."""
+        return tuple(self._configurations)
 
     @property
     def has_sampling_limits(self) -> bool:

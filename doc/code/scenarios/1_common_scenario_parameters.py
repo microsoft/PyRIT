@@ -19,7 +19,7 @@
 #
 # > **Two selection axes**: *Techniques* select attack techniques (*how* attacks run — e.g., prompt
 # > sending, role play, TAP). *Datasets* select objectives (*what* is tested — e.g., harm categories,
-# > compliance topics). Use `--dataset-names` on the CLI to filter by content category.
+# > compliance topics). Use `--datasets` on the CLI to filter by content category.
 #
 # > **Running scenarios from the command line?** See the [Scanner documentation](../../scanner/0_scanner.md).
 #

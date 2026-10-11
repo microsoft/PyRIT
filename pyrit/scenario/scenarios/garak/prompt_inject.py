@@ -17,6 +17,7 @@ from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPrompt
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -217,6 +218,7 @@ class PromptInject(Scenario):
     """
 
     VERSION: int = 3
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     DEFAULT_GOAL_TEXTS: ClassVar[tuple[str, str, str]] = _DEFAULT_GOAL_TEXTS
     TECHNIQUE_DATASET_NAME: ClassVar[str] = "prompt_inject_techniques"

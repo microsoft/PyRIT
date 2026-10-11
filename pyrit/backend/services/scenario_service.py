@@ -68,6 +68,8 @@ def _metadata_to_registered_scenario(
         all_techniques=list(metadata.all_techniques),
         technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
+        dataset_options=metadata.dataset_options,
+        dataset_defaults=metadata.dataset_defaults,
         supported_parameters=[
             parameter.for_external_catalog()
             for parameter in metadata.supported_parameters
@@ -498,9 +500,7 @@ class ScenarioService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
+                datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
             )
             return await self._registry.create_and_estimate_async(

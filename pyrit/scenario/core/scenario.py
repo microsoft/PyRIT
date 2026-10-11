@@ -53,6 +53,7 @@ from pyrit.models import (
     config_hash,
 )
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -61,6 +62,7 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
 )
+from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -346,6 +348,11 @@ class Scenario(ABC):
             Parameter(
                 name="scenario_techniques",
                 description="Techniques to execute; defaults to the scenario's default aggregate when omitted.",
+                opaque=True,
+            ),
+            Parameter(
+                name="dataset_overrides",
+                description="Serializable dataset edits applied on top of the dataset configuration.",
                 opaque=True,
             ),
             Parameter(
@@ -637,6 +644,22 @@ class Scenario(ABC):
     @final
     async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
+        Estimate without preparation and expose resolved defaults separately from edits.
+
+        Returns:
+            ScenarioRunSizeEstimate: Estimate with dataset defaults and effective settings.
+        """
+        estimate = await self._get_run_size_estimate_async(target_is_configured=target_is_configured)
+        return estimate.model_copy(
+            update={
+                "dataset_options": self.get_dataset_options(),
+                "dataset_defaults": project_dataset_settings(self._resolved_default_dataset_config),
+                "effective_datasets": project_dataset_settings(self._dataset_config),
+            }
+        )
+
+    async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+        """
         Estimate the currently configured run without creating or persisting it.
 
         ``set_params_from_args`` should be called first for a request-specific
@@ -818,7 +841,6 @@ class Scenario(ABC):
 
         dataset_config = params.get("dataset_config")
         self._dataset_config_provided = dataset_config is not None
-        self._dataset_config = (dataset_config if dataset_config else self._default_dataset_config).with_overrides()
         self._max_concurrency = params.get("max_concurrency", 4)
         self._max_retries = params.get("max_retries", 0)
         self._memory_labels = params.get("memory_labels") or {}
@@ -839,7 +861,38 @@ class Scenario(ABC):
             scenario_techniques=params.get("scenario_techniques")
         )
         self._technique_converters = params.get("technique_converters") or {}
+        self._resolved_default_dataset_config = self._resolve_default_dataset_config().with_overrides()
+        self._dataset_config = (
+            dataset_config if dataset_config is not None else self._resolved_default_dataset_config
+        ).with_overrides()
+        options = self.get_dataset_options()
+        raw_overrides = params.get("dataset_overrides")
+        if raw_overrides is not None:
+            self._dataset_config = apply_dataset_overrides(
+                config=self._dataset_config,
+                request=ScenarioDatasetRequest.model_validate(raw_overrides),
+                options=options,
+            )
         self._validate_runtime_configuration()
+
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        """
+        Resolve parameter-aware defaults before any override or preparation.
+
+        Returns:
+            DatasetAttackConfiguration: Scenario-owned resolved default configuration.
+        """
+        return self._default_dataset_config
+
+    DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """Return the scenario's named-dataset capabilities for the current parameters."""
+        return self.DATASET_OPTIONS
+
+    def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
+        """Return the default dataset settings for the current parameters, without reading memory."""
+        return project_dataset_settings(self._resolve_default_dataset_config())
 
     def _validate_runtime_configuration(self) -> None:
         """
