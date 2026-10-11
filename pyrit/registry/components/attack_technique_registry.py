@@ -33,6 +33,7 @@ if TYPE_CHECKING:
         AttackTechniqueFactory,
         ScorerOverridePolicy,
     )
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +219,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         factories: list[AttackTechniqueFactory],
         default_tags: set[str] | None = None,
         default_names: set[str] | None = None,
-    ) -> type:
+    ) -> type[ScenarioTechnique]:
         """
         Build a ``ScenarioTechnique`` enum subclass dynamically from technique factories.
 
@@ -253,7 +254,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 those techniques are filtered out. Mutually exclusive with ``default_tags``.
 
         Returns:
-            type: A ``ScenarioTechnique`` subclass with the generated members.
+            type[ScenarioTechnique]: A subclass with the generated members.
 
         Raises:
             ValueError: If both ``default_tags`` and ``default_names`` are provided, or if generated

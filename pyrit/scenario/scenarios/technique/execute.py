@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig
@@ -61,11 +61,8 @@ def _build_execute_technique() -> type[ScenarioTechnique]:
     factories = list(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise().values())
     names = {factory.name for factory in factories}
     default_name = "red_teaming" if "red_teaming" in names else sorted(names)[0]
-    return cast(
-        "type[ScenarioTechnique]",
-        AttackTechniqueRegistry.build_technique_class_from_factories(
-            class_name="ExecuteTechnique", factories=factories, default_names={default_name}
-        ),
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
+        class_name="ExecuteTechnique", factories=factories, default_names={default_name}
     )
 
 
