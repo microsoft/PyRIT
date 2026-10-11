@@ -4,7 +4,7 @@
 import logging
 from typing import ClassVar
 
-from pyrit.converter.text_selection_strategy import WordSelectionStrategy
+from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
 
@@ -50,8 +50,14 @@ class ZalgoConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        selection_params = (
+            {}
+            if type(self._word_selection_strategy) is AllWordsSelectionStrategy
+            else super()._build_identifier().params
+        )
         return self._create_identifier(
             params={
+                **selection_params,
                 "intensity": self._intensity,
             },
         )

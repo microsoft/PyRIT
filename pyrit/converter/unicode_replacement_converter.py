@@ -36,13 +36,11 @@ class UnicodeReplacementConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "encode_spaces": self.encode_spaces,
-            }
-        )
+        params = dict(super()._build_identifier().params)
+        if not params["word_selection_strategy_params"]:
+            del params["word_selection_strategy_params"]
+        params["encode_spaces"] = self.encode_spaces
+        return self._create_identifier(params=params)
 
     async def convert_word_async(self, word: str) -> str:
         """

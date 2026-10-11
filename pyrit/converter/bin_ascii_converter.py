@@ -75,13 +75,12 @@ class BinAsciiConverter(WordLevelConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(
-            params={
-                "word_selection_strategy": self._word_selection_strategy.__class__.__name__,
-                "word_split_separator": self._word_split_separator,
-                "encoding_func": self._encoding_func,
-            }
-        )
+        params = dict(super()._build_identifier().params)
+        if not params["word_selection_strategy_params"]:
+            # Preserve existing identities for parameterless selection strategies.
+            del params["word_selection_strategy_params"]
+        params["encoding_func"] = self._encoding_func
+        return self._create_identifier(params=params)
 
     async def convert_word_async(self, word: str) -> str:
         """
