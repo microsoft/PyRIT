@@ -60,6 +60,19 @@ class TestAzureSpeechAudioToTextConverter:
         mock_logger.info.assert_any_call(f"Speech recognition canceled: {speechsdk.CancellationReason.EndOfStream}")
         mock_logger.info.assert_called_with("End of audio stream detected.")
 
+    def test_stop_cb_session_stopped(self) -> None:
+        import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
+
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+        event = MagicMock(spec=speechsdk.SessionEventArgs)
+        recognizer = MagicMock(spec=speechsdk.SpeechRecognizer)
+
+        assert not hasattr(event, "result")
+        converter.stop_cb(evt=event, recognizer=recognizer)
+
+        assert converter.done is True
+        recognizer.stop_continuous_recognition_async.assert_called_once()
+
     @patch(
         "pyrit.common.default_values.get_required_value",
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
