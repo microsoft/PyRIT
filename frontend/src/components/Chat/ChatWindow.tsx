@@ -452,18 +452,12 @@ export default function ChatWindow({
     [activePieceConversions, converters.pipelines, converters.editRevision],
   )
 
-  // Auto-open conversation sidebar when loading a historical attack with multiple
-  // conversations. Uses the "adjust state during render" pattern to avoid
-  // react-hooks/set-state-in-effect.
-  const [autoOpenedForAttack, setAutoOpenedForAttack] = useState<string | null>(null)
-  if (
-    attackResultId
-    && attackResultId !== autoOpenedForAttack
-    && relatedConversationCount
-    && relatedConversationCount > 0
-  ) {
-    setAutoOpenedForAttack(attackResultId)
-    if (!isNarrowScreen) {
+  // Apply the historical attack's drawer default once. Late send refreshes
+  // must not override the operator's open/closed choice.
+  const [panelInitializedForAttack, setPanelInitializedForAttack] = useState<string | null>(null)
+  if (attackResultId && attackResultId !== panelInitializedForAttack) {
+    setPanelInitializedForAttack(attackResultId)
+    if (!isNarrowScreen && relatedConversationCount && relatedConversationCount > 0) {
       setIsPanelOpen(true)
     }
   }

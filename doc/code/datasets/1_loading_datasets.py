@@ -22,6 +22,7 @@
 # Aegis [@ghosh2025aegis],
 # Agent Threat Rules [@atr2026],
 # ALERT [@tedeschi2024alert],
+# Anthropic Model-Written Evals [@perez2022modelwritten],
 # BeaverTails [@ji2023beavertails],
 # CBT-Bench [@zhang2024cbtbench],
 # CategoricalHarmfulQA (CatQA) [@bhardwaj2024homer],
