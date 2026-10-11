@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+import uuid
 from collections.abc import MutableSequence
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
@@ -43,6 +44,7 @@ from pyrit.models import (
     ToolExecutionMetadata,
     flatten_to_message_pieces,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.openai.openai_response_target import _ToolDispatchResult, token_usage_from_responses
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
@@ -1072,7 +1074,39 @@ async def test_build_input_for_multi_modal_async_preserves_mixed_payload_contrac
     ]
 
 
-def _web_search_response() -> Response:
+_WEB_SEARCH_ACTIONS = [
+    {"type": "search", "query": "pyrit release"},
+    {"type": "open_page", "url": "https://example.com/pyrit"},
+    {"type": "find_in_page", "pattern": "release", "url": "https://example.com/pyrit"},
+]
+
+
+def _answer_response(*, text: str, extra_output: list[dict[str, Any]] | None = None) -> Response:
+    return Response.model_validate(
+        {
+            "id": "resp-2",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-4.1",
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [{"type": "web_search_preview"}],
+            "status": "completed",
+            "output": [
+                *(extra_output or []),
+                {
+                    "type": "message",
+                    "id": "msg-2",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": text, "annotations": []}],
+                },
+            ],
+        }
+    )
+
+
+def _web_search_response(*, action: dict[str, Any] | None = None) -> Response:
     return Response.model_validate(
         {
             "id": "resp-1",
@@ -1088,7 +1122,7 @@ def _web_search_response() -> Response:
                     "type": "web_search_call",
                     "id": "ws-1",
                     "status": "completed",
-                    "action": {"type": "search", "query": "pyrit release"},
+                    "action": action or _WEB_SEARCH_ACTIONS[0],
                 },
                 {
                     "type": "message",
@@ -1104,7 +1138,7 @@ def _web_search_response() -> Response:
 
 async def test_web_search_answer_is_the_response_value_async(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
-):
+) -> None:
     reply = await target._construct_message_from_response_async(_web_search_response(), dummy_text_message_piece)
 
     assert reply.get_value() == "PyRIT 0.13 is out."
@@ -1128,6 +1162,37 @@ async def test_web_search_call_replays_as_a_valid_input_item_async(
     assert items[1] == web_search
     assert set(web_search) == set(get_type_hints(ResponseFunctionWebSearchParam))
     assert items[2] == {"role": "assistant", "content": [{"type": "output_text", "text": "PyRIT 0.13 is out."}]}
+
+
+@pytest.mark.parametrize("action", _WEB_SEARCH_ACTIONS)
+async def test_web_search_conversation_continues_through_send_prompt_async(
+    *, target: OpenAIResponseTarget, sqlite_instance: MemoryInterface, action: dict[str, Any]
+) -> None:
+    create = AsyncMock(side_effect=[_web_search_response(action=action), _answer_response(text="Nothing else is new.")])
+    target._async_client.responses.create = create  # type: ignore[method-assign]
+    normalizer = PromptNormalizer()
+    conversation_id = str(uuid.uuid4())
+
+    first = await normalizer.send_prompt_async(
+        message=Message.from_prompt(prompt="What's new in PyRIT?", role="user"),
+        target=target,
+        conversation_id=conversation_id,
+    )
+    second = await normalizer.send_prompt_async(
+        message=Message.from_prompt(prompt="Anything else?", role="user"),
+        target=target,
+        conversation_id=conversation_id,
+    )
+
+    web_search = {"id": "ws-1", "type": "web_search_call", "status": "completed", "action": action}
+    assert first.get_value() == "PyRIT 0.13 is out."
+    assert second.get_value() == "Nothing else is new."
+    replayed = create.await_args_list[1].kwargs["input"]
+    assert replayed[1] == web_search
+    assert replayed[2]["role"] == "assistant"
+    stored = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+    [tool_call] = [piece for piece in stored if piece.converted_value_data_type == "tool_call"]
+    assert json.loads(tool_call.converted_value) == web_search
 
 
 async def test_web_search_call_stored_without_its_action_is_skipped_on_replay_async(
