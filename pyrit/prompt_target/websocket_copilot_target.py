@@ -28,11 +28,13 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     MessagePiece,
+    RequestTraceContext,
     construct_response_from_request,
 )
 from pyrit.prompt_target import PromptTarget, limit_requests_per_minute
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,10 @@ class WebSocketCopilotTarget(PromptTarget):
     ``session_id`` and ``conversation_id`` values, enabling Copilot to preserve conversational
     context across multiple turns.
 
+    Request tracing is off by default. With ``TargetTraceConfig(enabled=True)``, each send records
+    a fresh trace context, carries its trace ID in the prompt payload's ``traceId`` field, and sends
+    the ``traceparent`` header on the WebSocket handshake.
+
     Because conversation state is managed entirely on the Copilot server, this target does
     not resend conversation history with each request and does not support programmatic
     inspection or manipulation of that history. At present, there appears to be no supported
@@ -112,6 +118,7 @@ class WebSocketCopilotTarget(PromptTarget):
             BrowserSessionCopilotAuthenticator | CopilotAuthenticator | ManualCopilotAuthenticator | None
         ) = None,
         custom_configuration: TargetConfiguration | None = None,
+        trace_config: TargetTraceConfig | None = None,
     ) -> None:
         """
         Initialize the WebSocketCopilotTarget.
@@ -128,6 +135,9 @@ class WebSocketCopilotTarget(PromptTarget):
                 ``CopilotAuthenticator`` is created.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+            trace_config (TargetTraceConfig | None): Request tracing configuration. Tracing is
+                disabled by default. Enable it only for an endpoint that is known to accept the
+                propagated context.
 
         Raises:
             ValueError: If ``response_timeout_seconds`` is not a positive integer.
@@ -151,6 +161,7 @@ class WebSocketCopilotTarget(PromptTarget):
             endpoint=self._websocket_base_url,
             model_name=model_name,
             custom_configuration=custom_configuration,
+            trace_config=trace_config,
         )
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -379,6 +390,7 @@ class WebSocketCopilotTarget(PromptTarget):
         session_id: str,
         copilot_conversation_id: str,
         is_start_of_session: bool,
+        trace_context: RequestTraceContext | None = None,
     ) -> dict[str, Any]:
         """
         Construct the prompt message payload for Copilot WebSocket API.
@@ -391,11 +403,14 @@ class WebSocketCopilotTarget(PromptTarget):
             session_id (str): Copilot session identifier.
             copilot_conversation_id (str): Copilot conversation identifier.
             is_start_of_session (bool): Whether this is the first message in the conversation.
+            trace_context (RequestTraceContext | None): The recorded request trace context. When
+                present, its trace ID is sent as the payload's ``traceId``.
 
         Returns:
             dict: The complete message payload ready to be sent via WebSocket.
         """
-        request_id = trace_id = uuid.uuid4().hex
+        request_id = uuid.uuid4().hex
+        trace_id = trace_context.trace_id if trace_context else request_id
 
         text_parts: list[str] = []
         message_annotations: list[dict[str, Any]] = []
@@ -495,6 +510,7 @@ class WebSocketCopilotTarget(PromptTarget):
         session_id: str,
         copilot_conversation_id: str,
         is_start_of_session: bool,
+        trace_context: RequestTraceContext | None = None,
     ) -> str:
         """
         Establish WebSocket connection, send prompt, and await response.
@@ -507,6 +523,8 @@ class WebSocketCopilotTarget(PromptTarget):
             session_id (str): Copilot session identifier.
             copilot_conversation_id (str): Copilot conversation identifier.
             is_start_of_session (bool): Whether this is the first message in the conversation.
+            trace_context (RequestTraceContext | None): The recorded request trace context. When
+                present, it is sent in the payload and as the handshake ``traceparent`` header.
 
         Returns:
             str: The final response text from Copilot.
@@ -527,14 +545,19 @@ class WebSocketCopilotTarget(PromptTarget):
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
                 is_start_of_session=is_start_of_session,
+                trace_context=trace_context,
             ),
         ]
         response = ""
+        connect_options: dict[str, Any] = {}
+        if trace_context:
+            connect_options["additional_headers"] = {"traceparent": trace_context.traceparent}
 
         async with websockets.connect(
             websocket_url,
             open_timeout=self.CONNECTION_TIMEOUT_SECONDS,
             close_timeout=self.CONNECTION_TIMEOUT_SECONDS,
+            **connect_options,
         ) as websocket:
             for input_msg in inputs:
                 payload = self._dict_to_websocket(input_msg)
@@ -702,6 +725,7 @@ class WebSocketCopilotTarget(PromptTarget):
                 session_id=session_id,
                 copilot_conversation_id=copilot_conversation_id,
                 is_start_of_session=is_start_of_session,
+                trace_context=RequestTraceContext.from_metadata(message.get_piece().prompt_metadata),
             )
 
             if not response_text or not response_text.strip():

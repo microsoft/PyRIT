@@ -4,17 +4,23 @@
 """Tests for the RapidResponse scenario (refactored from ContentHarms)."""
 
 import pathlib
+import threading
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import (
+    AttackStrategy,
+    CrescendoAttack,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
+    SkeletonKeyAttack,
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, TargetIdentifier
+from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -149,6 +155,48 @@ ALL_HARM_SEED_GROUPS = {cat: _make_seed_groups(cat) for cat in ALL_HARM_CATEGORI
 
 
 FIXTURES = ["patch_central_database", "mock_runtime_env"]
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+@pytest.mark.parametrize(
+    "attack_class",
+    [ManyShotJailbreakAttack, CrescendoAttack, TreeOfAttacksWithPruningAttack, SkeletonKeyAttack],
+)
+async def test_matrix_attack_templates_are_loaded_off_loop_async(
+    *,
+    attack_class: type[AttackStrategy[Any, Any]],
+    mock_objective_target: PromptTarget,
+    mock_objective_scorer: TrueFalseScorer,
+) -> None:
+    from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
+
+    registry = AttackTechniqueRegistry()
+    registry.register_from_factories(
+        [AttackTechniqueFactory(name="disk_backed", attack_class=attack_class, technique_tags=["light"])]
+    )
+    backend_thread = threading.get_ident()
+    original_load = yaml_seed_loader._read_yaml
+
+    def load_template(file: str | pathlib.Path) -> dict[str, Any]:
+        assert threading.get_ident() != backend_thread
+        return original_load(file)
+
+    _build_rapid_response_technique.cache_clear()
+    with (
+        patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(
+            DatasetAttackConfiguration,
+            "get_attack_groups_by_dataset_async",
+            return_value={"local": _make_seed_groups("local")},
+        ),
+    ):
+        scenario = RapidResponse(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "include_baseline": False})
+        with patch.object(yaml_seed_loader, "_read_yaml", side_effect=load_template) as read:
+            await scenario.initialize_async()
+        assert read.call_count > 0
+        assert len(scenario._atomic_attacks) == 1
+        assert isinstance(scenario._atomic_attacks[0].attack_technique.attack, attack_class)
 
 
 # ===========================================================================

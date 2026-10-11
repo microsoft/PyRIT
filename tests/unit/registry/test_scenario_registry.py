@@ -3,12 +3,21 @@
 
 """Tests for ScenarioRegistry._build_metadata and create_and_initialize_async."""
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
-from pyrit.scenario.core import BaselineAttackPolicy, ScenarioTechnique
+from pyrit.scenario import Scenario
+from pyrit.scenario.core import (
+    BaselineAttackPolicy,
+    ScenarioTechnique,
+    get_default_adversarial_target,
+    override_default_adversarial_target,
+)
+from unit.mocks import MockPromptTarget
 
 
 class _NotNoArgScenario:
@@ -73,6 +82,60 @@ class _MarkdownMetadataScenario(_MetadataScenario):
 
     <script>alert("untrusted")</script>
     """
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_construction_offload_retains_context_and_ownership_async(
+    *, patch_central_database: object, cancelled: bool
+) -> None:
+    registry = ScenarioRegistry()
+    scenario = MagicMock(spec=Scenario)
+    scenario.initialize_async = AsyncMock()
+    selected = MockPromptTarget()
+    loop = asyncio.get_running_loop()
+    backend_thread = threading.get_ident()
+    entered = asyncio.Event()
+    release = threading.Event()
+    configured: list[object] = []
+
+    def construct(name: str, *, params: dict, constructor_kwargs: dict) -> MagicMock:
+        assert threading.get_ident() != backend_thread
+        assert get_default_adversarial_target() is selected
+        configured.append(params["objective_target"])
+        loop.call_soon_threadsafe(entered.set)
+        if not release.wait(5):
+            raise TimeoutError("Construction was not released.")
+        return scenario
+
+    async def initialize_async() -> None:
+        assert asyncio.get_running_loop() is loop
+        assert get_default_adversarial_target() is selected
+
+    scenario.initialize_async.side_effect = initialize_async
+    with patch.object(registry, "_create_and_configure", side_effect=construct):
+        with override_default_adversarial_target(selected):
+            task = asyncio.create_task(registry.create_and_initialize_async("test", objective_target=selected))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            if cancelled:
+                task.cancel()
+                barrier = asyncio.Event()
+                loop.call_soon(barrier.set)
+                await asyncio.wait_for(barrier.wait(), 5)
+                assert not task.done()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 5)
+                scenario.initialize_async.assert_not_awaited()
+            else:
+                assert not task.done()
+                release.set()
+                assert await asyncio.wait_for(task, 5) is scenario
+                scenario.initialize_async.assert_awaited_once()
+            assert configured == [selected]
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def test_build_metadata_raises_when_scenario_requires_constructor_args() -> None:

@@ -8,6 +8,7 @@ from functools import cache
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -170,7 +171,8 @@ class Doctor(Scenario):
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
         )
-        return builder.build(
+        return await run_legacy_sync_async(
+            builder.build,
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             include_baseline=context.include_baseline,

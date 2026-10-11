@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -123,7 +124,8 @@ class Cyber(Scenario):
         Returns:
             list[AtomicAttack]: The generated atomic attacks.
         """
-        return build_matrix_atomic_attacks(
+        return await run_legacy_sync_async(
+            build_matrix_atomic_attacks,
             context=context,
             objective_scorer=self._objective_scorer,
             technique_converters=self._technique_converters,
