@@ -207,7 +207,8 @@ class HumanLabeledDataset:
         - 'data_type': Optional data type (defaults to 'text' if not present)
 
         You can optionally include a # comment line at the top of the CSV file to specify
-        the dataset version and harm definition path. The format is:
+        the dataset version and harm definition path. Only leading # lines are treated as
+        comments; a # anywhere else is preserved as literal data. The format is:
         - For harm datasets: # dataset_version=x.y, harm_definition=path/to/definition.yaml, harm_definition_version=x.y
         - For objective datasets: # dataset_version=x.y
 
@@ -235,8 +236,10 @@ class HumanLabeledDataset:
         parsed_version = None
         parsed_harm_definition = None
         parsed_harm_definition_version = None
+        # "utf-8-sig" drops a byte-order mark if the file has one, so a BOM file's
+        # first line is still recognized as the metadata comment line
         try:
-            with open(csv_path, encoding="utf-8") as f:
+            with open(csv_path, encoding="utf-8-sig") as f:
                 first_line = f.readline().strip()
         except UnicodeDecodeError:
             with open(csv_path, encoding="latin-1") as f:
@@ -271,11 +274,24 @@ class HumanLabeledDataset:
         if not harm_definition_version and parsed_harm_definition_version:
             harm_definition_version = parsed_harm_definition_version
 
+        # Skip the leading "#" comment line(s) instead of relying on comment="#",
+        # which also truncates the remainder of unquoted cells containing "#" (#2974).
+        # "utf-8-sig" drops a byte-order mark, which does not start a "#" line but
+        # does leave the metadata line looking like data, and a leading blank line
+        # is skipped the same way so it cannot stop the scan either.
+        skiprows = 0
+        with open(csv_path, encoding="utf-8-sig", errors="ignore") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith("#") or not stripped:
+                    skiprows += 1
+                else:
+                    break
         # Try UTF-8 first, fall back to latin-1 for files with special characters
         try:
-            eval_df = pd.read_csv(csv_path, comment="#", encoding="utf-8")
+            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="utf-8")
         except UnicodeDecodeError:
-            eval_df = pd.read_csv(csv_path, comment="#", encoding="latin-1")
+            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="latin-1")
 
         # Drop rows where every column is NaN (e.g. trailing blank lines in the CSV)
         eval_df = eval_df.dropna(how="all")
