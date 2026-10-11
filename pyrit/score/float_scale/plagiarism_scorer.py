@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-import re
+import unicodedata
 from enum import Enum
 
 import numpy as np
@@ -88,12 +88,56 @@ class PlagiarismScorer(MessageFloatScaleScorer):
         """
         Tokenize text using whitespace-based tokenization (case-insensitive).
 
+        Text is normalized to NFKC first so that compatibility forms (fullwidth
+        letters, mathematical alphanumerics, decomposed accents) fold to a single
+        representation. Fraction separators between decimal digits are preserved
+        as ``/`` instead of joining the numerator and denominator. Compact
+        fractions remain separate from a preceding whole number.
+
+        Combining marks are kept only after a retained word character or another
+        attached mark, so meaningful vowel signs survive without keeping orphaned
+        marks from removed emoji, punctuation, or whitespace.
+
         Returns:
-            list[str]: List of lowercase tokens with punctuation removed.
+            list[str]: Lowercase word tokens with numeric fraction separators preserved.
         """
-        text = text.lower()
-        text = re.sub(r"[^\w\s]", "", text)
-        return text.split()
+        text = self._normalize_text(text)
+        characters: list[str] = []
+        has_word_base = False
+        for index, char in enumerate(text):
+            if char.isalnum() or char == "_":
+                characters.append(char)
+                has_word_base = True
+            elif unicodedata.category(char).startswith("M"):
+                if has_word_base:
+                    characters.append(char)
+            else:
+                has_word_base = False
+                if char.isspace():
+                    characters.append(char)
+                elif (
+                    char in {"/", "\u2044"}
+                    and 0 < index < len(text) - 1
+                    and text[index - 1].isdecimal()
+                    and text[index + 1].isdecimal()
+                ):
+                    characters.append("/")
+        return "".join(characters).split()
+
+    def _normalize_text(self, text: str) -> str:
+        """
+        Normalize compatibility forms without merging mixed-number components.
+
+        Returns:
+            str: Lowercase NFKC text separating whole numbers from compact fraction symbols.
+        """
+        text = "".join(
+            f" {char}"
+            if index > 0 and text[index - 1].isnumeric() and unicodedata.decomposition(char).startswith("<fraction>")
+            else char
+            for index, char in enumerate(text)
+        )
+        return unicodedata.normalize("NFKC", text).lower()
 
     def _lcs_length(self, a: list[str], b: list[str]) -> int:
         """

@@ -1356,18 +1356,21 @@ class _TreeOfAttacksNode:
             response_id (str): The unique identifier of the response to retrieve the score for.
 
         Returns:
-            str: The score value as a string representation. Returns "unavailable" if no score
-                exists for the given response ID. For numeric scores, this will be the string
+            str: The score value as a string representation. Returns "unavailable" if no identified
+                objective score exists for the given response ID. For numeric scores, this will be the string
                 representation of the float value (e.g., "0.75").
 
         Note:
-            The method assumes that if scores exist, at least one score will be present in the
-            list. It takes the first score if multiple scores are associated with the response,
-            which is typically the objective score in the TAP algorithm context.
+            Auxiliary scorers also score the response, so only the objective scorer's score is used.
         """
         scores = await self._memory.get_prompt_scores_async(prompt_ids=[str(response_id)])
-        if scores:
-            return str(normalize_score_to_float(scores[0]))
+        objective_scorer_hash = self._objective_scorer.get_identifier().hash
+        for score in scores:
+            if (
+                score.scorer_class_identifier is not None
+                and score.scorer_class_identifier.hash == objective_scorer_hash
+            ):
+                return str(normalize_score_to_float(score))
         return "unavailable"
 
     async def _send_to_adversarial_chat_async(
