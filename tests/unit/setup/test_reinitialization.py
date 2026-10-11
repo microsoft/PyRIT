@@ -5,16 +5,47 @@
 
 import os
 import uuid
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.common.apply_defaults import get_global_default_values
+from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
 from pyrit.registry import AttackRegistry, InitializerRegistry, Registry, TargetRegistry
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import reset_setup_registries, validate_reinitialization_memory
+from pyrit.setup.initializers.targets import TARGET_CONFIGS
+
+
+@contextmanager
+def _isolated_reinitialization_state() -> Generator[None, None, None]:
+    defaults = get_global_default_values()
+    previous_seed = get_configured_random_seed()
+    with (
+        patch.dict(os.environ),
+        patch.dict(Registry._singletons, {}, clear=True),
+        patch.dict(defaults._default_values, {}, clear=True),
+    ):
+        for config in TARGET_CONFIGS:
+            for name in (config.endpoint_var, config.key_var, config.model_var, config.underlying_model_var):
+                if name:
+                    os.environ.pop(name, None)
+        try:
+            yield
+        finally:
+            reset_setup_registries()
+            configure_random_seed(seed=previous_seed)
+
+
+@pytest.fixture(autouse=True)
+def isolate_reinitialization_state() -> Iterator[None]:
+    with _isolated_reinitialization_state():
+        yield
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -90,25 +121,84 @@ class CaptureInitializer(PyRITInitializer):
     reset_setup_registries()
 
 
-async def test_replacement_precedence_interpolation_empty_and_omission(tmp_path: Path) -> None:
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("configured_target", [False, True])
+async def test_replacement_precedence_interpolation_empty_and_omission(
+    *, tmp_path: Path, sqlite_instance: SQLiteMemory, configured_target: bool
+) -> None:
     base, other, local = tmp_path / ".env", tmp_path / "other.env", tmp_path / ".env.local"
     base.write_text("VALUE=new\nEMPTY=\nINTERPOLATED=${VALUE}/suffix\n", encoding="utf-8")
     other.write_text("VALUE=ignored\n", encoding="utf-8")
     local.write_text("VALUE=local\n", encoding="utf-8")
     with patch.dict(os.environ, {"VALUE": "old", "EMPTY": "old", "OMITTED": "keep"}):
+        if configured_target:
+            os.environ.update(
+                {
+                    "OPENAI_CHAT_ENDPOINT": "http://127.0.0.1:1",
+                    "OPENAI_CHAT_KEY": "synthetic-test-key",
+                    "OPENAI_CHAT_MODEL": "gpt-4o",
+                }
+            )
         values = await resolve_environment_async(env_files=[base, other, local], env_akv_ref=None, env_akv_strict=True)
         assert values == {"VALUE": "local", "EMPTY": "", "INTERPOLATED": "local/suffix"}
         assert os.environ["VALUE"] == "old"
-        with (
-            patch("pyrit.setup.initialization.validate_reinitialization_memory", return_value=object()),
-            patch.object(CentralMemory, "set_memory_instance"),
-        ):
-            config = ConfigurationLoader(memory_db_type="in_memory", initialization_scripts=[], env_files=[])
-            prepared = await config.preflight_reinitialization_async(environment_values=values)
-            await config.apply_prepared_reinitialization_async(prepared=prepared)
+        config = ConfigurationLoader(memory_db_type="in_memory", initialization_scripts=[], env_files=[])
+        prepared = await config.preflight_reinitialization_async(environment_values=values)
+        await config.apply_prepared_reinitialization_async(prepared=prepared)
+        assert CentralMemory.get_memory_instance() is sqlite_instance
+        targets = TargetRegistry.get_registry_singleton().instances
+        if configured_target:
+            assert targets.get("openai_chat")._memory is sqlite_instance
+        else:
+            assert targets.get_names() == []
         assert os.environ["VALUE"] == "local"
         assert os.environ["EMPTY"] == ""
         assert os.environ["OMITTED"] == "keep"
+
+
+async def test_reinitialization_without_memory_does_not_mutate_state_async(sqlite_instance: SQLiteMemory) -> None:
+    assert CentralMemory.get_memory_instance() is sqlite_instance
+    config = ConfigurationLoader(memory_db_type="in_memory", initialization_scripts=[], env_files=[])
+    prepared = await config.preflight_reinitialization_async(environment_values={"DO_NOT_APPLY": "changed"})
+    registry = TargetRegistry.get_registry_singleton()
+    initializers = InitializerRegistry.get_registry_singleton()
+    environment = dict(os.environ)
+
+    with patch.object(CentralMemory, "_memory_instance", None):
+        with pytest.raises(RuntimeError, match="Live reinitialization requires initialized memory"):
+            await config.apply_prepared_reinitialization_async(prepared=prepared)
+
+    assert dict(os.environ) == environment
+    assert TargetRegistry.get_registry_singleton() is registry
+    assert InitializerRegistry.get_registry_singleton() is initializers
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("fail", [False, True])
+def test_reinitialization_scope_restores_state_after_success_or_failure(fail: bool) -> None:
+    registry = TargetRegistry.get_registry_singleton()
+    memory = CentralMemory.get_memory_instance()
+    defaults = get_global_default_values()
+    defaults.set_default_value(class_type=ConfigurationLoader, parameter_name="operation", value="outside")
+    expected_defaults = defaults.all_defaults
+    environment = dict(os.environ)
+    previous_seed = get_configured_random_seed()
+    outcome = pytest.raises(RuntimeError, match="scope failure") if fail else nullcontext()
+
+    with outcome:
+        with _isolated_reinitialization_state():
+            os.environ["PYRIT_REINIT_TEST_CAPTURED"] = "inside"
+            assert TargetRegistry.get_registry_singleton() is not registry
+            defaults.set_default_value(class_type=ConfigurationLoader, parameter_name="operation", value="inside")
+            configure_random_seed(seed=7)
+            if fail:
+                raise RuntimeError("scope failure")
+
+    assert TargetRegistry.get_registry_singleton() is registry
+    assert CentralMemory.get_memory_instance() is memory
+    assert defaults.all_defaults == expected_defaults
+    assert dict(os.environ) == environment
+    assert get_configured_random_seed() == previous_seed
 
 
 async def test_key_vault_selection_skips_default_base_and_overrides_process(tmp_path: Path) -> None:

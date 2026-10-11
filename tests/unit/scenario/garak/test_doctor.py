@@ -3,6 +3,7 @@
 
 """Tests for the Doctor scenario."""
 
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,11 +12,19 @@ from pyrit.converter import Base64Converter, LeetspeakConverter, PolicyPuppetryC
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
+from pyrit.registry import Registry
 from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.garak import Doctor, DoctorTechnique  # type: ignore[ty:unresolved-import]
+from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.garak.doctor import DOCTOR_FACTORIES
 from pyrit.score import TrueFalseScorer
+from pyrit.setup.initialization import reset_setup_registries
+
+
+class _OtherTechnique(ScenarioTechnique):
+    ALL = ("all", {"all"})
 
 
 def _factories_by_name():
@@ -154,6 +163,37 @@ class TestDoctorTechniqueExpansion:
 
         technique_values = {s.value for s in scenario._scenario_techniques}
         assert technique_values == {"policy_puppetry", "policy_puppetry_leet"}
+
+    @pytest.mark.parametrize("reset_caches", [reset_dynamic_technique_caches, reset_setup_registries])
+    async def test_imported_technique_survives_registry_reset_async(
+        self,
+        *,
+        mock_objective_target: PromptTarget,
+        mock_objective_scorer: TrueFalseScorer,
+        doctor_dataset_config: DatasetAttackConfiguration,
+        reset_caches: Callable[[], None],
+    ) -> None:
+        with patch.dict(Registry._singletons):
+            reset_caches()
+            scenario = Doctor(objective_scorer=mock_objective_scorer)
+            assert scenario._technique_class is DoctorTechnique
+            assert scenario._default_technique is DoctorTechnique.DEFAULT
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [DoctorTechnique.ALL],
+                    "dataset_config": doctor_dataset_config,
+                }
+            )
+            await scenario.initialize_async()
+
+        assert scenario._scenario_techniques == DoctorTechnique.get_all_techniques()
+        assert len(scenario._atomic_attacks) == 2
+
+    @pytest.mark.parametrize("unsupported", ["all", _OtherTechnique.ALL])
+    def test_techniques_from_outside_doctor_catalog_are_rejected(self, unsupported: object) -> None:
+        with pytest.raises(ValueError, match="DoctorTechnique received unsupported techniques"):
+            DoctorTechnique.resolve([unsupported], default=DoctorTechnique.DEFAULT)
 
     async def test_all_expands_to_concrete_techniques(
         self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
