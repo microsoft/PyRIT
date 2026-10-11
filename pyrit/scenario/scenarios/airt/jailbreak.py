@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import TextJailbreakConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
@@ -306,12 +307,14 @@ class Jailbreak(Scenario):
                 " or `jailbreak_names` (specific selection)."
             )
         if jailbreak_names:
-            available = set(TextJailBreak.get_jailbreak_templates())
+            available = set(await run_legacy_sync_async(TextJailBreak.get_jailbreak_templates))
             diff = set(jailbreak_names) - available
             if diff:
                 raise ValueError(f"Error: could not find templates `{diff}`!")
             return list(jailbreak_names)
-        return TextJailBreak.get_jailbreak_templates(num_templates=num_jailbreaks or _DEFAULT_NUM_JAILBREAKS)
+        return await run_legacy_sync_async(
+            TextJailBreak.get_jailbreak_templates, num_templates=num_jailbreaks or _DEFAULT_NUM_JAILBREAKS
+        )
 
     def _build_initial_scenario_metadata(self) -> dict[str, Any]:
         """
@@ -463,6 +466,18 @@ class Jailbreak(Scenario):
             )
 
         self._resolved_jailbreaks = await self._resolve_templates_async()
+        return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
+
+    def _build_atomic_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build the synchronous template and delivery matrix off-loop.
+
+        Returns:
+            list[AtomicAttack]: The attacks for the selected templates and delivery methods.
+
+        Raises:
+            ValueError: If only system-prompt delivery is selected for an incompatible target.
+        """
         num_attempts = self.params["num_jailbreak_attempts"]
 
         technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
@@ -470,7 +485,7 @@ class Jailbreak(Scenario):
         prompt_sending_factory = technique_factories.get(_PROMPT_SENDING)
         system_selected = _JAILBREAK_SYSTEM_PROMPT in technique_factories
 
-        build_system_delivery = system_selected and self._target_supports_system_delivery(self._objective_target)
+        build_system_delivery = system_selected and self._target_supports_system_delivery(context.objective_target)
         if system_selected and not build_system_delivery:
             if prompt_sending_factory is None:
                 raise ValueError(
@@ -483,7 +498,7 @@ class Jailbreak(Scenario):
             )
 
         builder = MatrixAtomicAttackBuilder(
-            objective_target=self._objective_target,
+            objective_target=context.objective_target,
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
         )

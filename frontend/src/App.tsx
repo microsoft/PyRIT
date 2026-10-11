@@ -12,6 +12,7 @@ import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
 import TargetConfig from './components/Config/TargetConfig'
 import ConverterRegistry from './components/Registry/ConverterRegistry'
+import TechniqueRegistry from './components/Registry/TechniqueRegistry'
 import RegistryLayout from './components/Registry/RegistryLayout'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
@@ -730,6 +731,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   }
                 />
                 <Route path="converters" element={<ConverterRegistry />} />
+                <Route path="techniques" element={<TechniqueRegistry />} />
               </Route>
               <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
