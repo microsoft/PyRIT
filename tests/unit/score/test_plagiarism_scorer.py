@@ -8,9 +8,9 @@ from unittest.mock import patch
 import pytest
 from unit.mocks import mock_memory_resolving, store_message_async
 
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import MessagePiece
-from pyrit.score import MessageScorable, PlagiarismMetric, PlagiarismScorer
+from pyrit.score import FloatScaleThresholdScorer, MessageScorable, PlagiarismMetric, PlagiarismScorer
 
 
 class _OtherMetric(Enum):
@@ -56,7 +56,7 @@ class TestPlagiarismScorer:
 
     @pytest.mark.parametrize(
         "no_token_reference",
-        ["!!!", "???", "---", "... ,,, ;;;", "   !@#$%^&*()   "],
+        ["!!!", "???", "---", "... ,,, ;;;", "   !@#$%^&*()   ", "\u0301", "\ufe0f", "☀️", "❤️", "/⁄"],
     )
     def test_init_rejects_reference_text_without_tokens(self, no_token_reference):
         """Test initialization rejects reference text containing no word tokens."""
@@ -283,7 +283,75 @@ class TestPlagiarismScorer:
         assert 0.0 <= score_value <= 1.0
         assert score_value > 0.5  # Should have some similarity
 
+    @pytest.mark.parametrize(
+        ("metric", "expected_value"),
+        [(PlagiarismMetric.LCS, 0.75), (PlagiarismMetric.LEVENSHTEIN, 0.75), (PlagiarismMetric.JACCARD, 2 / 3)],
+    )
+    @pytest.mark.parametrize(
+        ("reference", "response"),
+        [("½", "12"), ("¼", "14"), ("⅔", "23"), ("⅟2", "12"), ("1/2", "12")],
+    )
+    async def test_score_text_fraction_not_concatenated_async(
+        self,
+        *,
+        reference: str,
+        response: str,
+        metric: PlagiarismMetric,
+        expected_value: float,
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        scorer = PlagiarismScorer(reference_text=f"The amount is {reference}", metric=metric, n=2)
+        text = f"The amount is {response}"
+        score = (await scorer.score_text_async(text))[0]
+        assert score.get_value() == pytest.approx(expected_value)
+        persisted = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+        assert persisted.get_value() == pytest.approx(expected_value)
 
+        threshold_scorer = FloatScaleThresholdScorer(scorer=scorer, threshold=0.9)
+        verdict = (await threshold_scorer.score_text_async(text))[0]
+        assert verdict.get_value() is False
+        assert verdict.score_metadata["original_float_value"] == pytest.approx(expected_value)
+        persisted_verdict = (await sqlite_instance.get_scores_async(score_ids=[str(verdict.id)]))[0]
+        assert persisted_verdict.get_value() is False
+        assert persisted_verdict.score_metadata["original_float_value"] == pytest.approx(expected_value)
+
+    @pytest.mark.parametrize("metric", list(PlagiarismMetric))
+    @pytest.mark.parametrize(
+        ("reference", "response"),
+        [
+            ("½", "1/2"),
+            ("¼", "1/4"),
+            ("1⁄2", "1/2"),
+            ("⅟2", "1/2"),
+            ("1½", "1 1/2"),
+            ("１２⁄２４", "12/24"),
+            ("use½cup", "use1/2cup"),
+        ],
+    )
+    async def test_score_text_equivalent_fractions_async(
+        self, *, reference: str, response: str, metric: PlagiarismMetric
+    ) -> None:
+        scorer = PlagiarismScorer(reference_text=reference, metric=metric)
+        assert (await scorer.score_text_async(response))[0].get_value() == 1.0
+
+    @pytest.mark.parametrize("metric", list(PlagiarismMetric))
+    @pytest.mark.parametrize("response", ["hello❤️", "❤️hello", "hello ❤️", "\ufe0fhello", "hello \u0301", "hello❤️\u0301"])
+    async def test_score_text_ignores_orphaned_marks_async(self, *, response: str, metric: PlagiarismMetric) -> None:
+        scorer = PlagiarismScorer(reference_text="hello", metric=metric)
+        assert (await scorer.score_text_async(response))[0].get_value() == 1.0
+
+    @pytest.mark.parametrize("metric", list(PlagiarismMetric))
+    async def test_score_text_mark_only_response_async(self, *, metric: PlagiarismMetric) -> None:
+        scorer = PlagiarismScorer(reference_text="hello", metric=metric)
+        assert (await scorer.score_text_async("❤️\u0301"))[0].get_value() == 0.0
+
+    @pytest.mark.parametrize("metric", list(PlagiarismMetric))
+    async def test_score_text_mixed_fraction_is_not_improper_fraction_async(self, *, metric: PlagiarismMetric) -> None:
+        scorer = PlagiarismScorer(reference_text="The amount is 1½", metric=metric, n=2)
+        assert (await scorer.score_text_async("The amount is 11/2"))[0].get_value() < 0.9
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestPlagiarismScorerUtilityFunctions:
     """Test cases for utility functions in the plagiarism scorer."""
 
@@ -327,6 +395,33 @@ class TestPlagiarismScorerUtilityFunctions:
         assert scorer._tokenize("दिन") == ["दिन"]  # "day"
         assert scorer._tokenize("दीन") == ["दीन"]  # "poor"
         assert scorer._tokenize("दिन") != scorer._tokenize("दीन")
+
+    @pytest.mark.parametrize(
+        ("text", "expected_tokens"),
+        [
+            ("½", ["1/2"]),
+            ("1½", ["1", "1/2"]),
+            ("⅟2", ["1/2"]),
+            ("hello❤️", ["hello"]),
+            ("hello❤️\u0301", ["hello"]),
+            ("\u0301hello", ["hello"]),
+            ("hello \u0301", ["hello"]),
+            ("❤️☀️\u0301", []),
+            ("a/b", ["ab"]),
+            ("a/", ["a"]),
+            ("/a", ["a"]),
+            ("a//b", ["ab"]),
+            ("a-\u0301b", ["ab"]),
+            ("सिस्टम", ["सिस्टम"]),
+            ("สวัสดี", ["สวัสดี"]),
+            ("வணக்கம்", ["வணக்கம்"]),
+            ("السَّلَامُ", ["السَّلَامُ"]),
+        ],
+    )
+    def test_tokenize_fraction_and_mark_boundaries(
+        self, *, scorer: PlagiarismScorer, text: str, expected_tokens: list[str]
+    ) -> None:
+        assert scorer._tokenize(text) == expected_tokens
 
     def test_plagiarism_score_nfd_reference_is_verbatim(self, scorer):
         """A verbatim copy written in NFD must score 1.0 against its NFC reference."""
