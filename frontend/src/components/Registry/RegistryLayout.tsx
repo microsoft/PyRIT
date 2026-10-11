@@ -7,7 +7,8 @@ export default function RegistryLayout() {
   const styles = useRegistryLayoutStyles()
   const location = useLocation()
   const navigate = useNavigate()
-  const selectedTab = location.pathname.endsWith('/converters') ? 'converters' : 'targets'
+  const selectedTab = location.pathname.endsWith('/techniques') ? 'techniques'
+    : location.pathname.endsWith('/converters') ? 'converters' : 'targets'
 
   return (
     <div className={styles.root}>
@@ -20,6 +21,7 @@ export default function RegistryLayout() {
       >
         <Tab value="targets">Targets</Tab>
         <Tab value="converters">Converters</Tab>
+        <Tab value="techniques">Techniques</Tab>
       </TabList>
       <div className={styles.content}>
         <Outlet />

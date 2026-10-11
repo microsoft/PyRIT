@@ -222,8 +222,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         Raises:
             ValueError: If ``child_attacks`` is empty.
         """
-        if not child_attacks:
-            raise ValueError("child_attacks must contain at least one SequentialChildAttack")
+        SequentialAttack.validate_constructor_parameters({"child_attacks": child_attacks})
 
         super().__init__(
             objective_target=objective_target,
@@ -238,6 +237,18 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         self._completion_policy = completion_policy
         self._executor = AttackExecutor(max_concurrency=1)
 
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the child selection without constructing or executing child attacks.
+
+        Raises:
+            ValueError: If the child selection is empty.
+        """
+        super().validate_constructor_parameters(params)
+        if "child_attacks" in params and not params["child_attacks"]:
+            raise ValueError("child_attacks must contain at least one SequentialChildAttack")
+
     def _validate_context(self, *, context: AttackContext[AttackParameters]) -> None:
         if not context.objective or context.objective.isspace():
             raise ValueError("Attack objective must be provided and non-empty")
@@ -250,6 +261,13 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
 
     async def _perform_async(self, *, context: AttackContext[AttackParameters]) -> SequentialAttackResult:
         results: list[AttackResult] = []
+        child_ids: list[str] = []
+        context._error_result_metadata.update(
+            {
+                self.CHILD_ATTACK_RESULT_IDS_KEY: child_ids,
+                self.COMPLETION_POLICY_KEY: self._completion_policy.value,
+            }
+        )
 
         for attempt_index, child_attack in enumerate(self._child_attacks, start=1):
             labels = {**context.memory_labels, **dict(child_attack.memory_labels)}
@@ -260,8 +278,10 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 memory_labels=labels,
                 attribution=attribution,
                 expectation=context.params.expectation,
+                child_result_ids=child_ids,
             )
             results.append(result)
+            child_ids.append(result.attack_result_id)
             if self._should_stop_after(result=result):
                 break
 
@@ -294,6 +314,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         *,
         child_attack: SequentialChildAttack,
         memory_labels: dict[str, str],
+        child_result_ids: list[str],
         attribution: AttackResultAttribution | None = None,
         expectation: ScoringExpectation | None = None,
     ) -> AttackResult:
@@ -316,6 +337,8 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 parent linkage.
             expectation (ScoringExpectation | None): Explicit scoring input forwarded unchanged.
                 Omission leaves the child's seed preparation and objective fallback in control.
+            child_result_ids (list[str]): This execution's ordered child links. A confirmed
+                persisted result from a failed dispatch is appended before its exception is re-raised.
 
         Returns:
             AttackResult: The ``AttackResult`` produced by the inner
@@ -335,12 +358,15 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             adversarial_chat=child_attack.adversarial_chat,
             objective_scorer=child_attack.objective_scorer,
             memory_labels=memory_labels,
+            return_partial_on_failure=True,
             attribution=attribution,
             **expectation_override,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]
         if executor_result.incomplete_objectives:
+            if executor_result.incomplete_result_ids and executor_result.incomplete_result_ids[0] is not None:
+                child_result_ids.append(executor_result.incomplete_result_ids[0])
             raise executor_result.incomplete_objectives[0][1]
         raise RuntimeError(  # pragma: no cover - defensive
             "AttackExecutor returned neither completed nor incomplete results."

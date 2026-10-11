@@ -72,6 +72,13 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         Raises:
             ValueError: If many_shot_examples is empty.
         """
+        ManyShotJailbreakAttack.validate_constructor_parameters(
+            {
+                "max_attempts_on_failure": max_attempts_on_failure,
+                "example_count": example_count,
+                "many_shot_examples": many_shot_examples,
+            }
+        )
         super().__init__(
             objective_target=objective_target,
             attack_converter_config=attack_converter_config,
@@ -91,6 +98,20 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
             else load_many_shot_jailbreaking_dataset()[:example_count]
         )
         if not self._examples:
+            raise ValueError("Many shot examples must be provided.")
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the supplied example selection without loading the default dataset.
+
+        Raises:
+            ValueError: If the supplied example selection is empty.
+        """
+        super().validate_constructor_parameters(params)
+        examples = params.get("many_shot_examples")
+        count = params.get("example_count", 100)
+        if count == 0 or (examples is not None and not examples[:count]):
             raise ValueError("Many shot examples must be provided.")
 
     async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:

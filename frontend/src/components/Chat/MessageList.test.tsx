@@ -147,7 +147,7 @@ describe("MessageList", () => {
     expect(screen.getByText("Assistant message test")).toBeInTheDocument();
   });
 
-  it("should show persisted scores on a redacted processing error", async () => {
+  it("should show persisted scores with the complete processing error", async () => {
     const user = userEvent.setup();
     const backendMessage: BackendMessage = {
       turn_number: 1,
@@ -177,10 +177,10 @@ describe("MessageList", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByText(/the target could not process this message/i)).toBeInTheDocument();
+    expect(screen.getByText(/Traceback: internal converted diagnostic/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /score false from manualscorer/i }));
     expect(screen.getByText("The target did not answer.")).toBeInTheDocument();
-    expect(screen.queryByText(/Internal original diagnostic|Traceback/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Internal original diagnostic/)).not.toBeInTheDocument();
   });
 
   it("should show the message score and its details when present", async () => {
@@ -1520,7 +1520,6 @@ describe("MessageList", () => {
   });
 
   it("should render error messages", () => {
-    const onRecover = jest.fn();
     const errorMessages: Message[] = [
       {
         role: "assistant",
@@ -1537,12 +1536,6 @@ describe("MessageList", () => {
       <TestWrapper>
         <MessageList
           messages={errorMessages}
-          processingErrorRecovery={{
-            messageIndex: 0,
-            actionLabel: "Edit in clean conversation",
-            description: "Recovery details",
-            onRecover,
-          }}
         />
       </TestWrapper>
     );
@@ -1551,12 +1544,9 @@ describe("MessageList", () => {
       screen.getByText(/Content was filtered by safety system/)
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /edit in clean conversation/i })).not.toBeInTheDocument();
-    expect(onRecover).not.toHaveBeenCalled();
   });
 
-  it("should render a direct recovery action only for the current processing error", async () => {
-    const user = userEvent.setup();
-    const onRecover = jest.fn();
+  it("should show the full error without a duplicate recovery panel", () => {
     const messages: Message[] = [
       {
         role: "assistant",
@@ -1564,7 +1554,7 @@ describe("MessageList", () => {
         timestamp: new Date().toISOString(),
         error: {
           type: "processing",
-          description: "The target could not process this message.",
+          description: "RuntimeError: target failed\nTraceback (most recent call last):\nFull error details",
         },
       },
     ];
@@ -1573,27 +1563,18 @@ describe("MessageList", () => {
       <TestWrapper>
         <MessageList
           messages={messages}
-          processingErrorRecovery={{
-            messageIndex: 0,
-            actionLabel: "Edit in clean conversation",
-            description:
-              "Continue in a clean conversation so the stored error is not sent back to the target. "
-              + "Your prompt, attachments, and converter choices are preserved for editing.",
-            onRecover,
-          }}
           onCopyToInput={jest.fn()}
         />
       </TestWrapper>
     );
 
     expect(
-      screen.getByText(/prompt, attachments, and converter choices are preserved/i)
+      screen.getByText(/RuntimeError: target failed.*Traceback.*Full error details/)
     ).toBeInTheDocument();
-    expect(screen.getByText(/stored error is not sent back to the target/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Continue in a clean conversation/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId("message-actions-0")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /edit in clean conversation/i }));
-    expect(onRecover).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /edit in clean conversation/i })).not.toBeInTheDocument();
   });
 
   it("should render multiple messages in order", () => {

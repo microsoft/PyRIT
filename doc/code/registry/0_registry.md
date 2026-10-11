@@ -135,8 +135,8 @@ attack = AttackRegistry.get_registry_singleton().create_instance(
 Simple scalar inputs use the shared resolver. Pass live Python configuration
 objects, such as `AttackAdversarialConfig`, `AttackConverterConfig`, and
 `AttackScoringConfig`, for nested components. Advanced Python values, such as a
-prompt normalizer or a parameter class, pass through unchanged. Nested JSON
-attack recipes are not supported.
+prompt normalizer or a parameter class, pass through unchanged. The shared
+resolver also constructs explicitly declared structured configuration variants.
 
 An attack class implements the conversation algorithm. An attack technique
 factory selects and configures that class, converters, scorers, and seeds.

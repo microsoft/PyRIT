@@ -3,8 +3,21 @@
 
 import pytest
 
-from pyrit.cli._cli_args import _argparse_validator, parse_run_arguments
+from pyrit.cli._cli_args import _argparse_validator, parse_list_targets_arguments, parse_run_arguments
 from pyrit.models import Parameter
+
+
+def test_shell_parsers_omit_unsupplied_arguments() -> None:
+    assert parse_run_arguments(args_string="test") == {"scenario_name": "test"}
+    assert parse_list_targets_arguments(args_string="") == {}
+
+
+@pytest.mark.parametrize(("value", "expected"), [("all", "all"), ("default", "default"), ("7", 7), ('""', "default")])
+def test_shell_explicit_dataset_limit(*, value: str, expected: int | str | None) -> None:
+    assert parse_run_arguments(args_string=f"test --max-dataset-size {value}") == {
+        "scenario_name": "test",
+        "max_dataset_size": expected,
+    }
 
 
 def _sp(*, name: str, description: str = "", param_type: str = "str") -> Parameter:

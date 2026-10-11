@@ -216,14 +216,31 @@ class _TAPAttackConfiguration:
         Raises:
             ValueError: If a search limit is less than one.
         """
-        validations = (
-            (self.tree_depth, "The tree depth must be at least 1."),
-            (self.tree_width, "The tree width must be at least 1."),
-            (self.branching_factor, "The branching factor must be at least 1."),
-            (self.batch_size, "The batch size must be at least 1."),
+        self.validate_limits(
+            {
+                "tree_depth": self.tree_depth,
+                "tree_width": self.tree_width,
+                "branching_factor": self.branching_factor,
+                "batch_size": self.batch_size,
+            }
         )
-        for value, message in validations:
-            if value < 1:
+
+    @staticmethod
+    def validate_limits(params: dict[str, Any]) -> None:
+        """
+        Validate supplied search limits without constructing attack components.
+
+        Raises:
+            ValueError: If a search limit is less than one.
+        """
+        validations = (
+            ("tree_depth", "The tree depth must be at least 1."),
+            ("tree_width", "The tree width must be at least 1."),
+            ("branching_factor", "The branching factor must be at least 1."),
+            ("batch_size", "The batch size must be at least 1."),
+        )
+        for name, message in validations:
+            if name in params and params[name] < 1:
                 raise ValueError(message)
 
 
@@ -1339,18 +1356,21 @@ class _TreeOfAttacksNode:
             response_id (str): The unique identifier of the response to retrieve the score for.
 
         Returns:
-            str: The score value as a string representation. Returns "unavailable" if no score
-                exists for the given response ID. For numeric scores, this will be the string
+            str: The score value as a string representation. Returns "unavailable" if no identified
+                objective score exists for the given response ID. For numeric scores, this will be the string
                 representation of the float value (e.g., "0.75").
 
         Note:
-            The method assumes that if scores exist, at least one score will be present in the
-            list. It takes the first score if multiple scores are associated with the response,
-            which is typically the objective score in the TAP algorithm context.
+            Auxiliary scorers also score the response, so only the objective scorer's score is used.
         """
         scores = await self._memory.get_prompt_scores_async(prompt_ids=[str(response_id)])
-        if scores:
-            return str(normalize_score_to_float(scores[0]))
+        objective_scorer_hash = self._objective_scorer.get_identifier().hash
+        for score in scores:
+            if (
+                score.scorer_class_identifier is not None
+                and score.scorer_class_identifier.hash == objective_scorer_hash
+            ):
+                return str(normalize_score_to_float(score))
         return "unavailable"
 
     async def _send_to_adversarial_chat_async(
@@ -1554,6 +1574,12 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
     DEFAULT_ADVERSARIAL_SEED_PROMPT_PATH: Path = (
         EXECUTOR_SEED_PROMPT_PATH / "tree_of_attacks" / "adversarial_seed_prompt.yaml"
     )
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """Validate TAP search limits without constructing an attack."""
+        super().validate_constructor_parameters(params)
+        _TAPAttackConfiguration.validate_limits(params)
 
     @apply_defaults
     def __init__(

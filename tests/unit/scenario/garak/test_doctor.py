@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.converter import LeetspeakConverter, PolicyPuppetryConverter
+from pyrit.converter import Base64Converter, LeetspeakConverter, PolicyPuppetryConverter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, SeedGroup, SeedObjective
 from pyrit.prompt_target import PromptTarget
@@ -189,6 +189,27 @@ class TestDoctorTechniqueExpansion:
         assert any(n.startswith("policy_puppetry_leet") for n in names)
         assert any(n.startswith("policy_puppetry") and "leet" not in n for n in names)
         assert all(isinstance(a.attack_technique.attack, PromptSendingAttack) for a in atomic_attacks)
+
+    async def test_technique_converters_are_appended_to_their_technique(
+        self, mock_objective_target, mock_objective_scorer, doctor_dataset_config
+    ):
+        scenario = Doctor(objective_scorer=mock_objective_scorer)
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "dataset_config": doctor_dataset_config,
+                "technique_converters": {"policy_puppetry": [Base64Converter()]},
+            }
+        )
+        await scenario.initialize_async()
+
+        converters_by_attack = {
+            attack.atomic_attack_name: _flatten_converters(attack.attack_technique.attack)
+            for attack in scenario._atomic_attacks
+        }
+        for name, converters in converters_by_attack.items():
+            has_base64 = any(isinstance(c, Base64Converter) for c in converters)
+            assert has_base64 == ("leet" not in name)
 
 
 @pytest.mark.usefixtures("patch_central_database")
