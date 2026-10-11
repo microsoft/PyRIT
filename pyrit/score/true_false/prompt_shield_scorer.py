@@ -63,7 +63,7 @@ class PromptShieldScorer(MessageTrueFalseScorer):
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         conversation_id = str(uuid.uuid4())
 
-        body = message_piece.original_value
+        body = message_piece.converted_value
 
         request = Message(
             message_pieces=[

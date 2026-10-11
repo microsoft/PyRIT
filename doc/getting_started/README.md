@@ -3,7 +3,6 @@
 Welcome to PyRIT! Getting up and running takes two steps: **install** the package, then **configure** your AI endpoints.
 
 :::::{grid} 1 1 3 3
-:gutter: 3
 
 ::::{card} 📦 Install PyRIT
 :link: ./install
