@@ -19,6 +19,7 @@ from typing import Any, TypeVar
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_APPLY_DEFAULTS_ATTRIBUTE = "__pyrit_apply_defaults__"
 
 
 class _RequiredValueSentinel:
@@ -272,40 +273,78 @@ def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
         bound_args = sig.bind(self, *args, **kwargs)
         bound_args.apply_defaults()
 
-        # Apply default values for parameters that are None or REQUIRED_VALUE
-        for param_name, param_value in bound_args.arguments.items():
-            if param_name == "self":
-                continue
-
-            # Apply defaults if parameter is None or REQUIRED_VALUE sentinel
-            if param_value is None or isinstance(param_value, _RequiredValueSentinel):
-                found, default_value = _global_default_values.get_default_value(
-                    class_type=cls,
-                    parameter_name=param_name,
-                )
-                if found:
-                    bound_args.arguments[param_name] = default_value
-                    logger.debug(f"Applied default value for {cls.__name__}.{param_name} = {default_value}")
-                elif isinstance(param_value, _RequiredValueSentinel):
-                    # REQUIRED_VALUE was used but no default found - raise clear error
-                    raise ValueError(
-                        f"{param_name} is required for {cls.__name__}. "
-                        f"Either pass the parameter explicitly or register a default using set_default_value()."
-                    )
-                # If None was explicitly passed and parameter has REQUIRED_VALUE as default, also raise
-                else:
-                    # Check if the parameter's default in the signature is REQUIRED_VALUE
-                    param_obj = sig.parameters.get(param_name)
-                    if param_obj and isinstance(param_obj.default, _RequiredValueSentinel):
-                        raise ValueError(
-                            f"{param_name} is required for {cls.__name__}. "
-                            f"Either pass a valid value or register a default using set_default_value()."
-                        )
+        _apply_default_arguments(class_type=cls, signature=sig, arguments=bound_args.arguments)
 
         # Call the original method with updated arguments
         return method(*bound_args.args, **bound_args.kwargs)
 
+    setattr(wrapper, _APPLY_DEFAULTS_ATTRIBUTE, True)
     return wrapper
+
+
+def resolve_constructor_defaults(
+    *, class_type: type[object], arguments: dict[str, Any], excluded_parameters: set[str]
+) -> dict[str, Any]:
+    """
+    Resolve effective constructor defaults for deferred validation without constructing an instance.
+
+    Only decorated constructors use global defaults. Excluded execution inputs are
+    neither materialized nor looked up. The caller's arguments remain unchanged.
+
+    Args:
+        class_type (type[object]): The class whose constructor is validated.
+        arguments (dict[str, Any]): Supplied constructor arguments.
+        excluded_parameters (set[str]): Execution inputs to leave unresolved.
+
+    Returns:
+        dict[str, Any]: Supplied values and effective non-execution defaults.
+
+    Raises:
+        ValueError: If a required default placeholder cannot be resolved.
+    """
+    signature = inspect.signature(class_type.__init__)
+    resolved = {
+        name: parameter.default
+        for name, parameter in signature.parameters.items()
+        if name != "self" and name not in excluded_parameters and parameter.default is not inspect.Parameter.empty
+    }
+    resolved.update({name: value for name, value in arguments.items() if name not in excluded_parameters})
+    if getattr(class_type.__init__, _APPLY_DEFAULTS_ATTRIBUTE, False):
+        _apply_default_arguments(class_type=class_type, signature=signature, arguments=resolved)
+    return resolved
+
+
+def _apply_default_arguments(
+    *, class_type: type[object], signature: inspect.Signature, arguments: dict[str, Any]
+) -> None:
+    """
+    Apply the decorator's global-default rules to an already bound argument bag.
+
+    Args:
+        class_type (type[object]): The concrete class used for default lookup.
+        signature (inspect.Signature): The decorated method's signature.
+        arguments (dict[str, Any]): Bound arguments to update in place.
+
+    Raises:
+        ValueError: If a required default placeholder cannot be resolved.
+    """
+    for name, value in arguments.items():
+        if name == "self" or (value is not None and not isinstance(value, _RequiredValueSentinel)):
+            continue
+        found, default = _global_default_values.get_default_value(class_type=class_type, parameter_name=name)
+        if found:
+            arguments[name] = default
+            logger.debug(f"Applied default value for {class_type.__name__}.{name} = {default}")
+        elif isinstance(value, _RequiredValueSentinel):
+            raise ValueError(
+                f"{name} is required for {class_type.__name__}. "
+                "Either pass the parameter explicitly or register a default using set_default_value()."
+            )
+        elif (parameter := signature.parameters.get(name)) and isinstance(parameter.default, _RequiredValueSentinel):
+            raise ValueError(
+                f"{name} is required for {class_type.__name__}. "
+                "Either pass a valid value or register a default using set_default_value()."
+            )
 
 
 def apply_defaults(method: Callable[..., T]) -> Callable[..., T]:
