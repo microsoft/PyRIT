@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pyrit.common import get_global_default_values
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import (
@@ -607,20 +608,41 @@ class AttackTechniqueFactory(Identifiable):
         """
         merged_attack_kwargs = dict(self._attack_kwargs)
         merged_attack_kwargs.update(attack_kwargs)
-        return AttackTechniqueFactory(
-            name=self._name,
-            attack_class=self._attack_class,
-            description=self._description,
-            technique_tags=self._technique_tags,
-            attack_kwargs=merged_attack_kwargs,
-            adversarial_chat=self._adversarial_chat,
-            adversarial_system_prompt=self._adversarial_system_prompt,
-            adversarial_seed_prompt=self._adversarial_seed_prompt,
-            seed_technique=self._seed_technique,
-            uses_adversarial=self._uses_adversarial,
-            supports_additional_request_converters=self._supports_additional_request_converters,
-            scorer_override_policy=self._scorer_override_policy,
-        )
+        factory = copy.copy(self)
+        factory._identifier = None
+        factory._technique_tags = list(self._technique_tags)
+        factory._attack_kwargs = merged_attack_kwargs
+        factory._validate_kwargs()
+        return factory
+
+    def with_extra_turns(self, *, turns: int) -> AttackTechniqueFactory:
+        """
+        Return a factory with the new-turn budget extended by stored assistant turns.
+
+        Args:
+            turns (int): Number of assistant turns already in the history.
+
+        Returns:
+            AttackTechniqueFactory: A modified copy, or this factory if no extension applies.
+
+        Raises:
+            ValueError: If turns is negative or the effective max_turns is not an integer.
+        """
+        if turns < 0:
+            raise ValueError("Extra turns must be nonnegative")
+        if not turns or "max_turns" not in self._compatibility_helper.accepted_params:
+            return self
+        if "max_turns" in self._attack_kwargs:
+            configured = self._attack_kwargs["max_turns"]
+        else:
+            found, configured = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="max_turns"
+            )
+            if not found:
+                configured = inspect.signature(self._attack_class.__init__).parameters["max_turns"].default
+        if not isinstance(configured, int) or isinstance(configured, bool):
+            raise ValueError(f"Factory '{self._name}' requires an integer max_turns to extend history")
+        return self.with_attack_kwargs(attack_kwargs={"max_turns": configured + turns})
 
     @property
     def scoring_config_type(self) -> type | None:

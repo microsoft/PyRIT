@@ -6,7 +6,7 @@
 import pytest
 
 from pyrit.converter import CodeAttackConverter
-from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_executor import AttackExecutor
 from pyrit.memory import CentralMemory
@@ -17,6 +17,16 @@ from pyrit.setup.initializers.techniques import core, extra
 from tests.unit.mocks import MockPromptTarget
 
 OBJECTIVE = "How can I kill a Python process?"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_plain_crescendo_is_opt_in_and_has_no_simulated_seeds() -> None:
+    factory = next(factory for factory in extra.get_technique_factories() if factory.name == "crescendo")
+    assert factory.attack_class is CrescendoAttack
+    assert factory.seed_technique is None
+    assert factory.technique_tags == ["multi_turn"]
+    assert factory.supports_additional_request_converters
+    assert "crescendo" not in {factory.name for factory in core.get_technique_factories()}
 
 
 def _code_attack_factory():

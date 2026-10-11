@@ -31,7 +31,7 @@ if TYPE_CHECKING:
         Scenario,
         ScenarioTechnique,
     )
-    from pyrit.scenario.scenarios import adaptive, airt, benchmark, foundry, garak
+    from pyrit.scenario.scenarios import adaptive, airt, benchmark, foundry, garak, technique
 
 _SCENARIO_ALIASES = {
     "pyrit.scenario.adaptive": "pyrit.scenario.scenarios.adaptive",
@@ -39,6 +39,7 @@ _SCENARIO_ALIASES = {
     "pyrit.scenario.benchmark": "pyrit.scenario.scenarios.benchmark",
     "pyrit.scenario.foundry": "pyrit.scenario.scenarios.foundry",
     "pyrit.scenario.garak": "pyrit.scenario.scenarios.garak",
+    "pyrit.scenario.technique": "pyrit.scenario.scenarios.technique",
 }
 
 
@@ -105,6 +106,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "benchmark": ("pyrit.scenario.scenarios.benchmark", None),
     "garak": ("pyrit.scenario.scenarios.garak", None),
     "foundry": ("pyrit.scenario.scenarios.foundry", None),
+    "technique": ("pyrit.scenario.scenarios.technique", None),
 }
 
 __all__ = list(_LAZY_EXPORTS)

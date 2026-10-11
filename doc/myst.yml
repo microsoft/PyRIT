@@ -96,6 +96,7 @@ project:
         - file: scanner/benchmark.ipynb
         - file: scanner/foundry.ipynb
         - file: scanner/garak.ipynb
+        - file: scanner/technique.ipynb
     - file: code/framework.md
       children:
         - file: code/datasets/0_dataset.md

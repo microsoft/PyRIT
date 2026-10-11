@@ -62,6 +62,7 @@ PyRIT ships with scenarios organized into the following families:
 | **Benchmark** | AdversarialBenchmark | [Benchmark Scenarios](benchmark.ipynb) |
 | **Foundry** | RedTeamAgent | [Foundry Scenarios](foundry.ipynb) |
 | **Garak** | Encoding, FigStep, WebInjection, Doctor, SystemPromptExtraction, PackageHallucination, AudioAchillesHeel | [Garak Scenarios](garak.ipynb) |
+| **Technique** | Execute | [Execute a Technique](technique.ipynb) |
 
 Each scenario page shows how to run it with minimal configuration.
 

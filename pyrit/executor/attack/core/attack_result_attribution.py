@@ -10,6 +10,13 @@ whatever produced it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from pyrit.models import AtomicAttackEvaluationIdentifier, AtomicAttackIdentifier
+
+if TYPE_CHECKING:
+    from pyrit.memory import MemoryInterface
+    from pyrit.models import AttackResult, AttackSeedGroup, ComponentIdentifier
 
 
 @dataclass(frozen=True)
@@ -57,3 +64,34 @@ class AttackResultAttribution:
     parent_eval_hash: str | None = None
     seed_group_id: str | None = None
     attempt_index: int | None = None
+
+
+async def enrich_attack_result_identifier_async(
+    *,
+    result: AttackResult,
+    technique_identifier: ComponentIdentifier,
+    seed_group: AttackSeedGroup,
+    memory: MemoryInterface,
+) -> None:
+    """
+    Enrich a result with its packaged technique and source seeds.
+
+    Results with an ID are updated in memory before their in-process identity is changed.
+
+    Args:
+        result (AttackResult): The result to enrich.
+        technique_identifier (ComponentIdentifier): The configured technique identity.
+        seed_group (AttackSeedGroup): Source seeds, before technique seeds are merged.
+        memory (MemoryInterface): Memory holding the result.
+    """
+    identifier = AtomicAttackIdentifier.build(
+        technique_identifier=technique_identifier,
+        seed_group=seed_group,
+    )
+    identifier = identifier.with_eval_hash(AtomicAttackEvaluationIdentifier(identifier).eval_hash)
+    if result.attack_result_id:
+        await memory.update_attack_result_by_id_async(
+            attack_result_id=result.attack_result_id,
+            update_fields={"atomic_attack_identifier": identifier.model_dump()},
+        )
+    result.atomic_attack_identifier = identifier

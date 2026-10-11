@@ -643,11 +643,10 @@ class ConversationManager:
 
         final_prepended_message = valid_messages[-1]
 
-        if is_multi_turn and final_prepended_message.api_role == "assistant":
-            # Update executed_turns
-            if hasattr(context, "executed_turns"):
-                context.executed_turns = state.turn_count  # type: ignore[ty:invalid-assignment]
+        if is_multi_turn and hasattr(context, "executed_turns"):
+            context.executed_turns = state.turn_count  # type: ignore[ty:invalid-assignment]
 
+        if is_multi_turn and final_prepended_message.api_role == "assistant":
             # Extract scores on final prepended assistant message if it exists and are relevant.
             # The prepended pieces were re-keyed with new ids when added to memory, so look
             # them up by conversation_id and filter to the last assistant turn. Only extract
