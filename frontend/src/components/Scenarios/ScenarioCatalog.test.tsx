@@ -66,6 +66,7 @@ function makeScenario(overrides: Partial<RegisteredScenario> & { scenario_name: 
     include_baseline_by_default: true,
     uses_default_adversarial_target: true,
     supported_parameters: [],
+    supported_parameter_names: [],
     default_run_size: {
       dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
       dataset_limit: { state: 'scenario_default' },

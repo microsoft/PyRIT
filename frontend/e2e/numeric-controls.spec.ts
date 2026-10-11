@@ -25,6 +25,10 @@ const SCENARIO: RegisteredScenario = {
     { name: 'iterations', type_name: 'int', required: false, default: '2', choices: null, is_list: false },
     { name: 'temperature', type_name: 'float', required: false, default: '0.5', choices: null, is_list: false },
   ],
+  supported_parameter_names: [
+    'objective_target', 'scenario_techniques', 'dataset_config', 'memory_labels',
+    'max_concurrency', 'max_retries', 'include_baseline', 'iterations', 'temperature',
+  ],
   default_run_size: {
     dataset_size: { kind: 'indeterminate', reason: 'configuration_unavailable', detail: 'Population configuration is not available.' },
     dataset_limit: { state: 'scenario_default' },

@@ -373,7 +373,12 @@ class RegisteredScenario(BaseModel):
         False, description="Whether any available technique uses the shared adversarial target"
     )
     supported_parameters: list[Parameter] = Field(
-        default_factory=list, description="Scenario-declared custom parameters"
+        default_factory=list, description="Scenario-declared external input descriptors"
+    )
+    supported_parameter_names: list[str] = Field(
+        ...,
+        description="All scenario-declared input names, including opaque inputs handled by dedicated API fields. "
+        "Clients use these names for input support, not defaults or run-size estimates.",
     )
     default_run_size: ScenarioRunSizeEstimate = Field(
         default_factory=ScenarioRunSizeEstimate.unavailable,
@@ -434,7 +439,9 @@ class RunScenarioRequest(BaseModel):
     """Request body for starting a scenario run."""
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
-    target_name: _RequestName = Field(..., description="Name of a registered target from the TargetRegistry")
+    target_name: _RequestName | None = Field(
+        None, description="Registered objective target name; required when the scenario declares objective_target"
+    )
     adversarial_target_name: _RequestName | None = Field(
         None,
         min_length=1,
@@ -461,8 +468,8 @@ class RunScenarioRequest(BaseModel):
             "Dataset seed filters keyed by field, applied before sampling. Accepted keys: harm_categories, data_types."
         ),
     )
-    max_concurrency: int = Field(10, ge=1, le=100, description="Maximum concurrent operations")
-    max_retries: int = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
+    max_concurrency: int | None = Field(10, ge=1, le=100, description="Maximum concurrent operations")
+    max_retries: int | None = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
     include_baseline: bool | None = Field(
         None, description="Override the scenario baseline default; forbidden scenarios reject true"
     )

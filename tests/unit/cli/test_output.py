@@ -43,6 +43,7 @@ def _make_scenario(**overrides) -> RegisteredScenario:
         "all_techniques": [],
         "default_datasets": [],
         "supported_parameters": [],
+        "supported_parameter_names": [],
     }
     defaults.update(overrides)
     return RegisteredScenario(**defaults)

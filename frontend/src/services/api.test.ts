@@ -771,6 +771,7 @@ describe("api service", () => {
           baseline_policy: "enabled",
           include_baseline_by_default: true,
           supported_parameters: [],
+          supported_parameter_names: [],
         },
       };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);

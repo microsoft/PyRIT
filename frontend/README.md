@@ -19,6 +19,19 @@ Failed runs offer **Resume run** on the run page and **Resume** in Scanner Histo
 See the [GUI guide](../doc/gui/0_gui.md#resuming-a-failed-scanner-run) for resume
 behavior and the saved launch configuration requirement.
 
+## Supported scenario inputs
+
+Scanner forms show only inputs declared by the selected scenario. Hidden
+inputs are not validated or sent in estimate or launch requests, even if an
+older draft contains values for them. Dataset overrides, size limits, and
+filters are available only when the scenario declares `dataset_config`.
+
+The catalog's required `supported_parameter_names` field includes all declared
+names, including opaque inputs with dedicated controls. `supported_parameters`
+contains only typed external input descriptors. Defaults and run-size estimates
+do not determine input support. A catalog response without the names field
+shows an error and blocks the form; update the backend and reload.
+
 ## Default labels after runtime changes
 
 When the runtime configuration changes, CoPyRIT reloads the server's default
