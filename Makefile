@@ -1,4 +1,4 @@
-.PHONY: all pre-commit ty unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
+.PHONY: all pre-commit ty docs-api docs-build docs-build-pdf docs-build-all unit-test unit-test-junit unit-test-cov-html unit-test-cov-xml diff-cover unit-test-diff-cover
 
 CMD:=uv run -m
 PYMODULE:=pyrit
@@ -19,29 +19,19 @@ pre-commit:
 ty:
 	$(CMD) ty check $(PYMODULE) $(UNIT_TESTS)
 
-# Build the full documentation site:
-# 1. Generate API reference JSON from Python source (griffe)
-# 2. Convert API JSON to MyST markdown pages
-# 3. Build the Jupyter Book site (HTML only — fast, no LaTeX needed)
-# 4. Generate RSS feed
-docs-build:
-	uv run python -m build_scripts.pydoc2json pyrit --submodules -o doc/_api/pyrit_all.json
-	uv run python -m build_scripts.gen_api_md
-	# --strict validates URLs and cross-refs; skips are configured in doc/myst.yml under error_rules
-	cd doc && uv run jupyter-book build --all --html --strict
+# Build strict HTML and the RSS feed after generating the API reference.
+# --all would also select the configured PDF export and require LaTeX.
+docs-build: docs-api
+	cd doc && uv run jupyter-book build --html --strict
 	uv run python -m build_scripts.generate_rss
 
-# Build the full documentation site including the PDF export.
-# Mirrors the ReadTheDocs build (.readthedocs.yaml) so CI catches PDF-only issues
-# such as missing images that the HTML-only build silently ignores.
-# Requires xelatex / latexmk on PATH (texlive-xetex + texlive-fonts-recommended +
-# texlive-plain-generic + latexmk on Ubuntu).
-docs-build-all:
-	uv run python -m build_scripts.pydoc2json pyrit --submodules -o doc/_api/pyrit_all.json
-	uv run python -m build_scripts.gen_api_md
-	# --strict validates URLs and cross-refs; skips are configured in doc/myst.yml under error_rules
-	cd doc && uv run jupyter-book build --all --html --pdf --strict
-	uv run python -m build_scripts.generate_rss
+# PDF is a separate, checked export requiring latexmk and xelatex.
+docs-build-pdf: docs-api
+	uv run python -m build_scripts.build_docs_pdf
+
+# Build HTML first, then check the PDF export without repeating API generation.
+docs-build-all: docs-build
+	uv run python -m build_scripts.build_docs_pdf
 
 # Regenerate only the API reference pages (without building the full site)
 docs-api:

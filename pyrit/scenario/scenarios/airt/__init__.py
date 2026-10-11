@@ -45,6 +45,10 @@ __all__ = list(_LAZY_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
+    if _LAZY_EXPORTS.get(name) == "pyrit.scenario.scenarios._dynamic_techniques":
+        from pyrit.scenario.scenarios import _dynamic_techniques
+
+        return getattr(_dynamic_techniques, name)
     return resolve_lazy_export(
         name=name,
         module_name=__name__,

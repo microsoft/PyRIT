@@ -13,6 +13,7 @@ from pyrit.backend.services.scenario_run_service import reset_scenario_run_servi
 from pyrit.backend.services.scenario_service import get_scenario_service
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.backend.services.technique_service import get_technique_service
 
 
 def outstanding_estimates() -> int:
@@ -50,5 +51,6 @@ async def close_services_async() -> None:
                 get_scenario_service,
                 get_scorer_service,
                 get_target_service,
+                get_technique_service,
             ):
                 factory.cache_clear()

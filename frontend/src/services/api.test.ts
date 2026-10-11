@@ -21,6 +21,7 @@ import {
   versionApi,
   configurationApi,
   targetsApi,
+  techniquesApi,
   convertersApi,
   attacksApi,
   labelsApi,
@@ -368,6 +369,28 @@ describe("api service", () => {
       (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
 
       await expect(targetsApi.listTargets()).rejects.toThrow("Server error");
+    });
+  });
+
+  describe("techniquesApi", () => {
+    it("should list techniques with the default page limit", async () => {
+      const response = { data: { items: [], pagination: { limit: 50, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", { params: { limit: 50 } });
+    });
+
+    it("should forward the page limit and cursor", async () => {
+      const response = { data: { items: [], pagination: { limit: 10, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques(10, "last_technique")).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", {
+        params: { limit: 10, cursor: "last_technique" },
+      });
     });
   });
 
