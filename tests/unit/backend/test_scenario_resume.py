@@ -448,7 +448,9 @@ async def test_resume_missing_scenario_registration_is_explicit_async(
             await service.resume_run_async(scenario_result_id=str(stored.id))
 
 
-@pytest.mark.parametrize("missing", [name for name in _LAUNCH_REQUEST_FIELDS if name != "adversarial_target_name"])
+@pytest.mark.parametrize(
+    "missing", [name for name in _LAUNCH_REQUEST_FIELDS if name not in {"adversarial_target_name", "max_dataset_size"}]
+)
 async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
     *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], missing: str
 ) -> None:
@@ -464,6 +466,33 @@ async def test_resume_incomplete_saved_configuration_never_uses_defaults_async(
         with pytest.raises(ScenarioRunConflictError, match="incomplete"):
             await service.resume_run_async(scenario_result_id=str(stored.id))
         prepare.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "limit_args",
+    [
+        {},
+        {"max_dataset_size": None},
+        {"max_dataset_size": ""},
+        {"max_dataset_size": "default"},
+        {"max_dataset_size": "all"},
+        {"max_dataset_size": 1},
+    ],
+)
+async def test_saved_total_limit_round_trips_async(
+    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], limit_args: dict[str, int | str | None]
+) -> None:
+    service, _ = resume_environment
+    prepared = await service._prepare_run_async(
+        request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, **limit_args)
+    )
+    stored = (
+        await CentralMemory.get_memory_instance().get_scenario_results_async(
+            scenario_result_ids=[prepared.scenario._scenario_result_id]
+        )
+    )[0]
+    restored = service._restore_launch_request(stored=stored)
+    assert restored.max_dataset_size == (limit_args.get("max_dataset_size") or "default")
 
 
 async def test_resume_older_launch_record_without_adversarial_selection_async(
@@ -631,6 +660,13 @@ async def test_launch_saves_declared_baseline_default_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
     service, _ = resume_environment
+    execution_started = asyncio.Event()
+
+    async def hold_execution_async() -> None:
+        execution_started.set()
+        # The fixture cancels and drains this task during teardown.
+        await asyncio.Event().wait()
+
     parameters = [
         parameter
         if parameter.name != "include_baseline"
@@ -640,16 +676,18 @@ async def test_launch_saves_declared_baseline_default_async(
     with (
         patch.object(_OfflineResumeScenario, "BASELINE_ATTACK_POLICY", BaselineAttackPolicy.Disabled),
         patch.object(_OfflineResumeScenario, "supported_parameters", return_value=parameters),
+        patch.object(_OfflineResumeScenario, "run_async", side_effect=hold_execution_async),
     ):
         response = await service.start_run_async(
             request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1)
         )
-        await _wait_for_idle_async(service)
-    stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
-        scenario_result_id=response.scenario_result_id
-    )
-    assert stored is not None
-    assert stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["include_baseline"] is True
+        await execution_started.wait()
+        stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
+            scenario_result_id=response.scenario_result_id
+        )
+        assert stored is not None
+        assert stored.scenario_run_state == ScenarioRunState.IN_PROGRESS
+        assert stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["include_baseline"] is True
 
 
 async def test_resume_never_schedules_replacement_result_id_async(

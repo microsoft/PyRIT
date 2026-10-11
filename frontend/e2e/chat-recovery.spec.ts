@@ -14,6 +14,7 @@ import type {
   AddMessageRequest,
   AddMessageResponse,
   ConversationMessagesResponse,
+  CreateAttackResponse,
   CreateConversationResponse,
   MessageSendStatus,
   AttackConversationsResponse,
@@ -363,6 +364,64 @@ test.describe("Chat processing recovery @seeded", () => {
     expect(localTarget.requestBodies).toHaveLength(1);
   });
 
+  test("keeps recovery on the submitted prompt without adding a user message", async ({ page, request, localTarget }) => {
+    localTarget.setProcessingFailure(true);
+    const failed = await sendFromComposer(page, "Explain the target error");
+    expect(failed.messages.target_response_status?.response_error).toBe("processing");
+    expect(failed.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const bubbles = page.getByTestId(/^message-bubble-/);
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first()).toContainText("Explain the target error");
+    await expect(bubbles.first().getByRole("button", { name: "Copy conversation", exact: true })).toBeVisible();
+    await expect(bubbles.last()).toContainText("JSONDecodeError");
+    await expect(bubbles.last().getByRole("button", { name: "Copy conversation", exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first()).toContainText("Explain the target error");
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1280, height: 2800 });
+    await test.info().attach("detailed-target-error", {
+      body: await bubbles.last().screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    if (originalViewport) {
+      await page.setViewportSize(originalViewport);
+    }
+    const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
+    await disabledPrompt.click({ position: { x: 10, y: 10 } });
+    await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+    await test.info().attach("disabled-prompt-reasons", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    await page.keyboard.press("Escape");
+    await bubbles.first().getByRole("button", { name: "Copy conversation", exact: true }).click();
+    await test.info().attach("original-prompt-copy", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    const attackId = failed.attack.attack_result_id;
+    const [cloneResponse] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/attacks/${attackId}/conversations`),
+      page.getByRole("menuitem", { name: "New conversation", exact: true }).click(),
+    ]);
+    expect(cloneResponse.status()).toBe(201);
+    expect(cloneResponse.request().postDataJSON()).toEqual({});
+    const cloned: CreateConversationResponse = await cloneResponse.json();
+    await expect(page.getByTestId("chat-input")).toHaveValue("Explain the target error");
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+    await expect(bubbles).toHaveCount(0);
+    const historyResponse = await request.get(
+      `/api/attacks/${attackId}/messages?conversation_id=${cloned.conversation_id}`,
+      { headers: compatibilityHeaders() },
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: ConversationMessagesResponse = await historyResponse.json();
+    expect(history.messages).toHaveLength(0);
+    expect(localTarget.requestBodies).toHaveLength(1);
+  });
+
   for (const keepSafePrefix of [false, true]) {
     test(`recovers the latest failed draft without earlier errors, safe prefix ${keepSafePrefix}`, async ({
       page, request, localTarget,
@@ -389,9 +448,21 @@ test.describe("Chat processing recovery @seeded", () => {
       const laterResponse: AddMessageResponse = await later.json();
       expect(laterResponse.messages.target_response_status?.response_error).toBe("processing");
       await page.reload();
-      const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
+      const errorPiece = laterResponse.messages.messages.flatMap((message) => message.message_pieces)
+        .find((piece) => piece.response_error === "processing");
+      expect(errorPiece?.converted_value).toBeTruthy();
+      await expect(page.getByTestId("message-list")).toContainText(errorPiece?.converted_value ?? "");
+      await expect(page.getByRole("button", { name: "Edit in clean conversation", exact: true })).toHaveCount(0);
+      const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
+      await disabledPrompt.hover({ position: { x: 5, y: 5 } });
+      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await disabledPrompt.click({ position: { x: 10, y: 10 } });
+      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+      const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
       await expect(recover).toBeEnabled();
-      await expect(page.getByText(/history from the first failed prompt onward will be left out/i)).toBeVisible();
       await test.info().attach("processing-recovery", {
         body: await page.screenshot(),
         contentType: "image/png",
@@ -432,6 +503,115 @@ test.describe("Chat processing recovery @seeded", () => {
       if (keepSafePrefix) expect(targetContext).toContain("Earlier safe context");
     });
   }
+
+  for (const reload of [false, true]) {
+    test(`restores the failed prompt in a new attack without adding it to history, reload ${reload}`, async ({
+      page, request, localTarget,
+    }) => {
+      await sendFromComposer(page, "Safe context for the new attack");
+      localTarget.setProcessingFailure(true);
+      const failed = await sendFromComposer(page, "Edit this failed prompt");
+      const sourceAttackId = failed.attack.attack_result_id;
+      if (reload) await page.reload();
+      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+      const [savedResponse] = await Promise.all([
+        page.waitForResponse((response) => response.request().method() === "POST"
+          && new URL(response.url()).pathname === "/api/attacks/save-conversation"),
+        page.getByRole("menuitem", { name: "New attack", exact: true }).click(),
+      ]);
+      expect(savedResponse.status(), await savedResponse.text()).toBe(200);
+      const saved: AddMessageResponse = await savedResponse.json();
+      expect(saved.attack.attack_result_id).not.toBe(sourceAttackId);
+      expect(savedResponse.request().postDataJSON().messages).toHaveLength(2);
+      await expect(page).toHaveURL((url: URL) => url.pathname.includes(saved.attack.attack_result_id));
+      await expect(page.getByTestId("chat-input")).toHaveValue("Edit this failed prompt");
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(2);
+      const historyResponse = await request.get(
+        `/api/attacks/${saved.attack.attack_result_id}/messages?conversation_id=${saved.messages.conversation_id}`,
+        { headers: compatibilityHeaders() },
+      );
+      expect(historyResponse.ok()).toBeTruthy();
+      const history: ConversationMessagesResponse = await historyResponse.json();
+      expect(history.messages.map((message) => message.role)).toEqual(["user", "simulated_assistant"]);
+      expect(history.messages.flatMap((message) => message.message_pieces).some(
+        (piece) => piece.original_value === "Edit this failed prompt" || piece.response_error === "processing",
+      )).toBe(false);
+      expect(localTarget.requestBodies).toHaveLength(2);
+      localTarget.setProcessingFailure(false);
+      const retried = await sendFromComposer(page, "Revised prompt");
+      expect(retried.attack.attack_result_id).toBe(saved.attack.attack_result_id);
+      expect(retried.messages.target_response_status?.response_error).toBe("none");
+      const targetContext = localTarget.requestBodies.at(-1);
+      expect(targetContext).toContain("Safe context for the new attack");
+      expect(targetContext).toContain("Revised prompt");
+      expect(targetContext).not.toContain("Edit this failed prompt");
+      expect(targetContext).not.toMatch(/Traceback|JSONDecodeError/);
+    });
+  }
+
+  test("warns about lost converter choices when recovering a saved failure to a new attack", async ({
+    page, request, localTarget, imageConverterId,
+  }) => {
+    await page.getByTestId("file-input").setInputFiles({
+      name: "evidence.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAIAAAAuKetIAAAAaElEQVR4nNXOQREAIAzAsFJxCEMTAhGxB9coyNrnUiZxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEufvwNQDpI4B3CU+2fUAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    const panel = page.getByTestId("converter-panel");
+    await panel.getByRole("tab", { name: "Image", exact: true }).click();
+    await panel.getByRole("combobox", { name: "Add converter", exact: true }).click();
+    await page.getByTestId(`converter-option-${imageConverterId}`).click();
+    await panel.getByRole("button", { name: "Convert", exact: true }).click();
+    await expect(page.getByTestId("converter-preview-result")).toBeVisible();
+    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await panel.getByRole("button", { name: "Close converters", exact: true }).click();
+    localTarget.setProcessingFailure(true);
+    const failed = await sendFromComposer(page, "Restore the original image");
+    expect(failed.messages.target_response_status?.response_error).toBe("processing");
+    const originalImage = failed.messages.messages[0].message_pieces[1];
+    expect(originalImage.original_filename).toBeTruthy();
+    await page.reload();
+    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+    const [createdResponse] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === "/api/attacks"),
+      page.getByRole("menuitem", { name: "New attack", exact: true }).click(),
+    ]);
+    expect(createdResponse.status()).toBe(201);
+    const created: CreateAttackResponse = await createdResponse.json();
+    expect(created.attack_result_id).not.toBe(failed.attack.attack_result_id);
+    expect(createdResponse.request().postDataJSON().target_registry_name).toBe(localTarget.registryName);
+    await expect(page).toHaveURL((url: URL) => url.pathname.includes(created.attack_result_id));
+    await expect(page.getByTestId("chat-input")).toHaveValue("Restore the original image");
+    await expect(page.getByRole("button", { name: `Remove ${originalImage.original_filename}`, exact: true })).toBeVisible();
+    await expect(page.getByText(/Converter choices could not be restored/)).toBeVisible();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
+    await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(0);
+    expect(localTarget.requestBodies).toHaveLength(1);
+    localTarget.setProcessingFailure(false);
+    const [retryRequest, retried] = await Promise.all([
+      page.waitForRequest(isMessagePost),
+      sendFromComposer(page),
+    ]);
+    const payload: AddMessageRequest = retryRequest.postDataJSON();
+    expect(payload.pieces).toHaveLength(2);
+    expect(payload.pieces.every((piece) => !piece.applied_converter_ids?.length)).toBe(true);
+    expect(retried.messages.messages[0].message_pieces[1].original_value)
+      .toBe(originalImage.original_value);
+    await expect(page.getByText(/Converter choices could not be restored/)).toHaveCount(0);
+    const historyResponse = await request.get(
+      `/api/attacks/${retried.attack.attack_result_id}/messages?conversation_id=${retried.messages.conversation_id}`,
+      { headers: compatibilityHeaders() },
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: ConversationMessagesResponse = await historyResponse.json();
+    expect(history.messages).toHaveLength(2);
+  });
 
   test("waits for the selected conversation and exports only its history after a rejected send", async ({
     page, request,
@@ -539,7 +719,8 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId("remove-attachment-0").click();
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
     await selectConversation(page, first.attack.conversation_id);
-    const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
+    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+    const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
     await expect(recover).toBeEnabled();
     await page.evaluate(() => { document.documentElement.dataset.deferRecoveryReads = "true"; });
     try {

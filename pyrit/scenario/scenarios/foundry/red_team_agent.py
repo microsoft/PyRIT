@@ -60,7 +60,7 @@ from pyrit.prompt_normalizer.converter_configuration import ConverterConfigurati
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -253,6 +253,7 @@ class RedTeamAgent(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
     _DEFAULT_ATTACK_SPECIFICATION: ClassVar[_AttackSpecification] = _AttackSpecification(PromptSendingAttack)
     _ATTACK_SPECIFICATIONS: ClassVar[Mapping[FoundryTechnique, _AttackSpecification]] = MappingProxyType(
         {
@@ -344,7 +345,9 @@ class RedTeamAgent(Scenario):
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
             technique_class=FoundryTechnique,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=4
+            ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )

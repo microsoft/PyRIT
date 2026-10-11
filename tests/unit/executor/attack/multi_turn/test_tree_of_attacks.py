@@ -1781,6 +1781,47 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores == {}
         assert node.error_message is None
 
+    @pytest.mark.parametrize("include_legacy", [False, True])
+    @pytest.mark.parametrize("include_auxiliary", [False, True])
+    @pytest.mark.parametrize("include_objective", [False, True])
+    async def test_score_feedback_uses_only_the_identified_objective_score_async(
+        self,
+        *,
+        node_components: dict[str, Any],
+        include_legacy: bool,
+        include_auxiliary: bool,
+        include_objective: bool,
+    ) -> None:
+        node = _TreeOfAttacksNode(**node_components)
+
+        def score(*, value: str, identifier: ComponentIdentifier | None) -> Score:
+            return Score(
+                score_value=value,
+                score_type="float_scale",
+                score_category=["test"],
+                score_rationale="r",
+                score_value_description="d",
+                score_metadata=None,
+                message_piece_id=str(uuid.uuid4()),
+                scorer_class_identifier=identifier,
+            )
+
+        scores = []
+        if include_legacy:
+            scores.append(score(value="0.8", identifier=None))
+        if include_auxiliary:
+            scores.append(
+                score(value="0.95", identifier=ComponentIdentifier(class_name="AuxScorer", class_module="test"))
+            )
+        if include_objective:
+            scores.append(score(value="0.2", identifier=node._objective_scorer.get_identifier()))
+
+        with patch.object(node._memory, "get_prompt_scores_async", new=AsyncMock(return_value=scores)) as get_scores:
+            assert await node._get_response_score_async("response-id") == (
+                "0.2" if include_objective else "unavailable"
+            )
+        assert get_scores.await_args.kwargs["prompt_ids"] == ["response-id"]
+
     async def test_subsequent_prompt_omits_score_when_feedback_disabled(self, node_components):
         """A disabled score-feedback setting preserves response context without exposing the score."""
         node = _TreeOfAttacksNode(**node_components, use_score_as_feedback=False)
