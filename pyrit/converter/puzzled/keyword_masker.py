@@ -17,16 +17,48 @@ selection; without it, keywords are chosen by length alone.
 import logging
 import re
 import threading
+import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# The one tokenizer used for both candidate selection and placeholder ordering. Requiring
-# word boundaries keeps candidates to runs of letters that can actually be matched again
-# when masking, so a token embedded in an alphanumeric blob (the "h" of "h4ck3r") is never
-# selected and then silently dropped.
-_WORD_PATTERN = re.compile(r"\b[A-Za-z]+\b")
+# The one tokenizer used for both candidate selection and placeholder ordering (always
+# through ``_iter_words``). Requiring word boundaries keeps candidates to runs of letters
+# that can actually be matched again when masking, so a token embedded in an alphanumeric
+# blob (the "h" of "h4ck3r") is never selected and then silently dropped. ``[^\W\d_]`` is
+# any Unicode letter, so words such as "Schädlinge" or Cyrillic words are candidates too.
+_WORD_PATTERN = re.compile(r"\b[^\W\d_]+\b")
+
+
+def _is_combining_mark(char: str) -> bool:
+    return unicodedata.category(char).startswith("M")
+
+
+def _iter_words(prompt: str) -> Iterator[re.Match[str]]:
+    """
+    Yield the maskable words of ``prompt``.
+
+    ``\\w`` does not cover combining marks (Devanagari vowel signs, or the accents of
+    NFD-decomposed text), so ``\\b`` falls inside words that contain them. A match that
+    touches a combining mark is only a fragment of a word, so it is skipped, just like the
+    letters inside "h4ck3r".
+
+    Args:
+        prompt (str): The prompt to scan.
+
+    Yields:
+        re.Match[str]: Each whole-word match, in order of appearance.
+    """
+    for match in _WORD_PATTERN.finditer(prompt):
+        start, end = match.span()
+        if start > 0 and _is_combining_mark(prompt[start - 1]):
+            continue
+        if end < len(prompt) and _is_combining_mark(prompt[end]):
+            continue
+        yield match
+
 
 # Part-of-speech label used when spaCy is unavailable or the word was caller-supplied.
 _GENERIC_POS = "word"
@@ -214,7 +246,7 @@ def _rank_candidates(
     Returns:
         list[str]: Distinct candidate words (as they appear in the prompt) in priority order.
     """
-    tokens = _WORD_PATTERN.findall(prompt)
+    tokens = [match.group() for match in _iter_words(prompt)]
     seen: set[str] = set()
     unique: list[str] = []
     for token in tokens:
@@ -281,7 +313,7 @@ def mask_prompt(
     # [WORD1] is the leftmost masked word. Candidates come from the same word-boundary scan,
     # so every chosen word has an entry here.
     first_index: dict[str, int] = {}
-    for match in _WORD_PATTERN.finditer(prompt):
+    for match in _iter_words(prompt):
         first_index.setdefault(match.group().lower(), match.start())
     ordered = sorted(chosen, key=lambda w: first_index[w.lower()])
 
