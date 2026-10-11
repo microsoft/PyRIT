@@ -230,3 +230,37 @@ def test_image_color_saturation_converter_handles_non_rgb_png_modes(mode: str) -
 
     assert output_format == "PNG"
     assert Image.open(adjusted_io).size == (40, 30)
+
+
+@pytest.mark.parametrize(
+    "mode, transparency, expected_alpha",
+    [
+        ("P", 0, [0, 255, 255]),
+        ("P", bytes([0, 128, 255]), [0, 128, 255]),
+        ("LA", None, [0, 128, 255]),
+        ("RGBA", None, [0, 128, 255]),
+    ],
+)
+@pytest.mark.parametrize("level", [0.0, 0.5, 2.0])
+def test_image_color_saturation_converter_preserves_png_alpha(
+    *, mode: str, transparency: int | bytes | None, expected_alpha: list[int], level: float
+) -> None:
+    image = Image.new(mode, (3, 1))
+    if mode == "P":
+        image.putpalette([200, 40, 20, 40, 200, 20, 40, 20, 200])
+        image.putdata([0, 1, 2])
+        image.info["transparency"] = transparency
+    else:
+        image.putdata([(60, alpha) if mode == "LA" else (200, 40, 20, alpha) for alpha in expected_alpha])
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    converter = ImageColorSaturationConverter(level=level)
+
+    with Image.open(image_bytes) as source:
+        adjusted_io, output_format = converter._transform_image(source, "PNG")
+
+    assert output_format == "PNG"
+    with Image.open(adjusted_io) as adjusted:
+        assert adjusted.size == (3, 1)
+        assert adjusted.mode in ("LA", "RGBA")
+        assert adjusted.getchannel("A").tobytes() == bytes(expected_alpha)

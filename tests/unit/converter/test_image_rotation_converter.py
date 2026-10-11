@@ -282,3 +282,36 @@ def test_image_rotation_converter_handles_non_rgb_png_modes(mode: str) -> None:
     assert output_format == "PNG"
     assert rotated.mode in ("RGB", "RGBA")
     assert rotated.getpixel((0, 0))[:3] == (255, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "mode, transparency, expected_alpha",
+    [
+        ("P", 0, [0, 255, 255]),
+        ("P", bytes([0, 128, 255]), [0, 128, 255]),
+        ("LA", None, [0, 128, 255]),
+        ("RGBA", None, [0, 128, 255]),
+    ],
+)
+def test_image_rotation_converter_preserves_png_alpha(
+    *, mode: str, transparency: int | bytes | None, expected_alpha: list[int]
+) -> None:
+    image = Image.new(mode, (3, 1))
+    if mode == "P":
+        image.putpalette([200, 40, 20, 40, 200, 20, 40, 20, 200])
+        image.putdata([0, 1, 2])
+        image.info["transparency"] = transparency
+    else:
+        image.putdata([(60, alpha) if mode == "LA" else (200, 40, 20, alpha) for alpha in expected_alpha])
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    converter = ImageRotationConverter(angle=90.0)
+
+    with Image.open(image_bytes) as source:
+        rotated_io, output_format = converter._transform_image(source, "PNG")
+
+    assert output_format == "PNG"
+    with Image.open(rotated_io) as rotated:
+        assert rotated.size == (1, 3)
+        assert rotated.mode == "RGBA"
+        assert rotated.getchannel("A").tobytes() == bytes(expected_alpha[::-1])
