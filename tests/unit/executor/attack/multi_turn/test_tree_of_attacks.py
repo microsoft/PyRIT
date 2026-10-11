@@ -1781,10 +1781,20 @@ class TestTreeOfAttacksNode:
         assert node.auxiliary_scores == {}
         assert node.error_message is None
 
-    async def test_score_feedback_uses_the_objective_score_not_an_auxiliary_one(self, node_components):
+    @pytest.mark.parametrize("include_legacy", [False, True])
+    @pytest.mark.parametrize("include_auxiliary", [False, True])
+    @pytest.mark.parametrize("include_objective", [False, True])
+    async def test_score_feedback_uses_only_the_identified_objective_score_async(
+        self,
+        *,
+        node_components: dict[str, Any],
+        include_legacy: bool,
+        include_auxiliary: bool,
+        include_objective: bool,
+    ) -> None:
         node = _TreeOfAttacksNode(**node_components)
 
-        def score(value: str, identifier: ComponentIdentifier) -> Score:
+        def score(*, value: str, identifier: ComponentIdentifier | None) -> Score:
             return Score(
                 score_value=value,
                 score_type="float_scale",
@@ -1796,13 +1806,21 @@ class TestTreeOfAttacksNode:
                 scorer_class_identifier=identifier,
             )
 
-        auxiliary = score("0.95", ComponentIdentifier(class_name="AuxScorer", class_module="test"))
-        objective = score("0.2", node._objective_scorer.get_identifier())
+        scores = []
+        if include_legacy:
+            scores.append(score(value="0.8", identifier=None))
+        if include_auxiliary:
+            scores.append(
+                score(value="0.95", identifier=ComponentIdentifier(class_name="AuxScorer", class_module="test"))
+            )
+        if include_objective:
+            scores.append(score(value="0.2", identifier=node._objective_scorer.get_identifier()))
 
-        with patch.object(node._memory, "get_prompt_scores_async", new=AsyncMock(return_value=[auxiliary, objective])):
-            assert await node._get_response_score_async("response-id") == "0.2"
-        with patch.object(node._memory, "get_prompt_scores_async", new=AsyncMock(return_value=[auxiliary])):
-            assert await node._get_response_score_async("response-id") == "unavailable"
+        with patch.object(node._memory, "get_prompt_scores_async", new=AsyncMock(return_value=scores)) as get_scores:
+            assert await node._get_response_score_async("response-id") == (
+                "0.2" if include_objective else "unavailable"
+            )
+        assert get_scores.await_args.kwargs["prompt_ids"] == ["response-id"]
 
     async def test_subsequent_prompt_omits_score_when_feedback_disabled(self, node_components):
         """A disabled score-feedback setting preserves response context without exposing the score."""

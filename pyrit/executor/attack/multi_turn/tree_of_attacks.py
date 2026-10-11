@@ -1339,8 +1339,8 @@ class _TreeOfAttacksNode:
             response_id (str): The unique identifier of the response to retrieve the score for.
 
         Returns:
-            str: The score value as a string representation. Returns "unavailable" if no score
-                exists for the given response ID. For numeric scores, this will be the string
+            str: The score value as a string representation. Returns "unavailable" if no identified
+                objective score exists for the given response ID. For numeric scores, this will be the string
                 representation of the float value (e.g., "0.75").
 
         Note:
@@ -1349,7 +1349,10 @@ class _TreeOfAttacksNode:
         scores = await self._memory.get_prompt_scores_async(prompt_ids=[str(response_id)])
         objective_scorer_hash = self._objective_scorer.get_identifier().hash
         for score in scores:
-            if score.scorer_class_identifier.hash == objective_scorer_hash:
+            if (
+                score.scorer_class_identifier is not None
+                and score.scorer_class_identifier.hash == objective_scorer_hash
+            ):
                 return str(normalize_score_to_float(score))
         return "unavailable"
 
