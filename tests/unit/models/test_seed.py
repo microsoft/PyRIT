@@ -236,6 +236,33 @@ def test_seed_prompt_keeps_template_whose_missing_parameter_decides_a_branch(tem
     assert template.render_template_value(**parameters) == expected
 
 
+@pytest.mark.parametrize(
+    ("conversation_context", "expected_tail"),
+    [(None, ""), ("two turns", "Context: two turns")],
+)
+def test_seed_prompt_keeps_path_resolved_at_load_when_its_condition_is_deferred(conversation_context, expected_tail):
+    template = SeedPrompt(
+        value="Path: {{ datasets_path }}. {% if conversation_context %}Context: {{ conversation_context }}{% endif %}",
+        data_type="text",
+        is_jinja_template=True,
+    )
+
+    # Memory rebuilds a stored prompt from its value alone, without is_jinja_template
+    reloaded = SeedPrompt(value=template.value, data_type="text")
+
+    for seed in (template, reloaded):
+        rendered = seed.render_template_value(conversation_context=conversation_context)
+        assert rendered == f"Path: {DATASETS_PATH}. {expected_tail}"
+
+
+def test_render_template_value_silent_decides_conditions_as_before():
+    template = SeedPrompt(
+        value="{{ style }} {% if prompt %}{{ prompt }}{% endif %}", data_type="text", is_jinja_template=True
+    )
+
+    assert template.render_template_value_silent(style="brief") == "brief {{ prompt }}"
+
+
 def test_render_template_value_silent_renders_condition_once_its_parameters_are_provided():
     template = SeedPrompt(
         value="{% if flag %}{{ datasets_path }} {{ prompt }}{% endif %}",
@@ -243,7 +270,7 @@ def test_render_template_value_silent_renders_condition_once_its_parameters_are_
         is_jinja_template=True,
     )
 
-    assert template.render_template_value_silent(flag=True, datasets_path="data") == "data {{ prompt }}"
+    assert template.render_template_value_silent(flag=True) == f"{DATASETS_PATH} {{{{ prompt }}}}"
 
 
 def test_render_template_value_silent_renders_if_guard_on_loop_variable():

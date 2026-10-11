@@ -14,9 +14,9 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar, cast
 
-from jinja2 import StrictUndefined, Undefined
+from jinja2 import StrictUndefined, Undefined, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
@@ -82,8 +82,39 @@ class PartialUndefined(Undefined):
         """
         return f"{{{{ {self._undefined_name} }}}}" if self._undefined_name else ""
 
-    # A placeholder cannot decide a branch or a loop: answering now would drop the
-    # {% if %} or {% for %} tags, and the later render could not decide again.
+    def __iter__(self) -> Iterator[object]:
+        """
+        Return an empty iterator to prevent iteration over undefined variables.
+
+        Returns:
+            Iterator[object]: Empty iterator.
+
+        """
+        return iter([])
+
+    def __bool__(self) -> bool:
+        """
+        Evaluate as truthy to avoid falsey-branch side effects.
+
+        Returns:
+            bool: Always True.
+
+        """
+        return True  # Ensures it doesn't evaluate to False
+
+
+class _DeferRenderError(Exception):
+    """Raised when an unresolved variable would decide a branch or a loop."""
+
+
+class _DeferringUndefined(PartialUndefined):
+    """
+    Placeholder for the load-time render of trusted templates.
+
+    It cannot decide a branch or a loop: answering at load would drop the {% if %} or {% for %} tags,
+    and the later render with the real parameters could not decide again.
+    """
+
     def __iter__(self) -> Iterator[object]:
         """
         Defer rendering instead of iterating over an unresolved variable.
@@ -127,21 +158,21 @@ class PartialUndefined(Undefined):
     __hash__ = Undefined.__hash__
 
 
-class _DeferRenderError(Exception):
-    """Raised when an unresolved variable would decide a branch or a loop."""
+_JinjaCallable = TypeVar("_JinjaCallable", bound="Callable[..., Any]")
 
 
-def _deferring(function: Callable[..., Any]) -> Callable[..., Any]:
+def _deferring(function: _JinjaCallable) -> _JinjaCallable:
     # Jinja tests such as `is defined` and the `default` filter check the value's type, not its truth.
     # functools.wraps keeps Jinja's pass_environment marker, so the value may not be the first argument.
     @functools.wraps(function)
     def deferring(*args: Any, **kwargs: Any) -> Any:
         for arg in args:
-            if isinstance(arg, PartialUndefined):
+            if isinstance(arg, _DeferringUndefined):
                 raise _DeferRenderError(arg._undefined_name)
         return function(*args, **kwargs)
 
-    return deferring
+    # Same signature as the wrapped test or filter, so the environment's test and filter tables keep their types.
+    return cast("_JinjaCallable", deferring)
 
 
 class Seed(BaseModel):
@@ -265,16 +296,40 @@ class Seed(BaseModel):
 
         # Create a Jinja template with PartialUndefined placeholders
         env = SandboxedEnvironment(undefined=PartialUndefined)
-        env.tests = {name: _deferring(test) for name, test in env.tests.items()}
-        env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
         is_jinja_template = env.from_string(self.value)
 
         try:
             # Render the template with the provided kwargs
             return is_jinja_template.render(**kwargs)
-        except _DeferRenderError:
-            # A missing parameter decides a branch or a loop - preserve the template as-is
+        except Exception as e:
+            logger.error("Error rendering template: %s", e)
             return self.value
+
+    def _render_trusted_template_value(self, **kwargs: Any) -> str:
+        """
+        Render a trusted template at load time, keeping the decisions its later render must make.
+
+        Behaves like render_template_value_silent, except when a missing parameter would decide a branch,
+        a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
+        `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
+
+        Args:
+            kwargs: Key-value pairs to replace in the SeedPrompt value.
+
+        Returns:
+            The rendered value, or the unchanged value when rendering is deferred.
+
+        """
+        env = SandboxedEnvironment(undefined=_DeferringUndefined)
+        env.tests = {name: _deferring(test) for name, test in env.tests.items()}
+        env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
+
+        try:
+            return env.from_string(self.value).render(**kwargs)
+        except _DeferRenderError:
+            used = meta.find_undeclared_variables(env.parse(self.value))
+            bindings = "".join(f"{{% set {name} = {str(kwargs[name])!r} %}}" for name in sorted(used & kwargs.keys()))
+            return bindings + self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
