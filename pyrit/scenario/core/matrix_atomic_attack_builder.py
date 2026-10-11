@@ -188,6 +188,9 @@ def build_matrix_atomic_attacks(
     Scenarios needing extra axes (adversarial targets, caching, converter stacks) call
     ``MatrixAtomicAttackBuilder`` directly instead.
 
+    This synchronous builder can read attack templates from disk. Async callers
+    must offload construction, not their dataset reads or persistence.
+
     Args:
         context (ScenarioContext): The resolved runtime inputs for this run. Supplies the
             objective target, memory labels, per-dataset seed groups, selected techniques, and
