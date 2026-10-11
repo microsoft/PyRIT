@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import DATASETS_PATH
 from pyrit.converter import (
     CharSwapConverter,
@@ -631,7 +632,8 @@ class Psychosocial(Scenario):
 
             for technique in techniques:
                 if technique is PsychosocialTechnique.Crescendo:
-                    attack_technique = self._build_crescendo_technique(
+                    attack_technique = await asyncio.to_thread(
+                        self._build_crescendo_technique,
                         harm=harm,
                         objective_target=context.objective_target,
                         adversarial_chat=adversarial_chat,
@@ -639,11 +641,14 @@ class Psychosocial(Scenario):
                         max_turns=max_turns,
                     )
                 else:
-                    converter = _converter_for_technique(technique, adversarial_chat=adversarial_chat)
+                    converter = await run_legacy_sync_async(
+                        _converter_for_technique, technique, adversarial_chat=adversarial_chat
+                    )
                     extra_converters = (
                         ConverterConfiguration.from_converters(converters=[converter]) if converter else None
                     )
-                    attack_technique = base_factory.create(
+                    attack_technique = await run_legacy_sync_async(
+                        base_factory.create,
                         objective_target=context.objective_target,
                         attack_scoring_config=scoring_config,
                         adversarial_chat=adversarial_chat,
