@@ -1193,6 +1193,8 @@ class ScenarioRunService:
         ``ScenarioRegistry.create_and_initialize_async`` so the registry owns
         scenario creation and initialization. The run-specific common parameters
         are resolved before this method and forwarded as ``init_kwargs``.
+        The saved launch record retains effective numeric values so resume does
+        not depend on current parameter defaults.
 
         Args:
             request: The run request (for scenario_name, scenario_params, and
@@ -1205,18 +1207,26 @@ class ScenarioRunService:
         """
         scenario_registry = ScenarioRegistry.get_registry_singleton()
         scenario_class = scenario_registry.get_class(request.scenario_name)
-        declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
+        declared = scenario_class.supported_parameters()
+        declared_names = {parameter.name for parameter in declared}
         launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
+        numeric_parameters = [
+            parameter for parameter in declared if parameter.name in {"max_concurrency", "max_retries"}
+        ]
+        merged_args = {**(request.scenario_params or {}), **init_kwargs}
+        resolved_numeric = resolve_declared_params(
+            declared=numeric_parameters,
+            raw_args={parameter.name: merged_args.get(parameter.name) for parameter in numeric_parameters},
+            owner=f"Scenario '{request.scenario_name}'",
+        )
         for name in ("max_concurrency", "max_retries"):
-            if name not in declared_names and name not in request.model_fields_set:
+            if name in declared_names:
+                launch_request[name] = resolved_numeric[name]
+            elif name not in request.model_fields_set:
                 launch_request[name] = None
         if launch_request["include_baseline"] is None and "include_baseline" in declared_names:
             baseline_parameter = next(
-                (
-                    parameter
-                    for parameter in scenario_class.supported_parameters()
-                    if parameter.name == "include_baseline"
-                ),
+                (parameter for parameter in declared if parameter.name == "include_baseline"),
                 None,
             )
             baseline = (
