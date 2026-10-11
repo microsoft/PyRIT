@@ -3,6 +3,7 @@
 
 """Tests for the Multilingual scenario."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -481,9 +482,14 @@ class TestMultilingual:
             {"scenario_techniques": ["prompt_sending", "base64"]},
         ],
     )
-    async def test_run_size_estimate_matches_the_initialized_run(
-        self, params, mock_objective_target, mock_adversarial_chat, mock_objective_scorer
-    ):
+    async def test_run_size_estimate_matches_the_initialized_run_async(
+        self,
+        *,
+        params: dict[str, Any],
+        mock_objective_target: PromptTarget,
+        mock_adversarial_chat: PromptTarget,
+        mock_objective_scorer: TrueFalseScorer,
+    ) -> None:
         seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective {index}")]) for index in range(5)]
         technique_class = _build_multilingual_technique()
         if "scenario_techniques" in params:
