@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic import TypeAdapter
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
@@ -27,6 +28,7 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     ComponentIdentifier,
+    OutcomeStatistics,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -347,10 +349,12 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert list_item.total_retries == detail.total_retries == sdk.overall.retries
     assert progress.summary.overall.succeeded == sdk.overall.succeeded
     assert progress.summary.overall.errors == sdk.overall.errors
+    assert progress.summary.overall.outcomes == sdk.overall.outcomes
 
     # Reports
     report = json.loads(await JsonScenarioResultPrinter().render_async(scenario_result))
     assert report["stats"]["overall_success_rate"] == (expected or 0)
+    assert report["stats"]["outcomes"] == TypeAdapter(OutcomeStatistics).dump_python(sdk.overall.outcomes, mode="json")
 
     # Per-group numbers agree between the SDK, the saved-plan progress view, and the reports. Compare
     # key sets first so a group missing from one view fails instead of reading as 0%.
@@ -366,6 +370,10 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert report_groups == {
         name: (completed, rate or 0) for name, (completed, rate) in sdk_groups_with_results.items()
     }
+    for group in report["groups"]:
+        assert group["outcomes"] == TypeAdapter(OutcomeStatistics).dump_python(
+            sdk.display_groups[group["name"]].outcomes, mode="json"
+        )
     if history.plan is not None:
         progress_groups = {
             group.display_group: (group.completed, group.success_percentage)
@@ -373,6 +381,8 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
         }
         assert set(progress_groups) == set(sdk_groups)
         assert progress_groups == sdk_groups
+        for group in progress.summary.display_groups:
+            assert group.outcomes == sdk.display_groups[group.display_group].outcomes
 
 
 async def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> None:

@@ -2,14 +2,15 @@
 # Licensed under the MIT license.
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from pyrit.analytics import AttackStats as AnalyticsAttackStats
+from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.result_analysis import AttackStats as ResultAnalysisAttackStats
 from pyrit.common.pagination import fingerprint_filters
 from pyrit.models import (
@@ -28,6 +29,8 @@ from pyrit.models import (
     AttackOutcome,
     AttackResultSelection,
     AttackStats,
+    OutcomeStatistics,
+    ScenarioProgressCounts,
 )
 
 
@@ -44,6 +47,115 @@ def test_attack_stats_preserves_existing_import_and_constructor() -> None:
     }
     assert asdict(stats) == expected
     assert stats == AttackStats(**expected)
+    assert stats.success_rate_decided == stats.success_rate
+
+
+def test_shared_outcome_statistics_preserves_existing_attack_type_identity() -> None:
+    assert OutcomeStatistics is AttackAnalyticsStatistics
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1, "error": 2})
+    assert statistics.success_rate == 0.5
+    assert statistics.success_rate_all == 0.25
+    counts = ScenarioProgressCounts(
+        completed=4, succeeded=1, errors=5, retries=3, success_percentage=25, outcomes=statistics
+    )
+    assert counts.model_dump(mode="json")["outcomes"] == {
+        **asdict(statistics),
+        "success_rate_decided": statistics.success_rate,
+    }
+    restored = ScenarioProgressCounts.model_validate_json(counts.model_dump_json())
+    assert restored == counts
+    assert isinstance(restored.outcomes, OutcomeStatistics)
+    assert restored.outcomes.errors == 2
+    assert restored.errors == 5
+
+
+def test_legacy_scenario_counts_do_not_fabricate_an_outcome_breakdown() -> None:
+    counts = ScenarioProgressCounts.model_validate(
+        {"completed": 2, "succeeded": 1, "success_percentage": 50, "errors": 3, "retries": 2}
+    )
+    assert counts.outcomes is None
+    assert counts.errors == 3
+    assert counts.completed == 2
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"completed": 10},
+        {"succeeded": 3},
+        {"success_percentage": 100},
+    ],
+)
+@pytest.mark.parametrize("input_mode", ["object", "dict", "json"])
+def test_scenario_counts_reject_contradictory_outcomes(changes: dict[str, int], input_mode: str) -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1, "error": 2})
+    fields = {
+        "completed": 4,
+        "succeeded": 1,
+        "errors": 2,
+        "retries": 0,
+        "success_percentage": 25,
+        "outcomes": statistics if input_mode == "object" else asdict(statistics),
+        **changes,
+    }
+    with pytest.raises(ValidationError, match="completed|succeeded|success_percentage"):
+        if input_mode == "json":
+            ScenarioProgressCounts.model_validate_json(json.dumps(fields))
+        else:
+            ScenarioProgressCounts.model_validate(fields)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"successes": -1},
+        {"failures": True},
+        {"undetermined": 1.5},
+        {"total_decided": 99},
+        {"total_results": 99},
+        {"success_rate": None},
+        {"success_rate": 0.25},
+        {"success_rate_all": 0.5},
+        {"decided_share": 1.0},
+        {"outcome_shares": {AttackOutcome.SUCCESS: 1.0}},
+        {"success_rate": float("nan")},
+        {"success_rate_all": float("inf")},
+    ],
+)
+def test_shared_statistics_reject_inconsistent_counts_and_rates(changes: dict[str, object]) -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1, "error": 2})
+    with pytest.raises(ValueError):
+        replace(statistics, **changes)
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python({**asdict(statistics), **changes})
+
+
+def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:
+    statistics = compute_outcome_statistics({"success": 1})
+    statistics.successes = 5
+    with pytest.raises(ValidationError):
+        ScenarioProgressCounts(completed=1, succeeded=1, errors=0, retries=0, outcomes=statistics)
+
+
+def test_shared_statistics_serialize_and_accept_the_explicit_decided_alias() -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1, "error": 2})
+    adapter = TypeAdapter(OutcomeStatistics)
+    payload = adapter.dump_python(statistics, mode="json")
+    assert statistics.success_rate_decided == statistics.success_rate == 0.5
+    assert payload["success_rate_decided"] == payload["success_rate"] == 0.5
+    assert adapter.validate_json(adapter.dump_json(statistics)) == statistics
+    payload.pop("success_rate")
+    assert adapter.validate_python(payload) == statistics
+    assert "success_rate_decided" in adapter.json_schema(mode="serialization")["properties"]
+    with pytest.raises(ValidationError, match="success_rate"):
+        adapter.validate_python({**payload, "success_rate": 0.75})
+
+
+def test_explicit_decided_alias_is_not_independently_mutable() -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1})
+    with pytest.raises(AttributeError):
+        statistics.success_rate_decided = 1.0
+    assert statistics.success_rate_decided == statistics.success_rate == 0.5
 
 
 @pytest.mark.parametrize(
@@ -408,7 +520,10 @@ def test_report_round_trips_statistics_and_drilldown_availability(reason: str | 
         computed_at=computed_at,
     )
     assert isinstance(report.summary, AttackStats)
-    assert report.model_dump(mode="json")["summary"] == asdict(statistics)
+    assert report.model_dump(mode="json")["summary"] == {
+        **asdict(statistics),
+        "success_rate_decided": statistics.success_rate,
+    }
     assert report.drilldown_unavailable_reason == reason
     assert AttackAnalyticsReport.model_validate_json(report.model_dump_json()) == report
 

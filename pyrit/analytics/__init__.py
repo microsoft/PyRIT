@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
+    from pyrit.analytics.attack_result_analytics import AttackResultAnalytics
     from pyrit.analytics.conversation_analytics import ConversationAnalytics
+    from pyrit.analytics.outcome_statistics import combine_outcome_statistics, compute_outcome_statistics
     from pyrit.analytics.result_analysis import (
         AttackStats,
         analyze_results,
@@ -17,13 +19,18 @@ if TYPE_CHECKING:
         get_cached_results_for_technique_async,
     )
     from pyrit.analytics.scenario_statistics import compute_scenario_statistics
+    from pyrit.analytics.technique_analysis import compute_technique_stats_async
     from pyrit.analytics.text_matching import ApproximateTextMatching, ExactTextMatching, TextMatching
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "analyze_results": "pyrit.analytics.result_analysis",
     "ApproximateTextMatching": "pyrit.analytics.text_matching",
+    "AttackResultAnalytics": "pyrit.analytics.attack_result_analytics",
     "AttackStats": "pyrit.analytics.result_analysis",
+    "combine_outcome_statistics": "pyrit.analytics.outcome_statistics",
+    "compute_outcome_statistics": "pyrit.analytics.outcome_statistics",
     "compute_scenario_statistics": "pyrit.analytics.scenario_statistics",
+    "compute_technique_stats_async": "pyrit.analytics.technique_analysis",
     "ConversationAnalytics": "pyrit.analytics.conversation_analytics",
     "ExactTextMatching": "pyrit.analytics.text_matching",
     "get_cached_results_for_technique": "pyrit.analytics.result_analysis",
