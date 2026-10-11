@@ -22,7 +22,7 @@ from pyrit.models import (
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     build_baseline_atomic_attack,
@@ -243,7 +243,9 @@ class Jailbreak(Scenario):
         super().__init__(
             version=self.VERSION,
             technique_class=technique_class,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=4),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=4
+            ),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )

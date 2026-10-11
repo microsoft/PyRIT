@@ -4566,20 +4566,20 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Sequence[str]: A list of unique dataset names.
+
+        Raises:
+            SQLAlchemyError: If the dataset-name query fails.
         """
         try:
-            entries: Sequence[SeedEntry] = self._query_entries(
-                SeedEntry,
-                conditions=and_(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != ""),
-                distinct=True,
-            )
-            # Extract unique dataset names from the entries
-            dataset_names: set[str] = set()
-            for entry in entries:
-                if entry.dataset_name:
-                    dataset_names.add(entry.dataset_name)
-            return list(dataset_names)
-        except Exception as e:
+            with closing(self._get_session()) as session:
+                statement = (
+                    select(SeedEntry.dataset_name)
+                    .where(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != "")
+                    .distinct()
+                )
+                names: Sequence[str | None] = session.scalars(statement).all()
+                return [name for name in names if name is not None]
+        except SQLAlchemyError as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
 
@@ -5034,7 +5034,7 @@ class MemoryInterface(abc.ABC):
                 entry.atomic_attack_identifier_hash = identifier.hash
                 value = identifier.model_dump()
             if field == "attack_metadata":
-                value = {**(entry.attack_metadata or {}), **cast(dict[str, Any], value)}
+                value = {**(entry.attack_metadata or {}), **cast("dict[str, Any]", value)}
             setattr(entry, field, value)
 
     def _execute_promote_attack_conversation(self, *, attack_result_id: str, conversation_id: str) -> bool:
@@ -5994,7 +5994,7 @@ class MemoryInterface(abc.ABC):
             raise ValueError("Scenario run state projection limit must be between 1 and 500.")
         conditions = [ScenarioResultEntry.scenario_run_state.in_([state.value for state in states])]
         if after_id is not None:
-            conditions.append(ScenarioResultEntry.id > cast(Any, uuid.UUID(after_id)))
+            conditions.append(ScenarioResultEntry.id > cast("Any", uuid.UUID(after_id)))
         statement = (
             select(ScenarioResultEntry.id, ScenarioResultEntry.scenario_run_state)
             .where(and_(*conditions))
@@ -6099,9 +6099,13 @@ class MemoryInterface(abc.ABC):
             if scenario_result_id in aggregates
         ]
         with closing(self._get_session()) as session:
-            aggregate_rows = session.execute(
-                self._build_scenario_history_aggregate_statement(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
-            ).mappings().all()
+            aggregate_rows = (
+                session.execute(
+                    self._build_scenario_history_aggregate_statement(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+                )
+                .mappings()
+                .all()
+            )
             name_rows = session.execute(
                 select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
                 .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
@@ -6235,15 +6239,131 @@ class MemoryInterface(abc.ABC):
                 func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
                     "total_retries"
                 ),
-                func.sum(case((and_(ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.TARGET_FACING.value), 1), else_=0)).label("target_facing_attempts"),
-                func.sum(case((and_(ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.TARGET_FACING.value, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)).label("target_facing_error_attempts"),
-                func.sum(case((and_(ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.TARGET_FACING.value), ranked.c.attempt_retries), else_=0)).label("target_facing_retries"),
-                func.sum(case((and_(ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.ORCHESTRATION.value), 1), else_=0)).label("orchestration_attempts"),
-                func.sum(case((and_(ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.ORCHESTRATION.value, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)).label("orchestration_error_attempts"),
-                func.sum(case((and_(ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.ORCHESTRATION.value), ranked.c.attempt_retries), else_=0)).label("orchestration_retries"),
-                func.sum(case((and_(ranked.c.is_planned == 1, or_(ranked.c.result_role.is_(None), and_(ranked.c.result_role != AttackResultRole.TARGET_FACING.value, ranked.c.result_role != AttackResultRole.ORCHESTRATION.value))), 1), else_=0)).label("unknown_role_attempts"),
-                func.sum(case((and_(ranked.c.is_planned == 1, or_(ranked.c.result_role.is_(None), and_(ranked.c.result_role != AttackResultRole.TARGET_FACING.value, ranked.c.result_role != AttackResultRole.ORCHESTRATION.value)), ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)).label("unknown_role_error_attempts"),
-                func.sum(case((and_(ranked.c.is_planned == 1, or_(ranked.c.result_role.is_(None), and_(ranked.c.result_role != AttackResultRole.TARGET_FACING.value, ranked.c.result_role != AttackResultRole.ORCHESTRATION.value))), ranked.c.attempt_retries), else_=0)).label("unknown_role_retries"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.TARGET_FACING.value
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("target_facing_attempts"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1,
+                                ranked.c.result_role == AttackResultRole.TARGET_FACING.value,
+                                ranked.c.latest_outcome == AttackOutcome.ERROR.value,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("target_facing_error_attempts"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.TARGET_FACING.value
+                            ),
+                            ranked.c.attempt_retries,
+                        ),
+                        else_=0,
+                    )
+                ).label("target_facing_retries"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.ORCHESTRATION.value
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("orchestration_attempts"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1,
+                                ranked.c.result_role == AttackResultRole.ORCHESTRATION.value,
+                                ranked.c.latest_outcome == AttackOutcome.ERROR.value,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("orchestration_error_attempts"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1, ranked.c.result_role == AttackResultRole.ORCHESTRATION.value
+                            ),
+                            ranked.c.attempt_retries,
+                        ),
+                        else_=0,
+                    )
+                ).label("orchestration_retries"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1,
+                                or_(
+                                    ranked.c.result_role.is_(None),
+                                    and_(
+                                        ranked.c.result_role != AttackResultRole.TARGET_FACING.value,
+                                        ranked.c.result_role != AttackResultRole.ORCHESTRATION.value,
+                                    ),
+                                ),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("unknown_role_attempts"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1,
+                                or_(
+                                    ranked.c.result_role.is_(None),
+                                    and_(
+                                        ranked.c.result_role != AttackResultRole.TARGET_FACING.value,
+                                        ranked.c.result_role != AttackResultRole.ORCHESTRATION.value,
+                                    ),
+                                ),
+                                ranked.c.latest_outcome == AttackOutcome.ERROR.value,
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("unknown_role_error_attempts"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                ranked.c.is_planned == 1,
+                                or_(
+                                    ranked.c.result_role.is_(None),
+                                    and_(
+                                        ranked.c.result_role != AttackResultRole.TARGET_FACING.value,
+                                        ranked.c.result_role != AttackResultRole.ORCHESTRATION.value,
+                                    ),
+                                ),
+                            ),
+                            ranked.c.attempt_retries,
+                        ),
+                        else_=0,
+                    )
+                ).label("unknown_role_retries"),
             )
             .group_by(ranked.c.scenario_result_id)
             .order_by(ranked.c.scenario_result_id)
