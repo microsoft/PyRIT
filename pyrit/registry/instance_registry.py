@@ -72,6 +72,11 @@ class InstanceRegistry(Protocol[T]):
         T: The type of instances held (must be ``Identifiable``).
     """
 
+    @property
+    def revision(self) -> int:
+        """The mutation revision of this container."""
+        ...
+
     def register(
         self,
         instance: T,
@@ -207,6 +212,12 @@ class DefaultInstanceRegistry(Generic[T]):
         self._instance_version = 0
         self._instance_type: type[T] | Callable[[], type[T]] | None = instance_type
         self._reserved_names = frozenset(reserved_names or ())
+
+    @property
+    def revision(self) -> int:
+        """The mutation revision, including direct registration and removal."""
+        with self._lock:
+            return self._instance_version
 
     def _resolve_instance_type(self) -> type | None:
         """
