@@ -199,7 +199,7 @@ def _message_payload_without_context(text: str, *, message_id: str) -> dict[str,
 
 @pytest.mark.usefixtures("patch_central_database")
 @patch("httpx.AsyncClient.send")
-async def test_a2a_continues_its_own_context_when_the_agent_sends_none(mock_send):
+async def test_a2a_continues_its_own_context_when_the_agent_sends_none_async(mock_send: AsyncMock) -> None:
     """A plain Message reply may omit contextId; turn 2 must still continue the same context."""
     mock_send.side_effect = [
         _rpc_response(_message_payload_without_context("First reply", message_id="m-1")),
@@ -226,7 +226,7 @@ async def test_a2a_continues_its_own_context_when_the_agent_sends_none(mock_send
 
 @pytest.mark.usefixtures("patch_central_database")
 @patch("httpx.AsyncClient.send")
-async def test_a2a_adopts_the_context_the_agent_returns(mock_send):
+async def test_a2a_adopts_the_context_the_agent_returns_async(mock_send: AsyncMock) -> None:
     mock_send.side_effect = [
         _rpc_response(_message_payload("First reply", context_id="ctx-from-agent")),
         _rpc_response(_message_payload("Second reply", context_id="ctx-from-agent")),
