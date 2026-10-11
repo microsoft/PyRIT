@@ -1147,7 +1147,7 @@ async def test_web_search_answer_is_the_response_value_async(
 
 async def test_web_search_call_replays_as_a_valid_input_item_async(
     target: OpenAIResponseTarget, dummy_text_message_piece: MessagePiece
-):
+) -> None:
     reply = await target._construct_message_from_response_async(_web_search_response(), dummy_text_message_piece)
     follow_up = Message.from_prompt(prompt="Anything else?", role="user")
 
@@ -1197,7 +1197,7 @@ async def test_web_search_conversation_continues_through_send_prompt_async(
 
 async def test_web_search_call_stored_without_its_action_is_skipped_on_replay_async(
     target: OpenAIResponseTarget, caplog: pytest.LogCaptureFixture
-):
+) -> None:
     reply = Message(
         message_pieces=[
             MessagePiece(role="assistant", original_value="answer", conversation_id="c-1"),
