@@ -7,7 +7,7 @@ import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import DATASETS_PATH
@@ -32,11 +32,9 @@ from pyrit.executor.attack import (
     CrescendoAttack,
 )
 from pyrit.models import (
-    AllAvailableDatasetSize,
+    AttackSeedGroup,
     BoundedDatasetSize,
-    ScenarioDatasetSizeCap,
     ScenarioDatasetSizeEstimate,
-    ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedPrompt,
@@ -47,9 +45,11 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
-    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
+    DatasetConstraintError,
+    DatasetSource,
 )
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
@@ -64,7 +64,6 @@ from pyrit.score import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pyrit.models import AttackSeedGroup
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import FloatScaleScorer, TrueFalseScorer
@@ -363,12 +362,13 @@ class Psychosocial(Scenario):
     (``all`` only) swaps the simulated base for a real ``CrescendoAttack``. One baseline per sub-harm
     is emitted (toggle with ``include_baseline``).
 
-    Dataset selection is bound to the sub-harms: the ``dataset_config`` parameter still tunes
-    ``max_dataset_size`` and sampling, but the dataset names are always the selected sub-harms'
-    datasets (``--dataset-names`` is ignored).
+    Dataset selection is bound to the selected sub-harms. Source caps apply independently,
+    then ``max_total`` caps the combined population while keeping every selected sub-harm.
+    The total must cover each selected sub-harm. Unrelated dataset names are rejected.
     """
 
-    VERSION: int = 4
+    VERSION: int = 6
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     def additional_parameters(cls) -> list[Parameter]:
@@ -447,7 +447,7 @@ class Psychosocial(Scenario):
             uses_default_adversarial_target=adversarial_chat is None,
             technique_class=PsychosocialTechnique,
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[harm.dataset_name for harm in _SUB_HARMS],
+                sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
             ),
             # No single scenario objective scorer -- each sub-harm scores itself. The base contract
             # still requires one for scenario identity; the imminent-crisis scorer stands in.
@@ -478,93 +478,85 @@ class Psychosocial(Scenario):
             )
         return [_SUB_HARMS_BY_NAME[name]]
 
+    def _validate_runtime_configuration(self) -> None:
+        config = self._dataset_config
+        allowed = {harm.dataset_name for harm in _SUB_HARMS}
+        if set(config.dataset_names) - allowed:
+            raise DatasetConstraintError("Psychosocial sources must match its sub-harm datasets.")
+        by_name = {source.name: source for source in config.sources}
+        self._dataset_config = config.with_overrides(
+            sources=[
+                by_name.get(harm.dataset_name, DatasetSource(name=harm.dataset_name))
+                for harm in self._selected_sub_harms()
+            ]
+        )
+        super()._validate_runtime_configuration()
+        cap = self._dataset_config.max_total
+        if cap != "all" and cap < len(self._selected_sub_harms()):
+            raise DatasetConstraintError(
+                f"Psychosocial max_total ({cap}) must cover every selected sub-harm "
+                f"({len(self._selected_sub_harms())}). Increase the total limit to at least "
+                f"{len(self._selected_sub_harms())}, or select one sub-harm."
+            )
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
         """
-        Hard-bind the dataset names to the selected sub-harms before resolving seeds.
-
-        Forces the dataset names to the selected sub-harms' (so ``--dataset-names`` cannot repoint
-        the scenario at unrelated data) and applies any ``max_dataset_size`` budget *per sub-harm*
-        rather than as one global budget. A single ``DatasetAttackConfiguration`` spends one budget
-        across the union of sub-harm datasets, so a small cap (e.g. ``1``) can starve a sub-harm of
-        every seed; a per-sub-harm compound caps each independently. Any run-time ``filters`` on the
-        active ``dataset_config`` are preserved.
-
-        Args:
-            apply_sampling (bool): When True (default), apply ``max_dataset_size`` sampling. On
-                resume the base passes False so the full deterministic dataset is resolved.
+        Apply source caps, then sample the total while keeping every selected sub-harm.
 
         Returns:
-            dict[str, list[AttackSeedGroup]]: Seed groups keyed by originating dataset name.
+            dict[str, list[AttackSeedGroup]]: Selected groups keyed by sub-harm dataset.
         """
-        dataset_names = [harm.dataset_name for harm in self._selected_sub_harms()]
-        per_subharm_cap = self._dataset_config.max_dataset_size
-        filters = self._dataset_config.filters
-        if per_subharm_cap is None:
-            self._dataset_config = DatasetAttackConfiguration(
-                dataset_names=dataset_names, max_dataset_size=None, filters=filters
+        populations = await super()._resolve_seed_groups_by_dataset_async(apply_sampling=False)
+        if not apply_sampling:
+            return populations
+        selected = {
+            harm.dataset_name: self._dataset_config._sample_source_groups(
+                name=harm.dataset_name, groups=populations.get(harm.dataset_name, [])
             )
-        else:
-            rebuilt = CompoundDatasetAttackConfiguration.per_dataset(
-                dataset_names=dataset_names, max_dataset_size=per_subharm_cap, filters=filters
-            )
-            # Parent cap = per-sub-harm cap x sub-harm count: each child already caps at the
-            # per-sub-harm budget so the parent never trims the union, yet it stays non-None so the
-            # base still pins the sampled objective subset into the scenario metadata for resume.
-            rebuilt.max_dataset_size = per_subharm_cap * len(dataset_names)
-            self._dataset_config = rebuilt
-        return await super()._resolve_seed_groups_by_dataset_async(apply_sampling=apply_sampling)
+            for harm in self._selected_sub_harms()
+        }
+        return sample_with_coverage(
+            groups_by_dataset=selected,
+            cap=self._dataset_config.max_total,
+            required_keys=list(selected),
+            key=lambda name, _: name,
+        )
 
     def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """
-        Use the outer limit applied by seed resolution, not compound child budgets.
+        Use the source and total limits applied by seed resolution.
 
         Returns:
             ScenarioDatasetSizeEstimate: Combined sub-harm cap or all available finite data.
         """
-        cap = self._dataset_config.max_dataset_size
-        return (
-            AllAvailableDatasetSize()
-            if cap is None
-            else BoundedDatasetSize(value=cap * len(self._selected_sub_harms()))
-        )
+        return self._dataset_config.get_size_budget()
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate the independent sub-harm technique sweeps and per-harm baselines.
 
         Returns:
-            ScenarioRunSizeEstimate: Configured per-sub-harm budget.
+            ScenarioRunSizeEstimate: Combined selected-population budget.
         """
-        per_harm_count = budget.value // len(self._selected_sub_harms())
-        datasets = [
-            ScenarioDatasetSummary(
-                name=harm.dataset_name,
-                configured_caps=[ScenarioDatasetSizeCap(label="per-sub-harm cap", count=per_harm_count)],
-            )
-            for harm in self._selected_sub_harms()
-        ]
+        count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         technique_count = len(self._scenario_techniques)
-        components: list[ScenarioRunSizeComponent] = []
-        for dataset in datasets:
-            dataset_name = dataset.name
-            count = per_harm_count
+        components = [
+            ScenarioRunSizeComponent(
+                label="Sub-harm technique sweeps",
+                count=count * technique_count,
+            )
+        ]
+        if self._include_baseline:
             components.append(
                 ScenarioRunSizeComponent(
-                    label=f"{dataset_name} technique sweep",
-                    count=count * technique_count,
+                    label="Sub-harm baselines",
+                    count=count,
+                    is_baseline=True,
+                    note="Each selected objective has one baseline with its sub-harm scorer.",
                 )
             )
-            if self._include_baseline:
-                components.append(
-                    ScenarioRunSizeComponent(
-                        label=f"{dataset_name} baseline",
-                        count=count,
-                        is_baseline=True,
-                        note="Psychosocial uses a distinct baseline and scorer for each sub-harm.",
-                    )
-                )
         return ScenarioRunSizeEstimate(
             total_attack_count=sum(component.count for component in components),
             components=components,
@@ -594,7 +586,7 @@ class Psychosocial(Scenario):
             per-sub-harm baselines prepended when enabled.
 
         Raises:
-            ValueError: If no seed groups were loaded for any selected sub-harm.
+            ValueError: If a selected sub-harm has no seed groups.
         """
         # Resolved lazily so a no-arg ``Psychosocial()`` works for registry metadata introspection.
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
@@ -604,7 +596,7 @@ class Psychosocial(Scenario):
         max_turns = int(self.params.get("max_turns", 5))
         seed_groups_by_dataset = context.seed_groups_by_dataset
 
-        if not any(seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
+        if all(not seed_groups_by_dataset.get(harm.dataset_name) for harm in sub_harms):
             harm_names = ", ".join(f"'{harm.dataset_name}'" for harm in sub_harms)
             raise ValueError(
                 "No seed groups were loaded for any selected psychosocial sub-harm. Ensure the "
@@ -616,8 +608,7 @@ class Psychosocial(Scenario):
         for harm in sub_harms:
             seed_groups = seed_groups_by_dataset.get(harm.dataset_name)
             if not seed_groups:
-                logger.warning(f"No seed groups loaded for dataset '{harm.dataset_name}'; skipping sub-harm.")
-                continue
+                raise ValueError(f"No seed groups loaded for selected sub-harm dataset '{harm.dataset_name}'.")
 
             scorer = self._scorers_by_harm[harm.name]
             scoring_config = AttackScoringConfig(objective_scorer=scorer)

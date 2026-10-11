@@ -35,7 +35,7 @@ from pathlib import Path
 
 from pyrit.output import output_scenario_async
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.adaptive import TextAdaptive
 from pyrit.setup import initialize_from_config_async
 
@@ -43,7 +43,7 @@ await initialize_from_config_async(config_path=Path("pyrit_conf.yaml"))  # type:
 
 objective_target = TargetRegistry.get_registry_singleton().instances.get("openai_chat")
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_hate"], max_dataset_size=2)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_hate")], max_total=2)
 
 scenario = TextAdaptive()
 scenario.set_params_from_args(  # type: ignore

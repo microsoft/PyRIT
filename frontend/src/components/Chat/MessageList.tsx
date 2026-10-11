@@ -24,7 +24,6 @@ import {
 import {
   ArrowDownloadRegular,
   ArrowReplyRegular,
-  EditRegular,
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
@@ -38,14 +37,6 @@ import type {
 } from '../../types'
 import { useMessageListStyles } from './MessageList.styles'
 
-interface ProcessingErrorRecovery {
-  messageIndex: number
-  actionLabel: string
-  description: string
-  disabled?: boolean
-  onRecover: () => void | Promise<void>
-}
-
 interface MessageListProps {
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
@@ -58,8 +49,6 @@ interface MessageListProps {
   isLoading?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
-  /** Recovery action for the processing error caused by the most recent send. */
-  processingErrorRecovery?: ProcessingErrorRecovery
 }
 
 /** Image that shows a spinner while loading. */
@@ -554,7 +543,7 @@ function getRenderMessagePieces(message: Message, messageIndex: number): RenderM
 
 export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, copyConversationDisabled = false,
-  newConversationDisabledReason, isLoading, globalMarkdown = false, processingErrorRecovery,
+  newConversationDisabledReason, isLoading, globalMarkdown = false,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -611,8 +600,6 @@ export default function MessageList({
           : isUser ? 'User' : isSimulated ? 'Simulated'
           : message.role === 'system' ? 'System' : message.role === 'tool' ? 'Tool'
             : message.role === 'developer' ? 'Developer' : 'Assistant'
-        const canRecoverProcessingError = message.error?.type === 'processing'
-          && processingErrorRecovery?.messageIndex === index
         const renderPieces = getRenderMessagePieces(message, index)
 
         return (
@@ -635,25 +622,7 @@ export default function MessageList({
                     <MessageBarBody>
                       <Text weight="semibold">{message.error.type}</Text>
                       {message.error.description && (
-                        <Text>: {message.error.description}</Text>
-                      )}
-                      {canRecoverProcessingError && processingErrorRecovery && (
-                        <div className={styles.errorRecovery}>
-                          <Text block>
-                            {processingErrorRecovery.description}
-                          </Text>
-                          <Button
-                            appearance="primary"
-                            size="small"
-                            icon={<EditRegular />}
-                            className={styles.errorRecoveryButton}
-                            onClick={() => { void processingErrorRecovery.onRecover() }}
-                            disabled={processingErrorRecovery.disabled}
-                            data-testid={`recover-processing-error-btn-${index}`}
-                          >
-                            {processingErrorRecovery.actionLabel}
-                          </Button>
-                        </div>
+                        <Text className={styles.errorDetails}>: {message.error.description}</Text>
                       )}
                     </MessageBarBody>
                   </MessageBar>

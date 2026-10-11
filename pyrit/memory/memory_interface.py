@@ -4543,20 +4543,20 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             Sequence[str]: A list of unique dataset names.
+
+        Raises:
+            SQLAlchemyError: If the dataset-name query fails.
         """
         try:
-            entries: Sequence[SeedEntry] = self._query_entries(
-                SeedEntry,
-                conditions=and_(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != ""),
-                distinct=True,
-            )
-            # Extract unique dataset names from the entries
-            dataset_names: set[str] = set()
-            for entry in entries:
-                if entry.dataset_name:
-                    dataset_names.add(entry.dataset_name)
-            return list(dataset_names)
-        except Exception as e:
+            with closing(self._get_session()) as session:
+                statement = (
+                    select(SeedEntry.dataset_name)
+                    .where(SeedEntry.dataset_name.isnot(None), SeedEntry.dataset_name != "")
+                    .distinct()
+                )
+                names: Sequence[str | None] = session.scalars(statement).all()
+                return [name for name in names if name is not None]
+        except SQLAlchemyError as e:
             logger.exception(f"Failed to retrieve dataset names with error {e}")
             raise
 
