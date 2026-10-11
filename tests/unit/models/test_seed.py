@@ -9,6 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import yaml
+from jinja2 import StrictUndefined
+from jinja2.sandbox import SandboxedEnvironment
 from PIL import Image
 from scipy.io import wavfile
 
@@ -202,6 +205,103 @@ def test_render_template_value_silent_blocks_ssti_via_endraw_injection():
     result = seed.render_template_value_silent()
     # Must NOT contain any Python class names — that would mean the SSTI executed
     assert "__class__" not in result or result == raw_wrapped
+
+
+@pytest.mark.parametrize(
+    ("template_value", "parameters", "expected"),
+    [
+        ("{% if flag %}A{% else %}B{% endif %}", {"flag": True}, "A"),
+        ("{% if flag %}A{% else %}B{% endif %}", {"flag": False}, "B"),
+        ("{% if flag %}A{% else %}B{% endif %}", {"flag": None}, "B"),
+        ("{% if other %}A{% elif flag %}B{% else %}C{% endif %}", {"other": False, "flag": False}, "C"),
+        ('{{ "A" if flag else "B" }}', {"flag": False}, "B"),
+        ("{% set local = flag %}{% if local %}A{% else %}B{% endif %}", {"flag": False}, "B"),
+        ("{% if flag is defined %}A{% else %}B{% endif %}", {}, "B"),
+        ("{{ flag | default('B') }}", {}, "B"),
+        ("{% if flag == 'a' %}A{% else %}B{% endif %}", {"flag": "b"}, "B"),
+        ("{% if flag is filter %}A{% else %}B{% endif %}", {"flag": "upper"}, "A"),
+        ("{% if flag is test %}A{% else %}B{% endif %}", {"flag": "nope"}, "B"),
+        ("{% for item in ['A', 'B'] if flag %}{{ item }}{% endfor %}", {"flag": False}, ""),
+        (
+            "{% macro show(rows) %}{% for row in rows %}[{{ row }}]{% endfor %}{% endmacro %}{{ show(items) }}",
+            {"items": ["x", "y"]},
+            "[x][y]",
+        ),
+    ],
+)
+def test_seed_prompt_keeps_template_whose_missing_parameter_decides_a_branch(template_value, parameters, expected):
+    template = SeedPrompt(value=template_value, data_type="text", is_jinja_template=True)
+
+    assert template.value == template_value
+    assert template.render_template_value(**parameters) == expected
+
+
+@pytest.mark.parametrize(
+    ("conversation_context", "expected_tail"),
+    [(None, ""), ("two turns", "Context: two turns")],
+)
+def test_seed_prompt_keeps_path_resolved_at_load_when_its_condition_is_deferred(conversation_context, expected_tail):
+    template = SeedPrompt(
+        value="Path: {{ datasets_path }}. {% if conversation_context %}Context: {{ conversation_context }}{% endif %}",
+        data_type="text",
+        is_jinja_template=True,
+    )
+
+    # Memory rebuilds a stored prompt from its value alone, without is_jinja_template
+    reloaded = SeedPrompt(value=template.value, data_type="text")
+
+    for seed in (template, reloaded):
+        rendered = seed.render_template_value(conversation_context=conversation_context)
+        assert rendered == f"Path: {DATASETS_PATH}. {expected_tail}"
+
+
+def test_render_template_value_silent_decides_conditions_as_before():
+    template = SeedPrompt(
+        value="{{ style }} {% if prompt %}{{ prompt }}{% endif %}", data_type="text", is_jinja_template=True
+    )
+
+    assert template.render_template_value_silent(style="brief") == "brief {{ prompt }}"
+
+
+def test_render_template_value_silent_renders_condition_once_its_parameters_are_provided():
+    template = SeedPrompt(
+        value="{% if flag %}{{ datasets_path }} {{ prompt }}{% endif %}",
+        data_type="text",
+        is_jinja_template=True,
+    )
+
+    assert template.render_template_value_silent(flag=True) == f"{DATASETS_PATH} {{{{ prompt }}}}"
+
+
+def test_render_template_value_silent_renders_if_guard_on_loop_variable():
+    seed = SeedPrompt(
+        value="{% for item in items %}{% if item %}[{{ item }}]{% endif %}{% endfor %}",
+        data_type="text",
+        is_jinja_template=True,
+    )
+
+    assert seed.render_template_value_silent(items=["a", "", "b"]) == "[a][b]"
+
+
+_CONVERSATION_CONTEXT_TEMPLATES = sorted(
+    path
+    for path in pathlib.Path(DATASETS_PATH, "executors").rglob("*.yaml")
+    if "{% if conversation_context %}" in path.read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("template_path", _CONVERSATION_CONTEXT_TEMPLATES, ids=lambda path: path.stem)
+@pytest.mark.parametrize("conversation_context", [None, "<context>"])
+def test_loaded_template_renders_like_its_source(template_path, conversation_context):
+    seed_prompt = SeedPrompt.from_yaml_file(template_path)
+    parameters = {name: f"<{name}>" for name in seed_prompt.parameters or []}
+    parameters["conversation_context"] = conversation_context
+    source = yaml.safe_load(template_path.read_text(encoding="utf-8"))["value"]
+
+    expected = SandboxedEnvironment(undefined=StrictUndefined).from_string(source).render(**parameters)
+
+    assert seed_prompt.render_template_value(**parameters) == expected
+    assert ("<context>" in expected) == (conversation_context is not None)
 
 
 def test_seed_group_untrusted_auto_escapes():

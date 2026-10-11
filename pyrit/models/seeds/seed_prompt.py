@@ -118,7 +118,7 @@ class SeedPrompt(Seed):
         # crafted payload containing "{% endraw %}" can escape the raw wrapper and execute
         # arbitrary Jinja expressions. See seed_objective.py for the same pattern.
         if self.is_jinja_template:
-            self.value = self.render_template_value_silent(**PATHS_DICT)
+            self.value = self._render_trusted_template_value(**PATHS_DICT)
 
         if not self.data_type:
             # If data_type is not provided, infer it from the value

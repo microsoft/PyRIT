@@ -9,13 +9,14 @@ This module is the foundation for all seed types in PyRIT.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, TypeVar, cast
 
-from jinja2 import StrictUndefined, Undefined
+from jinja2 import StrictUndefined, Undefined, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
 
@@ -23,7 +24,7 @@ from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-requir
 from pyrit.models.seeds.seed_origin import SeedOrigin
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,78 @@ class PartialUndefined(Undefined):
 
         """
         return True  # Ensures it doesn't evaluate to False
+
+
+class _DeferRenderError(Exception):
+    """Raised when an unresolved variable would decide a branch or a loop."""
+
+
+class _DeferringUndefined(PartialUndefined):
+    """
+    Placeholder for the load-time render of trusted templates.
+
+    It cannot decide a branch or a loop: answering at load would drop the {% if %} or {% for %} tags,
+    and the later render with the real parameters could not decide again.
+    """
+
+    def __iter__(self) -> Iterator[object]:
+        """
+        Defer rendering instead of iterating over an unresolved variable.
+
+        Raises:
+            _DeferRenderError: Always.
+
+        """
+        raise _DeferRenderError(self._undefined_name)
+
+    def __bool__(self) -> bool:
+        """
+        Defer rendering instead of testing an unresolved variable.
+
+        Raises:
+            _DeferRenderError: Always.
+
+        """
+        raise _DeferRenderError(self._undefined_name)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Defer rendering instead of comparing an unresolved variable.
+
+        Raises:
+            _DeferRenderError: Always.
+
+        """
+        raise _DeferRenderError(self._undefined_name)
+
+    def __ne__(self, other: object) -> bool:
+        """
+        Defer rendering instead of comparing an unresolved variable.
+
+        Raises:
+            _DeferRenderError: Always.
+
+        """
+        raise _DeferRenderError(self._undefined_name)
+
+    __hash__ = Undefined.__hash__
+
+
+_JinjaCallable = TypeVar("_JinjaCallable", bound="Callable[..., Any]")
+
+
+def _deferring(function: _JinjaCallable) -> _JinjaCallable:
+    # Jinja tests such as `is defined` and the `default` filter check the value's type, not its truth.
+    # functools.wraps keeps Jinja's pass_environment marker, so the value may not be the first argument.
+    @functools.wraps(function)
+    def deferring(*args: Any, **kwargs: Any) -> Any:
+        for arg in args:
+            if isinstance(arg, _DeferringUndefined):
+                raise _DeferRenderError(arg._undefined_name)
+        return function(*args, **kwargs)
+
+    # Same signature as the wrapped test or filter, so the environment's test and filter tables keep their types.
+    return cast("_JinjaCallable", deferring)
 
 
 class Seed(BaseModel):
@@ -228,6 +301,35 @@ class Seed(BaseModel):
         try:
             # Render the template with the provided kwargs
             return is_jinja_template.render(**kwargs)
+        except Exception as e:
+            logger.error("Error rendering template: %s", e)
+            return self.value
+
+    def _render_trusted_template_value(self, **kwargs: Any) -> str:
+        """
+        Render a trusted template at load time, keeping the decisions its later render must make.
+
+        Behaves like render_template_value_silent, except when a missing parameter would decide a branch,
+        a loop, a comparison, a Jinja test or the `default` filter. Then the template is kept as-is, with a
+        `{% set %}` in front for each supplied parameter it uses, so later renders and stored copies keep them.
+
+        Args:
+            kwargs: Key-value pairs to replace in the SeedPrompt value.
+
+        Returns:
+            The rendered value, or the unchanged value when rendering is deferred.
+
+        """
+        env = SandboxedEnvironment(undefined=_DeferringUndefined)
+        env.tests = {name: _deferring(test) for name, test in env.tests.items()}
+        env.filters["default"] = env.filters["d"] = _deferring(env.filters["default"])
+
+        try:
+            return env.from_string(self.value).render(**kwargs)
+        except _DeferRenderError:
+            used = meta.find_undeclared_variables(env.parse(self.value))
+            bindings = "".join(f"{{% set {name} = {str(kwargs[name])!r} %}}" for name in sorted(used & kwargs.keys()))
+            return bindings + self.value
         except Exception as e:
             logger.error("Error rendering template: %s", e)
             return self.value
