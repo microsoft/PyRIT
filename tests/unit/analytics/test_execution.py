@@ -99,6 +99,56 @@ async def test_defaults_bound_both_lanes() -> None:
     await execution.close_async()
 
 
+@pytest.mark.parametrize(("report", "timeout"), [(True, 5.0), (False, 1.0)])
+async def test_default_execution_deadline_retains_capacity_until_cleanup(
+    harness: _Harness, report: bool, timeout: float
+) -> None:
+    """Drive expiry with an event so runner load cannot decide the test outcome."""
+    execution = AnalyticsExecution()
+    harness.executions.append(execution)
+    operation = harness.blocked()
+    expire = asyncio.Event()
+    observed_timeouts: list[float] = []
+
+    async def reach_deadline_async(
+        tasks: set[asyncio.Task[str]], *, timeout: float
+    ) -> tuple[set[asyncio.Task[str]], set[asyncio.Task[str]]]:
+        observed_timeouts.append(timeout)
+        await expire.wait()
+        return set(), tasks
+
+    with (
+        patch("pyrit.analytics._execution.monotonic", return_value=100.0),
+        patch("pyrit.memory.query_control.time") as clock,
+        patch("pyrit.analytics._execution.asyncio.wait", side_effect=reach_deadline_async),
+    ):
+        clock.monotonic.return_value = 100.0
+        caller = harness.submit(execution=execution, operation=operation, report=report)
+        try:
+            await operation.entered.wait()
+            assert observed_timeouts == [timeout]
+            assert operation.control.deadline == 100.0 + timeout
+            assert not caller.done()
+            expire.set()
+            with pytest.raises(AnalyticsTimeoutException):
+                await caller
+            assert operation.control.cancel_event.is_set()
+            assert execution._lanes[report].active == 1
+            assert not operation.exited.is_set()
+            assert operation.cancellations == 0
+            closing = asyncio.create_task(execution.close_async())
+            await asyncio.sleep(0)
+            assert not closing.done()
+            operation.release.set()
+            await closing
+            assert operation.exited.is_set()
+            assert execution._lanes[report].active == 0
+            assert execution.is_closed
+        finally:
+            expire.set()
+            operation.release.set()
+
+
 @pytest.mark.parametrize("name", ["report_workers", "quick_workers", "max_queue"])
 @pytest.mark.parametrize("value", [0, -1, 1.5, True, float("inf"), float("nan"), "1", None])
 async def test_invalid_counts_are_rejected(*, name: str, value: object) -> None:

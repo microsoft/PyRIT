@@ -325,6 +325,12 @@ SDK. SQL Server uses the reader's SQL path and requires its configured SNAPSHOT
 support. Cross-backend collation details, malformed historical metadata, and live
 Azure SQL validation remain storage/deployment concerns.
 
+Functional SDK tests use finite test-specific execution budgets while still
+running the native reader, admission controller, and cleanup. They are correctness
+checks, not assertions that a loaded CI worker can finish each read within the
+production one-second quick-query budget. Separate execution tests assert the
+unchanged default budgets and drive deadline/cleanup transitions with events.
+
 Focused tests compare the SDK/profile path with the actual SQLite SQL fallback,
 including Unicode, typed absence, duplicate/legacy memberships, and cap boundaries.
 They also exercise weighted aggregation at the profile cap and deterministic

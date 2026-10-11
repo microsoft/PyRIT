@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.analytics import AttackResultAnalytics, compute_scenario_statistics
+from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions.analytics_exception import AnalyticsBusyException, AnalyticsDataException
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
@@ -45,8 +47,17 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 async def analytics(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResultAnalytics, None]:
-    async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
-        yield analytics
+    """
+    Run real SQLite correctness checks with bounded test time, not a production latency requirement.
+
+    Full-suite contention must not turn filter/count assertions into one-second
+    benchmarks. Default budgets and expiration/cleanup are tested independently
+    in test_execution.py. Admission capacities and native database work are unchanged.
+    """
+    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
+    with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
+        async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
+            yield analytics
 
 
 @pytest.fixture
@@ -404,9 +415,6 @@ async def test_native_report_and_quick_calls_use_independent_sessions(
     sessions: list[AsyncSession] = []
     acquire = sqlite_instance.get_session_async
     execution = analytics._execution()
-    # This exercises ownership under concurrency, not a machine-speed latency target.
-    for lane in execution._lanes.values():
-        lane.timeout = 10
 
     async def acquire_async() -> AsyncSession:
         session = await acquire()
@@ -444,7 +452,7 @@ async def test_query_snapshot_precedes_admission(
     await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result()])
     execution = analytics._execution()
     lane = execution._lanes[operation == "query"]
-    lane.limit, lane.timeout = 1, 10
+    lane.limit = 1
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def occupy_async(control: QueryControl) -> None:
