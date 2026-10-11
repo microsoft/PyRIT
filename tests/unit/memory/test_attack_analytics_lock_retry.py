@@ -252,6 +252,10 @@ async def test_sqlite_lock_retry_deadline_or_cancellation_restores_connection_as
                 await asyncio.wait_for(observed.wait(), timeout=5)
                 assert not task.done()
                 assert configure_timeout.await_args_list[0].kwargs["timeout_ms"] == 0
+                driver = configure_timeout.await_args_list[0].kwargs["driver"]
+                assert isinstance(driver, SQLiteConnection)
+                async with driver.execute("PRAGMA busy_timeout") as cursor:
+                    assert await cursor.fetchone() == (0,)
                 if trigger != "task":
                     if trigger == "deadline":
                         control.deadline = 0
