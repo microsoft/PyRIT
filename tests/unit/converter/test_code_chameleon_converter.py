@@ -3,6 +3,8 @@
 
 import re
 
+import pytest
+
 from pyrit.converter import CodeChameleonConverter
 
 
@@ -74,8 +76,8 @@ def string_to_tree(problem_description):
         if node_dict is None:
             return None
         node = TreeNode(node_dict['value'])
-        node.left = helper(json.loads(node_dict['left'])) if node_dict['left'] else None
-        node.right = helper(json.loads(node_dict['right'])) if node_dict['right'] else None
+        node.left = helper(node_dict['left']) if node_dict['left'] else None
+        node.right = helper(node_dict['right']) if node_dict['right'] else None
         return node
 
     return helper(json.loads(problem_description))
@@ -100,6 +102,43 @@ def decryption(encrypted_problem):
         in output.output_text
     )
     assert output.output_type == "text"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected_prompt"),
+    [
+        pytest.param("", "", id="empty"),
+        pytest.param(" \t\n ", "", id="whitespace-only"),
+        pytest.param("one", "one", id="single-node"),
+        pytest.param("one two", "one two", id="right-subtree"),
+        pytest.param("one two three", "one two three", id="both-subtrees"),
+        pytest.param("one two three four five six", "one two three four five six", id="nested-even"),
+        pytest.param("one two three four five six seven", "one two three four five six seven", id="nested-odd"),
+        pytest.param("\tone\n two\r\nthree  ", "one two three", id="normalized-whitespace"),
+        pytest.param(
+            'say "hello" then {check} [brackets] back\\slash',
+            'say "hello" then {check} [brackets] back\\slash',
+            id="escaped-values",
+        ),
+    ],
+)
+async def test_codechameleon_converter_binary_tree_round_trip_async(*, prompt: str, expected_prompt: str) -> None:
+    converter = CodeChameleonConverter(encrypt_type="binary_tree")
+    output = await converter.convert_async(prompt=prompt)
+    assert output.output_type == "text"
+    code_match = re.search(r"```python\n(?P<code>.*?)\n```", output.output_text, flags=re.DOTALL)
+    assert code_match is not None
+    encrypted_match = re.search(
+        r"The encrypted_problem you need to solve is: (?P<encrypted_prompt>[^\n]*)",
+        output.output_text,
+    )
+    assert encrypted_match is not None
+
+    namespace: dict[str, object] = {}
+    exec(code_match.group("code"), namespace)
+    decryption = namespace["decryption"]
+    assert callable(decryption)
+    assert decryption(encrypted_match.group("encrypted_prompt")) == expected_prompt
 
 
 async def test_codechameleon_converter_odd_even_encrypt_decrypt() -> None:

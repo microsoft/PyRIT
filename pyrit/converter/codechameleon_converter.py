@@ -272,8 +272,8 @@ class CodeChameleonConverter(Converter):
             if node_dict is None:
                 return None
             node = TreeNode(node_dict['value'])
-            node.left = helper(json.loads(node_dict['left'])) if node_dict['left'] else None
-            node.right = helper(json.loads(node_dict['right'])) if node_dict['right'] else None
+            node.left = helper(node_dict['left']) if node_dict['left'] else None
+            node.right = helper(node_dict['right']) if node_dict['right'] else None
             return node
 
         return helper(json.loads(problem_description))
