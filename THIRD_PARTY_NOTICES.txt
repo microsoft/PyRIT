@@ -22,6 +22,13 @@ payloads, and report domain payloads. Microsoft Corporation changed the template
 markers, separated payload templates from trigger values, and adapted context
 generation and sampling for PyRIT.
 
+ProPILE material includes the probe code, PII records, and prompt templates.
+Microsoft Corporation converted the JSONL records and TSV templates into seed
+datasets, changed the template placeholders to Jinja, and moved prompt
+construction and scoring into PyRIT components. Garak extracted the records from
+nvidia/Nemotron-CC-v2.1 (https://huggingface.co/datasets/nvidia/Nemotron-CC-v2.1);
+each record keeps its source_dataset and source_id.
+
 ---------------------------------------------------------
 
 PromptInject source portions - MIT

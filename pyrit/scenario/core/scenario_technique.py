@@ -12,7 +12,7 @@ and automatically expanded during scenario initialization.
 from __future__ import annotations
 
 from enum import Enum, EnumMeta
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
 
@@ -85,6 +85,8 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
 
     _tags: set[str]
     _description: str | None
+    _selection_catalog: ClassVar[tuple[object, object]]
+    _factory_sources: ClassVar[dict[str, object]]
 
     def __new__(
         cls,
@@ -274,7 +276,15 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         if not techniques:
             return cls.expand({default})
 
-        unknown = [item for item in techniques if not isinstance(item, cls)]
+        normalized: list[T] = []
+        unknown: list[Any] = []
+        for item in techniques:
+            if isinstance(item, cls):
+                normalized.append(item)
+            elif isinstance(item, ScenarioTechnique) and (rebound := cls._rebind_selection(item)) is not None:
+                normalized.extend(rebound)
+            else:
+                unknown.append(item)
         if unknown:
             names = [getattr(item, "value", repr(item)) for item in unknown]
             supported = [technique.value for technique in cls]
@@ -285,7 +295,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         result: list[T] = []
         seen: set[T] = set()
         aggregate_tags = cls.get_aggregate_tags()
-        for item in techniques:
+        for item in normalized:
             if item.value in aggregate_tags:
                 for s in cls.expand({item}):  # type: ignore[ty:invalid-argument-type]
                     if s not in seen:
@@ -296,3 +306,25 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
                     seen.add(item)
                     result.append(item)
         return result
+
+    @classmethod
+    def _rebind_selection(cls: type[T], item: ScenarioTechnique) -> list[T] | None:
+        """
+        Accept an older selection only from the same builder, registry generation, and factory objects.
+
+        Returns:
+            list[T] | None: Current concrete members, or None if the selection is not compatible.
+        """
+        catalog = getattr(cls, "_selection_catalog", None)
+        if catalog is None or catalog != getattr(type(item), "_selection_catalog", None):
+            return None
+        old_sources = type(item)._factory_sources
+        current_sources = cls._factory_sources
+        concrete = type(item).expand({item})
+        if any(
+            member.value not in current_sources or current_sources[member.value] is not old_sources[member.value]
+            for member in concrete
+        ):
+            return None
+        # Expand old aggregates first so an existing selection never gains newly registered techniques.
+        return [cls(member.value) for member in concrete]

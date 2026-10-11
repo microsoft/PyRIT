@@ -132,26 +132,9 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         Raises:
             ValueError: If chunk_size or total_length are invalid.
         """
-        if chunk_size < 1:
-            raise ValueError("chunk_size must be >= 1")
-        if total_length < chunk_size:
-            raise ValueError("total_length must be >= chunk_size")
-
-        # Validate request_template contains required placeholders
-        required_placeholders = {"start", "end", "chunk_type", "objective"}
-        try:
-            # Extract all field names from the template
-            formatter = Formatter()
-            template_fields = {field_name for _, field_name, _, _ in formatter.parse(request_template) if field_name}
-
-            missing_placeholders = required_placeholders - template_fields
-            if missing_placeholders:
-                raise ValueError(
-                    f"request_template must contain all required placeholders: {required_placeholders}. "
-                    f"Missing: {missing_placeholders}"
-                )
-        except (ValueError, KeyError) as e:
-            raise ValueError(f"Invalid request_template: {e}") from e
+        ChunkedRequestAttack.validate_constructor_parameters(
+            {"chunk_size": chunk_size, "total_length": total_length, "request_template": request_template}
+        )
 
         # Initialize base class
         super().__init__(
@@ -184,6 +167,35 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
         self._conversation_manager = ConversationManager(
             prompt_normalizer=self._prompt_normalizer,
         )
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate chunk bounds and template fields without constructing an attack.
+
+        Raises:
+            ValueError: If the bounds or template fields are invalid.
+        """
+        super().validate_constructor_parameters(params)
+        if "chunk_size" in params and params["chunk_size"] < 1:
+            raise ValueError("chunk_size must be >= 1")
+        if {"total_length", "chunk_size"} <= params.keys() and params["total_length"] < params["chunk_size"]:
+            raise ValueError("total_length must be >= chunk_size")
+        if "request_template" not in params:
+            return
+        required_placeholders = {"start", "end", "chunk_type", "objective"}
+        try:
+            template_fields = {
+                field_name for _, field_name, _, _ in Formatter().parse(params["request_template"]) if field_name
+            }
+            missing_placeholders = required_placeholders - template_fields
+            if missing_placeholders:
+                raise ValueError(
+                    f"request_template must contain all required placeholders: {required_placeholders}. "
+                    f"Missing: {missing_placeholders}"
+                )
+        except (ValueError, KeyError) as e:
+            raise ValueError(f"Invalid request_template: {e}") from e
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
