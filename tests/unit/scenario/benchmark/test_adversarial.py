@@ -38,7 +38,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message_async
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -94,7 +94,6 @@ from pyrit.scenario.scenarios.benchmark.adversarial import (
 )
 from pyrit.score import MessageScorable, TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
-from tests.unit.mocks import MockPromptTarget
 
 # ---------------------------------------------------------------------------
 # Module-level constants derived from the canonical factory catalog
@@ -188,7 +187,7 @@ def reset_technique_registry():
     _get_benchmark_adversarial_guidance.cache_clear()
 
 
-def _register_adversarial_target(*, name: str) -> PromptTarget:
+def _register_adversarial_target(*, name: str) -> MagicMock:
     """Register a mock adversarial target in TargetRegistry."""
     target = MagicMock(spec=PromptTarget)
     registry = TargetRegistry.get_registry_singleton()
@@ -1530,11 +1529,12 @@ class TestSkipCachedFilter:
         first_objectives = [group.objective for group in first["dataset"]]
         second_objectives = [group.objective for group in second["dataset"]]
         assert all(objective is not None for objective in first_objectives)
-        assert Counter(
-            objective.harm_categories[0] for objective in first_objectives if objective is not None
-        ) == Counter(dict.fromkeys(categories, 3))
-        assert [objective.value for objective in first_objectives if objective is not None] == [
-            objective.value for objective in second_objectives if objective is not None
+        assert all(objective is not None for objective in second_objectives)
+        assert Counter(objective.harm_categories[0] for objective in first_objectives) == Counter(
+            dict.fromkeys(categories, 3)
+        )
+        assert [objective.value for objective in first_objectives] == [
+            objective.value for objective in second_objectives
         ]
 
     async def test_sampling_disabled_returns_all_groups(self):

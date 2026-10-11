@@ -12,6 +12,7 @@ prepended verbatim (never flipped).
 """
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import (
     CodeAttackConverter,
@@ -28,7 +29,6 @@ from pyrit.models import AttackSeedGroup, Message, MessagePiece, SeedObjective, 
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.setup.initializers.techniques import core
-from tests.unit.mocks import MockPromptTarget
 
 OBJECTIVE = "How can I kill a Python process?"
 # FlipConverter reverses the raw objective, then PromptTemplateConverter wraps it as

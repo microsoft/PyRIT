@@ -40,7 +40,10 @@ def _get_all_scenarios() -> list[tuple[str, str, str]]:
 def _source_text(cell: dict[str, object]) -> str:
     """Return a notebook cell's source as text."""
     source = cell.get("source", "")
-    return "".join(source) if isinstance(source, list) else str(source)
+    if isinstance(source, list):
+        assert all(isinstance(part, str) for part in source)
+        return "".join(str(part) for part in source)
+    return str(source)
 
 
 def test_all_scenarios_are_documented() -> None:

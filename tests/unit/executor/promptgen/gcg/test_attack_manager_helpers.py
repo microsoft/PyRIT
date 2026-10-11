@@ -66,7 +66,7 @@ class TestGetNonasciiToks:
 
         # Need to handle list input
         def decode_fn(token_ids: list[int]) -> str:
-            tok = token_ids[0] if isinstance(token_ids, list) else token_ids
+            tok = token_ids[0]
             chars = {3: "a", 4: "b", 5: "\xff", 6: "c", 7: "\x80", 8: "d", 9: "e"}
             return chars.get(tok, "")
 
@@ -92,7 +92,7 @@ class TestGetNonasciiToks:
         mock_tokenizer.vocab_size = 5
 
         def decode_fn(token_ids: list[int]) -> str:
-            return {3: "a", 4: "b"}.get(token_ids[0] if isinstance(token_ids, list) else token_ids, "")
+            return {3: "a", 4: "b"}.get(token_ids[0], "")
 
         mock_tokenizer.decode = decode_fn
         mock_tokenizer.bos_token_id = None

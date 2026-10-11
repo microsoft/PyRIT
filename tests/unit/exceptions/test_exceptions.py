@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from contextlib import suppress
+from typing import assert_type
 
 import pytest
 from tenacity import RetryError
@@ -22,6 +23,26 @@ from pyrit.exceptions import (
     pyrit_custom_result_retry,
 )
 from pyrit.models import MessagePiece
+
+
+def test_custom_result_retry_preserves_signature_and_result() -> None:
+    @pyrit_custom_result_retry(retry_function=lambda result: result == 0)
+    def calculate(*, value: int) -> int:
+        return value
+
+    result = calculate(value=42)
+    assert_type(result, int)
+    assert result == 42
+
+
+async def test_custom_result_retry_preserves_async_signature_and_result_async() -> None:
+    @pyrit_custom_result_retry(retry_function=lambda result: result == 0)
+    async def calculate_async(*, value: int) -> int:
+        return value
+
+    result = await calculate_async(value=42)
+    assert_type(result, int)
+    assert result == 42
 
 
 def test_pyrit_exception_initialization():

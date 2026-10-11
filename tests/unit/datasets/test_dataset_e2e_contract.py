@@ -6,10 +6,10 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from end_to_end import test_all_datasets as dataset_tests
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.models import SeedDataset
-from tests.end_to_end import test_all_datasets as dataset_tests
 
 _PROVIDER_NAME = "LocalDataset_latent_injection_tasks"
 

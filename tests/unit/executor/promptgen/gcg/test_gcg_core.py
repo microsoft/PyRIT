@@ -19,18 +19,20 @@ attack_manager_mod = pytest.importorskip(
 )
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-MultiPromptAttack = attack_manager_mod.MultiPromptAttack
-AttackPrompt = attack_manager_mod.AttackPrompt
-PromptManager = attack_manager_mod.PromptManager
-EvaluateAttack = attack_manager_mod.EvaluateAttack
-IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
-ModelWorker = attack_manager_mod.ModelWorker
-ModelWorkerOperation = attack_manager_mod.ModelWorkerOperation
-ModelWorkerTask = attack_manager_mod.ModelWorkerTask
-ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
-get_embedding_layer = attack_manager_mod.get_embedding_layer
-get_embedding_matrix = attack_manager_mod.get_embedding_matrix
-get_embeddings = attack_manager_mod.get_embeddings
+from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
+    AttackPrompt,
+    EvaluateAttack,
+    IndividualPromptAttack,
+    ModelWorker,
+    ModelWorkerOperation,
+    ModelWorkerTask,
+    MultiPromptAttack,
+    ProgressiveMultiPromptAttack,
+    PromptManager,
+    get_embedding_layer,
+    get_embedding_matrix,
+    get_embeddings,
+)
 
 gcg_attack_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack",
@@ -462,7 +464,12 @@ class TestEvaluateAttackInit:
             (EvaluateAttack, "EvaluateAttack requires a managers mapping"),
         ],
     )
-    def test_attack_raises_when_managers_are_missing(self, *, attack_class: type[Any], expected_message: str) -> None:
+    def test_attack_raises_when_managers_are_missing(
+        self,
+        *,
+        attack_class: type[MultiPromptAttack | ProgressiveMultiPromptAttack | IndividualPromptAttack | EvaluateAttack],
+        expected_message: str,
+    ) -> None:
         with pytest.raises(ValueError, match=expected_message):
             attack_class(goals=["goal"], targets=["target"], workers=[])
 
@@ -2070,7 +2077,10 @@ class TestRandomSeedDeterminism:
 
         def tracking_step(**kwargs: Any) -> tuple[str, float]:
             snapshots.append(attack.control_str)
-            return real_step(**kwargs)
+            control, loss = real_step(**kwargs)
+            assert isinstance(control, str)
+            assert isinstance(loss, float)
+            return control, loss
 
         attack.step = MagicMock(side_effect=tracking_step)
 

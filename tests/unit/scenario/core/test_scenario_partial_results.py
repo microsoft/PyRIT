@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from unit.async_utils import wait_for_completion_async
+from unit.mocks import MockPromptTarget
 
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import PromptSendingAttack
@@ -27,7 +28,6 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
 from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:

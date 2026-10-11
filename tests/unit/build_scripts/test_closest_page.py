@@ -53,7 +53,9 @@ def _run_find_closest_page(pages: list[str], rel_path: str) -> str | None:
         text=True,
         check=True,
     )
-    return json.loads(proc.stdout)
+    result = json.loads(proc.stdout)
+    assert result is None or isinstance(result, str)
+    return result
 
 
 def _run_common_segment_prefix(page_path: str, target_segs: list[str]) -> int:
@@ -74,7 +76,9 @@ def _run_common_segment_prefix(page_path: str, target_segs: list[str]) -> int:
         text=True,
         check=True,
     )
-    return json.loads(proc.stdout)
+    result = json.loads(proc.stdout)
+    assert isinstance(result, int)
+    return result
 
 
 # --- commonSegmentPrefix ---------------------------------------------------

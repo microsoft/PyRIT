@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_mock_prompt_normalizer
+from unit.mocks import MockPromptTarget, get_mock_prompt_normalizer
 
 from pyrit.exceptions import (
     AdversarialChatRefusedException,
@@ -50,7 +50,6 @@ from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import MessageScorer, TrueFalseScorer
-from tests.unit.mocks import MockPromptTarget
 
 
 def _adversarial_reply_message(next_message: str = "Adversarial next message") -> Message:

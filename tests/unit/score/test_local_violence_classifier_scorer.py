@@ -280,7 +280,7 @@ def test_long_objective_retains_different_responses() -> None:
 @requires_transformers
 @pytest.mark.parametrize("objective", [None, "a short objective"])
 def test_real_tokenizer_short_input_parity(objective: str | None) -> None:
-    from transformers import BertTokenizer
+    from transformers.models.bert.tokenization_bert import BertTokenizer
 
     tokens = [
         "[PAD]",
@@ -314,7 +314,7 @@ def test_real_tokenizer_short_input_parity(objective: str | None) -> None:
 
 @requires_transformers
 def test_real_tokenizer_special_tokens_and_full_tail() -> None:
-    from transformers import BertTokenizer
+    from transformers.models.bert.tokenization_bert import BertTokenizer
 
     tokens = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "prompt", ":", "response", "context", "word", "tail"]
     tokenizer = BertTokenizer(vocab={token: index for index, token in enumerate(tokens)})

@@ -35,7 +35,9 @@ def _decode_assignment(converted: str, prefix: str) -> str:
     """Return the decoded value of a ``prefix "..."`` assignment."""
     match = re.search(rf"{prefix}\s*{_LITERAL}", converted)
     assert match is not None, f"Assignment {prefix!r} not found in output"
-    return ast.literal_eval(f'"{match.group(1)}"')
+    value = ast.literal_eval(f'"{match.group(1)}"')
+    assert isinstance(value, str)
+    return value
 
 
 def _write_template(directory, body: str, name: str = "custom.yaml"):

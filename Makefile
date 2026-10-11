@@ -17,7 +17,7 @@ pre-commit:
 	pre-commit run --all-files
 
 ty:
-	$(CMD) ty check $(PYMODULE) $(UNIT_TESTS)
+	uv run --frozen --extra all --link-mode=copy -m ty check $(PYMODULE) $(UNIT_TESTS)
 
 # Build the full documentation site:
 # 1. Generate API reference JSON from Python source (griffe)

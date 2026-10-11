@@ -202,9 +202,30 @@ uv run ruff check --fix .
 
 #### Running Type Checker
 
-```bash
-uv run ty check pyrit/
+Run checks from the repository root using its own uv environment. Install all optional
+dependencies so guarded imports have the same dependency coverage as the production
+pre-commit hook:
+
+```powershell
+uv sync --frozen --extra all
+uv run --frozen --no-sync ty check pyrit
+uv run --frozen --no-sync ty check pyrit tests\unit
 ```
+
+The first check covers production code, matching the CI typing hook. The second also
+checks unit tests and is the scope of `make ty`. Pytest and ty both resolve test helpers
+from the `tests` directory; use tier-root imports such as `from unit.mocks import MockPromptTarget`.
+
+Checking all test tiers and build scripts is a separate, wider diagnostic scope:
+
+```powershell
+uv run --frozen --no-sync ty check pyrit tests build_scripts
+```
+
+That wider scope is not the CI typing hook and may still report errors outside unit tests.
+The lock file pins the checker version. Record the environment's Python version separately
+from ty's target version, which defaults to the minimum supported Python version unless
+overridden with `--python-version`.
 
 #### Pre-commit Hooks
 

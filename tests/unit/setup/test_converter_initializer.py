@@ -8,12 +8,12 @@ from collections.abc import Iterator
 from unittest.mock import call, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import Base64Converter, LeetspeakConverter, ROT13Converter, VariationConverter
 from pyrit.registry import ConverterRegistry, InitializerRegistry, TargetRegistry
 from pyrit.setup.initializers import ConverterInitializer
 from pyrit.setup.initializers.converters import ConverterConfig
-from tests.unit.mocks import MockPromptTarget
 
 
 @pytest.fixture(autouse=True)

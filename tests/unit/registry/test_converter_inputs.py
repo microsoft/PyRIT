@@ -87,7 +87,7 @@ def test_defining_namespace_wrapping_and_child_precedence(cls: type) -> None:
 
 def test_unresolved_annotation_does_not_hide_resolved_parameters() -> None:
     class Partial:
-        def __init__(self, *, missing: NotImported = None, count: int = 1) -> None:  # noqa: F821
+        def __init__(self, *, missing: NotImported = None, count: int = 1) -> None:  # noqa: F821  # ty: ignore[unresolved-reference]
             pass
 
     parameters = {param.name: param for param in derive_parameters(cls=Partial)}

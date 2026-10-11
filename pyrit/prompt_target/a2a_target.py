@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable  # noqa: TC003 - registry annotation resolution
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 from weakref import WeakValueDictionary
 
 import httpx
@@ -339,7 +339,7 @@ class A2ATarget(PromptTarget):
                 while task.status.state in (a2a_pb2.TASK_STATE_SUBMITTED, a2a_pb2.TASK_STATE_WORKING):
                     await asyncio.sleep(delay)
                     try:
-                        task = cast("a2a_pb2.Task", await self._get_task_async(client=client, task_id=task.id))
+                        task = await self._get_task_async(client=client, task_id=task.id)
                         delay = self._poll_interval_seconds
                     except (A2AError, httpx.HTTPError) as exc:
                         response = self._rate_limit_response(exc)

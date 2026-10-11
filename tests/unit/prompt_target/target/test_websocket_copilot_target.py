@@ -71,9 +71,10 @@ def make_message_piece():
 @pytest.fixture
 def make_annotation():
     def _make(
+        *,
         doc_id: str,
         file_name: str,
-        file_type: str = None,
+        file_type: str | None = None,
     ) -> dict:
         if file_type is None:
             file_type = file_name.split(".")[-1].lower() if "." in file_name else "png"

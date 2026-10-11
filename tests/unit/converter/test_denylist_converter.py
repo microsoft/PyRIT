@@ -18,7 +18,7 @@ def mock_template():
 
 
 @pytest.fixture
-def mock_target() -> MockPromptTarget:
+def mock_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[

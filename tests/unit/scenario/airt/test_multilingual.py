@@ -79,7 +79,7 @@ def mock_memory_seed_groups() -> list[AttackSeedGroup]:
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     """Create the target under test."""
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_identifier("MockObjectiveTarget")
@@ -88,7 +88,7 @@ def mock_objective_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_adversarial_chat() -> PromptTarget:
+def mock_adversarial_chat() -> MagicMock:
     """Create the target used by translation converters."""
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_identifier("MockAdversarialChat")
@@ -97,7 +97,7 @@ def mock_adversarial_chat() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_objective_scorer() -> TrueFalseScorer:
+def mock_objective_scorer() -> MagicMock:
     """Create the objective scorer."""
     mock = MagicMock(spec=TrueFalseScorer)
     mock.get_identifier.return_value = _mock_identifier("MockObjectiveScorer")

@@ -26,7 +26,9 @@ def response_parser() -> Callable[[str | bytes], str | None]:
     def parse_response(message: str | bytes) -> str | None:
         if isinstance(message, bytes):
             message = message.decode()
-        return json.loads(message).get("message")
+        value = json.loads(message).get("message")
+        assert value is None or isinstance(value, str)
+        return value
 
     return parse_response
 
@@ -266,16 +268,16 @@ async def test_cancellation_during_websocket_setup_occurs_after_target_invocatio
     connection_started = asyncio.Event()
     connection_release = asyncio.Event()
 
-    async def wait_for_connection(
+    async def wait_for_connection_async(
         *,
         conversation_id: str,
         conversation_history: list[Message],
-    ) -> ClientConnection:
+    ) -> AsyncMock:
         connection_started.set()
         await connection_release.wait()
         return AsyncMock(spec=ClientConnection)
 
-    with patch.object(websocket_target, "_get_or_create_connection_async", side_effect=wait_for_connection):
+    with patch.object(websocket_target, "_get_or_create_connection_async", side_effect=wait_for_connection_async):
         send_task = asyncio.create_task(
             websocket_target.send_prompt_async(
                 message=create_message(value="Current"),

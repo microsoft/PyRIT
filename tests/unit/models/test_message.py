@@ -343,7 +343,7 @@ class TestMessagePydanticShape:
         piece = MessagePiece(role="user", original_value="hi", conversation_id="c")
         positional_args = ([piece],)
         with pytest.raises(TypeError):
-            Message(*positional_args)  # type: ignore[misc]
+            Message(*positional_args)  # ty: ignore[too-many-positional-arguments]
 
     def test_model_validate_canonical_shape(self) -> None:
         piece = MessagePiece(role="user", original_value="hi", conversation_id="c")

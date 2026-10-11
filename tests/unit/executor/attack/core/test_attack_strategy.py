@@ -1351,7 +1351,7 @@ class TestAttackStrategyIntegration:
         assert "_DefaultAttackStrategyEventHandler" in strategy._event_handlers
 
 
-def _adv_target(*, model_name: str = "gpt-adv", extra_params: dict | None = None) -> PromptTarget:
+def _adv_target(*, model_name: str = "gpt-adv", extra_params: dict | None = None) -> MagicMock:
     """Build a mock adversarial chat target whose identifier carries the given params."""
     target = MagicMock(spec=PromptTarget)
     params: dict = {"model_name": model_name}

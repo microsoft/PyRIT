@@ -3,9 +3,9 @@
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from pyrit.exceptions import PyritException
 from pyrit.models import (
@@ -17,6 +17,9 @@ from pyrit.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 
 def _get_rate_limit_lock(target: Any) -> asyncio.Lock:
@@ -60,7 +63,9 @@ def validate_top_p(top_p: float | None) -> None:
         raise PyritException(message="top_p must be between 0 and 1 (inclusive).")
 
 
-def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
+def limit_requests_per_minute(
+    func: Callable[_P, Awaitable[_T]],
+) -> Callable[_P, Coroutine[Any, Any, _T]]:
     """
     Enforce a target's request rate by serializing the delay before each request.
 
@@ -79,7 +84,7 @@ def limit_requests_per_minute(func: Callable[..., Any]) -> Callable[..., Any]:
     """
 
     @wraps(func)
-    async def set_max_rpm_async(*args: Any, **kwargs: Any) -> Any:
+    async def set_max_rpm_async(*args: _P.args, **kwargs: _P.kwargs) -> _T:
         self = args[0]
         rpm = getattr(self, "_max_requests_per_minute", None)
         if rpm and rpm > 0:

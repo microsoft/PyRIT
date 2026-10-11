@@ -5,6 +5,7 @@
 Tests for backend initializer service and routes.
 """
 
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,7 +27,7 @@ from pyrit.registry import InitializerMetadata
 
 
 @pytest.fixture
-def client(compatibility_headers: dict[str, str]) -> TestClient:
+def client(compatibility_headers: dict[str, str]) -> Iterator[TestClient]:
     """Create a test client for the FastAPI app."""
     app.dependency_overrides[require_admin] = lambda: None
     try:

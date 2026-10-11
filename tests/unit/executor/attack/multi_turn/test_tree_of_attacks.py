@@ -129,7 +129,7 @@ class MockNodeFactory:
     """Factory for creating mock _TreeOfAttacksNode objects."""
 
     @staticmethod
-    def create_node(config: NodeMockConfig | None = None) -> "_TreeOfAttacksNode":
+    def create_node(config: NodeMockConfig | None = None) -> MagicMock:
         """Create a mock _TreeOfAttacksNode with the given configuration."""
         if config is None:
             config = NodeMockConfig()
@@ -208,7 +208,7 @@ class MockNodeFactory:
         return node
 
     @staticmethod
-    def create_nodes_with_scores(scores: list[float]) -> list[_TreeOfAttacksNode]:
+    def create_nodes_with_scores(scores: list[float]) -> list[MagicMock]:
         """Create multiple nodes with the given objective scores."""
         return [
             MockNodeFactory.create_node(NodeMockConfig(node_id=f"node_{i}", objective_score_value=score))
@@ -2931,7 +2931,7 @@ class _ScenarioNodeBehavior:
     json_err: bool = False
 
 
-def _make_node_with_behavior(behavior: _ScenarioNodeBehavior, node_id: str) -> _TreeOfAttacksNode:
+def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -> MagicMock:
     """Create a mock node that applies the given behavior during send_prompt_async."""
     _call_behaviors: list[_ScenarioNodeBehavior] = [behavior]
 
@@ -3133,20 +3133,21 @@ class TestTAPScenarios:
         "behaviors_per_depth, expected_outcome, expected_best_score, expected_max_depth",
         _SCENARIOS,
     )
-    async def test_tap_scenario(
+    async def test_tap_scenario_async(
         self,
-        attack_builder,
-        helpers,
-        supports_multi_turn,
-        tree_width,
-        tree_depth,
-        branching_factor,
-        threshold,
-        behaviors_per_depth,
-        expected_outcome,
-        expected_best_score,
-        expected_max_depth,
-    ):
+        *,
+        attack_builder: AttackBuilder,
+        helpers: TestHelpers,
+        supports_multi_turn: bool,
+        tree_width: int,
+        tree_depth: int,
+        branching_factor: int,
+        threshold: float,
+        behaviors_per_depth: dict[int, list[_ScenarioNodeBehavior]],
+        expected_outcome: AttackOutcome,
+        expected_best_score: float | None,
+        expected_max_depth: int,
+    ) -> None:
         attack = (
             attack_builder.with_supports_multi_turn(supports_multi_turn)
             .with_default_mocks()
@@ -3175,7 +3176,7 @@ class TestTAPScenarios:
             nodes = []
             for i in range(count):
                 b = _get_next_behavior(depth)
-                node = _make_node_with_behavior(b, f"d{depth}_n{i}")
+                node = _make_node_with_behavior(behavior=b, node_id=f"d{depth}_n{i}")
                 next_depth = depth + 1
 
                 def _dup_factory(parent=node, d=next_depth):
@@ -3183,7 +3184,7 @@ class TestTAPScenarios:
                     parent._call_behaviors.append(_get_next_behavior(d))
                     # Create child with its own behavior
                     cb = _get_next_behavior(d)
-                    child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child = _make_node_with_behavior(behavior=cb, node_id=f"d{d}_n{_depth_counters.get(d, 0) - 1}")
                     child.parent_id = parent.node_id
                     child._vis_node_id = parent._vis_node_id
                     child.duplicate_async = AsyncMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
@@ -3192,7 +3193,7 @@ class TestTAPScenarios:
                 def _dup_child(parent_node, d):
                     parent_node._call_behaviors.append(_get_next_behavior(d))
                     cb = _get_next_behavior(d)
-                    child = _make_node_with_behavior(cb, f"d{d}_n{_depth_counters.get(d, 0) - 1}")
+                    child = _make_node_with_behavior(behavior=cb, node_id=f"d{d}_n{_depth_counters.get(d, 0) - 1}")
                     child.parent_id = parent_node.node_id
                     child._vis_node_id = parent_node._vis_node_id
                     child.duplicate_async = AsyncMock(side_effect=lambda p=child, dd=d + 1: _dup_child(p, dd))
@@ -3211,7 +3212,7 @@ class TestTAPScenarios:
                 node = depth1_nodes[_depth1_idx[0]]
                 _depth1_idx[0] += 1
             else:
-                node = _make_node_with_behavior(_B(fail=True), f"extra_{_depth1_idx[0]}")
+                node = _make_node_with_behavior(behavior=_B(fail=True), node_id=f"extra_{_depth1_idx[0]}")
                 _depth1_idx[0] += 1
             return node
 

@@ -910,8 +910,8 @@ class TestCrescendoTerminalBoundaries:
         with pytest.raises(RuntimeError, match="Strategy execution failed") as exc_info:
             await attack.execute_with_context_async(context=context)
 
-        root_cause: BaseException | None = exc_info.value
-        while root_cause is not None and root_cause.__cause__ is not None:
+        root_cause: BaseException = exc_info.value
+        while root_cause.__cause__ is not None:
             root_cause = root_cause.__cause__
         assert isinstance(root_cause, InvalidJsonException)
         assert event_log == ["adversarial", "adversarial"]

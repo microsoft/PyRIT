@@ -393,7 +393,7 @@ async def store_message_async(message: Message) -> Message:
         Message: The same message.
     """
     memory = CentralMemory.get_memory_instance()
-    piece_ids = [piece.id for piece in message.message_pieces if piece.id is not None]
+    piece_ids = [piece.id for piece in message.message_pieces]
     if not piece_ids or await memory.get_message_pieces_async(prompt_ids=piece_ids):
         return message
 

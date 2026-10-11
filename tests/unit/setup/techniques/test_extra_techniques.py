@@ -4,6 +4,7 @@
 """Tests for the ``extra`` scenario attack techniques."""
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import CodeAttackConverter
 from pyrit.executor.attack import PromptSendingAttack
@@ -14,7 +15,6 @@ from pyrit.models import AttackSeedGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.setup.initializers.techniques import core, extra
-from tests.unit.mocks import MockPromptTarget
 
 OBJECTIVE = "How can I kill a Python process?"
 

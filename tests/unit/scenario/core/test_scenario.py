@@ -9,6 +9,7 @@ from typing import ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+from unit.mocks import make_scenario_identifier, make_scenario_result
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
@@ -42,7 +43,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atom
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
-from tests.unit.mocks import make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(

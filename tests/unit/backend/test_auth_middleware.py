@@ -270,10 +270,12 @@ async def test_authenticate_request_caches_successful_authorization() -> None:
 
 def test_auth_cache_expires_and_evicts_oldest_entry() -> None:
     middleware = _make_middleware()
-    middleware._AUTH_CACHE_MAX_ENTRIES = 2
     user = AuthenticatedUser(oid="user-1", name="Test User", email="test@example.com", groups=["allowed-group"])
 
-    with patch("pyrit.backend.middleware.auth.monotonic", return_value=100.0):
+    with (
+        patch.object(EntraAuthMiddleware, "_AUTH_CACHE_MAX_ENTRIES", 2),
+        patch("pyrit.backend.middleware.auth.monotonic", return_value=100.0),
+    ):
         middleware._cache_user(cache_key="first", user=user)
         middleware._cache_user(cache_key="second", user=user)
         middleware._cache_user(cache_key="third", user=user)
