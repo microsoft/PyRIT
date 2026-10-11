@@ -4,7 +4,7 @@
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, get_origin
 from unittest.mock import MagicMock
 
@@ -159,6 +159,29 @@ def test_utcdatetime_leaves_aware_datetime_unchanged():
 
 def test_utcdatetime_passes_through_none():
     assert UTCDateTime().process_result_value(None, dialect=MagicMock()) is None
+
+
+def test_utcdatetime_binds_aware_datetimes_as_naive_utc():
+    offset = timezone(timedelta(hours=5, minutes=30))
+    bound = UTCDateTime().process_bind_param(datetime(2024, 1, 1, 12, 0, tzinfo=offset), dialect=MagicMock())
+    assert bound == datetime(2024, 1, 1, 6, 30)  # noqa: DTZ001
+    naive = datetime(2024, 1, 1, 12, 0)  # noqa: DTZ001
+    assert UTCDateTime().process_bind_param(naive, dialect=MagicMock()) is naive
+    assert UTCDateTime().process_bind_param(None, dialect=MagicMock()) is None
+
+
+async def test_offset_timestamps_round_trip_as_the_same_instant_async(sqlite_instance):
+    written = datetime(2024, 1, 1, 12, 0, tzinfo=timezone(timedelta(hours=-7)))
+    piece = MessagePiece(role="user", original_value="hi", conversation_id="utc-round-trip", timestamp=written)
+    seed = SeedPrompt(value="seed", data_type="text", dataset_name="utc-round-trip", date_added=written)
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece])
+    await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="test")
+
+    stored_piece = (await sqlite_instance.get_message_pieces_async(conversation_id="utc-round-trip"))[0]
+    stored_seed = (await sqlite_instance.get_seeds_async(dataset_name="utc-round-trip"))[0]
+    assert stored_piece.timestamp == written
+    assert stored_seed.date_added == written
+    assert stored_piece.timestamp.tzinfo == UTC
 
 
 # ---------------------------------------------------------------------------

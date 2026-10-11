@@ -660,6 +660,13 @@ async def test_launch_saves_declared_baseline_default_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
     service, _ = resume_environment
+    execution_started = asyncio.Event()
+
+    async def hold_execution_async() -> None:
+        execution_started.set()
+        # The fixture cancels and drains this task during teardown.
+        await asyncio.Event().wait()
+
     parameters = [
         parameter
         if parameter.name != "include_baseline"
@@ -669,16 +676,18 @@ async def test_launch_saves_declared_baseline_default_async(
     with (
         patch.object(_OfflineResumeScenario, "BASELINE_ATTACK_POLICY", BaselineAttackPolicy.Disabled),
         patch.object(_OfflineResumeScenario, "supported_parameters", return_value=parameters),
+        patch.object(_OfflineResumeScenario, "run_async", side_effect=hold_execution_async),
     ):
         response = await service.start_run_async(
             request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1)
         )
-        await _wait_for_idle_async(service)
-    stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
-        scenario_result_id=response.scenario_result_id
-    )
-    assert stored is not None
-    assert stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["include_baseline"] is True
+        await execution_started.wait()
+        stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
+            scenario_result_id=response.scenario_result_id
+        )
+        assert stored is not None
+        assert stored.scenario_run_state == ScenarioRunState.IN_PROGRESS
+        assert stored.metadata[_LAUNCH_REQUEST_METADATA_KEY]["include_baseline"] is True
 
 
 async def test_resume_never_schedules_replacement_result_id_async(
