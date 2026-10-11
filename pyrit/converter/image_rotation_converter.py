@@ -86,4 +86,6 @@ class ImageRotationConverter(BaseImageToImageConverter):
         Returns:
             PIL.Image.Image: The rotated image.
         """
+        # The fill color is an RGB tuple, which grayscale and other single-band modes reject.
+        image = self._convert_to_rgb_or_rgba(image)
         return image.rotate(self._angle, expand=True, fillcolor=self._fill_color)
