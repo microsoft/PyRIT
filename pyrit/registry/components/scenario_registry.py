@@ -74,6 +74,7 @@ class ScenarioMetadata(RegistryMetadata):
 
     include_baseline_by_default: bool = field(kw_only=True, default=True)
     uses_default_adversarial_target: bool = field(kw_only=True, default=False)
+    max_concrete_techniques: int | None = field(kw_only=True, default=None)
 
 
 class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
@@ -234,6 +235,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
             include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",
             uses_default_adversarial_target=instance.uses_default_adversarial_target,
+            max_concrete_techniques=instance.MAX_CONCRETE_TECHNIQUES,
         )
 
     async def create_and_estimate_async(

@@ -8,6 +8,7 @@ SeedPrompt class for representing seed prompts with role and sequence informatio
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -24,6 +25,7 @@ from pyrit.models.target.json_schema_definition import (  # noqa: TC001  (runtim
     JsonSchemaDefinition,
     get_common_json_schema,
 )
+from pyrit.models.target.request_trace_context import RequestTraceContext
 
 if TYPE_CHECKING:
     import uuid
@@ -376,12 +378,16 @@ class SeedPrompt(Seed):
             role: ChatMessageRole = message.api_role
 
             for piece in message.message_pieces:
+                metadata = deepcopy(piece.prompt_metadata)
+                metadata.pop(RequestTraceContext.METADATA_KEY, None)
+                metadata.pop(RequestTraceContext.REQUEST_METADATA_KEY, None)
                 seed_prompt = SeedPrompt(
                     value=piece.converted_value,
                     data_type=piece.converted_value_data_type,
                     role=role,
                     sequence=current_sequence,
                     prompt_group_id=prompt_group_id,
+                    metadata=metadata,
                 )
                 seed_prompts.append(seed_prompt)
 

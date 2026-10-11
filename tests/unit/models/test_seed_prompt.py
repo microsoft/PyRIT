@@ -3,10 +3,10 @@
 
 import textwrap
 import uuid
-from unittest.mock import MagicMock
 
 import pytest
 
+from pyrit.models import MessagePiece, RequestTraceContext
 from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 
@@ -96,38 +96,22 @@ def test_seed_prompt_non_jinja_preserved():
     assert sp.value == "Hello {{ name }}"
 
 
-def test_seed_prompt_from_messages():
-    piece_mock = MagicMock()
-    piece_mock.converted_value = "test value"
-    piece_mock.converted_value_data_type = "text"
-
-    message_mock = MagicMock()
-    message_mock.api_role = "user"
-    message_mock.message_pieces = [piece_mock]
-
-    result = SeedPrompt.from_messages([message_mock])
+def test_seed_prompt_from_messages() -> None:
+    piece = MessagePiece(role="user", original_value="test value")
+    result = SeedPrompt.from_messages([piece.to_message()])
     assert len(result) == 1
     assert result[0].value == "test value"
     assert result[0].role == "user"
     assert result[0].sequence == 0
 
 
-def test_seed_prompt_from_messages_multiple():
-    piece1 = MagicMock()
-    piece1.converted_value = "user msg"
-    piece1.converted_value_data_type = "text"
-    msg1 = MagicMock()
-    msg1.api_role = "user"
-    msg1.message_pieces = [piece1]
-
-    piece2 = MagicMock()
-    piece2.converted_value = "assistant msg"
-    piece2.converted_value_data_type = "text"
-    msg2 = MagicMock()
-    msg2.api_role = "assistant"
-    msg2.message_pieces = [piece2]
-
-    result = SeedPrompt.from_messages([msg1, msg2])
+def test_seed_prompt_from_messages_multiple() -> None:
+    result = SeedPrompt.from_messages(
+        [
+            MessagePiece(role="user", original_value="user msg").to_message(),
+            MessagePiece(role="assistant", original_value="assistant msg").to_message(),
+        ]
+    )
     assert len(result) == 2
     assert result[0].role == "user"
     assert result[0].sequence == 0
@@ -135,29 +119,35 @@ def test_seed_prompt_from_messages_multiple():
     assert result[1].sequence == 1
 
 
-def test_seed_prompt_from_messages_with_group_id():
-    piece = MagicMock()
-    piece.converted_value = "val"
-    piece.converted_value_data_type = "text"
-    msg = MagicMock()
-    msg.api_role = "user"
-    msg.message_pieces = [piece]
-
+def test_seed_prompt_from_messages_with_group_id() -> None:
+    message = MessagePiece(role="user", original_value="val").to_message()
     gid = uuid.uuid4()
-    result = SeedPrompt.from_messages([msg], prompt_group_id=gid)
+    result = SeedPrompt.from_messages([message], prompt_group_id=gid)
     assert result[0].prompt_group_id == gid
 
 
-def test_seed_prompt_from_messages_with_starting_sequence():
-    piece = MagicMock()
-    piece.converted_value = "val"
-    piece.converted_value_data_type = "text"
-    msg = MagicMock()
-    msg.api_role = "user"
-    msg.message_pieces = [piece]
-
-    result = SeedPrompt.from_messages([msg], starting_sequence=5)
+def test_seed_prompt_from_messages_with_starting_sequence() -> None:
+    message = MessagePiece(role="user", original_value="val").to_message()
+    result = SeedPrompt.from_messages([message], starting_sequence=5)
     assert result[0].sequence == 5
+
+
+def test_seed_prompt_from_messages_copies_metadata_without_request_traces() -> None:
+    piece = MessagePiece(
+        role="tool",
+        original_value="before",
+        converted_value="received",
+        prompt_metadata={
+            "custom": {"call_id": "call-1"},
+            RequestTraceContext.METADATA_KEY: {"old": "trace"},
+            RequestTraceContext.REQUEST_METADATA_KEY: {"old": "request"},
+        },
+    )
+    seed = SeedPrompt.from_messages([piece.to_message()])[0]
+    assert seed.value == "received"
+    assert seed.metadata == {"custom": {"call_id": "call-1"}}
+    seed.metadata["custom"]["call_id"] = "changed"
+    assert piece.prompt_metadata["custom"]["call_id"] == "call-1"
 
 
 # --- response_json_schema resolution (response_json_schema_name is init-only) ---
