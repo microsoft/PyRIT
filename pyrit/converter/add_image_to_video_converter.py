@@ -32,6 +32,8 @@ class AddImageVideoConverter(Converter):
     Adds an image to a video at a specified position.
 
     Currently the image is placed in the whole video, not at a specific timepoint.
+    Supports 8-bit and 16-bit grayscale, color, and alpha-channel images.
+    16-bit image values are scaled to 8-bit before compositing onto video frames.
     """
 
     SUPPORTED_INPUT_TYPES = ("image_path",)
@@ -132,8 +134,9 @@ class AddImageVideoConverter(Converter):
             bytes: The converted video data.
 
         Raises:
-            ValueError: If the input video format is unsupported or the overlay image cannot
-                be decoded.
+            ValueError: If the input video format is unsupported, the input video cannot be
+                opened, the frame rate is invalid, the video writer cannot be created,
+                or the overlay image cannot be decoded or has an unsupported pixel depth.
         """
         import cv2
 
@@ -153,20 +156,34 @@ class AddImageVideoConverter(Converter):
         try:
             try:
                 cap = cv2.VideoCapture(str(input_path))
+                if not cap.isOpened():
+                    raise ValueError("Failed to open the input video")
 
                 # Get video properties
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                if not np.isfinite(fps) or fps <= 0:
+                    raise ValueError("Could not determine the frame rate of the input video")
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 video_char_code = cv2.VideoWriter.fourcc(*video_encoding_map[file_extension])
                 output_video = cv2.VideoWriter(str(output_path), video_char_code, fps, (width, height))
+                if not output_video.isOpened():
+                    raise ValueError(f"Failed to create a video writer for '.{file_extension}' (codec unavailable?)")
 
                 # Load and resize the overlay image
 
+                if not image_bytes:
+                    raise ValueError("Failed to decode overlay image")
                 image_np_arr = np.frombuffer(image_bytes, np.uint8)
                 decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
                 if decoded is None:
                     raise ValueError("Failed to decode overlay image")
+                if decoded.dtype == np.uint16:
+                    decoded = cv2.convertScaleAbs(decoded, alpha=255.0 / 65535.0)
+                elif decoded.dtype != np.uint8:
+                    raise ValueError(f"Unsupported overlay image depth: {decoded.dtype}; expected uint8 or uint16")
+                if decoded.ndim == 2:  # Grayscale images decode without a channel axis
+                    decoded = cv2.cvtColor(decoded, cv2.COLOR_GRAY2BGR)
                 overlay = cv2.resize(decoded, self._img_resize_size)
 
                 # Get overlay image dimensions
