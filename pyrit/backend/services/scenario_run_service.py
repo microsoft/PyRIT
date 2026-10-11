@@ -23,6 +23,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
 
+from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import compute_scenario_statistics
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
@@ -1648,7 +1649,7 @@ class ScenarioRunService:
             techniques_used=techniques,
             total_attacks=planned_total if atomic_groups is not None or planned_total else None,
             completed_attacks=completed,
-            objective_achieved_rate=int((successful / completed) * 100) if completed else 0,
+            objective_achieved_rate=success_percentage(succeeded=successful, completed=completed) or 0,
             total_retries=aggregate.total_retries,
             labels=record.labels,
             completed_at=record.completed_at if terminal else None,

@@ -227,5 +227,14 @@ async def test_overview_separates_units_from_attempts(printer):
     assert payload["stats"]["total_attempts"] == 2
     assert payload["stats"]["overall_success_rate"] == 100
     assert payload["groups"] == [
-        {"name": "technique_a", "num_objective_executions": 1, "num_attempts": 2, "success_rate": 100}
+        {
+            "name": "technique_a",
+            "num_objective_executions": 1,
+            "num_attempts": 2,
+            "success_rate": 100,
+            "outcomes": payload["stats"]["outcomes"],
+        }
     ]
+    assert payload["stats"]["outcomes"]["success_rate"] == 1.0
+    assert payload["stats"]["outcomes"]["success_rate_all"] == 1.0
+    assert payload["stats"]["outcomes"]["errors"] == 0

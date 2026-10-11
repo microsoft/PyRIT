@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import warnings
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.result_analysis import (
     AttackStats,
     _objective_target_eval_hash_for,
@@ -21,6 +24,7 @@ from pyrit.models import (
     IdentifierFilter,
     IdentifierType,
     ObjectiveTargetEvaluationIdentifier,
+    OutcomeStatistics,
 )
 
 
@@ -54,6 +58,41 @@ def test_analyze_results_empty_raises():
 def test_analyze_results_raises_on_invalid_object():
     with pytest.raises(TypeError):
         analyze_results(["not-an-AttackResult"])
+
+
+def test_analyze_results_opt_in_returns_shared_statistics_without_changing_default_shape() -> None:
+    attacks = [
+        make_attack(AttackOutcome.SUCCESS, attack_type="one"),
+        make_attack(AttackOutcome.ERROR, attack_type="one"),
+        make_attack(AttackOutcome.FAILURE, attack_type="two"),
+        make_attack(AttackOutcome.UNDETERMINED, attack_type="two"),
+    ]
+    legacy = analyze_results(attacks)
+    rich = analyze_results(attacks, include_outcome_statistics=True)
+    assert type(legacy["Overall"]) is AttackStats
+    assert len(asdict(legacy["Overall"])) == 6
+    assert isinstance(rich["Overall"], OutcomeStatistics)
+    assert rich["Overall"] == compute_outcome_statistics(dict.fromkeys(AttackOutcome, 1))
+    assert rich["Overall"].success_rate_decided == 0.5
+    assert rich["Overall"].success_rate_all == 0.25
+    assert rich["By_attack_identifier"]["one"] == compute_outcome_statistics({"success": 1, "error": 1})
+    assert rich["By_attack_identifier"]["two"] == compute_outcome_statistics({"failure": 1, "undetermined": 1})
+    assert set(legacy) == set(rich)
+
+
+@pytest.mark.parametrize("include_outcome_statistics", [False, True])
+def test_analyze_results_remains_supported_without_deprecation(include_outcome_statistics: bool) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        analyze_results([make_attack(AttackOutcome.SUCCESS)], include_outcome_statistics=include_outcome_statistics)
+
+
+@pytest.mark.parametrize("include_outcome_statistics", [False, True])
+def test_analyze_results_keeps_input_validation_with_both_output_shapes(include_outcome_statistics: bool) -> None:
+    with pytest.raises(ValueError, match="empty"):
+        analyze_results([], include_outcome_statistics=include_outcome_statistics)
+    with pytest.raises(TypeError, match="AttackResult"):
+        analyze_results(["invalid"], include_outcome_statistics=include_outcome_statistics)
 
 
 @pytest.mark.parametrize(
