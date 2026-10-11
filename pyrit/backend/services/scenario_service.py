@@ -73,6 +73,7 @@ def _metadata_to_registered_scenario(
             for parameter in metadata.supported_parameters
             if parameter.is_external_input
         ],
+        supported_parameter_names=[parameter.name for parameter in metadata.supported_parameters],
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
         uses_default_adversarial_target=metadata.uses_default_adversarial_target,

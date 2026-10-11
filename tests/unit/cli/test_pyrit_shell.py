@@ -61,6 +61,7 @@ def mock_api_client():
         all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
+        supported_parameter_names=[],
     )
     client.close_async = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
@@ -75,6 +76,7 @@ def mock_api_client():
         all_techniques=kw.get("all_techniques", []),
         default_datasets=kw.get("default_datasets", []),
         supported_parameters=kw.get("supported_parameters", []),
+        supported_parameter_names=[parameter.name for parameter in kw.get("supported_parameters", [])],
     )
     # Suppress unused-import warning for datetime/timezone helpers used by tests.
     _ = (datetime, timezone)

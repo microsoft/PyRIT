@@ -63,8 +63,8 @@ import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
 import { techniqueSetName } from './scenarioTechniqueSets'
 
 /**
- * Common/opaque parameters every scenario declares via
- * `Scenario._common_scenario_parameters` — the launch form already exposes a
+ * Common/opaque parameters the base scenario declares via
+ * `Scenario._common_scenario_parameters` — the launch form exposes a
  * purpose-built control for each of these (target, techniques, datasets,
  * labels, concurrency, retries, baseline), and `technique_converters` has no
  * UI at all. They're hidden from the dynamic scenario-specific parameter list.
@@ -87,6 +87,10 @@ const MAX_MAX_RETRIES = 20
 const DEFAULT_MAX_CONCURRENCY = 10
 const DEFAULT_MAX_RETRIES = 0
 const ESTIMATE_DEBOUNCE_MS = 300
+
+function supportsParameter(scenario: RegisteredScenario, name: string): boolean {
+  return scenario.supported_parameter_names.includes(name)
+}
 
 function targetOptionLabel(target: TargetInstance): string {
   const modelName = targetModelName(target)
@@ -297,7 +301,7 @@ function buildEstimateRequest({
   dataTypesFilter,
   includeBaseline,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
-  if (techniques.length === 0) {
+  if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
 
@@ -311,7 +315,8 @@ function buildEstimateRequest({
   }
 
   let maxDatasetSizeValue: number | 'all' | undefined
-  const trimmedMaxDatasetSize = maxDatasetSize.trim()
+  const supportsDatasets = supportsParameter(scenario, 'dataset_config')
+  const trimmedMaxDatasetSize = supportsDatasets ? maxDatasetSize.trim() : ''
   if (trimmedMaxDatasetSize === 'all') {
     maxDatasetSizeValue = 'all'
   } else if (trimmedMaxDatasetSize.length > 0) {
@@ -321,12 +326,15 @@ function buildEstimateRequest({
     }
     maxDatasetSizeValue = parsed
   }
-  const datasetNames = parseDatasetNames(datasetOverride)
-  const request: ScenarioRunSizeEstimateRequest = {
-    techniques,
-    include_baseline: includeBaseline,
+  const datasetNames = supportsDatasets ? parseDatasetNames(datasetOverride) : []
+  const request: ScenarioRunSizeEstimateRequest = {}
+  if (supportsParameter(scenario, 'scenario_techniques')) {
+    request.techniques = techniques
   }
-  if (targetName) {
+  if (supportsParameter(scenario, 'include_baseline')) {
+    request.include_baseline = includeBaseline
+  }
+  if (supportsParameter(scenario, 'objective_target') && targetName) {
     request.target_name = targetName
   }
   if (scenario.uses_default_adversarial_target && adversarialTargetName) {
@@ -338,8 +346,8 @@ function buildEstimateRequest({
   if (maxDatasetSizeValue !== undefined) {
     request.max_dataset_size = maxDatasetSizeValue
   }
-  const harmCategories = parseDatasetNames(harmCategoriesFilter)
-  const dataTypes = parseDatasetNames(dataTypesFilter)
+  const harmCategories = supportsDatasets ? parseDatasetNames(harmCategoriesFilter) : []
+  const dataTypes = supportsDatasets ? parseDatasetNames(dataTypesFilter) : []
   if (harmCategories.length > 0 || dataTypes.length > 0) {
     request.dataset_filters = {
       ...(harmCategories.length > 0 ? { harm_categories: harmCategories } : {}),
@@ -353,7 +361,7 @@ function buildEstimateRequest({
 }
 
 function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
-  if (!input.targetName) {
+  if (supportsParameter(input.scenario, 'objective_target') && !input.targetName) {
     return { ok: false, error: 'Select a target.' }
   }
   const estimateResult = buildEstimateRequest(input)
@@ -361,9 +369,11 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
     return estimateResult
   }
   if (
-    !Number.isInteger(input.maxConcurrency)
-    || input.maxConcurrency < MIN_MAX_CONCURRENCY
-    || input.maxConcurrency > MAX_MAX_CONCURRENCY
+    supportsParameter(input.scenario, 'max_concurrency') && (
+      !Number.isInteger(input.maxConcurrency)
+      || input.maxConcurrency < MIN_MAX_CONCURRENCY
+      || input.maxConcurrency > MAX_MAX_CONCURRENCY
+    )
   ) {
     return {
       ok: false,
@@ -371,9 +381,11 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
     }
   }
   if (
-    !Number.isInteger(input.maxRetries)
-    || input.maxRetries < MIN_MAX_RETRIES
-    || input.maxRetries > MAX_MAX_RETRIES
+    supportsParameter(input.scenario, 'max_retries') && (
+      !Number.isInteger(input.maxRetries)
+      || input.maxRetries < MIN_MAX_RETRIES
+      || input.maxRetries > MAX_MAX_RETRIES
+    )
   ) {
     return {
       ok: false,
@@ -384,27 +396,16 @@ function buildRunRequest(input: BuildRunRequestInput): BuildRunRequestResult {
   const estimateRequest = estimateResult.request
   const request: RunScenarioRequest = {
     scenario_name: input.scenario.scenario_name,
-    target_name: input.targetName,
-    techniques: estimateRequest.techniques,
-    max_concurrency: input.maxConcurrency,
-    max_retries: input.maxRetries,
-    include_baseline: estimateRequest.include_baseline,
-    labels: input.labels,
+    ...estimateRequest,
   }
-  if (estimateRequest.adversarial_target_name !== undefined) {
-    request.adversarial_target_name = estimateRequest.adversarial_target_name
+  if (supportsParameter(input.scenario, 'max_concurrency')) {
+    request.max_concurrency = input.maxConcurrency
   }
-  if (estimateRequest.dataset_names !== undefined) {
-    request.dataset_names = estimateRequest.dataset_names
+  if (supportsParameter(input.scenario, 'max_retries')) {
+    request.max_retries = input.maxRetries
   }
-  if (estimateRequest.max_dataset_size !== undefined) {
-    request.max_dataset_size = estimateRequest.max_dataset_size
-  }
-  if (estimateRequest.dataset_filters !== undefined) {
-    request.dataset_filters = estimateRequest.dataset_filters
-  }
-  if (estimateRequest.scenario_params !== undefined) {
-    request.scenario_params = estimateRequest.scenario_params
+  if (supportsParameter(input.scenario, 'memory_labels')) {
+    request.labels = input.labels
   }
   return { ok: true, request }
 }
@@ -456,6 +457,12 @@ function ScenarioDetailContent({
       .getScenario(decodedScenarioName)
       .then((data) => {
         if (cancelled) return
+        if (!Array.isArray(data.supported_parameter_names)) {
+          setScenario(null)
+          setScenarioStatus('error')
+          setScenarioError('The scenario catalog has no input support metadata. Update the backend and reload.')
+          return
+        }
         setScenario(data)
         setScenarioStatus('success')
         setScenarioError(null)
@@ -582,10 +589,17 @@ function ScenarioLaunchForm({
   )
   const dynamicParameters = useMemo(
     () => scenario.supported_parameters.filter(
-      (parameter) => !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name),
+      (parameter) => supportsParameter(scenario, parameter.name)
+        && !COMMON_SCENARIO_PARAMETER_NAMES.has(parameter.name),
     ),
-    [scenario.supported_parameters],
+    [scenario],
   )
+  const supportsObjectiveTarget = supportsParameter(scenario, 'objective_target')
+  const supportsTechniques = supportsParameter(scenario, 'scenario_techniques')
+  const supportsBaseline = supportsParameter(scenario, 'include_baseline')
+  const supportsDatasets = supportsParameter(scenario, 'dataset_config')
+  const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
+  const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
 
   const [targetName, setTargetName] = useState(() => {
@@ -607,8 +621,10 @@ function ScenarioLaunchForm({
   })
   const [selectedTechniques, setSelectedTechniques] = useState<string[]>(() => defaultTechniques)
   const unavailableSelection = (
-    targetName !== '' && !targets.some((target) => target.target_registry_name === targetName)
-  ) || selectedTechniques.some((name) => !techniqueOptions.some((technique) => technique.name === name))
+    supportsObjectiveTarget && targetName !== ''
+    && !targets.some((target) => target.target_registry_name === targetName)
+  ) || (supportsTechniques
+    && selectedTechniques.some((name) => !techniqueOptions.some((technique) => technique.name === name)))
   const [baselineChecked, setBaselineChecked] = useState(
     () => !isBaselineForbidden && scenario.include_baseline_by_default,
   )
@@ -656,18 +672,18 @@ function ScenarioLaunchForm({
 
   const selectableTechniques = useMemo<SelectableTechnique[]>(
     () => [
-      {
+      ...(supportsBaseline ? [{
         ...BASELINE_TECHNIQUE,
         isBaseline: true,
         disabled: isBaselineForbidden,
-      },
-      ...techniqueOptions.map((technique) => ({
+      }] : []),
+      ...(supportsTechniques ? techniqueOptions.map((technique) => ({
         ...technique,
         isBaseline: false,
         disabled: false,
-      })),
+      })) : []),
     ],
-    [isBaselineForbidden, techniqueOptions],
+    [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
   )
   const techniques = selectedTechniques
   const maxDatasetSizeOverride = maxDatasetSize.trim()
@@ -931,10 +947,11 @@ function ScenarioLaunchForm({
     setPreviewOpen(true)
   }
 
-  const techniqueSelectionInvalid = selectedTechniques.length === 0
+  const techniqueSelectionInvalid = supportsTechniques && selectedTechniques.length === 0
   const displayedEstimateNotes = estimateNotes(estimateState)
   const displayedEstimate = estimateFromState(estimateState)
-  const selectedTechniqueCount = selectedTechniques.length + (baselineChecked ? 1 : 0)
+  const selectedTechniqueCount = (supportsTechniques ? selectedTechniques.length : 0)
+    + (supportsBaseline && baselineChecked && !isBaselineForbidden ? 1 : 0)
   const previewDatasets = parseDatasetNames(datasetOverride)
   const effectiveDatasets = previewDatasets.length > 0 ? previewDatasets : scenario.default_datasets
   const previewHarmCategories = parseDatasetNames(harmCategoriesFilter)
@@ -965,9 +982,9 @@ function ScenarioLaunchForm({
             onSubmit={handleFormSubmit}
             noValidate
           >
-            {validationError && (
+            {validationError && !requestResult.ok && (
               <MessageBar intent="warning">
-                <MessageBarBody role="alert">{validationError}</MessageBarBody>
+                <MessageBarBody role="alert">{requestResult.error}</MessageBarBody>
               </MessageBar>
             )}
             {(staleSelection || (targetName && unavailableSelection)) && (
@@ -1001,6 +1018,7 @@ function ScenarioLaunchForm({
               />
             </section>
 
+            {supportsObjectiveTarget && (
             <section className={styles.section} aria-labelledby="target-section-title">
               <Text id="target-section-title" as="h2" size={400} weight="semibold">Objective Target</Text>
               <Field hint="The registered target this scenario will run against.">
@@ -1036,14 +1054,16 @@ function ScenarioLaunchForm({
                 </Button>
               )}
             </section>
+            )}
 
+            {(supportsTechniques || supportsBaseline) && (
             <section className={styles.section} aria-labelledby="techniques-section-title">
               <Text id="techniques-section-title" as="h2" size={400} weight="semibold">
                 Techniques
               </Text>
-              <Text size={200} className={styles.hint}>
+              {supportsTechniques && <Text size={200} className={styles.hint}>
                 Select individual techniques, or use a tag to select or clear all techniques with that tag.
-              </Text>
+              </Text>}
               {techniqueSelectionInvalid && (
                 <Text className={styles.errorText} role="alert">
                   Select at least one attack technique.
@@ -1101,7 +1121,10 @@ function ScenarioLaunchForm({
                 })}
               </div>
             </section>
+            )}
 
+            {(dynamicParameters.length > 0 || scenario.uses_default_adversarial_target
+              || supportsDatasets || supportsConcurrency || supportsRetries) && (
             <section className={styles.section} aria-labelledby="parameters-section-title">
               <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
                 Parameters
@@ -1130,6 +1153,8 @@ function ScenarioLaunchForm({
                     disabled={submitting}
                   />
                 )}
+                {supportsDatasets && (
+                <>
                 <Field
                   label="Dataset override"
                   hint="Comma-separated dataset names. Leave blank to use the scenario's default datasets."
@@ -1195,7 +1220,9 @@ function ScenarioLaunchForm({
                     data-testid="data-types-filter-input"
                   />
                 </Field>
-                <Field label="Max concurrency">
+                </>
+                )}
+                {supportsConcurrency && <Field label="Max concurrency">
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
@@ -1205,8 +1232,8 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
                     data-testid="max-concurrency-input"
                   />
-                </Field>
-                <Field label="Max retries">
+                </Field>}
+                {supportsRetries && <Field label="Max retries">
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
@@ -1216,9 +1243,10 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
                     data-testid="max-retries-input"
                   />
-                </Field>
+                </Field>}
               </div>
             </section>
+            )}
 
             <section
               className={styles.section}
@@ -1249,16 +1277,16 @@ function ScenarioLaunchForm({
                   <dt>Total atomic attacks</dt>
                   <dd>{formatAtomicAttackCount(estimateState)}</dd>
                 </div>
-                <div className={styles.costEstimateRow}>
+                {supportsDatasets && <div className={styles.costEstimateRow}>
                   <dt>Dataset size</dt>
                   <dd>
                     {datasetSizeLabel}
                   </dd>
-                </div>
-                <div className={styles.costEstimateRow}>
+                </div>}
+                {(supportsTechniques || supportsBaseline) && <div className={styles.costEstimateRow}>
                   <dt>Number techniques</dt>
                   <dd>{selectedTechniqueCount}</dd>
-                </div>
+                </div>}
                 {dynamicParameters.map((parameter) => (
                   <div className={styles.costEstimateRow} key={parameter.name}>
                     <dt>{parameter.name}</dt>
@@ -1316,8 +1344,10 @@ function ScenarioLaunchForm({
                 <DialogContent className={styles.dialogContent}>
                   <dl className={styles.previewList}>
                     <div className={styles.previewGroup}>
-                      <dt>Objective Target</dt>
-                      <dd>{targetName}</dd>
+                      {supportsObjectiveTarget && <>
+                        <dt>Objective Target</dt>
+                        <dd>{targetName}</dd>
+                      </>}
                       {scenario.uses_default_adversarial_target && (
                         <>
                           <dt>Adversarial Target</dt>
@@ -1325,17 +1355,19 @@ function ScenarioLaunchForm({
                         </>
                       )}
                     </div>
-                    <div className={styles.previewGroup}>
+                    {(supportsTechniques || supportsBaseline) && <div className={styles.previewGroup}>
                       <dt>Techniques</dt>
                       <dd>
                         <div className={styles.previewBadges}>
-                          {baselineChecked && <Badge appearance="outline">baseline</Badge>}
-                          {selectedTechniques.map((name) => (
+                          {supportsBaseline && baselineChecked && !isBaselineForbidden
+                            && <Badge appearance="outline">baseline</Badge>}
+                          {supportsTechniques && selectedTechniques.map((name) => (
                             <Badge key={name} appearance="outline">{name}</Badge>
                           ))}
                         </div>
                       </dd>
-                    </div>
+                    </div>}
+                    {supportsDatasets && <>
                     <div className={styles.previewGroup}>
                       <dt>Datasets</dt>
                       <dd>
@@ -1375,6 +1407,7 @@ function ScenarioLaunchForm({
                         )}
                       </dd>
                     </div>
+                    </>}
                     <div className={styles.previewGroup}>
                       <dt>Parameters</dt>
                       <dd>

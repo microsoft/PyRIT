@@ -66,6 +66,10 @@ const SCENARIO: RegisteredScenario = {
   include_baseline_by_default: true,
   uses_default_adversarial_target: true,
   supported_parameters: [],
+  supported_parameter_names: [
+    'objective_target', 'scenario_techniques', 'dataset_config', 'memory_labels',
+    'max_concurrency', 'max_retries', 'include_baseline',
+  ],
   default_run_size: {
     dataset_size: { kind: 'bounded', value: 1 },
     dataset_limit: { state: 'scenario_default' },

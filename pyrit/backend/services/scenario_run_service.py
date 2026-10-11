@@ -322,10 +322,8 @@ class ScenarioRunService:
         if isinstance(raw_request, dict):
             # Launch records from before per-run target selection used the server default.
             raw_request = {"adversarial_target_name": None, **raw_request}
-        if (
-            not isinstance(raw_request, dict)
-            or any(name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size")
-            or raw_request["include_baseline"] is None
+        if not isinstance(raw_request, dict) or any(
+            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size"
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
@@ -336,12 +334,24 @@ class ScenarioRunService:
             raise ScenarioRunConflictError(
                 "The saved launch configuration is invalid; resume was not started."
             ) from exc
-        if not request.scenario_name.strip() or not request.target_name.strip():
+        if not request.scenario_name.strip() or (request.target_name is not None and not request.target_name.strip()):
             raise ScenarioRunConflictError("The saved scenario or target registration name is empty.")
-        identifier = stored.scenario_identifier
-        if (request.techniques is None and identifier.techniques is None) or (
-            request.dataset_names is None and identifier.datasets is None
+        scenario_class = self._configuration_resolver.resolve_scenario_class(scenario_name=request.scenario_name)
+        declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
+        if any(
+            parameter_name in declared_names and getattr(request, field_name) is None
+            for parameter_name, field_name in (
+                ("objective_target", "target_name"),
+                ("include_baseline", "include_baseline"),
+                ("max_concurrency", "max_concurrency"),
+                ("max_retries", "max_retries"),
+            )
         ):
+            raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
+        identifier = stored.scenario_identifier
+        if (
+            "scenario_techniques" in declared_names and request.techniques is None and identifier.techniques is None
+        ) or ("dataset_config" in declared_names and request.dataset_names is None and identifier.datasets is None):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
@@ -354,9 +364,13 @@ class ScenarioRunService:
                 "initializers": None,
                 "initializer_args": None,
                 "scenario_params": custom_params,
-                "techniques": request.techniques if request.techniques is not None else identifier.techniques,
-                "dataset_names": request.dataset_names if request.dataset_names is not None else identifier.datasets,
-                "labels": dict(stored.labels),
+                "techniques": request.techniques
+                if request.techniques is not None or "scenario_techniques" not in declared_names
+                else identifier.techniques,
+                "dataset_names": request.dataset_names
+                if request.dataset_names is not None or "dataset_config" not in declared_names
+                else identifier.datasets,
+                "labels": dict(stored.labels) if "memory_labels" in declared_names else None,
             },
             deep=True,
         )
@@ -633,7 +647,14 @@ class ScenarioRunService:
                 owner=request.scenario_name,
             )
         await self._run_initializers_async(request=request)
-        objective_target = self._configuration_resolver.resolve_target(target_name=request.target_name)
+        declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
+        if "objective_target" in declared_names and not request.target_name:
+            raise ValueError(f"Scenario '{request.scenario_name}' requires an objective target.")
+        objective_target = (
+            self._configuration_resolver.resolve_target(target_name=request.target_name)
+            if request.target_name is not None
+            else None
+        )
         adversarial_target = self._configuration_resolver.resolve_adversarial_target(
             target_name=request.adversarial_target_name
         )
@@ -647,8 +668,12 @@ class ScenarioRunService:
                 max_dataset_size=request.max_dataset_size,
                 dataset_filters=request.dataset_filters,
                 include_baseline=request.include_baseline,
-                max_concurrency=request.max_concurrency,
-                max_retries=request.max_retries,
+                max_concurrency=request.max_concurrency
+                if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
+                else None,
+                max_retries=request.max_retries
+                if "max_retries" in declared_names or "max_retries" in request.model_fields_set
+                else None,
                 memory_labels=request.labels,
             )
             scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
@@ -1231,9 +1256,13 @@ class ScenarioRunService:
             The fully initialized Scenario instance ready for run_async.
         """
         scenario_registry = ScenarioRegistry.get_registry_singleton()
+        scenario_class = scenario_registry.get_class(request.scenario_name)
+        declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
         launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
-        if launch_request["include_baseline"] is None:
-            scenario_class = scenario_registry.get_class(request.scenario_name)
+        for name in ("max_concurrency", "max_retries"):
+            if name not in declared_names and name not in request.model_fields_set:
+                launch_request[name] = None
+        if launch_request["include_baseline"] is None and "include_baseline" in declared_names:
             baseline_parameter = next(
                 (
                     parameter

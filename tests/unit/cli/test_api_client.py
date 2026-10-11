@@ -343,6 +343,7 @@ def _scenario_payload(*, scenario_name: str = "s1") -> dict:
         "all_techniques": ["single_turn"],
         "default_datasets": [],
         "supported_parameters": [],
+        "supported_parameter_names": [],
     }
 
 
