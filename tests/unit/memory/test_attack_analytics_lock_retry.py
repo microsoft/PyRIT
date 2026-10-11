@@ -228,9 +228,9 @@ async def test_sqlite_read_succeeds_when_writer_releases_lock_async(*, file_memo
 
 
 @pytest.mark.parametrize("method", ["report", "matrix", "compact_report", "results", "facets"])
-@pytest.mark.parametrize("cancel", ["control", "task"])
-async def test_sqlite_lock_retry_cancellation_restores_connection_async(
-    *, file_memory: SQLiteMemory, method: str, cancel: str
+@pytest.mark.parametrize("trigger", ["deadline", "control", "task"])
+async def test_sqlite_lock_retry_deadline_or_cancellation_restores_connection_async(
+    *, file_memory: SQLiteMemory, method: str, trigger: str
 ) -> None:
     reader = AttackAnalyticsReader(memory=file_memory)
     observed = asyncio.Event()
@@ -239,20 +239,33 @@ async def test_sqlite_lock_retry_cancellation_restores_connection_async(
     async with engine.connect() as writer:
         default_timeout = (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
         await writer.exec_driver_sql("BEGIN EXCLUSIVE")
-        with patch.object(
-            reader, "_retry_sqlite_busy_async", side_effect=_observe_busy(reader=reader, observed=observed)
+        with (
+            patch.object(
+                reader, "_retry_sqlite_busy_async", side_effect=_observe_busy(reader=reader, observed=observed)
+            ),
+            patch.object(
+                reader, "_sqlite_busy_timeout_async", wraps=reader._sqlite_busy_timeout_async
+            ) as configure_timeout,
         ):
             task = asyncio.create_task(_read_async(reader=reader, method=method, control=control))
             try:
                 await asyncio.wait_for(observed.wait(), timeout=5)
-                if cancel == "control":
-                    control.cancel()
+                assert not task.done()
+                assert configure_timeout.await_args_list[0].kwargs["timeout_ms"] == 0
+                if trigger != "task":
+                    if trigger == "deadline":
+                        control.deadline = 0
+                    else:
+                        control.cancel()
                     with pytest.raises(AnalyticsTimeoutException):
-                        await asyncio.wait_for(task, timeout=1)
+                        await asyncio.wait_for(task, timeout=5)
+                    assert control.expired
+                    assert control.cancel_event.is_set() == (trigger == "control")
                 else:
                     task.cancel()
                     with pytest.raises(asyncio.CancelledError):
-                        await asyncio.wait_for(task, timeout=1)
+                        await asyncio.wait_for(task, timeout=5)
+                assert configure_timeout.await_args_list[-1].kwargs["timeout_ms"] == default_timeout
                 async with engine.connect() as connection:
                     assert (await connection.exec_driver_sql("PRAGMA busy_timeout")).scalar_one() == default_timeout
             finally:
