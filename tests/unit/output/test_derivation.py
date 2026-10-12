@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from unit.mocks import make_scenario_result
 
+from pyrit.analytics import compute_outcome_statistics
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -13,6 +14,8 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     MessagePiece,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -71,7 +74,18 @@ def test_scenario_overview_empty_is_zero():
     overview = scenario_overview(result)
 
     assert (overview.objective_executions, overview.attempts, overview.success_rate) == (0, 0, 0)
-    assert overview.groups == [GroupStatistics(name="s1", objective_executions=0, attempts=0, success_rate=0)]
+    assert overview.groups == [
+        GroupStatistics(
+            name="s1",
+            objective_executions=0,
+            attempts=0,
+            success_rate=0,
+            outcomes=compute_outcome_statistics({}),
+            producer_counts=ScenarioProducerCounts(),
+        )
+    ]
+    assert overview.outcomes == compute_outcome_statistics({})
+    assert overview.producer_counts == ScenarioProducerCounts()
 
 
 def test_scenario_overview_folds_atomic_attacks_by_display_group():
@@ -90,7 +104,17 @@ def test_scenario_overview_folds_atomic_attacks_by_display_group():
     overview = scenario_overview(result)
 
     assert overview.success_rate == 66
-    assert overview.groups == [GroupStatistics(name="encoding", objective_executions=3, attempts=3, success_rate=66)]
+    assert overview.groups == [
+        GroupStatistics(
+            name="encoding",
+            objective_executions=3,
+            attempts=3,
+            success_rate=66,
+            outcomes=compute_outcome_statistics({"success": 2, "failure": 1}),
+            producer_counts=ScenarioProducerCounts(unknown=ScenarioProducerCategoryCounts(attempts=3)),
+        )
+    ]
+    assert overview.producer_counts == ScenarioProducerCounts(unknown=ScenarioProducerCategoryCounts(attempts=3))
 
 
 def test_scenario_overview_uses_display_group_map_even_when_plan_labels_differ():
@@ -126,7 +150,17 @@ def test_scenario_overview_uses_display_group_map_even_when_plan_labels_differ()
 
     overview = scenario_overview(result)
 
-    assert overview.groups == [GroupStatistics(name="encoding", objective_executions=1, attempts=1, success_rate=100)]
+    assert overview.groups == [
+        GroupStatistics(
+            name="encoding",
+            objective_executions=1,
+            attempts=1,
+            success_rate=100,
+            outcomes=compute_outcome_statistics({"success": 1}),
+            producer_counts=ScenarioProducerCounts(unknown=ScenarioProducerCategoryCounts(attempts=1)),
+        )
+    ]
+    assert overview.producer_counts == ScenarioProducerCounts(unknown=ScenarioProducerCategoryCounts(attempts=1))
 
 
 # --- attack_score_display ---
