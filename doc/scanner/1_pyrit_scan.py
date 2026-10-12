@@ -182,7 +182,7 @@
 
 from pyrit.common import apply_defaults
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
-from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioTechnique
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioTechnique
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
 
@@ -206,8 +206,8 @@ class MyCustomScenario(Scenario):
             version=1,
             objective_scorer=TrueFalseInverterScorer(scorer=SelfAskRefusalScorer(chat_target=OpenAIChatTarget())),
             technique_class=MyCustomTechnique,
-            # DatasetAttackConfiguration selects at most 5 attack groups by default; set max_dataset_size to change it.
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"]),
+            # Named sources default to 5 groups each; use max_per_dataset and max_total to set caps.
+            default_dataset_config=DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")]),
             scenario_result_id=scenario_result_id,
         )
         # ... your scenario-specific initialization code

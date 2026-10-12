@@ -37,7 +37,11 @@ from pyrit.models import (
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetSource,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -198,8 +202,16 @@ class Encoding(Scenario):
             technique_class=EncodingTechnique,
             default_dataset_config=CompoundDatasetAttackConfiguration(
                 configurations=[
-                    EncodingDatasetConfiguration(dataset_names=["garak_slur_terms_en"], max_dataset_size=10),
-                    EncodingDatasetConfiguration(dataset_names=["garak_web_html_js"], max_dataset_size=10),
+                    EncodingDatasetConfiguration(
+                        sources=[DatasetSource(name=name) for name in ["garak_slur_terms_en"]],
+                        max_per_dataset="all",
+                        max_total=10,
+                    ),
+                    EncodingDatasetConfiguration(
+                        sources=[DatasetSource(name=name) for name in ["garak_web_html_js"]],
+                        max_per_dataset="all",
+                        max_total=10,
+                    ),
                 ]
             ),
             objective_scorer=objective_scorer,

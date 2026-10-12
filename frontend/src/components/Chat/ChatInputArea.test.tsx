@@ -88,7 +88,8 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("should show a disabled composer without a no-target warning", () => {
+  it("should explain a missing target when the disabled composer is clicked", async () => {
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <ChatInputArea {...defaultProps} activeTarget={null} disabled />
@@ -97,8 +98,31 @@ describe("ChatInputArea", () => {
 
     expect(screen.getByRole("textbox")).toBeDisabled();
     expect(getSendButton()).toBeDisabled();
-    expect(screen.queryByText("No target selected")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Configure Target" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/No target is selected/)).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Why the prompt box is disabled"));
+    expect(screen.getByRole("listitem")).toHaveTextContent("No target is selected.");
+  });
+
+  it("should show all disabled reasons on hover and keyboard activation", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["This conversation contains a target error.", "The attack is loading."]} /></TestWrapper>);
+    const composer = screen.getByLabelText("Why the prompt box is disabled");
+    await user.hover(composer);
+    expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getByText("This conversation contains a target error.")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    composer.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
+  });
+
+  it("should explain a temporary disabled state even when no reason was supplied", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} activeTarget={makeTarget({})} disabled /></TestWrapper>);
+    await user.click(screen.getByLabelText("Why the prompt box is disabled"));
+    expect(screen.getByRole("listitem")).toHaveTextContent("Wait for the current operation to finish.");
   });
 
   it("should show a retry action when target verification fails", async () => {

@@ -267,19 +267,16 @@ class ScenarioProgressReadModel:
         *,
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
-    ) -> tuple[int, int, int, int]:
+    ) -> ScenarioProgressCounts:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
 
         Delegates to ``pyrit.analytics.scenario_statistics`` so run details match the SDK and reports.
 
         Returns:
-            tuple[int, int, int, int]: Total, completed, success-rate percentage,
-                and successful-unit count.
+            ScenarioProgressCounts: The calculated progress counts.
         """
-        overall = compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
-        total = overall.planned if overall.planned is not None else overall.completed
-        return total, overall.completed, overall.success_percentage or 0, overall.succeeded
+        return compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
 
     @staticmethod
     def total_retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
@@ -343,8 +340,18 @@ class ScenarioProgressReadModel:
             )
             attempts_by_unit.setdefault(identity, []).append(result)
 
-        def aggregate(*, units: Sequence[ResultUnitIdentity], planned: int | None) -> ScenarioProgressCounts:
-            return count_execution_units(units=units, attempts_by_unit=attempts_by_unit, planned=planned)
+        def aggregate(
+            *,
+            units: Sequence[ResultUnitIdentity],
+            planned: int | None,
+            producer_attempts: Sequence[ScenarioProgressResult] | None = None,
+        ) -> ScenarioProgressCounts:
+            return count_execution_units(
+                units=units,
+                attempts_by_unit=attempts_by_unit,
+                planned=planned,
+                producer_attempts=producer_attempts,
+            )
 
         group_units: dict[str, list[ResultUnitIdentity]] = {
             group.id: [
@@ -359,6 +366,7 @@ class ScenarioProgressReadModel:
         overall = aggregate(
             units=overall_units,
             planned=len(overall_units) if plan_complete else None,
+            producer_attempts=results,
         )
         planned_units = set(overall_units)
         unattributed_attempts = sum(
@@ -367,7 +375,7 @@ class ScenarioProgressReadModel:
         if unattributed_attempts:
             logger.warning(
                 "%d persisted attempt(s) matched no planned execution unit and are excluded from "
-                "scenario progress rollups.",
+                "logical-unit progress rollups, but retained in overall producer counts.",
                 unattributed_attempts,
             )
         latest_results = [attempts_by_unit[unit][-1] for unit in overall_units if attempts_by_unit.get(unit)]
@@ -376,6 +384,10 @@ class ScenarioProgressReadModel:
             results=latest_results,
         )
 
+        results_by_atomic_group_id: dict[str, list[ScenarioProgressResult]] = {}
+        for result in results:
+            results_by_atomic_group_id.setdefault(result.atomic_group_id, []).append(result)
+
         active_ids = set(active_group_ids)
         atomic_groups: list[ScenarioAtomicGroupProgress] = []
         for group in plan.atomic_groups:
@@ -383,6 +395,7 @@ class ScenarioProgressReadModel:
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=results_by_atomic_group_id.get(group.id, ()),
             )
             if not terminal and group.id in active_ids:
                 group_status: Literal["RUNNING", "PENDING", "INCOMPLETE", "COMPLETED"] = "RUNNING"
@@ -424,6 +437,7 @@ class ScenarioProgressReadModel:
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=[r for group in groups for r in results_by_atomic_group_id.get(group.id, ())],
             )
             display_groups.append(
                 ScenarioDisplayGroupProgress(
@@ -442,6 +456,7 @@ class ScenarioProgressReadModel:
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=[r for group in groups for r in results_by_atomic_group_id.get(group.id, ())],
             )
             descriptions = list(dict.fromkeys(group.description for group in groups if group.description))
             tags = sorted({tag for group in groups for tag in group.tags})
@@ -466,9 +481,11 @@ class ScenarioProgressReadModel:
                 for group in plan.atomic_groups
                 if seed_id in group.seed_group_ids
             ]
+            group_ids = {group.id for group in plan.atomic_groups if seed_id in group.seed_group_ids}
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=[r for r in results if r.seed_group_id == seed_id and r.atomic_group_id in group_ids],
             )
             seed_groups.append(
                 ScenarioSeedGroupProgress(

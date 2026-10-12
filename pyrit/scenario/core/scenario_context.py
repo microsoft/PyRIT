@@ -57,6 +57,8 @@ class ScenarioContext:
             onto separate attacks or display groups.
         stored_run_plan (ScenarioRunPlan | None): The original plan on resume. Builders
             with per-input choices restore them from this plan instead of selecting again.
+        scenario_result_id (str | None): The ``ScenarioResult`` id of this run: the stored id
+            on resume, or the id the new result will be created with on a fresh run.
     """
 
     objective_target: PromptTarget
@@ -68,3 +70,4 @@ class ScenarioContext:
     seed_groups: Sequence[AttackSeedGroup] = field(default_factory=tuple)
     seed_groups_by_dataset: Mapping[str, list[AttackSeedGroup]] = field(default_factory=dict)
     stored_run_plan: ScenarioRunPlan | None = None
+    scenario_result_id: str | None = None

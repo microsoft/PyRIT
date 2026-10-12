@@ -245,6 +245,7 @@ class AdaptiveScenario(Scenario):
                     techniques=techniques,
                     selector=self._selector,
                     stored_groups=stored_groups,
+                    scenario_result_id=context.scenario_result_id,
                 )
             )
 
@@ -447,6 +448,7 @@ class AdaptiveScenario(Scenario):
         techniques: dict[str, TechniqueBundle],
         selector: TechniqueSelector,
         stored_groups: dict[str, ScenarioRunPlanAtomicGroup] | None = None,
+        scenario_result_id: str | None = None,
     ) -> list[AtomicAttack]:
         """
         Build one ``AtomicAttack`` per seed group with at least one
@@ -468,6 +470,7 @@ class AdaptiveScenario(Scenario):
             techniques (dict[str, TechniqueBundle]): The resolved technique pool.
             selector (TechniqueSelector): The selector used for new runs.
             stored_groups (dict[str, ScenarioRunPlanAtomicGroup] | None): Saved groups on resume.
+            scenario_result_id (str | None): The run id passed to the technique selector.
 
         Returns:
             list[AtomicAttack]: One atomic per compatible seed group.
@@ -499,7 +502,7 @@ class AdaptiveScenario(Scenario):
             selector=selector,
             objective_scorer=self._objective_scorer,
             max_attempts_per_objective=self.params.get("max_attempts_per_objective", 3),
-            scenario_result_id=self._scenario_result_id,
+            scenario_result_id=scenario_result_id,
             incompatible_technique_policy=self._incompatible_technique_policy,
         )
 

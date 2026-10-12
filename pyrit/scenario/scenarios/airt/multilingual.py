@@ -9,6 +9,7 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import DATASETS_PATH
 from pyrit.converter import RandomTranslationConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack
@@ -23,6 +24,7 @@ from pyrit.scenario.core import (
     ScenarioTechnique,
     get_default_adversarial_target,
 )
+from pyrit.scenario.core.dataset_configuration import DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     build_baseline_atomic_attack,
@@ -106,21 +108,26 @@ def _extra_default_factories() -> dict[str, AttackTechniqueFactory]:
     return {_PROMPT_SENDING: _prompt_sending_factory()}
 
 
-@cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_multilingual_technique() -> type[ScenarioTechnique]:
     """
     Build the Multilingual technique class from text-compatible registered factories.
+
+    Scenario-local factories override registered factories before compatibility
+    filtering, as they do during execution.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
     registry = AttackTechniqueRegistry.get_registry_singleton()
+    pool = registry.get_factories_or_raise()
+    pool.update(_extra_default_factories())
     factories = [
         factory
-        for factory in list(registry.get_factories_or_raise().values()) + list(_extra_default_factories().values())
+        for factory in pool.values()
         if factory.can_append_request_converter(converter_type=TranslationConverter)
     ]
-    return AttackTechniqueRegistry.build_technique_class_from_factories(  # type: ignore[ty:invalid-return-type]
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="MultilingualTechnique",
         factories=factories,
         default_names={_PROMPT_SENDING},
@@ -219,7 +226,9 @@ class Multilingual(Scenario):
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
             technique_class=technique_class,
-            default_dataset_config=DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=5),
+            default_dataset_config=DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=5
+            ),
             objective_scorer=self._objective_scorer,
             scenario_result_id=scenario_result_id,
         )
@@ -306,6 +315,15 @@ class Multilingual(Scenario):
             )
 
         self._resolved_languages = await self._resolve_languages_async()
+        return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
+
+    def _build_atomic_attacks(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        """
+        Build the synchronous attack and converter matrix off-loop.
+
+        Returns:
+            list[AtomicAttack]: The attacks for the selected languages and translation methods.
+        """
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
         strategies = set(self.params.get("translation_strategies") or [_TRANSLATION, _RANDOM_TRANSLATION])
         technique_factories = resolve_technique_factories(

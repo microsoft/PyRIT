@@ -31,6 +31,7 @@ from pyrit.cli._cli_args import (
     collapse_dataset_filters,
     non_negative_int,
     parse_dataset_filter,
+    parse_dataset_limit,
     positive_int,
     validate_log_level_argparse,
 )
@@ -311,7 +312,7 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     parser.add_argument("--max-retries", type=non_negative_int, help=ARG_HELP["max_retries"])
     parser.add_argument("--memory-labels", type=str, help=ARG_HELP["memory_labels"])
     parser.add_argument("--dataset-names", type=str, nargs="+", help=ARG_HELP["dataset_names"])
-    parser.add_argument("--max-dataset-size", type=positive_int, help=ARG_HELP["max_dataset_size"])
+    parser.add_argument("--max-dataset-size", type=parse_dataset_limit, help=ARG_HELP["max_dataset_size"])
     parser.add_argument(
         "--dataset-filters",
         type=parse_dataset_filter,

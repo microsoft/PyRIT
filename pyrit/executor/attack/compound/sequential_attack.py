@@ -228,8 +228,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         Raises:
             ValueError: If ``child_attacks`` is empty.
         """
-        if not child_attacks:
-            raise ValueError("child_attacks must contain at least one SequentialChildAttack")
+        SequentialAttack.validate_constructor_parameters({"child_attacks": child_attacks})
 
         super().__init__(
             objective_target=objective_target,
@@ -258,6 +257,18 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         return self._create_identifier(
             params={"child_technique_eval_hashes": child_hashes} if any(child_hashes) else None
         )
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the child selection without constructing or executing child attacks.
+
+        Raises:
+            ValueError: If the child selection is empty.
+        """
+        super().validate_constructor_parameters(params)
+        if "child_attacks" in params and not params["child_attacks"]:
+            raise ValueError("child_attacks must contain at least one SequentialChildAttack")
 
     def _validate_context(self, *, context: AttackContext[AttackParameters]) -> None:
         if not context.objective or context.objective.isspace():

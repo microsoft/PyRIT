@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import String
+from sqlalchemy import String, event
 from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.memory import MemoryInterface
@@ -816,6 +816,25 @@ async def test_get_seed_dataset_names_multiple(sqlite_instance: MemoryInterface)
     await sqlite_instance.add_seeds_to_memory_async(seeds=seed_prompts)
     assert len(await sqlite_instance.get_seed_dataset_names_async()) == 5
     assert sorted(await sqlite_instance.get_seed_dataset_names_async()) == sorted(dataset_names)
+
+
+async def test_get_seed_dataset_names_without_loading_seed_rows_async(sqlite_instance: MemoryInterface) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value=f"objective-{index}", dataset_name=name)
+            for index, name in enumerate(["first", "first", "second", None, ""])
+        ],
+        added_by="test",
+    )
+
+    def reject_seed_load(*_: object) -> None:
+        raise AssertionError("Listing dataset names must not load full seed rows")
+
+    event.listen(SeedEntry, "load", reject_seed_load)
+    try:
+        assert set(await sqlite_instance.get_seed_dataset_names_async()) == {"first", "second"}
+    finally:
+        event.remove(SeedEntry, "load", reject_seed_load)
 
 
 async def test_add_seed_groups_to_memory_empty_list(sqlite_instance: MemoryInterface):
