@@ -3,8 +3,9 @@
 `AttackResultAnalytics` is an async Python SDK for saved attack outcomes. It reads
 aggregate counts and lightweight metadata through the configured memory backend,
 without loading conversations, messages, media, scores, or full `AttackResult`
-objects. This API does not change History's existing result-selection behavior.
-REST and GUI integration are separate work, not part of this SDK.
+objects. The backend exposes the same shared contracts through three POST
+endpoints. Attack History also lists distinct result IDs; the analytics explorer
+GUI is a separate changeset.
 
 ## Counting policy
 
@@ -230,6 +231,9 @@ Case-insensitive categorical keys use the reader's backend semantics. In SQLite,
 the SQL function and SDK profiles both use Python `str.lower`, including Unicode.
 They do not use ASCII-only lowercasing or `casefold`. Display labels retain original
 spellings, choosing the binary-smallest label for equivalent keys.
+SQLite avoids a Python callback when byte/character lengths prove a text value
+is ASCII and native `lower` is equivalent. Unicode, embedded NULs, and non-text
+values retain the existing Python conversion and lowercasing.
 
 Objective-target keys are persisted frozen-v1 behavioral evaluation hashes.
 Deployment changes need not split behaviorally equivalent targets. The
@@ -304,6 +308,83 @@ There is no in-flight coalescing, access-scope parameter, or persistent result
 cache. Every request has independent result objects and cancellation. The SDK is
 not an authorization layer; applications must enforce access policy themselves.
 
+The read-only `has_active_work` property includes admitted work and cleanup after
+a caller leaves. `is_closed` indicates that the facade is terminal and its attached
+controller has drained. Neither property starts a controller or opens a session.
+These are lifecycle observations, not substitutes for closing admission and
+awaiting `close_async()` before memory replacement.
+
+## REST and backend lifecycle
+
+| POST endpoint | Shared request | Shared response |
+|---|---|---|
+| `/api/analytics/attacks/query` | `AttackAnalyticsQuery` | `AttackAnalyticsReport` |
+| `/api/analytics/attacks/results` | `AttackAnalyticsResultsQuery` | `AttackAnalyticsResults` |
+| `/api/analytics/attacks/facets` | `AttackAnalyticsFacetQuery` | `AttackAnalyticsFacets` |
+
+The routes await the corresponding SDK method. They do not calculate statistics,
+rebuild filters, hydrate attacks, or recalculate charts for pages/facets. Shared
+Pydantic serialization preserves both `success_rate` and `success_rate_decided`,
+including nested group and cell statistics. The report's first result page and
+`computed_at` come from its coherent SDK read.
+
+Business requests require the caller's packaged `PyRIT-Compatibility-ID` and the
+deployment's normal authentication and authorization. Compare the caller's own
+build identity with `/api/version`; never copy the backend's identity to make an
+incompatible client appear compatible. Runtime readiness/admission, request IDs,
+security headers, the 8,192-byte request-target cap, and the existing body-size
+policy apply. Potentially large filter selections belong in POST bodies, not URLs.
+
+```python
+import asyncio
+
+from pyrit import _compatibility
+from pyrit.models import AttackAnalyticsReport
+
+# client is an authenticated httpx.AsyncClient connected to the backend.
+identity = await asyncio.to_thread(_compatibility.get_compatibility_id)
+response = await client.post(
+    "/api/analytics/attacks/query",
+    headers={_compatibility.COMPATIBILITY_HEADER: identity},
+    json={
+        "group_by": {"name": "targeted_harm_category"},
+        "compare_by": {"name": "attack_type"},
+        "filters": {"outcomes": ["success", "failure"]},
+    },
+)
+response.raise_for_status()
+report = AttackAnalyticsReport.model_validate(response.json())
+```
+
+Malformed inputs return the standard 422 problem response. Invalid or mismatched
+analytics cursors return 400, rather than silently restarting pagination.
+Overload returns 503 with `Retry-After: 1`; execution deadlines return 504.
+Stored-data failures and unexpected errors remain explicit 500 responses, never
+successful empty reports. Outcome-filtered reports retain their ASR* annotation,
+and legal full-budget reports retain `drilldown_unavailable_reason`.
+
+The backend lazily caches a direct, long-lived `AttackResultAnalytics` facade.
+Its async HTTP dependency resolves the synchronous cache on the runtime loop,
+so simultaneous first requests do not construct competing threadpool owners.
+There is no pass-through analytics service class, per-request SDK context, or
+SDK authorization scope. The shared runtime treats analytics cleanup as active
+work even after a timeout response. Live apply rejects busy work, closes admission
+at its existing idle barrier, then drains services and invalidates the SDK cache
+before replacing runtime state. Shutdown drains on the owning event loop before
+disposing memory. Repeated shutdown cancellation cannot release that ownership.
+If analytics closure fails before draining, its cached owner and memory are
+retained, the failure is surfaced, and live apply requires a restart.
+
+Attack History explicitly passes `AttackResultSelection.ALL_RESULTS` to
+`get_attack_results_async`. Two saved result IDs sharing one conversation both
+appear, including retries with different outcomes. History retains its filters,
+recency/UUID ordering, SQL keyset pagination, and page-only conversation-stat
+hydration. Its cursor fingerprint now includes selection mode; an old History
+cursor restarts at the first page under History's existing fallback policy.
+Analytics and History cursors are not interchangeable. Unrelated SDK callers
+still default to `LATEST_PER_CONVERSATION`, and scenario latest-unit/history
+statistics keep their separate population.
+
 ## Bounded profile aggregation and backend limits
 
 For eligible SQLite category, attack-type, and converter-type charts, memory
@@ -318,6 +399,18 @@ Overflow selects the **complete SQL fallback**, never partial totals or sampling
 cohort. The combined-text check happens after fetching the probe. These caps bound
 transferred profiles and SDK work, not SQL scans, intermediate SQL work, or peak
 network bytes.
+
+Profile SQL decodes each distinct raw membership array once, removes duplicate
+members without changing their spellings, and sums weights of equivalent
+profiles before applying the same caps. Every saved result still contributes
+its full weight. For complete normalized attack/converter metadata, SQLite
+checks completeness per identifier instead of per result; incomplete and
+legacy rows retain their embedded metadata. Scalar membership filters use
+indexable set predicates, and scalar facets project their distinct values before
+searching and paging. SQLite 3.35+ uses query-local materialized projections to
+avoid repeated JSON decoding; older SQLite keeps semantically equivalent
+unhinted queries. None of this changes storage, persisted identities, schema,
+global settings, or response caching.
 
 SQLite reports preserve reader warnings about rollback journaling and never enable
 WAL themselves. Choose journaling and deployment settings explicitly outside the
@@ -334,6 +427,101 @@ unchanged default budgets and drive deadline/cleanup transitions with events.
 Focused tests compare the SDK/profile path with the actual SQLite SQL fallback,
 including Unicode, typed absence, duplicate/legacy memberships, and cap boundaries.
 They also exercise weighted aggregation at the profile cap and deterministic
-admission/cancellation/cleanup lifetimes. They are not a 100,000-row REST benchmark
-or evidence of production latency. End-to-end application performance and runtime
-integration require their own validation.
+admission/cancellation/cleanup lifetimes. Backend tests separately exercise native
+session cleanup, reinitialization, actual application routing/middleware, and
+shared-model JSON. These correctness tests are not performance evidence.
+
+## Reproducible REST workload
+
+Run the benchmark in a fresh process from the repository root, after other heavy
+checks have finished. For a development checkout, first create its normal local
+compatibility stamp:
+
+```powershell
+uv run python -m build_scripts.stamp_compatibility --development
+uv run python -m build_scripts.benchmark_attack_analytics --results 100000 --analysts 5 --iterations 6 --output .pytest_cache\analytics-benchmark.json
+```
+
+The script owns a new temporary directory below `.pytest_cache`, a private home
+and configuration, and a new SQLite database built from the current schema.
+It refuses an existing database or initialized memory. It never reads the user's
+configuration/database, runs deployment migrations, or changes global database
+settings. WAL is explicitly enabled only on its disposable database. The actual
+runtime starts with local technique registration, then closes services and memory
+before the temporary directory is removed. No server or frontend is started.
+
+The deterministic data contains 100,000 result IDs, two per conversation, all
+outcomes and result roles, 100 skewed operations (the largest exceeds 60%), 50
+operators, 40 overlapping harm categories, 64 shared identifier configurations,
+eight models, overlapping converter pairs, known empty pipelines, supported
+legacy documents, missing identifiers, and 100,000 distinct case labels.
+Duplicated memberships must not multiply counts. An independent native async
+writer updates outcomes/recency and inserts IDs sharing an existing conversation.
+
+Five independent HTTPX clients concurrently request both categorical report
+shapes, high-cardinality label facets, first result pages, and actual
+`next_cursor` continuations. Report shapes have separate distributions and gates.
+No identity/request coalescing, row sampling, or deadline overrides are used.
+Metadata profile limits remain transfer/work bounds; overflow still uses the
+complete SQL fallback.
+
+Timing includes request encoding, all production middleware (with external auth
+disabled only in the scratch process), admission/queueing, the real SDK and SQL,
+native session cleanup, shared response serialization, and client model
+validation. It excludes schema/seeding, runtime startup/shutdown, external
+authentication I/O, TCP/TLS/network, frontend/static serving, and final count
+verification. "Cold" means the first request of each class after seeding/startup,
+not flushed OS or SQLite caches.
+
+JSON output records environment/package versions, data shape, every measured
+sample, first-request/cold time, nearest-rank p95 and maximum per class, request
+success/error counts, concurrent callers, and committed writes. Final SQL and
+REST outcome counts must agree with the exact seed/write ledger. Pages must have
+distinct IDs, bounded output and correct recency/UUID order; continuations must
+follow the preceding page's cursor and seek past its anchor.
+
+The process exits nonzero for request/write errors, missing workload classes or
+continuations, incorrect counts/output, or p95 above **2 seconds per report
+shape** or **0.5 seconds for facets, first pages, or continuations**. Errors remain
+in timing samples and cannot pass through successful-only sampling. Smaller
+`--results`, `--analysts`, or `--iterations` settings are useful for smoke checks
+but are explicitly marked non-representative and do not establish the 100k/5-user
+performance gate.
+
+### Recorded 100k gate
+
+Measured on **2026-10-12 at 03:50 UTC**, with the command above, against this
+changeset on base `40ac8ccf55e952d73b2a6425e754ba923220943c`. The local development
+compatibility stamp was `1.2.0.dev0+g40ac8ccf55e952d73b2a6425e754ba923220943c`;
+the working tree included the changes being measured.
+
+Environment: Windows 11 build 26200, 16 logical CPUs, AMD64 family 25/model 117;
+Python 3.14.4, SQLite 3.50.4, FastAPI 0.142.2, Starlette 1.7.0, Pydantic 2.13.5,
+SQLAlchemy 2.1.1, aiosqlite 0.22.1, and HTTPX 0.28.1. WAL applied only to the
+disposable database. The data shape and timing inclusions/exclusions are those
+described above.
+
+| Workload | Cold (s) | Concurrent p95 (s) | Maximum (s) | Successful / error requests |
+|---|---:|---:|---:|---:|
+| Harm category x attack type report | 0.521531 | 1.709813 | 1.751549 | 31 / 0 |
+| Harm category x converter type report | 0.539402 | 1.775586 | 1.799107 | 31 / 0 |
+| Case-label facets | 0.104245 | 0.379066 | 0.388970 | 31 / 0 |
+| First result pages | 0.012752 | 0.282331 | 0.304525 | 31 / 0 |
+| Actual cursor continuations | 0.015458 | 0.091053 | 0.103298 | 31 / 0 |
+
+Each class has one cold request and 30 concurrent samples; p95/max refer to the
+concurrent samples. Both final verification requests also succeeded, for **157
+successful requests and zero errors** overall. The concurrent phase took
+17.842994 seconds and reached five overlapping callers. All 107 write
+transactions committed: 107 outcome updates and 53 inserts, with write p95
+0.151302 seconds and maximum 0.371907 seconds. Final SQL and both REST reports
+matched the exact **100,053-result** write ledger. Temporary databases were removed.
+
+The first measurement failed: report p95s were 2.985537/5.026765 seconds, facets
+1.360661 seconds, first pages 0.773046 seconds, and continuations 0.225980 seconds,
+with 20 HTTP 504 responses. SQL profiling identified repeated profile/fallback
+work, repeated identifier/JSON interpretation, and Unicode callbacks on ASCII
+text. The query-local changes above addressed those costs. The data distribution,
+concurrency, production budgets, profile caps, and latency thresholds were not
+relaxed. These measurements establish this local workload result, not a latency
+guarantee for other machines or deployments.

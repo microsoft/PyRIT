@@ -69,6 +69,24 @@ async def mixed_results(sqlite_instance: SQLiteMemory) -> None:
     )
 
 
+async def test_lifecycle_status_is_lazy_and_shared_after_binding_async(sqlite_instance: SQLiteMemory) -> None:
+    first = AttackResultAnalytics(memory=sqlite_instance)
+    unused = AttackResultAnalytics(memory=sqlite_instance)
+    assert not first.has_active_work
+    assert not first.is_closed
+    assert first._controller is None
+    await unused.close_async()
+    assert unused.is_closed
+    assert not first.is_closed
+    async with first:
+        async with AttackResultAnalytics(memory=sqlite_instance) as second:
+            assert not first.has_active_work
+            assert not second.is_closed
+        assert first.is_closed
+        assert not first.has_active_work
+    assert second.is_closed
+
+
 @pytest.mark.usefixtures("mixed_results")
 async def test_all_saved_ids_and_outcomes_use_raw_decided_denominator(analytics: AttackResultAnalytics) -> None:
     report = await analytics.query_async()

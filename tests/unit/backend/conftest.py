@@ -3,16 +3,33 @@
 
 """Backend compatibility fixtures independent of a packaged workspace stamp."""
 
-from collections.abc import Iterator
+from collections.abc import AsyncGenerator, Iterator
+from functools import partial
 from unittest.mock import patch
 
 import pytest
 
 from pyrit import _compatibility
+from pyrit.analytics import AttackResultAnalytics
+from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.backend.main import app
+from pyrit.backend.services.analytics_service import close_analytics_service_async, get_analytics_service
 from pyrit.backend.services.attack_service import get_attack_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
+from pyrit.memory import SQLiteMemory
+
+
+@pytest.fixture
+async def analytics_service(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResultAnalytics, None]:
+    """Use real isolated memory with finite correctness budgets, not production latency assertions."""
+    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
+    assert get_analytics_service.cache_info().currsize == 0
+    with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
+        try:
+            yield get_analytics_service()
+        finally:
+            await close_analytics_service_async()
 
 
 @pytest.fixture(autouse=True)

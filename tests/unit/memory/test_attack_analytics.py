@@ -208,6 +208,96 @@ async def test_non_ascii_case_variants_share_group_filter_and_facet_keys(sqlite_
         assert (await connection.execute(select(UnicodeLower(literal("\u00c9COLE"))))).scalar_one() == "\u00e9cole"
 
 
+@pytest.mark.parametrize(
+    ("value", "fallback"),
+    [
+        ("ABC", False),
+        ("", False),
+        ("Line\nTAB\tEND\x7f", False),
+        ("\u00c9COLE", True),
+        ("\u0130\u1e9e\u03a3", True),
+        ("\U0001f600ABC", True),
+        ("ABC\0DEF", True),
+        (None, True),
+        (123, True),
+        (1e20, True),
+        (b"ABC", True),
+    ],
+)
+async def test_sqlite_lower_avoids_callbacks_only_when_native_lower_is_exact(
+    *, sqlite_instance: SQLiteMemory, value: str | bytes | int | float | None, fallback: bool
+) -> None:
+    expected = SQLiteMemory._unicode_lower(value)
+    with patch.object(SQLiteMemory, "_unicode_lower", wraps=SQLiteMemory._unicode_lower) as lower:
+        async with await sqlite_instance.get_session_async() as session:
+            actual = (await session.execute(select(UnicodeLower(literal(value))))).scalar_one()
+    assert actual == expected
+    assert lower.call_count == int(fallback)
+
+
+async def test_scalar_facet_filter_uses_index_and_preserves_exact_any_values(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            make_result(index=1, operation="operation-a", labels={"case": "first"}),
+            make_result(index=2, operation="operation-b", labels={"case": "second"}),
+            make_result(index=3, operation="OPERATION-A", labels={"case": "excluded"}),
+            make_result(index=4, operation=None, labels={"case": "missing"}),
+        ]
+    )
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=["operation-a", "operation-b"])]}
+    )
+    query = AttackAnalyticsFacetQuery(
+        filters=filters, dimension=AttackAnalyticsDimension(name="label", label_key="case"), search="s"
+    )
+    statement = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=filters).facet(query)
+    compiled = str(statement.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    async with await sqlite_instance.get_session_async() as session:
+        plan = await session.execute(text("EXPLAIN QUERY PLAN " + compiled))
+        steps = [row[3] for row in plan]
+    assert any("SEARCH analytics_results" in step and "operation=?" in step for step in steps), steps
+    result = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {item.key.value for item in result.items} == {"first", "second"}
+
+
+@pytest.mark.parametrize("version", [(3, 34, 0), (3, 35, 0)])
+@pytest.mark.parametrize("search", ["", "k", "\u00e9"])
+async def test_scalar_facet_materialization_preserves_exact_keys_absence_and_paging(
+    *, sqlite_instance: SQLiteMemory, version: tuple[int, int, int], search: str
+) -> None:
+    values = [None, "", "A", "a", "K", "\u212a", "\u00c9", "\u00e9", "A"]
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            make_result(index=index, labels={} if value is None else {"case": value})
+            for index, value in enumerate(values, 1)
+        ]
+    )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name="label", label_key="case"), search=search, limit=2
+    )
+    expected = sorted(
+        {
+            ("missing", "") if value is None else ("value", value)
+            for value in values
+            if not search or (value is not None and search in value.lower())
+        }
+    )
+    actual = []
+    with patch("pyrit.memory.attack_analytics_query.sqlite3.sqlite_version_info", version):
+        statement = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=query.filters).facet(query)
+        sql = str(statement.compile(dialect=sqlite.dialect()))
+        assert ("AS MATERIALIZED" in sql) == (version >= (3, 35, 0))
+        while True:
+            page = await reader.facets_async(query=query, control=control())
+            actual.extend((item.key.kind.value, item.key.value or "") for item in page.items)
+            if not page.has_more:
+                break
+            query.offset += len(page.items)
+            assert query.offset < len(expected)
+    assert actual == expected
+
+
 async def test_whitespace_empty_category_array_matches_missing_filter(sqlite_instance: SQLiteMemory) -> None:
     await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result()])
     async with sqlite_instance._get_async_engine().begin() as connection:

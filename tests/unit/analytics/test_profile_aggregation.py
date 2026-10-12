@@ -17,6 +17,7 @@ from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._profile_aggregation import ProfileAggregation
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsProfile, RawAnalyticsReport
+from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import (
     AttackAnalyticsDimension,
@@ -165,6 +166,45 @@ async def test_weighted_unicode_and_legacy_profiles_equal_actual_sql(
     await ProfileAggregation.populate_async(report=compact, query=query, control=control())
     _assert_same_chart(actual=compact, expected=sql)
     assert compact.profiles == sources
+
+
+async def test_duplicate_and_reordered_arrays_share_profiles_without_losing_result_weights(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    variants = [
+        (["Privacy", "Safety"], ["Alpha", "Beta"]),
+        (["Safety", "Privacy", "Privacy"], ["Beta", "Alpha", "Alpha"]),
+        (["Privacy", "Safety", "Safety"], ["Beta", "Beta", "Alpha"]),
+    ]
+    results = [
+        make_result(
+            index=outcome_index * len(variants) + variant_index + 1,
+            outcome=outcome,
+            categories=categories,
+            converters=converters,
+        )
+        for outcome_index, outcome in enumerate(AttackOutcome)
+        for variant_index, (categories, converters) in enumerate(variants)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
+        compare_by=AttackAnalyticsDimension(name="converter_type"),
+    )
+    sql = await reader.report_async(query=query, control=control())
+    with (
+        patch.object(reader, "MAX_COMPACT_PROFILES", len(AttackOutcome)),
+        patch.object(AttackAnalyticsQueryCompiler, "matrix", side_effect=AssertionError("Profiles must fit")),
+    ):
+        compact = await reader.report_async(query=query, control=control(), use_compact_profiles=True)
+    assert compact.profiles is not None
+    assert len(compact.profiles) == 4
+    assert sum(profile["weight"] for profile in compact.profiles) == len(results) == 12
+    assert all(profile["source0"] == '["Privacy","Safety"]' for profile in compact.profiles)
+    assert all(profile["source1"] == '["Alpha","Beta"]' for profile in compact.profiles)
+    await ProfileAggregation.populate_async(report=compact, query=query, control=control())
+    _assert_same_chart(actual=compact, expected=sql)
 
 
 @pytest.mark.parametrize("compare", [None, "converter_type", "attack_type"])

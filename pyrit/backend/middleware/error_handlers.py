@@ -13,12 +13,40 @@ from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
 from pyrit.backend.models.common import FieldError, ProblemDetail
+from pyrit.exceptions.analytics_exception import AnalyticsException
 
 logger = logging.getLogger(__name__)
 
 
 def register_error_handlers(app: FastAPI) -> None:
     """Register all error handlers with the FastAPI app."""
+
+    @app.exception_handler(AnalyticsException)
+    async def analytics_exception_handler_async(request: Request, exc: AnalyticsException) -> JSONResponse:
+        """
+        Surface overload, deadlines, and stored-data failures without empty-report fallbacks.
+
+        Returns:
+            JSONResponse: The shared error contract, with retry guidance for overload.
+        """
+        logger.warning(
+            "Analytics request failed on %s request_id=%s: %s",
+            request.url.path,
+            getattr(request.state, "request_id", None),
+            exc.message,
+        )
+        problem = ProblemDetail(
+            type="/errors/analytics",
+            title="Analytics unavailable",
+            status=exc.status_code,
+            detail=exc.message,
+            instance=str(request.url.path),
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=problem.model_dump(exclude_none=True),
+            headers={"Retry-After": "1"} if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE else None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(  # pyrit-async-suffix-exempt

@@ -640,8 +640,8 @@ class AttackAnalyticsReader:
         Bind pagination to the validated filters and distinct-result selection mode.
 
         Returns:
-            str: A cursor fingerprint that cannot be reused for History's legacy
-                newest-result-per-conversation selection.
+            str: A cursor fingerprint for the analytics cohort and selection mode.
+                History retains its own filter representation and cursor fallback policy.
         """
         return fingerprint_filters(
             filters={"filters": filters.model_dump(mode="json"), "result_selection": "all_results"}
