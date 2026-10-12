@@ -226,7 +226,7 @@ class ScenarioProgressCounts(BaseModel):
         if self.succeeded > self.completed:
             raise ValueError("succeeded must not exceed completed.")
         if self.success_percentage is not None:
-            expected = int((self.succeeded / self.completed) * 100) if self.completed else 0
+            expected = self.succeeded * 100 // self.completed if self.completed else 0
             if self.success_percentage != expected:
                 raise ValueError("success_percentage must agree with succeeded and completed.")
         if self.outcomes is not None:

@@ -1004,12 +1004,16 @@ class TestScenarioPartialAttackCompletion:
         assert len(result.attack_results["attack_2"]) == 3
         assert len(result.attack_results["attack_3"]) == 1
 
-    async def test_concurrent_partial_failures_resume_without_duplicate_results(self, mock_objective_target):
+    @pytest.mark.timeout(60)
+    async def test_concurrent_partial_failures_resume_without_duplicate_results(
+        self, *, mock_objective_target: MagicMock
+    ) -> None:
         """
         Concurrent partial failures should surface together and resume only unfinished objectives.
 
         Three attacks start together. Two persist one result each before failing, while the
         third succeeds. A second run must execute only the two unfinished objectives.
+        The test watchdog bounds deadlocks without cancelling slow database reads within a run.
         """
         attack_a = create_mock_atomic_attack("attack-a", ["a-complete", "a-retry"])
         attack_b = create_mock_atomic_attack("attack-b", ["b-complete", "b-retry"])
@@ -1098,7 +1102,7 @@ class TestScenarioPartialAttackCompletion:
             wraps=scenario._memory.update_scenario_run_state_async,
         ) as update_state:
             with pytest.raises(ExceptionGroup) as exc_info:
-                await asyncio.wait_for(scenario.run_async(), timeout=10)
+                await scenario.run_async()
 
             assert all(isinstance(error, ScenarioPartialFailureException) for error in exc_info.value.exceptions)
             partial_failures = {
@@ -1116,7 +1120,7 @@ class TestScenarioPartialAttackCompletion:
             assert failed_result.scenario_run_state == ScenarioRunState.FAILED
             assert failed_result.number_tries == 1
 
-            final_result = await asyncio.wait_for(scenario.run_async(), timeout=10)
+            final_result = await scenario.run_async()
 
         assert final_result.scenario_run_state == ScenarioRunState.COMPLETED
         assert final_result.number_tries == 2

@@ -254,6 +254,12 @@ _HISTORIES = {
         plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
         attempts=[],
     ),
+    "ratio_that_floating_point_truncates_low": _History(
+        attempts=[
+            _Attempt("attack", f"O{index}", AttackOutcome.SUCCESS if index < 29 else AttackOutcome.FAILURE)
+            for index in range(100)
+        ],
+    ),
     "role_aware_accounting": _History(
         plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
         attempts=[
@@ -290,6 +296,7 @@ _EXPECTED_OVERALL = {
     "identifier_only_then_attributed_only": 100,
     "display_groups": 50,
     "empty_history": None,
+    "ratio_that_floating_point_truncates_low": 29,
     "role_aware_accounting": 100,
 }
 
