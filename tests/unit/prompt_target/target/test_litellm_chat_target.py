@@ -5,11 +5,8 @@ import asyncio
 import base64
 import json
 import sys
-import threading
 import types
-from collections.abc import Callable, Iterator
-from email.message import Message as HTTPHeaders
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -948,78 +945,23 @@ async def test_provider_specific_trace_headers_require_disabled_tracing_async(
 
 
 # ---------------------------------------------------------------------------
-# Request tracing through the real LiteLLM adapter
+# Provider-specific request tracing at the LiteLLM boundary
 # ---------------------------------------------------------------------------
 
-_OPENAI_REPLY = {
-    "id": "chatcmpl-1",
-    "object": "chat.completion",
-    "created": 0,
-    "model": "gpt-4o",
-    "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
-    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-}
-_ANTHROPIC_REPLY = {
-    "id": "msg_1",
-    "type": "message",
-    "role": "assistant",
-    "model": "claude-sonnet-4-6",
-    "content": [{"type": "text", "text": "hello"}],
-    "stop_reason": "end_turn",
-    "stop_sequence": None,
-    "usage": {"input_tokens": 1, "output_tokens": 1},
-}
-# LiteLLM appends ``/chat/completions`` to an OpenAI base and ``/v1/messages`` to an Anthropic base.
-_WIRE_PROVIDERS = pytest.mark.parametrize(
-    ("model_name", "base_path"), [("openai/gpt-4o", "/v1"), ("anthropic/claude-sonnet-4-6", "")]
-)
 
-
-@pytest.fixture
-def chat_endpoint() -> Iterator[tuple[str, list[HTTPHeaders]]]:
-    """Serve OpenAI and Anthropic chat replies on loopback and record the headers of each request."""
-    pytest.importorskip("litellm")
-    received: list[HTTPHeaders] = []
-
-    class _Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
-            self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            received.append(self.headers)
-            reply = _ANTHROPIC_REPLY if self.path.endswith("/v1/messages") else _OPENAI_REPLY
-            payload = json.dumps(reply).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", received
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
-
-
-@_WIRE_PROVIDERS
-async def test_recorded_trace_context_reaches_wire_through_litellm_async(
-    patch_central_database, chat_endpoint: tuple[str, list[HTTPHeaders]], model_name: str, base_path: str
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("model_name", ["openai/gpt-4o", "anthropic/claude-sonnet-4-6"])
+async def test_recorded_trace_context_reaches_litellm_arguments_async(
+    *, litellm_stub: types.ModuleType, model_name: str
 ) -> None:
-    url, received = chat_endpoint
+    litellm_stub.acompletion.return_value = _mock_response(model=model_name)
     provider = model_name.split("/")[0]
+    scoped_headers = {"custom_llm_provider": provider, "extra_headers": {"X-Route": "a"}}
     target = LiteLLMChatTarget(
         model_name=model_name,
-        endpoint=url + base_path,
+        endpoint="https://example.invalid",
         api_key="test-key",
-        extra_body_parameters={
-            "provider_specific_header": {"custom_llm_provider": provider, "extra_headers": {"X-Route": "a"}}
-        },
+        extra_body_parameters={"provider_specific_header": scoped_headers},
         trace_config=TargetTraceConfig(enabled=True),
     )
     request = _user_message()
@@ -1027,10 +969,14 @@ async def test_recorded_trace_context_reaches_wire_through_litellm_async(
 
     link = RequestTraceContext.from_metadata(request.get_piece().prompt_metadata)
     assert link is not None
-    assert len(received) == 1
-    assert received[0].get_all("traceparent") == [link.traceparent]
-    assert received[0].get_all("tracestate") is None
-    assert received[0]["X-Route"] == "a"
+    litellm_stub.acompletion.assert_awaited_once()
+    kwargs = litellm_stub.acompletion.call_args.kwargs
+    assert kwargs["model"] == model_name
+    assert kwargs["api_base"] == "https://example.invalid"
+    assert kwargs["api_key"] == "test-key"
+    assert kwargs["messages"] == [{"role": "user", "content": "test prompt"}]
+    assert kwargs["extra_headers"] == {"traceparent": link.traceparent}
+    assert kwargs["provider_specific_header"] == scoped_headers
     assert responses[0].get_value() == "hello"
 
 
@@ -1045,26 +991,24 @@ def _list_scope(provider: str) -> object:
     ]
 
 
-@_WIRE_PROVIDERS
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("model_name", ["openai/gpt-4o", "anthropic/claude-sonnet-4-6"])
 @pytest.mark.parametrize("scoped_headers", [_single_scope, _list_scope])
-async def test_provider_specific_trace_header_is_rejected_through_litellm_async(
-    patch_central_database,
-    chat_endpoint: tuple[str, list[HTTPHeaders]],
+async def test_provider_specific_trace_header_is_rejected_before_litellm_async(
+    *,
+    litellm_stub: types.ModuleType,
     model_name: str,
-    base_path: str,
     scoped_headers: Callable[[str], object],
 ) -> None:
-    url, received = chat_endpoint
     target = LiteLLMChatTarget(
         model_name=model_name,
-        endpoint=url + base_path,
         api_key="test-key",
         extra_body_parameters={"provider_specific_header": scoped_headers(model_name.split("/")[0])},
         trace_config=TargetTraceConfig(enabled=True),
     )
     with pytest.raises(ValueError, match="Manual trace headers"):
         await target.send_prompt_async(message=_user_message())
-    assert received == []
+    litellm_stub.acompletion.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

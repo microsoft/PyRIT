@@ -20,12 +20,15 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
+from dataclasses import replace
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pyrit.common import get_global_default_values
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -50,12 +53,65 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    """
+    Capture supplied factory arguments before a helper expands them into runtime settings.
+
+    Returns:
+        Callable[_P, _R]: The original callable with creation-input capture.
+    """
+    signature = inspect.signature(method)
+
+    @wraps(method)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        name = wrapped.__name__
+        arguments = signature.bind(*args, **kwargs).arguments
+        owner = arguments.pop(next(iter(signature.parameters)))
+        calls = []
+        if name == "__init__":
+            call = type(owner).__name__
+        elif isinstance(owner, AttackTechniqueFactory):
+            calls = owner.get_creation_calls()
+            call = name
+        else:
+            call = f"{owner.__name__}.{name}"
+        result = method(*args, **kwargs)
+        factory = result if isinstance(result, AttackTechniqueFactory) else owner
+        if not isinstance(factory, AttackTechniqueFactory):
+            raise TypeError("Creation capture requires an AttackTechniqueFactory constructor or copy method")
+        factory._creation_calls = [*calls, (call, _copy_creation_value(arguments))]
+        return result
+
+    return wrapped
+
+
+def _copy_creation_value(value: Any) -> Any:
+    """
+    Copy input containers without copying live components.
+
+    Returns:
+        Any: Independent containers with live values retained by reference.
+    """
+    if isinstance(value, dict):
+        return {key: _copy_creation_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_creation_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_creation_value(item) for item in value)
+    return value
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -71,6 +127,9 @@ class AttackTechniqueFactory(Identifiable):
     construction time, catching typos and incompatible parameter names early.
     """
 
+    _creation_calls: list[tuple[str, dict[str, Any]]]
+
+    @_capture_creation
     def __init__(
         self,
         *,
@@ -189,6 +248,7 @@ class AttackTechniqueFactory(Identifiable):
         self._validate_score_feedback_override()
 
     @classmethod
+    @_capture_creation
     def with_simulated_conversation(
         cls,
         *,
@@ -466,6 +526,14 @@ class AttackTechniqueFactory(Identifiable):
         """The registry name for this technique."""
         return self._name
 
+    def get_creation_kwargs(self) -> dict[str, Any]:
+        """Return a copy of the supplied factory arguments, without adding defaults."""
+        return _copy_creation_value(self._creation_calls[-1][1])
+
+    def get_creation_calls(self) -> list[tuple[str, dict[str, Any]]]:
+        """Return the supplied constructor and copy-method inputs, without resolved defaults."""
+        return [(call, _copy_creation_value(arguments)) for call, arguments in self._creation_calls]
+
     @property
     def description(self) -> str | None:
         """Short human-readable summary of what the technique does, or None."""
@@ -593,6 +661,7 @@ class AttackTechniqueFactory(Identifiable):
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters
 
+    @_capture_creation
     def with_attack_kwargs(self, *, attack_kwargs: dict[str, Any]) -> AttackTechniqueFactory:
         """
         Return a copy with the supplied attack constructor arguments merged in.
@@ -644,11 +713,41 @@ class AttackTechniqueFactory(Identifiable):
             raise ValueError(f"Factory '{self._name}' requires an integer max_turns to extend history")
         return self.with_attack_kwargs(attack_kwargs={"max_turns": configured + turns})
 
+    def with_prepended_history_converters(self, *, enabled: bool) -> AttackTechniqueFactory:
+        """
+        Return a copy with request conversion of prepended history enabled or disabled.
+
+        Existing role scope and history formatting are preserved when enabled.
+
+        Args:
+            enabled (bool): Whether to apply request converters to prepended messages.
+
+        Returns:
+            AttackTechniqueFactory: A configured copy, or this factory when enabled.
+
+        Raises:
+            ValueError: If the attack cannot accept a prepended-conversation policy.
+        """
+        if enabled:
+            return self
+        if "prepended_conversation_config" not in self._compatibility_helper.accepted_params:
+            raise ValueError(f"Factory '{self._name}' cannot configure prepended history conversion")
+        config = self._attack_kwargs.get("prepended_conversation_config")
+        if config is None:
+            _, config = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="prepended_conversation_config"
+            )
+        config = config or PrependedConversationConfig()
+        return self.with_attack_kwargs(
+            attack_kwargs={"prepended_conversation_config": replace(config, apply_converters_to_roles=[])}
+        )
+
     @property
     def scoring_config_type(self) -> type | None:
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._compatibility_helper.scoring_config_type
 
+    @_capture_creation
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
         """
         Return a copy of this factory with static guidance layered onto its adversarial prompt.

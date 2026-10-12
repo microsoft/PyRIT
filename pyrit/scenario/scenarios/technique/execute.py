@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
@@ -50,7 +49,7 @@ if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
 
 
-@cache
+@AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_execute_technique() -> type[ScenarioTechnique]:
     """
     Build a catalog with one deterministic default and all registered techniques.
@@ -140,6 +139,14 @@ class Execute(Scenario):
                 param_type=str,
                 default=None,
             ),
+            Parameter(
+                name="apply_converters_to_prepended_history",
+                description=(
+                    "Apply request converters to prepended history again. New outgoing turns are always converted."
+                ),
+                param_type=bool,
+                default=False,
+            ),
         ]
 
     def _validate_runtime_configuration(self) -> None:
@@ -225,6 +232,10 @@ class Execute(Scenario):
         if not groups:
             raise ValueError(f"Technique '{name}' has no compatible seed group")
         factory = factory.with_extra_turns(turns=get_prepended_turn_count(groups[0].prepended_conversation))
+        if groups[0].prepended_conversation:
+            factory = factory.with_prepended_history_converters(
+                enabled=self.params["apply_converters_to_prepended_history"]
+            )
         converters = self._technique_converters.get(name)
         technique = factory.create(
             objective_target=context.objective_target,

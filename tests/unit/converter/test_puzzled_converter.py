@@ -163,6 +163,114 @@ async def test_crossword_falls_back_to_anagram_when_it_cannot_hide_the_word():
     assert "malware" not in result.output_text.lower()
 
 
+# --- non-ASCII words end to end ----------------------------------------------
+
+
+def _section(output: str, start: str, end: str) -> str:
+    return output.split(start, 1)[1].split(end, 1)[0].strip()
+
+
+def _clue_lengths(output: str) -> list[int]:
+    clues = _section(output, "Clues (one per hidden word, giving its length and part of speech):", "Follow these")
+    return [int(line.split(" = ", 1)[1].split("-letter", 1)[0]) for line in clues.splitlines()]
+
+
+def _grid_contains(grid: list[list[str]], word: str) -> bool:
+    # Try every start cell in each of the eight directions a word search may use.
+    size = len(grid)
+    directions = [(0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+    for row in range(size):
+        for col in range(size):
+            for row_delta, col_delta in directions:
+                cells = [(row + i * row_delta, col + i * col_delta) for i in range(len(word))]
+                if all(0 <= r < size and 0 <= c < size for r, c in cells) and all(
+                    grid[r][c] == letter for (r, c), letter in zip(cells, word, strict=True)
+                ):
+                    return True
+    return False
+
+
+async def test_anagram_encodes_exactly_the_letters_the_clues_promise():
+    # "ß" uppercases to "SS"; encoding it that way would put 12 letters behind clues for 6 + 5.
+    result = await PuzzledConverter(puzzle_type="anagram", num_to_mask=2, seed=42).convert_async(prompt="straße tasse")
+    puzzle = _section(result.output_text, "Puzzle:", "Clues")
+    assert sorted(_clue_lengths(result.output_text)) == [5, 6]
+    assert len(puzzle) == 11
+    assert sorted(puzzle) == sorted("STRAßETASSE")
+
+
+async def test_crossword_lines_match_their_length_clues():
+    result = await PuzzledConverter(puzzle_type="crossword", num_to_mask=2, seed=42).convert_async(
+        prompt="straße tasse"
+    )
+    lines = _section(result.output_text, "Puzzle:", "Clues").splitlines()
+    assert [len(line.split(". ", 1)[1]) for line in lines] == _clue_lengths(result.output_text)
+
+
+async def test_word_search_hides_words_at_their_clued_length():
+    result = await PuzzledConverter(puzzle_type="word_search", num_to_mask=2, seed=42).convert_async(
+        prompt="straße tasse"
+    )
+    grid = [row.split(" ") for row in _section(result.output_text, "Puzzle:", "Clues").splitlines()]
+    assert sorted(_clue_lengths(result.output_text)) == [5, 6]
+    # Each word occupies exactly as many cells as its clue says, keeping its "ß".
+    assert _grid_contains(grid, "STRAßE")
+    assert _grid_contains(grid, "TASSE")
+    assert not _grid_contains(grid, "STRASSE")
+
+
+@pytest.mark.parametrize("puzzle_type", ["word_search", "anagram", "crossword"])
+@pytest.mark.parametrize(
+    "prompt, instruction",
+    [
+        # Unicode case variants of one word share a placeholder.
+        ("ÉCOLE école", "[WORD1] [WORD1]"),
+        # Dotted "I" and dotless "ı" fold to different words, so with one mask the other stays.
+        ("KIŞ kış", "[WORD1] kış"),
+    ],
+)
+async def test_unicode_case_variants_convert_for_every_puzzle_type(puzzle_type, prompt, instruction):
+    result = await PuzzledConverter(puzzle_type=puzzle_type, num_to_mask=1, seed=0).convert_async(prompt=prompt)
+    assert _section(result.output_text, "Instruction with hidden words:", "The hidden words are") == instruction
+
+
+@pytest.mark.parametrize("puzzle_type", ["word_search", "anagram", "crossword"])
+@pytest.mark.parametrize("joiner", ["\u200c", "\u200d"])
+async def test_joined_words_are_never_partially_masked_async(*, puzzle_type: str, joiner: str) -> None:
+    joined_word = f"अक्{joiner}षर"
+    converter = PuzzledConverter(puzzle_type=puzzle_type, num_to_mask=3, seed=42)
+    with pytest.raises(ValueError, match="no maskable words"):
+        await converter.convert_async(prompt=joined_word)
+
+    result = await converter.convert_async(prompt=f"garden {joined_word} now")
+    instruction = _section(result.output_text, "Instruction with hidden words:", "The hidden words are")
+    assert instruction == f"[WORD1] {joined_word} [WORD2]"
+    assert _clue_lengths(result.output_text) == [6, 3]
+
+
+@pytest.mark.parametrize("puzzle_type", ["word_search", "anagram", "crossword"])
+@pytest.mark.parametrize("words", [("ılık", "ilik"), ("ilik", "ılık")])
+async def test_puzzles_preserve_distinct_case_folded_words_async(*, puzzle_type: str, words: tuple[str, str]) -> None:
+    result = await PuzzledConverter(puzzle_type=puzzle_type, num_to_mask=2, seed=42).convert_async(
+        prompt=" ".join(words)
+    )
+    instruction = _section(result.output_text, "Instruction with hidden words:", "The hidden words are")
+    assert instruction == "[WORD1] [WORD2]"
+    assert _clue_lengths(result.output_text) == [4, 4]
+    puzzle = _section(result.output_text, "Puzzle:", "Clues")
+    if puzzle_type == "word_search":
+        grid = [row.split(" ") for row in puzzle.splitlines()]
+        assert _grid_contains(grid, "ıLıK")
+        assert _grid_contains(grid, "ILIK")
+    elif puzzle_type == "anagram":
+        assert sorted(puzzle) == sorted("ıLıKILIK")
+    else:
+        encoded_words = [line.split(". ", 1)[1] for line in puzzle.splitlines()]
+        assert encoded_words[0] != encoded_words[1]
+        for word, encoded in zip(words, encoded_words, strict=True):
+            assert ("ı" in encoded) == ("ı" in word)
+
+
 # --- optional LLM semantic clues -------------------------------------------
 
 

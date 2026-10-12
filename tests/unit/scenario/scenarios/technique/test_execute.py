@@ -3,6 +3,7 @@
 
 """Tests for single-technique execution, history, retries, and resume."""
 
+import base64
 import importlib
 import uuid
 from collections.abc import Iterator
@@ -11,8 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.analytics import compute_scenario_statistics
 from pyrit.converter import Base64Converter
-from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialAttackResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -29,6 +33,7 @@ from pyrit.models import (
     RequestTraceContext,
     Score,
 )
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
@@ -110,6 +115,308 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    @pytest.mark.parametrize("retries", [0, 1])
+    @pytest.mark.parametrize("baked", [False, True])
+    @pytest.mark.parametrize("convert_history", [None, False, True])
+    @pytest.mark.parametrize("trailing_user", [False, True])
+    @pytest.mark.parametrize("editable_history", [False, True])
+    async def test_history_conversion_policy_at_target_boundary_async(
+        self,
+        *,
+        scorer: MagicMock,
+        retries: int,
+        baked: bool,
+        convert_history: bool | None,
+        trailing_user: bool,
+        editable_history: bool,
+    ) -> None:
+        memory = CentralMemory.get_memory_instance()
+        history_id = str(uuid.uuid4())
+        received = "c29ydCBhIGxpc3Q="
+        await memory.add_message_to_memory_async(
+            request=MessagePiece(
+                role="user",
+                original_value="sort a list",
+                converted_value=received,
+                conversation_id=history_id,
+            ).to_message()
+        )
+        await memory.add_message_to_memory_async(
+            request=MessagePiece(
+                role="assistant",
+                original_value="prior response",
+                conversation_id=history_id,
+            ).to_message()
+        )
+        if trailing_user:
+            await memory.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="user",
+                    original_value="sort a list",
+                    converted_value=received,
+                    conversation_id=history_id,
+                ).to_message()
+            )
+        before = [
+            message.model_dump()
+            for message in await memory.get_conversation_messages_async(
+                conversation_id=history_id,
+            )
+        ]
+        converter = Base64Converter()
+        kwargs = (
+            {
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[converter]),
+                )
+            }
+            if baked
+            else {}
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+            [
+                AttackTechniqueFactory(
+                    name="history_test",
+                    attack_class=PromptSendingAttack,
+                    attack_kwargs=kwargs,
+                    supports_additional_request_converters=True,
+                )
+            ]
+        )
+        params = {} if convert_history is None else {"apply_converters_to_prepended_history": convert_history}
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(
+                    supports_multi_turn=True,
+                    supports_editable_history=editable_history,
+                    supports_multi_message_pieces=True,
+                ),
+            )
+        )
+        scenario = _scenario(
+            scorer=scorer,
+            target=target,
+            scenario_techniques=["history_test"],
+            prepended_conversation_id=history_id,
+            retries_on_objective_failure=retries,
+            technique_converters={} if baked else {"history_test": [converter]},
+            **params,
+        )
+        scorer.score_async.return_value = [
+            Score(
+                score_value="false",
+                score_type="true_false",
+                score_rationale="not achieved",
+                scorer_class_identifier=scorer.get_identifier(),
+            )
+        ]
+        await scenario.initialize_async()
+        snapshots: list[list[str]] = []
+        send = target._send_prompt_to_target_async
+
+        async def capture_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            snapshots.append([message.get_value() for message in normalized_conversation])
+            responses = await send(normalized_conversation=normalized_conversation)
+            assert isinstance(responses, list)
+            messages: list[Message] = []
+            for message in responses:
+                assert isinstance(message, Message)
+                messages.append(message)
+            return messages
+
+        with (
+            patch.object(target, "_send_prompt_to_target_async", side_effect=capture_async),
+            patch.object(converter, "convert_async", wraps=converter.convert_async) as convert,
+        ):
+            result = await scenario.run_async()
+        double_encoded = base64.b64encode(received.encode()).decode()
+        expected_history = double_encoded if convert_history else received
+        outgoing = received if trailing_user else scenario.params["objective"]
+        expected_outgoing = base64.b64encode(outgoing.encode()).decode()
+        assert len(snapshots) == retries + 1
+        if editable_history:
+            assert all(values[0] == expected_history for values in snapshots)
+            assert all(values[-1] == expected_outgoing for values in snapshots)
+        else:
+            assert all(expected_history in values[-1] for values in snapshots)
+            assert all(expected_outgoing in values[-1] for values in snapshots)
+            if not convert_history and not trailing_user:
+                assert all(double_encoded not in values[-1] for values in snapshots)
+        assert convert.call_count == (retries + 1) * (2 if convert_history else 1)
+        assert compute_scenario_statistics(result).attempts == retries + 1
+        assert [
+            message.model_dump()
+            for message in await memory.get_conversation_messages_async(
+                conversation_id=history_id,
+            )
+        ] == before
+
+    @pytest.mark.parametrize("saved_resume", [False, True])
+    async def test_late_child_error_does_not_complete_the_compound_async(
+        self,
+        *,
+        scorer: MagicMock,
+        saved_resume: bool,
+    ) -> None:
+        target = MockPromptTarget()
+        scorer.score_async.return_value = [
+            Score(
+                score_value="false",
+                score_type="true_false",
+                score_rationale="not achieved",
+                scorer_class_identifier=scorer.get_identifier(),
+            )
+        ]
+        original = _scenario(
+            scorer=scorer,
+            target=target,
+            retries_on_objective_failure=2,
+            max_retries=0 if saved_resume else 1,
+        )
+        await original.initialize_async()
+        send = target._send_prompt_to_target_async
+        calls = 0
+
+        async def fail_second_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ValueError("late mock transport failure")
+            responses = await send(normalized_conversation=normalized_conversation)
+            assert isinstance(responses, list)
+            messages: list[Message] = []
+            for message in responses:
+                assert isinstance(message, Message)
+                messages.append(message)
+            return messages
+
+        with patch.object(target, "_send_prompt_to_target_async", side_effect=fail_second_async):
+            if saved_resume:
+                with pytest.raises(ScenarioPartialFailureException):
+                    await original.run_async()
+                completed = await original._get_completed_objective_hashes_by_attack_async()
+                assert not completed
+                resumed = _scenario(
+                    scorer=scorer,
+                    target=target,
+                    retries_on_objective_failure=2,
+                    resume_id=original._scenario_result_id,
+                )
+                await resumed.initialize_async()
+                result = await resumed.run_async()
+            else:
+                result = await original.run_async()
+        assert calls == 5
+        counts = compute_scenario_statistics(result)
+        assert result.scenario_run_state.value == "COMPLETED"
+        assert counts.overall.completed == 1
+        assert counts.attempts == 5
+        assert counts.overall.errors == 1
+        assert counts.overall.retries == 4
+        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+
+        service = ScenarioRunService()
+        try:
+            detail = await service.get_run_from_storage_async(scenario_result_id=str(result.id), active_error=None)
+            assert detail.completed_attacks == 1
+            assert detail.error_attacks == 1
+            assert detail.total_retries == 4
+            runs = await service.list_runs_async()
+            history = next(run for run in runs.items if run.scenario_result_id == str(result.id))
+            assert history.completed_attacks == 1
+            assert history.error_attacks == 1
+            assert history.total_retries == 4
+        finally:
+            await service.close_async()
+
+    async def test_changing_history_conversion_policy_prevents_resume_async(self, scorer: MagicMock) -> None:
+        history_id = await _save_history_async(
+            memory=CentralMemory.get_memory_instance(),
+            roles=["user", "assistant"],
+        )
+        target = MockPromptTarget()
+        original = _scenario(
+            scorer=scorer,
+            target=target,
+            prepended_conversation_id=history_id,
+            technique_converters={"prompt_sending": [Base64Converter()]},
+        )
+        await original.initialize_async()
+        resumed = _scenario(
+            scorer=scorer,
+            target=target,
+            prepended_conversation_id=history_id,
+            technique_converters={"prompt_sending": [Base64Converter()]},
+            apply_converters_to_prepended_history=True,
+            resume_id=original._scenario_result_id,
+        )
+        with pytest.raises(ValueError, match="does not match"):
+            await resumed.initialize_async()
+
+    async def test_three_attempts_count_as_two_retries_across_surfaces_async(self, scorer: MagicMock) -> None:
+        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.output._derivation import scenario_overview
+
+        target = MockPromptTarget()
+        scorer.score_async.return_value = [
+            Score(
+                score_value="false",
+                score_type="true_false",
+                score_rationale="not achieved",
+                scorer_class_identifier=scorer.get_identifier(),
+            )
+        ]
+        scenario = _scenario(scorer=scorer, target=target, retries_on_objective_failure=2)
+        await scenario.initialize_async()
+        result = await scenario.run_async()
+        memory = CentralMemory.get_memory_instance()
+        persisted = (await memory.get_scenario_results_async(scenario_result_ids=[str(result.id)]))[0]
+        statistics = compute_scenario_statistics(persisted)
+        assert len(target.prompt_sent) == 3
+        assert statistics.attempts == 3
+        assert statistics.overall.completed == 1
+        assert statistics.overall.retries == 2
+        assert statistics.overall.errors == 0
+        overview = scenario_overview(persisted)
+        assert overview.attempts == overview.groups[0].attempts == 3
+        aggregates = await memory.get_scenario_history_aggregates_async(
+            scenario_result_ids=[str(result.id)],
+            plan_scenario_ids=[str(result.id)],
+        )
+        assert aggregates[str(result.id)].total_retries == 2
+        assert aggregates[str(result.id)].completed_units == 1
+        service = ScenarioRunService()
+        try:
+            progress = await service.get_run_progress_from_storage_async(
+                scenario_result_id=str(result.id),
+                since=None,
+                limit=500,
+                active_group_ids=[],
+            )
+            assert progress.summary.overall.retries == 2
+            assert progress.summary.overall.completed == 1
+            assert progress.summary.overall.producer_counts.orchestration.attempts == 1
+        finally:
+            await service.close_async()
+
+    def test_history_conversion_policy_preserves_formatter_and_factory_async(self) -> None:
+        from pyrit.message_normalizer import ConversationContextNormalizer
+
+        normalizer = ConversationContextNormalizer()
+        config = PrependedConversationConfig(
+            message_normalizer=normalizer, apply_converters_to_roles=["user", "system"]
+        )
+        factory = AttackTechniqueFactory(
+            name="configured",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={"prepended_conversation_config": config},
+        )
+        configured = factory.with_prepended_history_converters(enabled=False)
+        assert configured._attack_kwargs["prepended_conversation_config"].message_normalizer is normalizer
+        assert configured._attack_kwargs["prepended_conversation_config"].apply_converters_to_roles == []
+        assert config.apply_converters_to_roles == ["user", "system"]
+        assert factory.with_prepended_history_converters(enabled=True) is factory
+
     def test_registry_and_parameters(self, scorer: MagicMock) -> None:
         registry = ScenarioRegistry.get_registry_singleton()
         assert registry.get_class("technique.execute") is Execute
@@ -190,7 +497,7 @@ class TestExecute:
                 await scenario.get_run_size_estimate_async()
 
     def test_technique_limit_is_unrestricted_for_existing_scenarios(self) -> None:
-        from pyrit.scenario.airt import Jailbreak
+        from pyrit.scenario.scenarios.airt import Jailbreak
 
         assert Jailbreak.MAX_CONCRETE_TECHNIQUES is None
 
@@ -674,6 +981,17 @@ class TestExecute:
         reset_dynamic_technique_caches()
         assert "ExecuteTechnique" not in package.__dict__
         assert package.ExecuteTechnique is not first
+
+    def test_exported_techniques_follow_catalog_changes_without_manual_reset(self) -> None:
+        package = importlib.import_module("pyrit.scenario.technique")
+        first = package.ExecuteTechnique
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+            [
+                AttackTechniqueFactory(name="new_history_test", attack_class=PromptSendingAttack),
+            ]
+        )
+        assert package.ExecuteTechnique is not first
+        assert package.ExecuteTechnique("new_history_test").value == "new_history_test"
 
     def test_factory_budget_copies_keep_settings(self, scorer: MagicMock) -> None:
         target = MockPromptTarget()

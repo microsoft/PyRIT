@@ -38,7 +38,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import RegisteredScenario
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import ScenarioMetadata, ScenarioRegistry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
@@ -47,6 +47,8 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
 )
 from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
@@ -147,6 +149,27 @@ def test_catalog_lists_only_external_scenario_parameters() -> None:
     summary = _metadata_to_registered_scenario(metadata=metadata)
 
     assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
+    assert summary.supported_parameter_names == ["dataset_config", "max_concurrency"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [Scam, Exploitation])
+def test_catalog_support_names_match_real_scenario_declarations(scenario_class: type[Scenario]) -> None:
+    with (
+        patch.object(ScenarioRegistry, "_discover"),
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=SubStringScorer(substring="test")),
+        override_default_adversarial_target(MockPromptTarget()),
+    ):
+        registry = ScenarioRegistry()
+        registry.register_class(scenario_class, name="test.support")
+        metadata = registry.get_registered_class_metadata("test.support")
+    assert metadata is not None
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+    assert summary.supported_parameter_names == [parameter.name for parameter in scenario_class.supported_parameters()]
+    assert ("dataset_config" in summary.supported_parameter_names) is (scenario_class is Scam)
+    assert "dataset_config" not in [parameter.name for parameter in summary.supported_parameters]
+    assert "scenario_techniques" in summary.supported_parameter_names
+    assert "memory_labels" in summary.supported_parameter_names
 
 
 def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> None:
@@ -717,10 +740,14 @@ class TestScenarioServiceListScenarios:
         async def cancelled_estimate_async(
             *,
             scenario_name: str,
-            cache_key: tuple[str, int],
+            cache_key: tuple[str, int, tuple[object, int]],
         ) -> ScenarioRunSizeEstimate:
             assert scenario_name == metadata.registry_name
-            assert cache_key == (metadata.registry_name, metadata.scenario_version)
+            assert cache_key == (
+                metadata.registry_name,
+                metadata.scenario_version,
+                AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            )
             started.set()
             await blocked.wait()
             raise AssertionError("The estimate task should have been cancelled.")
@@ -730,7 +757,13 @@ class TestScenarioServiceListScenarios:
         waiter = asyncio.create_task(service._get_default_run_size_estimate_async(metadata=metadata))
         await asyncio.wait_for(started.wait(), timeout=1)
 
-        service._estimate_tasks[(metadata.registry_name, metadata.scenario_version)].cancel()
+        service._estimate_tasks[
+            (
+                metadata.registry_name,
+                metadata.scenario_version,
+                AttackTechniqueRegistry.get_registry_singleton().catalog_revision,
+            )
+        ].cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
         await asyncio.sleep(0)
@@ -1435,7 +1468,9 @@ class TestScenarioServiceListScenarios:
             await service._get_default_run_size_estimate_async(metadata=_make_scenario_metadata(scenario_version=2))
 
         assert service._registry.create_instance.call_count == 2
-        assert list(service._estimate_cache) == [("test.scenario", 2)]
+        assert list(service._estimate_cache) == [
+            ("test.scenario", 2, AttackTechniqueRegistry.get_registry_singleton().catalog_revision)
+        ]
 
     async def test_list_scenarios_preserves_disabled_baseline_policy(self) -> None:
         metadata = _make_scenario_metadata(
@@ -1737,6 +1772,7 @@ class TestScenarioRoutes:
         """Test that GET /api/scenarios/catalog returns scenario data."""
         summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
+            supported_parameter_names=[],
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
             description_markdown='<script>alert("untrusted")</script>',
@@ -1841,6 +1877,7 @@ class TestScenarioRoutes:
         """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""
         summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
+            supported_parameter_names=[],
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
             default_technique="default",
@@ -1982,6 +2019,7 @@ class TestScenarioRoutes:
         """Test that dotted scenario names (e.g., 'foundry.red_team_agent') work in path."""
         summary = RegisteredScenario(
             scenario_name="garak.encoding",
+            supported_parameter_names=[],
             scenario_type="EncodingScenario",
             description="Encoding scenario",
             default_technique="all",

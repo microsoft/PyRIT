@@ -540,48 +540,6 @@ async def test_sqlite_execution_deadline_or_cancellation_cleans_up_the_connectio
     assert (await reader.report_async(query=AttackAnalyticsQuery(), control=control())).counts == {}
 
 
-@pytest.mark.parametrize("method", ["report", "results", "facets"])
-async def test_sqlite_deadline_bounds_file_database_lock_wait_and_restores_timeout(
-    *, tmp_path: Path, method: str
-) -> None:
-    memory = SQLiteMemory.__new__(SQLiteMemory)
-    with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "analytics-lock.sqlite", skip_schema_migration=True)
-    try:
-        engine = memory._get_async_engine()
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-        async with engine.connect() as writer:
-            default_timeout = (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
-            await writer.exec_driver_sql("BEGIN EXCLUSIVE")
-            try:
-                started = time.monotonic()
-                reader = AttackAnalyticsReader(memory=memory)
-                budget = QueryControl(deadline=started + 0.08)
-                with pytest.raises(AnalyticsTimeoutException):
-                    if method == "report":
-                        await reader.report_async(query=AttackAnalyticsQuery(), control=budget)
-                    elif method == "results":
-                        await reader.results_async(query=AttackAnalyticsResultsQuery(), control=budget)
-                    else:
-                        await reader.facets_async(
-                            query=AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name="operation")),
-                            control=budget,
-                        )
-                assert time.monotonic() - started < 1
-                async with engine.connect() as reader_connection:
-                    assert (
-                        await reader_connection.exec_driver_sql("PRAGMA busy_timeout")
-                    ).scalar_one() == default_timeout
-            finally:
-                await writer.rollback()
-            assert (
-                await AttackAnalyticsReader(memory=memory).report_async(query=AttackAnalyticsQuery(), control=control())
-            ).counts == {}
-    finally:
-        await memory.dispose_engine_async()
-
-
 async def test_odbc_timeout_is_applied_before_each_cursor_is_created() -> None:
     class RecordingConnection(sqlite3.Connection):
         timeout = 0

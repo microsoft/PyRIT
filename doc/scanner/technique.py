@@ -31,8 +31,8 @@
 # technique picker. The backend enforces this limit after aggregate expansion and
 # deduplication. Baseline comparison is separate and does not count toward the limit.
 #
-# Dataset inputs are not supported. Do not set dataset names or size limits. The generic
-# GUI can still show these controls. More than one concrete technique causes an error.
+# Dataset inputs are not supported. Do not set dataset names or size limits. CoPyRIT
+# hides unsupported inputs. More than one concrete technique causes an error.
 # This scenario does not add a "continue from conversation" button.
 #
 # ## Parameters
@@ -97,7 +97,13 @@ from pyrit.scenario.technique import ExecuteTechnique
 # simulated roles, so they are not treated as new scoring evidence. Prior request trace
 # metadata is removed from copied seeds.
 #
+# `apply_converters_to_prepended_history` defaults to `False`. Copied history keeps
+# the values the target already received, without applying baked-in or additional
+# request converters again. Set it to `True` to opt into the technique's configured
+# history-conversion role scope. New outgoing turns still use the selected converters.
+#
 # If the source ends with a user message, that message becomes the next message to send.
+# It is resent and converted as a new request, regardless of the history-conversion flag.
 # Otherwise, the technique creates the next turn. Blocked or error pieces in the source
 # cause an error; the scenario does not silently remove them.
 #
@@ -112,11 +118,15 @@ from pyrit.scenario.technique import ExecuteTechnique
 # The technique is configured once. Each attempt gets a fresh execution context and conversation.
 # Failure, undetermined, and completed error outcomes can start the next attempt.
 # Exceptions return to the scenario's error retry path.
+# A finished child does not complete the compound unit if a later child raises an error.
+# Error retries and saved-run resume can run that incomplete unit again.
 #
 # With objective retries, one compound unit holds the child attempt results. The run preview
 # counts one unit, not each child or turn. The baseline is off by default. Set
 # `include_baseline=True` to add one direct prompt-sending unit; it is not repeated by
 # `retries_on_objective_failure`.
+# Statistics count the target-facing attempts, not the orchestration envelope as another
+# attempt. Three objective attempts produce two retries, while the planned unit count stays one.
 #
 # To resume, pass the saved scenario result ID to `Execute(scenario_result_id=...)` and
 # supply the same inputs. A changed objective, source history, or technique configuration

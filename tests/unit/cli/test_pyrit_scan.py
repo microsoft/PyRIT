@@ -423,6 +423,7 @@ def _mock_api_client():
         all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
+        supported_parameter_names=[],
     )
     client.start_scenario_run_async.return_value = ScenarioRunSummary(
         scenario_result_id="test-id-123",
@@ -1270,6 +1271,7 @@ class TestMainExtraPaths:
         mock_client.list_scenarios_async.return_value = [
             RegisteredScenario(
                 scenario_name="alt_a",
+                supported_parameter_names=[],
                 scenario_type="X",
                 description="",
                 default_technique="",
@@ -1279,6 +1281,7 @@ class TestMainExtraPaths:
             ),
             RegisteredScenario(
                 scenario_name="alt_b",
+                supported_parameter_names=[],
                 scenario_type="X",
                 description="",
                 default_technique="",
@@ -1751,6 +1754,7 @@ class TestScenarioParamFlow:
         client.list_scenarios_async.return_value = [
             RegisteredScenario(
                 scenario_name="foo",
+                supported_parameter_names=[],
                 scenario_type="X",
                 description="",
                 default_technique="",
@@ -1768,6 +1772,7 @@ class TestScenarioParamFlow:
             all_techniques=[],
             default_datasets=[],
             supported_parameters=typed_params,
+            supported_parameter_names=[parameter.name for parameter in typed_params],
         )
         client.start_scenario_run_async.return_value = ScenarioRunSummary(
             scenario_result_id="rid",

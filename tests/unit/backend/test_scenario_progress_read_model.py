@@ -680,7 +680,9 @@ class TestScenarioResultRoles:
         labels = {result.attack_result_id: result.labels[ADAPTIVE_ATTEMPT_LABEL] for result in stored}
         assert labels == {single_id: "1", **dict.fromkeys(nested.child_attack_result_ids, "2")}
 
-    async def test_roles_do_not_change_progress_counts_async(self, sqlite_instance: MemoryInterface) -> None:
+    async def test_roles_preserve_unit_counts_but_remove_duplicate_retry_pressure_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
         snapshot, plan, run_id = await _run_and_read_progress_async(
             memory=sqlite_instance,
             build_atomic_attacks=lambda target: [
@@ -715,8 +717,24 @@ class TestScenarioResultRoles:
         )
 
         assert {result.result_role for result in legacy.results} == {AttackResultRole.UNKNOWN}
-        assert legacy.summary == snapshot.summary
+
+        def _strip(obj):
+            if isinstance(obj, dict):
+                obj.pop("producer_counts", None)
+                obj.pop("retries", None)
+                for v in obj.values():
+                    _strip(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _strip(item)
+            return obj
+
+        legacy_dump = _strip(legacy.summary.model_dump())
+        snapshot_dump = _strip(snapshot.summary.model_dump())
+        assert legacy_dump == snapshot_dump
         assert snapshot.summary.overall.planned == 2
+        assert snapshot.summary.overall.retries == 2
+        assert legacy.summary.overall.retries == 4
 
 
 @pytest.mark.parametrize(
