@@ -7,6 +7,7 @@ import asyncio
 import os
 from collections.abc import Generator
 from contextlib import ExitStack
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -95,7 +96,7 @@ async def test_runtime_readiness_reports_state_async(*, runtime: RuntimeLifecycl
 
 
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", "stopping", None])
-async def test_deployment_readiness_reports_state_and_revision_async(
+async def test_health_reports_readiness_and_revision_without_changing_liveness_async(
     *, runtime: RuntimeLifecycle, state: str | None
 ) -> None:
     if state is None:
@@ -105,22 +106,25 @@ async def test_deployment_readiness_reports_state_and_revision_async(
     revision = "copyrit-test--new"
     with patch.dict(os.environ, {"CONTAINER_APP_REVISION": revision}):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-            response = await client.get("/api/ready")
-            liveness = await client.get("/api/health")
-    assert response.status_code == (200 if state == "ready" else 503)
+            response = await client.get("/api/health")
+    assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json() == {
+    data = response.json()
+    assert datetime.fromisoformat(data["timestamp"]).tzinfo == UTC
+    assert data == {
+        "status": "healthy",
+        "timestamp": data["timestamp"],
+        "service": "pyrit-backend",
         "ready": state == "ready",
         "state": state if state is not None else "failed",
         "revision": revision,
     }
-    assert liveness.status_code == 200
 
 
-async def test_deployment_readiness_does_not_invent_a_revision_async(runtime: RuntimeLifecycle) -> None:
+async def test_health_does_not_invent_a_revision_async(runtime: RuntimeLifecycle) -> None:
     with patch.dict(os.environ, {}, clear=True):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-            response = await client.get("/api/ready")
+            response = await client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["revision"] is None
 
@@ -129,13 +133,13 @@ async def test_failed_startup_keeps_liveness_and_configuration_recovery_async(ru
     with patch.object(runtime, "_load_async", AsyncMock(side_effect=ValueError("private startup error"))):
         await runtime.startup_async()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        response = await client.get("/api/ready")
-        liveness = await client.get("/api/health")
+        response = await client.get("/api/health")
         saved_configuration = await client.get("/api/config")
-    assert response.status_code == 503
+    assert response.status_code == 200
+    assert response.json()["status"] == "healthy"
+    assert response.json()["ready"] is False
     assert response.json()["state"] == "restart-required"
     assert "private startup error" not in response.text
-    assert liveness.status_code == 200
     assert saved_configuration.status_code == 200
 
 

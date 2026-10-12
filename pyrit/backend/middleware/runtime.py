@@ -33,7 +33,6 @@ class RuntimeAdmissionMiddleware:
             or path
             in (
                 "/api/health",
-                "/api/ready",
                 "/api/runtime",
                 "/api/version",
                 "/api/auth/config",

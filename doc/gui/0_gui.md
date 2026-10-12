@@ -581,7 +581,10 @@ API clients can use administrator-only `GET /api/config/runtime`, `POST /api/con
 returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
 invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
 at `GET /api/runtime`.
-`GET /api/health` reports server responsiveness, not runtime readiness.
+`GET /api/health` remains HTTP 200 for server responsiveness, even when runtime initialization fails.
+It preserves `status`, `timestamp`, and `service`, and includes `ready`, `state`, and the serving ACA
+`revision` (or `null` outside ACA) for deployment readiness checks. Responses are uncached and do not
+expose configuration or exception details.
 
 ---
 

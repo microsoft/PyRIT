@@ -464,16 +464,17 @@ wait_for_http_health https://copyrit.example.azurefd.net/api/health 31
 
     def test_runtime_readiness_requires_expected_revision_and_consistent_status(self) -> None:
         revision = "copyrit-test--new"
-        ready = {"revision": revision, "state": "ready", "ready": True}
+        legacy_health = {"status": "healthy", "timestamp": "2026-10-12T17:28:40+00:00", "service": "pyrit-backend"}
+        ready = legacy_health | {"revision": revision, "state": "ready", "ready": True}
         cases = [
             ("200", ready, 0, True, False),
-            ("503", ready | {"state": "initializing", "ready": False}, 0, False, False),
-            ("503", ready | {"state": "failed", "ready": False}, 0, False, True),
-            ("503", ready | {"state": "restart-required", "ready": False}, 0, False, True),
-            ("503", ready | {"state": "stopping", "ready": False}, 0, False, True),
+            ("200", ready | {"state": "initializing", "ready": False}, 0, False, False),
+            ("200", ready | {"state": "failed", "ready": False}, 0, False, True),
+            ("200", ready | {"state": "restart-required", "ready": False}, 0, False, True),
+            ("200", ready | {"state": "stopping", "ready": False}, 0, False, True),
             ("200", ready | {"revision": "copyrit-test--old"}, 0, False, False),
             (
-                "503",
+                "200",
                 ready | {"revision": "copyrit-test--old", "state": "failed", "ready": False},
                 0,
                 False,
@@ -484,14 +485,16 @@ wait_for_http_health https://copyrit.example.azurefd.net/api/health 31
             ("200", ready | {"revision": None}, 0, False, False),
             ("200", ready | {"revision": ""}, 0, False, False),
             ("200", {"revision": revision, "state": "ready"}, 0, False, False),
+            ("200", legacy_health, 0, False, False),
             ("503", ready, 0, False, False),
+            ("503", ready | {"state": "failed", "ready": False}, 0, False, False),
             ("200", "private malformed response", 0, False, False),
             ("200", json.dumps(ready) + "\n" + json.dumps(ready), 0, False, False),
             ("404", ready, 0, False, False),
             ("302", ready, 0, False, False),
             ("200", ready, 28, False, False),
             (
-                "503",
+                "200",
                 ready | {"state": "failed", "ready": False, "message": "private exception details"},
                 0,
                 False,
@@ -510,7 +513,7 @@ curl() {{
   return {curl_exit}
 }}
 sleep() {{ SECONDS=$((SECONDS + $1)); }}
-wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/ready {revision} 6
+wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/health {revision} 6
 """,
                 )
                 assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
@@ -543,12 +546,12 @@ curl() {{
   printf 'request:' >&2; printf '%q ' "$@" >&2; printf '\\n' >&2
   case "$attempt" in
     1) printf '%s\\n200' {shlex.quote(json.dumps(responses[0]))};;
-    2) printf '%s\\n503' {shlex.quote(json.dumps(responses[1]))};;
+    2) printf '%s\\n200' {shlex.quote(json.dumps(responses[1]))};;
     *) printf '%s\\n200' {shlex.quote(json.dumps(responses[2]))};;
   esac
 }}
 sleep() {{ SECONDS=$((SECONDS + $1)); }}
-wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/ready copyrit-test--new 20
+wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/health copyrit-test--new 20
 """,
         )
         assert result.returncode == 0, result.stdout + result.stderr
@@ -563,7 +566,7 @@ wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/ready copyrit
             command="""
 curl() { printf 'request:' >&2; printf '%q ' "$@" >&2; printf '\\n' >&2; printf '\\n504'; }
 sleep() { printf 'sleep:%s\\n' "$1" >&2; SECONDS=$((SECONDS + $1)); }
-wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/ready copyrit-test--new 31
+wait_for_runtime_readiness https://copyrit.example.azurefd.net/api/health copyrit-test--new 31
 """,
         )
         assert result.returncode != 0
@@ -612,9 +615,8 @@ main
 """,
                 )
                 assert (result.returncode == 0) == (runtime_exit == 0), result.stdout + result.stderr
-                assert (
-                    "runtime-check:https://copyrit.example.azurefd.net/api/ready:copyrit-test--new:300" in result.stdout
-                )
+                expected_check = "runtime-check:https://copyrit.example.azurefd.net/api/health:copyrit-test--new:300"
+                assert expected_check in result.stdout
                 assert ("Deployment healthy:" in result.stdout) == (runtime_exit == 0)
 
     def _run_cancellation_rollback(

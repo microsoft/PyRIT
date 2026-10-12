@@ -35,26 +35,8 @@ async def runtime_readiness_async(request: Request) -> dict[str, str | bool]:
     return _runtime_readiness(request)
 
 
-@router.get("/ready", responses={503: {"description": "PyRIT runtime is not ready"}})
-async def deployment_readiness_async(*, request: Request, response: Response) -> dict[str, str | bool | None]:
-    """
-    Report uncached deployment readiness without configuration or exception details.
-
-    Returns:
-        dict[str, str | bool | None]: Runtime readiness and the serving ACA revision, when available.
-    """
-    readiness = _runtime_readiness(request)
-    response.status_code = 200 if readiness["ready"] else 503
-    response.headers["Cache-Control"] = "no-store"
-    return {
-        "ready": readiness["ready"],
-        "state": readiness["state"],
-        "revision": os.getenv("CONTAINER_APP_REVISION"),
-    }
-
-
 @router.get("/health")
-async def health_check_async() -> dict[str, str]:
+async def health_check_async(*, request: Request, response: Response) -> dict[str, str | bool | None]:
     """
     Check the health status of the backend service.
 
@@ -62,12 +44,19 @@ async def health_check_async() -> dict[str, str]:
     The frontend connection health monitor polls it every 60 seconds with a
     5-second timeout to detect backend availability. Adding authentication,
     database queries, or heavy computation here will break that contract.
+    HTTP 200 reports backend availability even when PyRIT initialization fails;
+    deployment checks use the readiness fields instead.
 
     Returns:
-        dict: Health status information including timestamp.
+        dict[str, str | bool | None]: Health status, timestamp, runtime readiness, and serving ACA revision.
     """
+    readiness = _runtime_readiness(request)
+    response.headers["Cache-Control"] = "no-store"
     return {
         "status": "healthy",
         "timestamp": datetime.now(UTC).isoformat(),
         "service": "pyrit-backend",
+        "ready": readiness["ready"],
+        "state": readiness["state"],
+        "revision": os.getenv("CONTAINER_APP_REVISION"),
     }

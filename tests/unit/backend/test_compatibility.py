@@ -80,7 +80,8 @@ def graph_user() -> AuthenticatedUser:
 
 def test_openapi_documents_the_required_header_only_on_business_operations() -> None:
     schema = app.openapi()
-    neutral_paths = {"/api/health", "/api/ready", "/api/auth/config", "/api/version", "/api/media"}
+    assert "/api/ready" not in schema["paths"]
+    neutral_paths = {"/api/health", "/api/auth/config", "/api/version", "/api/media"}
     business_operations = set()
     for path, path_item in schema["paths"].items():
         for method, operation in path_item.items():
@@ -230,13 +231,13 @@ def test_matching_identity_does_not_bypass_group_authorization(
     assert guarded_app.state.effects == []
 
 
-@pytest.mark.parametrize("path", ["/api/health", "/api/ready", "/api/auth/config", "/api/media"])
+@pytest.mark.parametrize("path", ["/api/health", "/api/auth/config", "/api/media"])
 @pytest.mark.parametrize("marker", [None, "invalid", "0.14.0+g" + "b" * 40])
 def test_public_neutral_routes_bypass_guard_and_auth(guarded_client: TestClient, path: str, marker: str | None) -> None:
     headers = {_compatibility.COMPATIBILITY_HEADER: marker} if marker is not None else {}
     with patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock) as authenticate:
         response = guarded_client.get(path, headers=headers)
-    assert response.status_code == {"/api/media": 422, "/api/ready": 503}.get(path, 200)
+    assert response.status_code == {"/api/media": 422}.get(path, 200)
     authenticate.assert_not_awaited()
 
 
@@ -246,6 +247,7 @@ def test_public_neutral_routes_bypass_guard_and_auth(guarded_client: TestClient,
         "/api",
         "/api/health/",
         "/api/health/extra",
+        "/api/ready",
         "/api/ready/",
         "/api/ready/extra",
         "/api/auth/config/",
@@ -261,9 +263,7 @@ def test_neutral_exemptions_are_exact(guarded_client: TestClient, path: str) -> 
 
 
 @pytest.mark.parametrize("state", ["ready", "initializing", "failed", "restart-required", "stopping"])
-def test_deployment_readiness_is_public_without_exposing_runtime_details(
-    *, guarded_app: FastAPI, state: str, tmp_path: Path
-) -> None:
+def test_health_is_public_without_exposing_runtime_details(*, guarded_app: FastAPI, state: str, tmp_path: Path) -> None:
     runtime = RuntimeLifecycle(
         app=guarded_app, source=ConfigurationFileService(config_file_value=str(tmp_path / "config.yaml"))
     )
@@ -276,9 +276,18 @@ def test_deployment_readiness_is_public_without_exposing_runtime_details(
         patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock) as authenticate,
         TestClient(guarded_app) as client,
     ):
-        response = client.get("/api/ready", headers={_compatibility.COMPATIBILITY_HEADER: "invalid"})
-    assert response.status_code == (200 if state == "ready" else 503)
-    assert response.json() == {"ready": state == "ready", "state": state, "revision": "copyrit-test--new"}
+        response = client.get("/api/health", headers={_compatibility.COMPATIBILITY_HEADER: "invalid"})
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data["timestamp"], str)
+    assert data == {
+        "status": "healthy",
+        "timestamp": data["timestamp"],
+        "service": "pyrit-backend",
+        "ready": state == "ready",
+        "state": state,
+        "revision": "copyrit-test--new",
+    }
     assert response.headers["cache-control"] == "no-store"
     authenticate.assert_not_awaited()
 

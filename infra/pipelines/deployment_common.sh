@@ -235,7 +235,7 @@ wait_for_runtime_readiness() {
       --max-time "$request_timeout" "$readiness_url"); then
       http_status=${raw_response##*$'\n'}
       body=${raw_response%$'\n'*}
-      if [[ "$http_status" != "200" && "$http_status" != "503" ]]; then
+      if [[ "$http_status" != "200" ]]; then
         last_result="Unexpected readiness HTTP status $http_status"
       elif ! parsed=$(jq -ser '
         if length != 1 then error("Invalid readiness response") else .[0] end
@@ -255,10 +255,10 @@ wait_for_runtime_readiness() {
         IFS=$'\t' read -r response_revision state ready <<< "$parsed"
         if [[ "$response_revision" != "$expected_revision" ]]; then
           last_result="Waiting for revision $expected_revision; received $response_revision"
-        elif [[ "$http_status" == "200" && "$state" == "ready" && "$ready" == "true" ]]; then
+        elif [[ "$state" == "ready" && "$ready" == "true" ]]; then
           echo "PyRIT runtime is ready on revision $expected_revision."
           return 0
-        elif [[ "$http_status" == "503" && "$state" =~ ^(failed|restart-required|stopping)$ ]]; then
+        elif [[ "$state" =~ ^(failed|restart-required|stopping)$ ]]; then
           runtime_readiness_error "$expected_revision" "Runtime state is $state"
         else
           last_result="Runtime state is $state (HTTP $http_status)"
