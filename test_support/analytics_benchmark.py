@@ -25,6 +25,8 @@ from unittest.mock import patch
 
 import pytest
 
+from test_support.fixtures import use_sqlite_memory
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 
@@ -75,7 +77,6 @@ async def sqlite_instance(benchmark_directory: Path) -> AsyncGenerator[SQLiteMem
     """Use file-backed SQLite for concurrent WAL readers; all files remain fixture-owned."""
     from pyrit.memory import SQLiteMemory
     from pyrit.memory.memory_models import Base
-    from unit.conftest import _use_sqlite_memory
 
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
@@ -88,7 +89,7 @@ async def sqlite_instance(benchmark_directory: Path) -> AsyncGenerator[SQLiteMem
             assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
             await connection.run_sync(Base.metadata.create_all)
             await session.commit()
-        with _use_sqlite_memory(memory):
+        with use_sqlite_memory(memory):
             yield memory
     finally:
         await memory.dispose_engine_async()

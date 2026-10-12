@@ -7,11 +7,16 @@ import asyncio
 import json
 
 import pytest
-from unit.backend.analytics_benchmark import AnalyticsBenchmark, benchmark_app, benchmark_directory, sqlite_instance  # noqa: F401
-from unit.backend.conftest import compatibility_headers, compatibility_id  # noqa: F401
 
 from pyrit.backend.middleware.compatibility import CompatibilityAPI
 from pyrit.memory import SQLiteMemory
+from test_support.analytics_benchmark import (  # noqa: F401
+    AnalyticsBenchmark,
+    benchmark_app,
+    benchmark_directory,
+    sqlite_instance,
+)
+from test_support.fixtures import compatibility_headers, compatibility_id  # noqa: F401
 
 
 async def test_100k_attack_analytics_performance_async(

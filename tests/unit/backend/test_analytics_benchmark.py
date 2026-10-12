@@ -3,7 +3,11 @@
 
 """Local SQLite smoke coverage and unit tests of the integration workload's failure gates."""
 
+import os
+import subprocess
+import sys
 from functools import partial
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -14,7 +18,7 @@ from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.backend.middleware.compatibility import CompatibilityAPI
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackAnalyticsResultsQuery
-from unit.backend.analytics_benchmark import (  # noqa: F401
+from test_support.analytics_benchmark import (  # noqa: F401
     AnalyticsBenchmark,
     RequestSample,
     benchmark_app,
@@ -161,3 +165,29 @@ def test_workload_legacy_documents_use_current_wrapped_identifiers() -> None:
 def test_workload_does_not_create_or_dispose_fixture_resources(measurements: AnalyticsBenchmark) -> None:
     assert isinstance(measurements.memory, MagicMock)
     assert measurements.memory.mock_calls == []
+
+
+def test_shared_support_imports_without_test_tiers_or_pythonpath() -> None:
+    script = """
+import sys
+from pathlib import Path
+from test_support import analytics_benchmark, fixtures
+
+assert analytics_benchmark.AnalyticsBenchmark
+assert fixtures.use_sqlite_memory
+assert all(Path(path).resolve() != Path("tests").resolve() for path in sys.path)
+assert not any(
+    name == tier or name.startswith(tier + ".")
+    for name in sys.modules
+    for tier in ("unit", "integration")
+)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[3],
+        env={name: value for name, value in os.environ.items() if name.upper() != "PYTHONPATH"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr

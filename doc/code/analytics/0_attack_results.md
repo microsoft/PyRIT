@@ -449,17 +449,19 @@ unit runs, so unrelated CI load cannot turn a correctness check into a one-secon
 performance assertion. `tests/unit/backend/test_analytics_benchmark.py` retains a
 smaller SQLite workload with finite correctness budgets, plus tests that reject
 wrong counts, missing continuations, errors, and unmet thresholds. Both tiers
-reuse the same workload and isolated database/runtime fixtures. There is no
-separate build script or benchmark CLI.
+reuse the workload and isolated fixtures from the test-only `test_support`
+package, which is not included in the PyRIT distribution. Neither suite imports
+the other's `conftest`, and pytest retains its existing repository-root-only
+Python path. There is no separate build script or benchmark CLI.
 
 The workload's pytest fixtures own a new temporary directory, configuration, and file-backed
 SQLite database built from the current schema. They scope CentralMemory using the
-existing unit-test isolation helper and never load the user's configuration or
+shared SQLite isolation helper and never load the user's configuration or
 database, run deployment migrations, or change global database settings. WAL is
 explicitly enabled only on the disposable database. The actual runtime starts
 with local technique registration, then closes services and memory before the
 temporary directory is removed. Compatibility identity and headers use the
-existing backend test fixtures; no packaged development stamp is needed.
+shared backend test fixtures; no packaged development stamp is needed.
 No server or frontend is started.
 The integration suite's normal bootstrap still applies. For a local-only run
 without discovering user dotenv files, the existing `PYTHON_DOTENV_DISABLED=1`

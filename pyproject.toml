@@ -178,7 +178,7 @@ pyrit_shell = "pyrit.cli.pyrit_shell:main"
 addopts = [
     "--import-mode=importlib",
 ]
-pythonpath = [".", "tests"]
+pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 filterwarnings = [
