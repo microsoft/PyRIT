@@ -405,6 +405,100 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
     return result
 
 
+@pytest.mark.parametrize("field", ["max_concurrency", "max_retries"])
+@pytest.mark.parametrize("input_kind", ["omitted", "null", "explicit", "scenario_param", "top_level_wins"])
+async def test_numeric_launch_values_survive_failure_and_default_changes_async(
+    *,
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    sqlite_instance: SQLiteMemory,
+    field: str,
+    input_kind: str,
+) -> None:
+    service, target = resume_environment
+    scenario_default = 4 if field == "max_concurrency" else 0
+    api_default = 10 if field == "max_concurrency" else 0
+    explicit_value = 2 if field == "max_concurrency" else 1
+    request_values: dict[str, Any] = {}
+    expected = api_default
+    if input_kind == "null":
+        request_values[field] = None
+        expected = scenario_default
+    elif input_kind == "explicit":
+        request_values[field] = explicit_value
+        expected = explicit_value
+    elif input_kind == "scenario_param":
+        request_values.update({field: None, "scenario_params": {field: explicit_value}})
+        expected = explicit_value
+    elif input_kind == "top_level_wins":
+        request_values.update({field: explicit_value, "scenario_params": {field: explicit_value + 1}})
+        expected = explicit_value
+
+    prepared = await service._prepare_run_async(
+        request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, **request_values)
+    )
+    assert getattr(prepared.scenario, f"_{field}") == expected
+    original_send = target._send_prompt_to_target_async
+
+    async def fail_second_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        if normalized_conversation[-1].get_value() == _SECOND_OBJECTIVE:
+            raise RuntimeError("Synthetic target failure")
+        return await original_send(normalized_conversation=normalized_conversation)
+
+    with patch.object(target, "_send_prompt_to_target_async", side_effect=fail_second_async):
+        with pytest.raises(ScenarioPartialFailureException):
+            await prepared.scenario.run_async()
+    run_id = prepared.scenario._scenario_result_id
+    assert run_id is not None
+    stored = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=run_id)
+    assert stored is not None and stored.scenario_run_state == ScenarioRunState.FAILED
+    assert stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][field] == expected
+
+    changed_defaults = [
+        parameter.model_copy(update={"default": expected + 3}) if parameter.name == field else parameter
+        for parameter in _OfflineResumeScenario._common_scenario_parameters()
+    ]
+    original_run = _OfflineResumeScenario.run_async
+
+    async def run_with_saved_value_async(self: _OfflineResumeScenario) -> None:
+        assert getattr(self, f"_{field}") == expected
+        await original_run(self)
+
+    with (
+        patch.object(_OfflineResumeScenario, "_common_scenario_parameters", return_value=changed_defaults),
+        patch.object(_OfflineResumeScenario, "run_async", run_with_saved_value_async),
+    ):
+        response = await service.resume_run_async(scenario_result_id=run_id)
+        await _wait_for_idle_async(service)
+    assert response.scenario_result_id == run_id
+    resumed = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=run_id)
+    assert resumed is not None and resumed.scenario_run_state == ScenarioRunState.COMPLETED
+    assert resumed.metadata[_LAUNCH_REQUEST_METADATA_KEY][field] == expected
+
+
+@pytest.mark.parametrize("field", ["max_concurrency", "max_retries"])
+async def test_unsupported_numeric_launch_values_remain_omitted_on_resume_async(
+    *,
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    sqlite_instance: SQLiteMemory,
+    field: str,
+) -> None:
+    service, _ = resume_environment
+    declared = [parameter for parameter in _OfflineResumeScenario.supported_parameters() if parameter.name != field]
+    with patch.object(_OfflineResumeScenario, "supported_parameters", return_value=declared):
+        prepared = await service._prepare_run_async(
+            request=RunScenarioRequest(scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME)
+        )
+        run_id = prepared.scenario._scenario_result_id
+        assert run_id is not None
+        stored = await sqlite_instance.get_scenario_result_header_async(scenario_result_id=run_id)
+        assert stored is not None
+        assert stored.metadata[_LAUNCH_REQUEST_METADATA_KEY][field] is None
+        restored = service._restore_launch_request(stored=stored)
+        assert getattr(restored, field) is None
+        resumed = await service._prepare_run_async(request=restored)
+        assert field not in resumed.scenario.params
+
+
 async def test_preparation_and_execution_share_sqlite_loop_resources_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget], sqlite_instance: SQLiteMemory
 ) -> None:

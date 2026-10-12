@@ -10,7 +10,11 @@ from typing import Any, Literal, Self
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from pyrit.models.analytics import OutcomeStatistics
-from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary  # noqa: TC001
+from pyrit.models.catalog.scenario import (
+    ScenarioOverloadSummary,
+    ScenarioProducerCounts,
+    ScenarioTargetSummary,
+)  # noqa: TC001
 from pyrit.models.identifiers.atomic_attack_identifier import AtomicAttackIdentifier
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -192,7 +196,8 @@ class ScenarioProgressCounts(BaseModel):
     their historical-attempt meaning and must not be used as outcome denominators.
     None preserves older count-only payloads whose outcome breakdown is unknown.
     Supplied totals must agree with the outcome breakdown; mutable values are
-    revalidated when they are passed back into analytics.
+    revalidated when they are passed back into analytics. ``producer_counts``
+    uses a separate historical population and never changes these logical totals.
     """
 
     model_config = ConfigDict(revalidate_instances="always")
@@ -203,6 +208,7 @@ class ScenarioProgressCounts(BaseModel):
     success_percentage: int | None = Field(default=None, ge=0, le=100)
     errors: int = Field(..., ge=0)
     retries: int = Field(..., ge=0)
+    producer_counts: ScenarioProducerCounts = Field(default_factory=ScenarioProducerCounts)
     outcomes: OutcomeStatistics | None = None
 
     @model_validator(mode="after")
@@ -220,7 +226,7 @@ class ScenarioProgressCounts(BaseModel):
         if self.succeeded > self.completed:
             raise ValueError("succeeded must not exceed completed.")
         if self.success_percentage is not None:
-            expected = int((self.succeeded / self.completed) * 100) if self.completed else 0
+            expected = self.succeeded * 100 // self.completed if self.completed else 0
             if self.success_percentage != expected:
                 raise ValueError("success_percentage must agree with succeeded and completed.")
         if self.outcomes is not None:
@@ -264,7 +270,7 @@ class ScenarioExecutionStatistics(BaseModel):
     display_groups: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
     #: Total persisted attempts, including superseded ones.
     attempts: int = Field(default=0, ge=0)
-    #: Attempts that matched no planned execution unit and are excluded from the counts.
+    #: Attempts excluded from logical-unit counts, but retained in producer counts.
     unattributed_attempts: int = Field(default=0, ge=0)
 
 
@@ -338,8 +344,8 @@ class ScenarioProgressSummary(BaseModel):
     techniques: list[ScenarioTechniqueProgress] = Field(default_factory=list)
     seed_groups: list[ScenarioSeedGroupProgress] = Field(default_factory=list)
     atomic_groups: list[ScenarioAtomicGroupProgress] = Field(default_factory=list)
-    #: Persisted attempts that matched no planned execution unit and are therefore absent
-    #: from every rollup above. Non-zero means the rollups understate what actually ran.
+    #: Persisted attempts excluded from logical-unit rollups. Overall producer counts
+    #: still include them; planned-group producer counts require unambiguous group attribution.
     unattributed_attempts: int = Field(default=0, ge=0)
 
 

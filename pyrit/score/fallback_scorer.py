@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, Score, ScoringExpectation
 from pyrit.score.observation.execution import _merge_observation_ids
+from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import Scorer
 
 if TYPE_CHECKING:
@@ -139,6 +140,9 @@ class _FallbackScorer(Scorer):
             f"primary.{key}": value for key, value in (primary.score_metadata or {}).items()
         }
         metadata["resolved_by"] = "fallback" if fallback is not None else "primary"
+        # Attacks rank true/false scores by this top-level key, so keep the selected child's value.
+        if selected.score_metadata and ORIGINAL_FLOAT_VALUE_KEY in selected.score_metadata:
+            metadata[ORIGINAL_FLOAT_VALUE_KEY] = selected.score_metadata[ORIGINAL_FLOAT_VALUE_KEY]
         rationale = primary.score_rationale
         if fallback_attempted:
             metadata["primary_rationale"] = primary.score_rationale or ""

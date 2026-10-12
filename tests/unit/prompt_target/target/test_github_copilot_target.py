@@ -1985,15 +1985,23 @@ async def test_normalizer_reports_partial_creation_cleanup_retry_failure_async(
         pytest.param("cancelled-error", id="first-delete-cancelled-error"),
     ],
 )
+@pytest.mark.parametrize(
+    "watchdog_expires",
+    [pytest.param(False, id="normal-observation"), pytest.param(True, id="expired-watchdog")],
+)
 async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after_allocation_async(
     *,
     client: NonCallableMagicMock,
     sqlite_instance: MemoryInterface,
     first_delete_failure: str,
+    watchdog_expires: bool,
 ) -> None:
     session = client.create_session.return_value
     sessions = {"unrelated-session-id"}
     allocated = asyncio.Event()
+    allow_allocation = asyncio.Event()
+    delete_started = asyncio.Event()
+    allow_delete = asyncio.Event()
     conversation_id = str(uuid4())
     cancellation_message = "cancel caller after session allocation"
     caller_cancellation: asyncio.CancelledError | None = None
@@ -2005,6 +2013,7 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
 
     async def create_session_async(*, session_id: str = "sdk-generated-session-id", **_kwargs: Any) -> None:
         nonlocal caller_cancellation
+        await allow_allocation.wait()
         sessions.add(session_id)
         allocated.set()
         try:
@@ -2014,6 +2023,8 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
             raise
 
     async def delete_session_async(session_id: str) -> None:
+        delete_started.set()
+        await allow_delete.wait()
         if client.delete_session.await_count == 1 and cleanup_failure is not None:
             raise cleanup_failure
         sessions.remove(session_id)
@@ -2036,13 +2047,38 @@ async def test_normalizer_deletes_owned_session_when_creation_is_cancelled_after
                 conversation_id=conversation_id,
             )
         )
+        allocated_waiter = asyncio.create_task(allocated.wait())
+        delete_started_waiter = asyncio.create_task(delete_started.wait())
         try:
-            await asyncio.wait_for(allocated.wait(), timeout=2.0)
+            if watchdog_expires:
+                with pytest.raises(TimeoutError, match="test watchdog expired"):
+                    await wait_for_completion_async(future=allocated_waiter, timeout=0)
+                assert not allocated_waiter.done()
+                assert not request_task.done()
+                assert request_task.cancelling() == 0
+                assert sessions == {"unrelated-session-id"}
+                client.delete_session.assert_not_awaited()
+
+            allow_allocation.set()
+            await wait_for_completion_async(future=allocated_waiter)
             request_task.cancel(cancellation_message)
+            await wait_for_completion_async(future=delete_started_waiter)
+            if watchdog_expires:
+                with pytest.raises(TimeoutError, match="test watchdog expired"):
+                    await wait_for_completion_async(future=request_task, timeout=0)
+                assert not request_task.done()
+                assert request_task.cancelling() == 1
+                assert sessions == {"unrelated-session-id", client.create_session.await_args.kwargs["session_id"]}
+                client.delete_session.assert_awaited_once()
+                client.stop.assert_not_awaited()
+
+            allow_delete.set()
             with pytest.raises(asyncio.CancelledError) as cancellation_error:
-                await asyncio.wait_for(request_task, timeout=2.0)
+                await wait_for_completion_async(future=request_task)
         finally:
-            await _cancel_tasks_async(request_task)
+            allow_allocation.set()
+            allow_delete.set()
+            await _cancel_tasks_async(request_task, allocated_waiter, delete_started_waiter)
 
         add_conversation.assert_awaited_once()
         add_message.assert_not_awaited()

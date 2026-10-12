@@ -109,6 +109,9 @@ def test_combining_rejects_mutated_rich_statistics_instead_of_silently_repairing
         combine_outcome_statistics([statistics])
 
 
-@pytest.mark.parametrize(("succeeded", "completed", "expected"), [(0, 0, None), (0, 2, 0), (2, 3, 66), (1, 1, 100)])
-def test_legacy_percentages_format_the_shared_rate(succeeded: int, completed: int, expected: int | None) -> None:
+@pytest.mark.parametrize(
+    ("succeeded", "completed", "expected"),
+    [(0, 0, None), (0, 2, 0), (2, 3, 66), (1, 1, 100), (29, 100, 29), (29, 50, 58)],
+)
+def test_legacy_percentages_truncate_the_exact_ratio(succeeded: int, completed: int, expected: int | None) -> None:
     assert success_percentage(succeeded=succeeded, completed=completed) == expected

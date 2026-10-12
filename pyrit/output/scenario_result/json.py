@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import TypeAdapter
 
-from pyrit.models import AttackResult, OutcomeStatistics, ScenarioResult
+from pyrit.models import AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
 from pyrit.output._derivation import (
     attack_score_display,
     resolve_target_info,
@@ -36,6 +36,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
     """
 
     _OUTCOME_ADAPTER: ClassVar[TypeAdapter[OutcomeStatistics | None]] = TypeAdapter(OutcomeStatistics | None)
+    _PRODUCER_ADAPTER: ClassVar[TypeAdapter[ScenarioProducerCounts | None]] = TypeAdapter(ScenarioProducerCounts | None)
 
     def __init__(
         self,
@@ -134,6 +135,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
                 "num_attempts": group.attempts,
                 "success_rate": group.success_rate,
                 "outcomes": self._OUTCOME_ADAPTER.dump_python(group.outcomes, mode="json"),
+                "producer_counts": self._PRODUCER_ADAPTER.dump_python(group.producer_counts, mode="json"),
             }
             for group in overview.groups
         ]
@@ -167,6 +169,7 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
                 "total_attempts": overview.attempts,
                 "overall_success_rate": overview.success_rate,
                 "outcomes": self._OUTCOME_ADAPTER.dump_python(overview.outcomes, mode="json"),
+                "producer_counts": self._PRODUCER_ADAPTER.dump_python(overview.producer_counts, mode="json"),
                 "unique_objectives": len(result.get_objectives()),
             },
             "groups": groups,
