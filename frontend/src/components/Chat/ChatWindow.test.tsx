@@ -5141,6 +5141,40 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByTestId("conversation-panel")).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("should preserve the operator's panel choice after a late conversation update, narrow %s", async (isNarrowScreen: boolean) => {
+    const user = userEvent.setup();
+    mockMatchMedia(isNarrowScreen);
+    const props = {
+      ...defaultProps,
+      attackResultId: "ar-late-conversations",
+      conversationId: "conv-main",
+      activeConversationId: "conv-main",
+      relatedConversationCount: 0,
+    };
+    const rendered = render(
+      <TestWrapper><ChatWindow {...props} /></TestWrapper>
+    );
+    const toggleButton = screen.getByRole("button", { name: "Toggle conversations panel" });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleButton);
+    await user.click(await screen.findByRole("button", { name: "Close panel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole(isNarrowScreen ? "dialog" : "complementary", {
+        name: "Attack Conversations",
+      })).not.toBeInTheDocument();
+    });
+
+    rendered.rerender(
+      <TestWrapper><ChatWindow {...props} relatedConversationCount={1} /></TestWrapper>
+    );
+
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole(isNarrowScreen ? "dialog" : "complementary", {
+      name: "Attack Conversations",
+    })).not.toBeInTheDocument();
+  });
+
   it("should keep the mobile drawer closed until requested and restore focus after Escape", async () => {
     const user = userEvent.setup();
     mockMatchMedia(true);

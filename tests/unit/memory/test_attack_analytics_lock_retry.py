@@ -16,7 +16,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from pyrit.exceptions.analytics_exception import AnalyticsTimeoutException
-from pyrit.memory import SQLiteMemory
+from pyrit.memory import SQLiteMemory, query_control
 from pyrit.memory.attack_analytics import AttackAnalyticsReader
 from pyrit.memory.memory_models import Base
 from pyrit.memory.query_control import QueryControl
@@ -28,6 +28,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
 )
+from unit.async_utils import wait_for_completion_async
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -183,7 +184,9 @@ async def test_non_sqlite_execution_does_not_retry_sqlite_error_codes_async() ->
     retry.assert_not_awaited()
 
 
-def _observe_busy(*, reader: AttackAnalyticsReader, observed: asyncio.Event) -> Callable[..., Awaitable[_ResultT]]:
+def _observe_busy(
+    *, reader: AttackAnalyticsReader, observed: asyncio.Event, release: asyncio.Event | None = None
+) -> Callable[..., Awaitable[_ResultT]]:
     retry = reader._retry_sqlite_busy_async
 
     async def observe_async(*, operation: Callable[[], Awaitable[_ResultT]], control: QueryControl) -> _ResultT:
@@ -193,11 +196,74 @@ def _observe_busy(*, reader: AttackAnalyticsReader, observed: asyncio.Event) -> 
             except OperationalError as error:
                 if getattr(error.orig, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY:
                     observed.set()
+                    if release is not None:
+                        await release.wait()
                 raise
 
         return await retry(operation=observed_operation_async, control=control)
 
     return observe_async
+
+
+@pytest.mark.parametrize("method", ["report", "matrix", "compact_report", "results", "facets"])
+async def test_sqlite_deadline_bounds_file_database_lock_wait_and_restores_timeout_async(
+    *, file_memory: SQLiteMemory, method: str
+) -> None:
+    reader = AttackAnalyticsReader(memory=file_memory)
+    observed, release = asyncio.Event(), asyncio.Event()
+    engine = file_memory._get_async_engine()
+    async with engine.connect() as writer:
+        default_timeout = (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
+        writer_driver = (await writer.get_raw_connection()).driver_connection
+        await writer.exec_driver_sql("BEGIN EXCLUSIVE")
+        started = time.monotonic()
+        control = QueryControl(deadline=started + 10)
+        request_driver: SQLiteConnection | None = None
+        configure_timeout = reader._sqlite_busy_timeout_async
+
+        async def configure_timeout_async(*, driver: SQLiteConnection, timeout_ms: int) -> None:
+            nonlocal request_driver
+            await configure_timeout(driver=driver, timeout_ms=timeout_ms)
+            if timeout_ms == 0:
+                request_driver = driver
+                # Arm the lock budget after acquisition, independently of test scheduling.
+                control.deadline = started + 0.08
+
+        with (
+            patch.object(query_control, "time") as clock,
+            patch.object(reader, "_sqlite_busy_timeout_async", side_effect=configure_timeout_async),
+            patch.object(
+                reader,
+                "_retry_sqlite_busy_async",
+                side_effect=_observe_busy(reader=reader, observed=observed, release=release),
+            ),
+        ):
+            clock.monotonic.return_value = started
+            task = asyncio.create_task(_read_async(reader=reader, method=method, control=control))
+            try:
+                await asyncio.wait_for(observed.wait(), timeout=30)
+                assert not task.done()
+                assert request_driver is not None and request_driver is not writer_driver
+                async with request_driver.execute("PRAGMA busy_timeout") as cursor:
+                    assert await cursor.fetchone() == (0,)
+                assert control.remaining == pytest.approx(0.08)
+                clock.monotonic.return_value = control.deadline
+                assert control.expired and not control.cancel_event.is_set()
+                release.set()
+                with pytest.raises(AnalyticsTimeoutException):
+                    await wait_for_completion_async(future=task)
+                assert not task.cancelled() and task.cancelling() == 0
+                async with engine.connect() as connection:
+                    assert (await connection.get_raw_connection()).driver_connection is request_driver
+                    assert (await connection.exec_driver_sql("PRAGMA busy_timeout")).scalar_one() == default_timeout
+                assert (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one() == default_timeout
+            finally:
+                release.set()
+                await writer.rollback()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+    await _read_async(reader=reader, method=method, control=QueryControl(deadline=time.monotonic() + 10))
 
 
 @pytest.mark.parametrize("method", ["report", "matrix", "compact_report", "results", "facets"])
@@ -215,30 +281,31 @@ async def test_sqlite_read_succeeds_when_writer_releases_lock_async(*, file_memo
                 _read_async(reader=reader, method=method, control=QueryControl(deadline=time.monotonic() + 10))
             )
             try:
-                await asyncio.wait_for(observed.wait(), timeout=5)
+                await asyncio.wait_for(observed.wait(), timeout=30)
                 assert not task.done()
                 await writer.rollback()
-                await asyncio.wait_for(task, timeout=5)
+                await wait_for_completion_async(future=task)
                 async with engine.connect() as connection:
                     assert (await connection.exec_driver_sql("PRAGMA busy_timeout")).scalar_one() == default_timeout
             finally:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
                 await writer.rollback()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("method", ["report", "matrix", "compact_report", "results", "facets"])
-@pytest.mark.parametrize("trigger", ["deadline", "control", "task"])
-async def test_sqlite_lock_retry_deadline_or_cancellation_restores_connection_async(
-    *, file_memory: SQLiteMemory, method: str, trigger: str
+@pytest.mark.parametrize("cancel", ["control", "task"])
+async def test_sqlite_lock_retry_cancellation_restores_connection_async(
+    *, file_memory: SQLiteMemory, method: str, cancel: str
 ) -> None:
     reader = AttackAnalyticsReader(memory=file_memory)
     observed = asyncio.Event()
-    control = QueryControl(deadline=time.monotonic() + 10)
     engine = file_memory._get_async_engine()
     async with engine.connect() as writer:
         default_timeout = (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
         await writer.exec_driver_sql("BEGIN EXCLUSIVE")
+        control = QueryControl(deadline=time.monotonic() + 10)
         with (
             patch.object(
                 reader, "_retry_sqlite_busy_async", side_effect=_observe_busy(reader=reader, observed=observed)
@@ -249,33 +316,32 @@ async def test_sqlite_lock_retry_deadline_or_cancellation_restores_connection_as
         ):
             task = asyncio.create_task(_read_async(reader=reader, method=method, control=control))
             try:
-                await asyncio.wait_for(observed.wait(), timeout=5)
+                await asyncio.wait_for(observed.wait(), timeout=30)
                 assert not task.done()
                 assert configure_timeout.await_args_list[0].kwargs["timeout_ms"] == 0
                 driver = configure_timeout.await_args_list[0].kwargs["driver"]
                 assert isinstance(driver, SQLiteConnection)
                 async with driver.execute("PRAGMA busy_timeout") as cursor:
                     assert await cursor.fetchone() == (0,)
-                if trigger != "task":
-                    if trigger == "deadline":
-                        control.deadline = 0
-                    else:
-                        control.cancel()
+                if cancel == "control":
+                    control.cancel()
                     with pytest.raises(AnalyticsTimeoutException):
-                        await asyncio.wait_for(task, timeout=5)
+                        await wait_for_completion_async(future=task)
                     assert control.expired
-                    assert control.cancel_event.is_set() == (trigger == "control")
+                    assert control.cancel_event.is_set()
+                    assert not task.cancelled() and task.cancelling() == 0
                 else:
-                    task.cancel()
-                    with pytest.raises(asyncio.CancelledError):
-                        await asyncio.wait_for(task, timeout=5)
+                    task.cancel("requested cancellation")
+                    with pytest.raises(asyncio.CancelledError, match="requested cancellation"):
+                        await wait_for_completion_async(future=task)
                 assert configure_timeout.await_args_list[-1].kwargs["timeout_ms"] == default_timeout
                 async with engine.connect() as connection:
                     assert (await connection.exec_driver_sql("PRAGMA busy_timeout")).scalar_one() == default_timeout
             finally:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
                 await writer.rollback()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
     await _read_async(reader=reader, method=method, control=QueryControl(deadline=time.monotonic() + 10))
 
 
@@ -343,12 +409,12 @@ async def test_sqlite_timeout_restoration_finishes_under_repeated_cancellation_a
     with patch.object(reader, "_sqlite_busy_timeout_async", side_effect=restore_async):
         task = asyncio.create_task(read_async())
         try:
-            await asyncio.wait_for(entered.wait(), timeout=5)
+            await asyncio.wait_for(entered.wait(), timeout=30)
             if cancel_in_body:
                 task.cancel("original cancellation")
             else:
                 finish_body.set()
-            await asyncio.wait_for(restoring.wait(), timeout=5)
+            await asyncio.wait_for(restoring.wait(), timeout=30)
             for index in range(2):
                 task.cancel(
                     "original cancellation" if not cancel_in_body and index == 0 else "cancel restoration again"
@@ -357,7 +423,7 @@ async def test_sqlite_timeout_restoration_finishes_under_repeated_cancellation_a
                 assert not task.done()
             release_restore.set()
             with pytest.raises(asyncio.CancelledError, match="original cancellation"):
-                await asyncio.wait_for(task, timeout=5)
+                await wait_for_completion_async(future=task)
         finally:
             release_restore.set()
             task.cancel()
@@ -395,25 +461,43 @@ async def test_sqlite_reset_failure_discards_connection_and_preserves_cancellati
 
 
 @pytest.mark.parametrize("method", ["report", "matrix", "compact_report", "results", "facets"])
+@pytest.mark.parametrize("expire_after_busy", [False, True])
+@pytest.mark.parametrize("started", [0.0, 248.670460394], ids=["exact-clock", "fractional-clock"])
 async def test_every_analytics_projection_retries_busy_in_the_same_session_async(
-    *, file_memory: SQLiteMemory, method: str
+    *, file_memory: SQLiteMemory, method: str, expire_after_busy: bool, started: float
 ) -> None:
     original = AsyncSession.execute
     calls: dict[Executable, int] = {}
     sessions: set[AsyncSession] = set()
+    control = QueryControl(deadline=started + 10)
 
     async def execute_async(self: AsyncSession, statement: Executable) -> Result[Any]:
         sessions.add(self)
         calls[statement] = calls.get(statement, 0) + 1
         if calls[statement] == 1:
+            if expire_after_busy:
+                clock.monotonic.return_value = control.deadline
             raise _sqlite_error(sqlite3.SQLITE_BUSY)
         return await original(self, statement)
 
-    with patch.object(AsyncSession, "execute", execute_async):
-        await _read_async(
-            reader=AttackAnalyticsReader(memory=file_memory),
-            method=method,
-            control=QueryControl(deadline=time.monotonic() + 10),
+    with patch.object(query_control, "time") as clock, patch.object(AsyncSession, "execute", execute_async):
+        # Only the query clock is controlled; the event loop watchdog remains real.
+        clock.monotonic.return_value = started
+        task = asyncio.create_task(
+            _read_async(reader=AttackAnalyticsReader(memory=file_memory), method=method, control=control)
         )
-    assert calls and all(count == 2 for count in calls.values())
+        try:
+            if expire_after_busy:
+                with pytest.raises(AnalyticsTimeoutException):
+                    await wait_for_completion_async(future=task)
+                assert control.expired and not control.cancel_event.is_set()
+            else:
+                await wait_for_completion_async(future=task)
+                assert control.remaining == pytest.approx(10)
+            assert not task.cancelled() and task.cancelling() == 0
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert calls and all(count == (1 if expire_after_busy else 2) for count in calls.values())
     assert len(sessions) == 1

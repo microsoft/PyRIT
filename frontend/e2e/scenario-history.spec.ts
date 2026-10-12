@@ -91,6 +91,11 @@ const catalogScenario = {
   baseline_policy: "enabled",
   include_baseline_by_default: false,
   uses_default_adversarial_target: false,
+  supported_parameter_names: [
+    "objective_target", "scenario_techniques", "dataset_config", "memory_labels",
+    "max_concurrency", "max_retries", "include_baseline", "num_jailbreaks",
+    "num_jailbreak_attempts", "jailbreak_names",
+  ],
   supported_parameters: [
     {
       name: "num_jailbreaks",
