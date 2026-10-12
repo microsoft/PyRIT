@@ -47,6 +47,8 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
 )
 from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
@@ -147,6 +149,27 @@ def test_catalog_lists_only_external_scenario_parameters() -> None:
     summary = _metadata_to_registered_scenario(metadata=metadata)
 
     assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
+    assert summary.supported_parameter_names == ["dataset_config", "max_concurrency"]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [Scam, Exploitation])
+def test_catalog_support_names_match_real_scenario_declarations(scenario_class: type[Scenario]) -> None:
+    with (
+        patch.object(ScenarioRegistry, "_discover"),
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=SubStringScorer(substring="test")),
+        override_default_adversarial_target(MockPromptTarget()),
+    ):
+        registry = ScenarioRegistry()
+        registry.register_class(scenario_class, name="test.support")
+        metadata = registry.get_registered_class_metadata("test.support")
+    assert metadata is not None
+    summary = _metadata_to_registered_scenario(metadata=metadata)
+    assert summary.supported_parameter_names == [parameter.name for parameter in scenario_class.supported_parameters()]
+    assert ("dataset_config" in summary.supported_parameter_names) is (scenario_class is Scam)
+    assert "dataset_config" not in [parameter.name for parameter in summary.supported_parameters]
+    assert "scenario_techniques" in summary.supported_parameter_names
+    assert "memory_labels" in summary.supported_parameter_names
 
 
 def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> None:
@@ -1749,6 +1772,7 @@ class TestScenarioRoutes:
         """Test that GET /api/scenarios/catalog returns scenario data."""
         summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
+            supported_parameter_names=[],
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
             description_markdown='<script>alert("untrusted")</script>',
@@ -1853,6 +1877,7 @@ class TestScenarioRoutes:
         """Test that GET /api/scenarios/catalog/{name} returns 200 when found."""
         summary = RegisteredScenario(
             scenario_name="foundry.red_team_agent",
+            supported_parameter_names=[],
             scenario_type="RedTeamAgentScenario",
             description="Red team agent testing",
             default_technique="default",
@@ -1994,6 +2019,7 @@ class TestScenarioRoutes:
         """Test that dotted scenario names (e.g., 'foundry.red_team_agent') work in path."""
         summary = RegisteredScenario(
             scenario_name="garak.encoding",
+            supported_parameter_names=[],
             scenario_type="EncodingScenario",
             description="Encoding scenario",
             default_technique="all",

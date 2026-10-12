@@ -151,22 +151,29 @@ async def test_crescendo_construction_keeps_initialization_responsive_async(
     def build(**kwargs: Any) -> AttackTechnique:
         loop.call_soon_threadsafe(entered.set)
         assert threading.get_ident() != backend_thread
-        if not release.wait(5):
-            raise TimeoutError("Crescendo construction was not released.")
+        release.wait()
         return original_build(**kwargs)
 
     with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
         _patch_base_seed_groups(_make_seed_groups()),
         patch.object(scenario, "_build_crescendo_technique", side_effect=build),
     ):
         initialize = asyncio.create_task(scenario.initialize_async())
         try:
-            await asyncio.wait_for(entered.wait(), 5)
+            # Readiness includes setup and thread scheduling, not just event-loop responsiveness.
+            await asyncio.wait_for(entered.wait(), 30)
+            heartbeat = asyncio.Event()
+            loop.call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), 5)
             assert not initialize.done()
+            assert not release.is_set()
             release.set()
-            await asyncio.wait_for(initialize, 5)
+            await asyncio.wait_for(initialize, 30)
         finally:
             release.set()
+            if not initialize.done():
+                initialize.cancel()
             await asyncio.gather(initialize, return_exceptions=True)
     assert [attack.atomic_attack_name for attack in scenario._atomic_attacks] == ["imminent_crisis_crescendo"]
 

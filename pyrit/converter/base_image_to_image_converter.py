@@ -105,6 +105,21 @@ class BaseImageToImageConverter(Converter, ABC):
             return background
         return image.convert("RGB")
 
+    @staticmethod
+    def _convert_to_rgb_or_rgba(image: Image.Image) -> Image.Image:
+        """
+        Convert an image to RGB, or RGBA when it has transparency, unless it already is one of them.
+
+        Args:
+            image (PIL.Image.Image): The image to convert.
+
+        Returns:
+            PIL.Image.Image: The image in RGB or RGBA mode.
+        """
+        if image.mode in ("RGB", "RGBA"):
+            return image
+        return image.convert("RGBA" if image.has_transparency_data else "RGB")
+
     def _transform_image(self, image: Image.Image, original_format: str) -> tuple[BytesIO, str]:
         """
         Resolve format, prepare the image, apply the transform, and save to a buffer.

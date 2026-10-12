@@ -55,6 +55,16 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
       <div class="value">{{ report.overview.stats.total_attempts }}</div></div>
     <div class="card"><div class="label">Objectives</div>
       <div class="value">{{ report.overview.stats.unique_objectives }}</div></div>
+    {% if report.overview.stats.producer_counts %}
+    <div class="card"><div class="label">Target-facing attempts</div>
+      <div class="value">{{ report.overview.stats.producer_counts.target_facing.attempts }}</div></div>
+    <div class="card"><div class="label">Orchestration attempts</div>
+      <div class="value">{{ report.overview.stats.producer_counts.orchestration.attempts }}</div></div>
+    {% if report.overview.stats.producer_counts.unknown.attempts %}
+    <div class="card"><div class="label">Unknown attempts</div>
+      <div class="value">{{ report.overview.stats.producer_counts.unknown.attempts }}</div></div>
+    {% endif %}
+    {% endif %}
   </div>
 
   <h2>Target</h2>
@@ -66,10 +76,19 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
 
   <h2>Per-group breakdown</h2>
   <table>
-    <tr><th>Group</th><th>Objective executions</th><th>Attempts</th><th>Success rate</th></tr>
+    <tr>
+      <th>Group</th>
+      <th>Objective executions</th>
+      <th>Attempts</th>
+      <th>Target-facing</th>
+      <th>Orchestration</th>
+      <th>Success rate</th>
+    </tr>
     {% for g in report.overview.groups %}
     <tr><td>{{ g.name }}</td><td>{{ g.num_objective_executions }}</td>
       <td>{{ g.num_attempts }}</td>
+      <td>{{ g.producer_counts.target_facing.attempts if g.producer_counts else "—" }}</td>
+      <td>{{ g.producer_counts.orchestration.attempts if g.producer_counts else "—" }}</td>
       <td>{{ g.success_rate }}%</td></tr>
     {% endfor %}
   </table>

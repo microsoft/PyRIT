@@ -10,6 +10,7 @@ import {
 import type { MenuCheckedValueChangeData, MenuCheckedValueChangeEvent } from '@fluentui/react-components'
 import {
   ChatRegular,
+  DatabaseRegular,
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
@@ -32,6 +33,7 @@ export type ViewName =
   | 'registry'
   | 'configuration'
   | 'scenarios'
+  | 'datasets'
 
 interface NavigationProps {
   currentView: ViewName
@@ -110,6 +112,17 @@ export default function Navigation({
           aria-label="Scanner"
           aria-current={currentView === 'scenarios' ? 'page' : undefined}
           onClick={() => onNavigate('scenarios')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'datasets'}
+          appearance="subtle"
+          icon={<DatabaseRegular />}
+          title="Datasets"
+          aria-label="Datasets"
+          aria-current={currentView === 'datasets' ? 'page' : undefined}
+          onClick={() => onNavigate('datasets')}
         />
 
         <Button

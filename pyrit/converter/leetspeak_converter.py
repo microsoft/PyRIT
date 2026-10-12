@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.converter.text_selection_strategy import WordSelectionStrategy
+from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordSelectionStrategy
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import ComponentIdentifier
 
@@ -65,8 +65,14 @@ class LeetspeakConverter(WordLevelConverter):
             substitutions_str = json.dumps(self._leet_substitutions, sort_keys=True)
             substitutions_hash = hashlib.sha256(substitutions_str.encode("utf-8")).hexdigest()[:16]
 
+        selection_params = (
+            {}
+            if type(self._word_selection_strategy) is AllWordsSelectionStrategy
+            else super()._build_identifier().params
+        )
         return self._create_identifier(
             params={
+                **selection_params,
                 "deterministic": self._deterministic,
                 "custom_substitutions_hash": substitutions_hash,
             },
