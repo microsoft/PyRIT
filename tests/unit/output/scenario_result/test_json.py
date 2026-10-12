@@ -233,6 +233,7 @@ async def test_overview_separates_units_from_attempts(printer):
             "num_attempts": 2,
             "success_rate": 100,
             "outcomes": payload["stats"]["outcomes"],
+            "producer_counts": payload["stats"]["producer_counts"],
         }
     ]
     assert payload["stats"]["outcomes"]["success_rate"] == 1.0
