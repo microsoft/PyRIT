@@ -135,7 +135,7 @@ class Execute(Scenario):
             ),
             Parameter(
                 name="prepended_conversation_id",
-                description="Stored conversation to copy as history. The source remains unchanged.",
+                description="Stored conversation to copy as history.",
                 param_type=str,
                 default=None,
             ),
