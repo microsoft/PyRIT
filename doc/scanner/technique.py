@@ -59,6 +59,57 @@ from pyrit.scenario.technique import ExecuteTechnique
 [technique.value for technique in ExecuteTechnique.expand({ExecuteTechnique.default()})]
 
 # %% [markdown]
+# ## Local example
+#
+# This example executes the real scenario against a local echo target. The target returns
+# the request unchanged, and a substring scorer checks the response. This demonstrates
+# configuration, execution, and result output without credentials or model calls; it does
+# not measure model safety. For a configured model, use the SDK example below.
+
+# %%
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.models import Message
+from pyrit.output import output_scenario_async
+from pyrit.prompt_target import PromptTarget
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import AttackTechniqueFactory
+from pyrit.score import SubStringScorer
+
+
+class EchoTarget(PromptTarget):
+    """Return the current request unchanged for this local demonstration."""
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        return [Message.from_prompt(prompt=normalized_conversation[-1].get_value(), role="assistant")]
+
+    def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
+        if not normalized_conversation:
+            raise ValueError("The local echo target requires a request.")
+
+
+AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+    [AttackTechniqueFactory(name="prompt_sending_demo", attack_class=PromptSendingAttack)]
+)
+
+from pyrit.scenario.technique import ExecuteTechnique
+
+demo = Execute(objective_scorer=SubStringScorer(substring="Python process"))
+demo.set_params_from_args(
+    args={
+        "objective_target": EchoTarget(),
+        "scenario_techniques": [ExecuteTechnique.prompt_sending_demo],
+        "objective": "Describe how to stop a Python process.",
+        "harm_categories": ["process_management"],
+        "retries_on_objective_failure": 2,
+    }
+)
+await demo.initialize_async()  # type: ignore
+demo_result = await demo.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(demo_result)  # type: ignore
+
+# %% [markdown]
 # ## SDK
 #
 # Run this example after your configuration registers `openai_chat`, `adversarial_chat`,
