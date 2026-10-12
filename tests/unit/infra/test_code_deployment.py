@@ -599,7 +599,7 @@ read_app_access_mode() {{ expected_public_access=Disabled; }}
 build_app_parameters() {{
   deployment_name=test
   template_file=test
-  parameters=()
+  parameters=("testParameter=testValue")
   immutable_image=test
 }}
 preview_deployment() {{ :; }}
