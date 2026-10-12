@@ -223,9 +223,7 @@ class AttackAnalyticsQueryCompiler:
         ):
             return None
         compiler = self._group_compiler(dimensions)
-        profiles = self._materialize_sqlite(
-            compiler._profiles([compiler._source(dimension) for dimension in dimensions])
-        )
+        profiles = self._materialize_sqlite(compiler._compact_profile_inputs(dimensions))
         origin: FromClause = profiles
         arrays: dict[str, ColumnElement[Any]] = {}
         for index, dimension in enumerate(dimensions):
@@ -280,6 +278,53 @@ class AttackAnalyticsQueryCompiler:
             ],
             oversized.label("oversized"),
         ).limit(limit)
+
+    def _compact_profile_inputs(self, dimensions: list[AttackAnalyticsDimension]) -> CTE:
+        """
+        Resolve identifier metadata once per distinct saved reference/document pair.
+
+        Retain the document in the join key: missing or incomplete normalized
+        identifiers may carry different embedded metadata under the same hash.
+        Only the metadata is shared within this statement; fact weights and
+        result-level axes still contribute independently to the grouped profiles.
+
+        Returns:
+            CTE: The same weighted raw profiles without repeatedly decoding identifier JSON.
+        """
+        if "analytics_weight" not in self.root.c:
+            return self._profiles([self._source(dimension) for dimension in dimensions])
+        keys = ("atomic_attack_identifier_hash", "atomic_attack_identifier")
+        identifiers = select(*(self.root.c[key] for key in keys)).distinct().cte("profile_identifier_sources")
+        lookup = AttackAnalyticsQueryCompiler(dialect=self.dialect, filters=AttackAnalyticsFilters(), root=identifiers)
+        sources = [
+            self._source(dimension)
+            if dimension.name is AttackAnalyticsDimensionName.TARGETED_HARM_CATEGORY
+            else lookup._source(dimension)
+            for dimension in dimensions
+        ]
+        values = list(identifiers.c)
+        for index, (dimension, source) in enumerate(zip(dimensions, sources, strict=True)):
+            if dimension.name is not AttackAnalyticsDimensionName.TARGETED_HARM_CATEGORY:
+                values.append(source.value.label(f"source{index}"))
+                if not source.array:
+                    values.append(source.label.label(f"display{index}"))
+        resolved = self._materialize_sqlite(select(*values).select_from(lookup._from).cte("profile_identifier_values"))
+        self._from = self.root.join(
+            resolved, and_(*(resolved.c[key].is_not_distinct_from(self.root.c[key]) for key in keys))
+        )
+        projected = [
+            source
+            if dimension.name is AttackAnalyticsDimensionName.TARGETED_HARM_CATEGORY
+            else _Source(
+                value=resolved.c[f"source{index}"],
+                label=resolved.c[f"source{index}" if source.array else f"display{index}"],
+                array=source.array,
+                converters=source.converters,
+                insensitive=source.insensitive,
+            )
+            for index, (dimension, source) in enumerate(zip(dimensions, sources, strict=True))
+        ]
+        return self._profiles(projected)
 
     def _profile_array(
         self, *, profile: CTE, raw: ColumnElement[Any], name: str, converters: bool
@@ -535,18 +580,14 @@ class AttackAnalyticsQueryCompiler:
         conditions = self._conditions()
         if self.dialect == "sqlite" and not source.insensitive and source.value is source.label:
             value = self._collate(source.value)
-            distinct = self._materialize_sqlite(
-                select(value.label("raw"))
-                .select_from(self._from)
-                .where(*conditions)
-                .distinct()
-                .cte("scalar_facet_values")
+            projected = self._materialize_sqlite(
+                select(value.label("raw")).select_from(self._from).where(*conditions).cte("scalar_facet_values")
             )
-            page = select(distinct.c.raw)
+            page = select(projected.c.raw).distinct()
             if query.search:
-                page = page.where(self._search_condition(label=distinct.c.raw, search=query.search))
+                page = page.where(self._search_condition(label=projected.c.raw, search=query.search))
             visible = (
-                page.order_by(distinct.c.raw).offset(query.offset).limit(query.limit + 1).cte("visible_facet_values")
+                page.order_by(projected.c.raw).offset(query.offset).limit(query.limit + 1).cte("visible_facet_values")
             )
             kind, value, label = self._scalar_key(value=visible.c.raw, label=visible.c.raw)
             return select(kind.label("kind0"), value.label("value0"), label.label("label0")).order_by(kind, value)

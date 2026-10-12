@@ -18,7 +18,7 @@ from pyrit.analytics._profile_aggregation import ProfileAggregation
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsProfile, RawAnalyticsReport
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsQuery,
@@ -205,6 +205,66 @@ async def test_duplicate_and_reordered_arrays_share_profiles_without_losing_resu
     assert all(profile["source1"] == '["Alpha","Beta"]' for profile in compact.profiles)
     await ProfileAggregation.populate_async(report=compact, query=query, control=control())
     _assert_same_chart(actual=compact, expected=sql)
+
+
+async def test_accepted_profiles_supply_exact_totals_without_a_second_cohort_scan(
+    mixed_reader: AttackAnalyticsReader,
+) -> None:
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
+        compare_by=AttackAnalyticsDimension(name="converter_type"),
+    )
+    expected = await mixed_reader.report_async(query=query, control=control())
+    with patch.object(AttackAnalyticsQueryCompiler, "totals", side_effect=AssertionError("No redundant totals scan")):
+        actual = await mixed_reader.report_async(query=query, control=control(), use_compact_profiles=True)
+    assert actual.profiles is not None
+    assert actual.counts == expected.counts
+    assert sum(actual.counts.values()) == 9
+    await ProfileAggregation.populate_async(report=actual, query=query, control=control())
+    _assert_same_chart(actual=actual, expected=expected)
+
+
+@pytest.mark.parametrize("comparison", ["attack_type", "converter_type"])
+@pytest.mark.parametrize("identifier_hash", [None, "unresolved", "normalized"])
+async def test_profile_identifier_lookup_keeps_different_documents_under_one_reference(
+    *, sqlite_instance: SQLiteMemory, comparison: str, identifier_hash: str | None
+) -> None:
+    results = [
+        make_result(index=index, outcome=outcome, categories=["privacy"], converters=["Original"])
+        for index, outcome in enumerate((AttackOutcome.SUCCESS, AttackOutcome.FAILURE), 1)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    async with sqlite_instance._get_async_engine().begin() as connection:
+        await connection.execute(update(AttackIdentifierEntry).values(class_name=None, identifier_json={}))
+        for result, name in zip(results, ("First", "Second"), strict=True):
+            reference = result.atomic_attack_identifier.hash if identifier_hash == "normalized" else identifier_hash
+            document = {
+                "children": {
+                    "attack": {
+                        "class_name": name,
+                        "children": {"request_converters": [{"class_name": name}]},
+                    }
+                }
+            }
+            if reference is not None:
+                document["hash"] = reference
+            await connection.execute(
+                update(AttackResultEntry)
+                .where(AttackResultEntry.id == result.attack_result_id)
+                .values(atomic_attack_identifier_hash=None, atomic_attack_identifier=document)
+            )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
+        compare_by=AttackAnalyticsDimension(name=comparison),
+    )
+    expected = await reader.report_async(query=query, control=control())
+    actual = await reader.report_async(query=query, control=control(), use_compact_profiles=True)
+    assert actual.profiles is not None
+    await ProfileAggregation.populate_async(report=actual, query=query, control=control())
+    _assert_same_chart(actual=actual, expected=expected)
+    assert {column.key.value for column in actual.columns} == {"first", "second"}
+    assert actual.counts == {"success": 1, "failure": 1}
 
 
 @pytest.mark.parametrize("compare", [None, "converter_type", "attack_type"])

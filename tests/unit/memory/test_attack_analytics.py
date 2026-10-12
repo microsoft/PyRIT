@@ -1514,7 +1514,10 @@ async def test_complete_raw_profiles_at_each_cap_and_full_sql_fallback_beyond_it
     assert fallback.cells == expected.cells
 
 
-async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path: Path) -> None:
+@pytest.mark.parametrize("use_compact_profiles", [False, True])
+async def test_report_is_consistent_and_later_result_pages_are_fresh(
+    *, tmp_path: Path, use_compact_profiles: bool
+) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
         memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", skip_schema_migration=True)
@@ -1526,7 +1529,7 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path
         await memory.add_attack_results_to_memory_async(attack_results=[make_result(), make_result(index=2)])
         inserted = False
 
-        async def insert_after_totals_async() -> None:
+        async def insert_after_counts_async() -> None:
             async with engine.begin() as writer:
                 await writer.execute(
                     AttackResultEntry.__table__.insert().values(
@@ -1539,23 +1542,35 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path
                     )
                 )
 
-        def insert_after_totals(
+        def insert_after_counts(
             conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
         ) -> None:
             nonlocal inserted
             if inserted or "count(" not in statement.lower():
                 return
             inserted = True
-            conn.connection.run_async(lambda _: insert_after_totals_async())
+            conn.connection.run_async(lambda _: insert_after_counts_async())
 
-        event.listen(engine.sync_engine, "after_cursor_execute", insert_after_totals)
+        event.listen(engine.sync_engine, "after_cursor_execute", insert_after_counts)
         try:
             reader = AttackAnalyticsReader(memory=memory)
-            report = await reader.report_async(query=AttackAnalyticsQuery(result_limit=1), control=control())
+            report = await reader.report_async(
+                query=AttackAnalyticsQuery(
+                    group_by=AttackAnalyticsDimension(name="attack_type"),
+                    result_limit=1,
+                ),
+                control=control(),
+                use_compact_profiles=use_compact_profiles,
+            )
         finally:
-            event.remove(engine.sync_engine, "after_cursor_execute", insert_after_totals)
+            event.remove(engine.sync_engine, "after_cursor_execute", insert_after_counts)
         assert inserted
-        assert report.counts == report.groups[0].counts == {"success": 2}
+        assert report.counts == {"success": 2}
+        if use_compact_profiles:
+            assert report.profiles is not None
+            assert [(profile["outcome"], profile["weight"]) for profile in report.profiles] == [("success", 2)]
+        else:
+            assert report.groups[0].counts == report.counts
         assert [row.attack_result_id for row in report.results.items] == [str(uuid.UUID(int=2))]
         assert report.results.has_more
         page = await reader.results_async(

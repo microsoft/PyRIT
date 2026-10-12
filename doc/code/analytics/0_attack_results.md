@@ -405,9 +405,17 @@ members without changing their spellings, and sums weights of equivalent
 profiles before applying the same caps. Every saved result still contributes
 its full weight. For complete normalized attack/converter metadata, SQLite
 checks completeness per identifier instead of per result; incomplete and
-legacy rows retain their embedded metadata. Scalar membership filters use
-indexable set predicates, and scalar facets project their distinct values before
-searching and paging. SQLite 3.35+ uses query-local materialized projections to
+legacy rows retain their embedded metadata. Identifier decoding is shared only
+within the query for an exact reference/document pair, so different embedded
+documents under one missing or incomplete reference remain distinct.
+Accepted profiles partition the complete cohort, allowing the reader to sum
+their validated weights for raw outcome totals without a redundant scan. This
+does not sum overlapping groups or cells; overflow still obtains complete SQL
+totals. The report and its initial page retain one consistent read transaction.
+
+Scalar membership filters use indexable set predicates. Scalar facets project
+values once, then combine deduplication and ordering before paging instead of
+sorting the same values twice. SQLite 3.35+ uses query-local materialized projections to
 avoid repeated JSON decoding; older SQLite keeps semantically equivalent
 unhinted queries. None of this changes storage, persisted identities, schema,
 global settings, or response caching.
@@ -509,8 +517,8 @@ budgets and always uses 100,000 results, five analysts, and six iterations.
 
 ### Recorded integration 100k gate
 
-Measured on **2026-10-12 at 05:02 UTC**, using the integration pytest command above, on
-`9b4d3cd66ff348a22b73a1aacb3af8895185f255` plus the integration-test migration.
+Measured on **2026-10-12 at 06:30 UTC**, using the integration pytest command above, on
+`67d6ad89b5b1c1a31dc967fd83c4fa03ccec93e2` plus the query optimizations described above.
 The backend and client used the existing test compatibility identity
 `0.14.0+gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`. Compatibility middleware
 remained active; no external authentication or credentials were used. The
@@ -525,27 +533,30 @@ described above.
 
 | Workload | Cold (s) | Concurrent p95 (s) | Maximum (s) | Successful / error requests |
 |---|---:|---:|---:|---:|
-| Harm category x attack type report | 0.592885 | 1.715601 | 1.795298 | 31 / 0 |
-| Harm category x converter type report | 0.647190 | 1.803894 | 1.928105 | 31 / 0 |
-| Case-label facets | 0.154327 | 0.462593 | 0.542402 | 31 / 0 |
-| First result pages | 0.016283 | 0.415984 | 0.419032 | 31 / 0 |
-| Actual cursor continuations | 0.019692 | 0.204494 | 0.206378 | 31 / 0 |
+| Harm category x attack type report | 0.412512 | 1.505472 | 1.519278 | 31 / 0 |
+| Harm category x converter type report | 0.510630 | 1.513099 | 1.692439 | 31 / 0 |
+| Case-label facets | 0.085879 | 0.456433 | 0.462182 | 31 / 0 |
+| First result pages | 0.021311 | 0.284401 | 0.308339 | 31 / 0 |
+| Actual cursor continuations | 0.023050 | 0.355649 | 0.377080 | 31 / 0 |
 
 Each class has one cold request and 30 concurrent samples; p95/max refer to the
 concurrent samples. Both final verification requests also succeeded, for **157
 successful requests and zero errors** overall. The concurrent phase took
-19.426444 seconds and reached five overlapping callers. All 125 write
-transactions committed: 125 outcome updates and 62 inserts, with write p95
-0.154500 seconds and maximum 0.222849 seconds. Final SQL and both REST reports
-matched the exact **100,062-result** write ledger. Temporary databases were removed.
-Pytest reported one passing performance test in 52.78 seconds including setup
+16.918652 seconds and reached five overlapping callers. All 107 write
+transactions committed: 107 outcome updates and 53 inserts, with write p95
+0.140424 seconds and maximum 0.360693 seconds. Final SQL and both REST reports
+matched the exact **100,053-result** write ledger. Temporary databases were removed.
+Pytest reported one passing performance test in 49.85 seconds including setup
 and teardown, which are excluded from the latency samples.
 
 The initial measurement before the query optimizations failed: report p95s were 2.985537/5.026765 seconds, facets
 1.360661 seconds, first pages 0.773046 seconds, and continuations 0.225980 seconds,
 with 20 HTTP 504 responses. SQL profiling identified repeated profile/fallback
 work, repeated identifier/JSON interpretation, and Unicode callbacks on ASCII
-text. The query-local changes above addressed those costs. The data distribution,
+text. A later retry without query changes still missed the limits, with report
+p95s of 3.738381/2.388267 seconds and facets at 0.577069 seconds. The
+reference/document projection, totals reuse, and facet sort changes addressed
+that remaining redundant work before the recorded passing run. The data distribution,
 concurrency, production budgets, profile caps, and latency thresholds were not
 relaxed. These measurements establish this local workload result, not a latency
 guarantee for other machines or deployments.
