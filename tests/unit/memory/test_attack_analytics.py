@@ -100,7 +100,20 @@ def make_result(
 
 
 def control() -> QueryControl:
-    return QueryControl(deadline=time.monotonic() + 10)
+    """Bound correctness queries without imposing a short CI performance limit."""
+    return QueryControl(deadline=time.monotonic() + 120)
+
+
+def test_correctness_query_control_retains_a_finite_deadline() -> None:
+    with patch.object(time, "monotonic", return_value=100):
+        query_control = control()
+        assert query_control.deadline == 220
+    with patch.object(time, "monotonic", return_value=135):
+        query_control.check()
+        assert query_control.remaining == 85
+    with patch.object(time, "monotonic", return_value=220):
+        with pytest.raises(AnalyticsTimeoutException):
+            query_control.check()
 
 
 def predicate(*, name: str, values: list[str | None], **options: Any) -> dict[str, Any]:

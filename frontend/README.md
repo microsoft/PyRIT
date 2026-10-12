@@ -21,6 +21,14 @@ refreshes do not override your open/closed choice. Creating, copying, or repeati
 conversations still opens the desktop drawer. On narrow screens the drawer opens
 only when requested and closes after selecting a conversation.
 
+## Dataset catalog
+
+The **Datasets** page shows summaries of datasets already loaded into the backend's
+memory. When memory is empty, **Learn how to load datasets into memory** opens the
+[dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
+Use the same memory as the backend, then select **Refresh** in the catalog.
+Provider-loading controls and individual-example browsing are not available yet.
+
 ## Resuming a scenario run
 
 Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.

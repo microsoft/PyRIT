@@ -156,8 +156,14 @@ Options:
   default; `"all"` removes that limit; a positive integer sets a cap.
 - `max_per_dataset=5` is the named-objective default. `max_total="all"` leaves the
   combined selection uncapped. Apply source limits before the total limit.
-- `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent registered datasets.
+- `DatasetSource(provider=...)` attaches a configured `SeedDatasetProvider` instance whose
+  `dataset_name` must match the source name. It takes precedence over registry lookup.
+  Configuration copies must preserve live providers by identity, not serialize or deep-copy them.
+- `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent configured or registered datasets.
   `NEVER` requires stored data. A filter miss must never fetch.
+- Stored rows win even if a configured provider's inputs change. Generation count and
+  selection limits are separate; use a new dataset name to keep another generated batch.
+  Use one writer per name; concurrent runs can generate and store different batches.
 - `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
 - Validators run on full filtered populations before any sampling.
 - Ingredients must remain complete. Use `max_per_dataset="all"` and no finite source
@@ -179,6 +185,8 @@ Options:
   stored scenario identity. Resume never prepares datasets.
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
+- Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.
+  Scenario code must not call memory seed-read methods directly; the scenario contract test enforces this.
 - `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
 
 `max_dataset_size` is an exact alias for `max_total`; it does not disable source caps.

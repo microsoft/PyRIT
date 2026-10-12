@@ -5,19 +5,19 @@ import type { DatasetInfo } from '@/types'
 
 import { useScenarioDatasets } from './useScenarioDatasets'
 
-jest.mock('@/services/api', () => ({ datasetsApi: { list: jest.fn() } }))
+jest.mock('@/services/api', () => ({ datasetsApi: { listDatasets: jest.fn() } }))
 let generation = 'one'
 jest.mock('./useRuntime', () => ({ useRuntime: () => ({ ready: true, generation }) }))
-const list = datasetsApi.list as jest.Mock
+const list = datasetsApi.listDatasets as jest.Mock
 const NAMED: DatasetInfo = {
-  name: 'named', selection_key: 'dataset:named:named', loaded: true, provider_available: false, logical_examples: 1, origins: ['local'],
+  name: 'named', selection_key: 'dataset:named:named', loaded: true, provider_available: false, logical_examples: 1, origins: ['local'], seed_pieces: 1, objectives: 1, modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
 }
 
 describe('useScenarioDatasets', () => {
   beforeEach(() => { jest.clearAllMocks(); generation = 'one' })
 
   it('caches metadata for the page, excludes unnamed populations, and explicitly reloads', async () => {
-    list.mockResolvedValue([NAMED, { ...NAMED, name: '(unnamed)', selection_key: 'dataset:unnamed' }])
+    list.mockResolvedValue({ items: [NAMED, { ...NAMED, name: '(unnamed)', selection_key: 'dataset:unnamed' }] })
     const view = renderHook(() => useScenarioDatasets())
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     view.rerender()
@@ -31,8 +31,8 @@ describe('useScenarioDatasets', () => {
 
   it('ignores old-generation responses and surfaces reload failures without generating datasets', async () => {
     let completeOld: (value: DatasetInfo[]) => void = () => {}
-    list.mockReturnValueOnce(new Promise<DatasetInfo[]>((resolve) => { completeOld = resolve }))
-    list.mockResolvedValueOnce([{ ...NAMED, name: 'new' }])
+    list.mockReturnValueOnce(new Promise<DatasetInfo[]>((resolve) => { completeOld = resolve }).then((items) => ({ items })))
+    list.mockResolvedValueOnce({ items: [{ ...NAMED, name: 'new' }] })
     const view = renderHook(() => useScenarioDatasets())
     generation = 'two'
     view.rerender()
@@ -45,7 +45,7 @@ describe('useScenarioDatasets', () => {
   })
 
   it('hides loaded metadata immediately when the runtime changes', async () => {
-    list.mockResolvedValueOnce([NAMED])
+    list.mockResolvedValueOnce({ items: [NAMED] })
     const view = renderHook(() => useScenarioDatasets())
     await waitFor(() => expect(view.result.current.items).toEqual([NAMED]))
     list.mockReturnValueOnce(new Promise(() => {}))

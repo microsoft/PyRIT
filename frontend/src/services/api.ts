@@ -5,7 +5,6 @@ import { toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
-  DatasetInfo,
   TargetInstance,
   TargetListResponse,
   TargetTypeListResponse,
@@ -29,6 +28,7 @@ import type {
   CreateAttackResponse,
   AttackSummary,
   AttackListResponse,
+  DatasetListResponse,
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
@@ -479,15 +479,6 @@ export const labelsApi = {
   },
 }
 
-export const datasetsApi = {
-  list: async (signal?: AbortSignal): Promise<DatasetInfo[]> => {
-    const response = await apiClient.get<{ items: DatasetInfo[] }>('/datasets', {
-      params: { loaded_only: false }, signal,
-    })
-    return response.data.items
-  },
-}
-
 export const scenariosApi = {
   /**
    * Lists one page of the scenario catalog. Callers that need the full
@@ -582,6 +573,23 @@ export const scenariosApi = {
 
   resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
+}
+
+export const datasetsApi = {
+  /**
+   * Lists dataset summaries. Counts, modalities, and harm categories on the
+   * cards come from this payload; callers do not page seeds to compute them.
+   */
+  listDatasets: async (
+    { loaded_only }: { readonly loaded_only: boolean },
+    signal?: AbortSignal,
+  ): Promise<DatasetListResponse> => {
+    const response = await apiClient.get('/datasets', {
+      params: { loaded_only },
+      signal,
+    })
     return response.data
   },
 }

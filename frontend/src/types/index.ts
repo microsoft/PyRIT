@@ -815,6 +815,29 @@ export interface ChangeMainConversationResponse {
   conversation_id: string
 }
 
+/**
+ * Wire shape of `DatasetInfo` from `GET /api/datasets`.
+ * Null counts mean the total is unknown, not zero.
+ */
+export interface DatasetInfo {
+  name: string
+  selection_key: string
+  loaded: boolean
+  provider_available: boolean
+  origins?: string[]
+  logical_examples: number | null
+  seed_pieces: number | null
+  objectives: number | null
+  modalities: string[]
+  harm_categories: string[]
+  has_unlabeled_harm_categories: boolean
+}
+
+/** Wire shape of `DatasetListResponse` from `GET /api/datasets`. */
+export interface DatasetListResponse {
+  items: DatasetInfo[]
+}
+
 // --- Scenarios ---
 
 export type ScenarioDatasetLimit = number | 'all' | 'default'
@@ -860,15 +883,6 @@ export interface ScenarioDatasetSettings {
   filters: Record<string, string[]>
 }
 
-export interface DatasetInfo {
-  name: string
-  selection_key: string
-  loaded: boolean
-  provider_available: boolean
-  logical_examples: number | null
-  origins: string[]
-}
-
 export interface RegisteredScenario {
   scenario_name: string
   scenario_type: string
@@ -888,6 +902,8 @@ export interface RegisteredScenario {
   include_baseline_by_default: boolean
   uses_default_adversarial_target: boolean
   supported_parameters: Parameter[]
+  /** All declared names, including opaque inputs with dedicated controls. */
+  supported_parameter_names: string[]
   default_run_size: ScenarioRunSizeEstimateResponse
 }
 
@@ -904,7 +920,7 @@ export interface ListRegisteredScenariosResponse {
 
 export interface RunScenarioRequest {
   scenario_name: string
-  target_name: string
+  target_name?: string | null
   adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null

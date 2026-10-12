@@ -345,7 +345,7 @@ def print_scenario_run_progress(*, run: ScenarioRunSummary) -> None:
     """
     parts: list[str] = []
     if run.total_attacks > 0:
-        pct = int((run.completed_attacks / run.total_attacks) * 100)
+        pct = run.completed_attacks * 100 // run.total_attacks
         bar_width = 30
         filled = int(bar_width * run.completed_attacks / run.total_attacks)
         bar = "█" * filled + "░" * (bar_width - filled)

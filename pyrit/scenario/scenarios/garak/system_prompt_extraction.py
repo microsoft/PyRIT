@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
@@ -17,6 +16,7 @@ from pyrit.models import (
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    Seed,
     SeedObjective,
     SeedPrompt,
     scenario_dataset_size_from_limit,
@@ -199,33 +199,32 @@ class SystemPromptExtraction(Scenario):
             note="The prompt cap is shared across all selected categories. Dataset size limits do not apply.",
         )
 
-    async def _load_system_prompts_async(self) -> list[str]:
+    def _sample_system_prompts(self, seeds_by_dataset: dict[str, list[Seed]]) -> list[str]:
         """
-        Load the real system prompts (the *what*) from the configured datasets in memory.
+        Select system prompts from the filtered seed populations.
 
         Returns:
             list[str]: The system-prompt strings, subsampled per dataset to ``system_prompt_subsample``.
         """
-        memory = CentralMemory.get_memory_instance()
         rng = random.Random(self._random_seed)
         system_prompts: list[str] = []
         for name in (DATASET_DRH_SYSTEM_PROMPTS, DATASET_TM_SYSTEM_PROMPTS):
-            values = [seed.value for seed in (await memory.get_seeds_async(dataset_name=name))]
+            values = [seed.value for seed in seeds_by_dataset[name]]
             if len(values) > self._system_prompt_subsample:
                 values = rng.sample(values, self._system_prompt_subsample)
             system_prompts.extend(values)
         return system_prompts
 
-    async def _load_templates_by_category_async(self) -> dict[str, list[str]]:
+    @staticmethod
+    def _group_templates(seeds: list[Seed]) -> dict[str, list[str]]:
         """
-        Load the extraction templates (the *how*) from memory, grouped by ``technique`` metadata.
+        Group filtered extraction templates by ``technique`` metadata.
 
         Returns:
             dict[str, list[str]]: Mapping of technique category to its extraction request templates.
         """
-        memory = CentralMemory.get_memory_instance()
         templates_by_category: dict[str, list[str]] = {}
-        for seed in await memory.get_seeds_async(dataset_name=DATASET_EXTRACTION_TEMPLATES):
+        for seed in seeds:
             category = (seed.metadata or {}).get("technique")
             if not category:
                 continue
@@ -255,9 +254,9 @@ class SystemPromptExtraction(Scenario):
         Raises:
             ValueError: If no system prompts or templates were found in memory.
         """
-        await self._dataset_config._collect_named_seeds_async()
-        system_prompts = await self._load_system_prompts_async()
-        templates_by_category = await self._load_templates_by_category_async()
+        seeds_by_dataset = await self._dataset_config._collect_named_seeds_async()
+        system_prompts = self._sample_system_prompts(seeds_by_dataset)
+        templates_by_category = self._group_templates(seeds_by_dataset[DATASET_EXTRACTION_TEMPLATES])
 
         selected_categories = {technique.value for technique in self._scenario_techniques}
 

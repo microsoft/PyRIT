@@ -25,11 +25,11 @@ export function useScenarioDatasets() {
     const controller = new AbortController()
     const load = async (): Promise<void> => {
       try {
-        const data = await datasetsApi.list(controller.signal)
+        const data = await datasetsApi.listDatasets({ loaded_only: false }, controller.signal)
         if (controller.signal.aborted) return
         setSnapshot({
           key,
-          items: data.filter((item) => item.selection_key !== 'dataset:unnamed'),
+          items: data.items.filter((item) => item.selection_key !== 'dataset:unnamed'),
           error: null,
         })
       } catch (err: unknown) {

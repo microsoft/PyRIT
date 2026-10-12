@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Button, Combobox, Field, Input, MessageBar, MessageBarBody, Option, Select, Text } from '@fluentui/react-components'
 
@@ -25,37 +25,27 @@ interface ScenarioDatasetTableProps {
 
 interface DatasetLimitFieldProps {
   label: string
-  value: ScenarioDatasetLimit | null | undefined
+  text: string
   effective: number | 'all'
   disabled: boolean
-  onChange: (value: ScenarioDatasetLimit) => void
-  onError: (error: string | null) => void
+  onChange: (text: string) => void
 }
 
-function DatasetLimitField({ label, value, effective, disabled, onChange, onError }: DatasetLimitFieldProps) {
-  const [invalidText, setInvalidText] = useState<string | null>(null)
+function parseLimit(text: string): ScenarioDatasetLimit | null {
+  const value = text.trim().toLowerCase()
+  if (value === '' || value === 'default') return 'default'
+  if (value === 'all') return 'all'
+  const number = Number(value)
+  return /^\d+$/.test(value) && Number.isSafeInteger(number) && number > 0 ? number : null
+}
+
+function DatasetLimitField({ label, text, effective, disabled, onChange }: DatasetLimitFieldProps) {
   const styles = useScenarioDatasetTableStyles()
   return (
     <Field label={label} hint={`Default/effective: ${effective}. Blank or default retains the scenario setting.`}>
-      <Input
-        className={styles.input}
-        aria-label={label}
-        disabled={disabled}
-        value={invalidText ?? (value == null || value === 'default' ? '' : String(value))}
+      <Input className={styles.input} aria-label={label} disabled={disabled} value={text}
         placeholder="default, all, or positive integer"
-        onChange={(_, data) => {
-          const text = data.value.trim()
-          const parsed = Number(text)
-          if (text !== '' && text !== 'default' && text !== 'all' && (!Number.isSafeInteger(parsed) || parsed < 1)) {
-            setInvalidText(data.value)
-            onError(`${label} must be a positive integer, all, or default.`)
-            return
-          }
-          setInvalidText(null)
-          onError(null)
-          onChange(text === '' || text === 'default' ? 'default' : text === 'all' ? 'all' : parsed)
-        }}
-      />
+        onChange={(_, data) => onChange(data.value)} />
     </Field>
   )
 }
@@ -67,17 +57,24 @@ export default function ScenarioDatasetTable({
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
   const [newName, setNewName] = useState('')
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [selectionError, setSelectionError] = useState<string | null>(null)
   const selected: ScenarioDatasetSourceInput[] = request.sources ?? effective.sources.map((source) => ({ name: source.name }))
   const canSelect = options.supports_overrides && options.mode !== 'fixed'
   const canEdit = options.supports_overrides && options.source_settings !== false
   const candidates = datasets.filter((dataset) => options.mode === 'any' || options.allowed_names.includes(dataset.name))
-  const setError = (key: string, error: string | null): void => {
-    const next = { ...errors }
-    if (error) next[key] = error
-    else delete next[key]
-    setErrors(next)
-    onValidationChange(Object.values(next)[0] ?? null)
+  const limitText = (key: string, value: ScenarioDatasetLimit | null | undefined): string =>
+    drafts[key] ?? (value == null || value === 'default' ? '' : String(value))
+  const updateLimit = (key: string, text: string, apply: (value: ScenarioDatasetLimit) => void): void => {
+    setDrafts((previous) => ({ ...previous, [key]: text }))
+    const value = parseLimit(text)
+    if (value !== null) apply(value)
+  }
+  const clearSourceDrafts = (name?: string): void => {
+    setDrafts((previous) => Object.fromEntries(Object.entries(previous).filter(([key]) =>
+      name === undefined ? !key.startsWith('source:') : key !== `source:${name}`,
+    )))
+    setSelectionError(null)
   }
   const updateSource = (name: string, edits: Partial<ScenarioDatasetSourceInput>): void => {
     onChange({ ...request, sources: selected.map((source) => source.name === name ? { ...source, ...edits } : source) })
@@ -91,24 +88,37 @@ export default function ScenarioDatasetTable({
   const invalidNames = selected.filter((source) =>
     options.mode === 'subset' && !options.allowed_names.includes(source.name),
   )
+  const limits: Array<[string, string]> = []
+  if (options.supports_overrides) {
+    if (options.per_dataset_limit) limits.push(['Max per dataset', limitText('perDataset', request.max_per_dataset)])
+    if (options.total_limit) limits.push(['Max total', limitText('total', request.max_total)])
+    if (canEdit && options.per_dataset_limit) {
+      for (const source of selected) {
+        limits.push([`${source.name} limit`, limitText(`source:${source.name}`, source.max_size)])
+      }
+    }
+  }
+  const errors = limits.filter(([, text]) => parseLimit(text) === null)
+    .map(([label]) => `${label} must be a positive integer, all, or default.`)
+  if (invalidNames.length > 0) {
+    errors.push(`Invalid selection for current parameters: ${invalidNames.map((source) => source.name).join(', ')}`)
+  }
+  if (selectionError) errors.push(selectionError)
+  const validationError = errors[0] ?? null
+  useEffect(() => { onValidationChange(validationError) }, [validationError, onValidationChange])
   return (
     <section className={styles.root} aria-label="Dataset configuration">
       <Text weight="semibold">Datasets</Text>
       <Button className={styles.button} disabled={loading || disabled} onClick={onReload}>Reload dataset metadata</Button>
       {metadataError && <MessageBar intent="warning"><MessageBarBody>{metadataError}</MessageBarBody></MessageBar>}
-      {invalidNames.length > 0 && <MessageBar intent="error" role="alert"><MessageBarBody>
-        Invalid selection for current parameters: {invalidNames.map((source) => source.name).join(', ')}
-      </MessageBarBody></MessageBar>}
-      {Object.values(errors).map((error) => <MessageBar key={error} intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>)}
+      {errors.map((error) => <MessageBar key={error} intent="error" role="alert"><MessageBarBody>{error}</MessageBarBody></MessageBar>)}
       {options.supports_overrides && <div className={styles.controls}>
-        {options.per_dataset_limit && <DatasetLimitField label="Max per dataset" value={request.max_per_dataset}
+        {options.per_dataset_limit && <DatasetLimitField label="Max per dataset" text={limitText('perDataset', request.max_per_dataset)}
           effective={effective.max_per_dataset} disabled={disabled}
-          onError={(error) => setError('perDataset', error)}
-          onChange={(value) => updateGlobal('max_per_dataset', value)} />}
-        {options.total_limit && <DatasetLimitField label="Max total" value={request.max_total}
+          onChange={(text) => updateLimit('perDataset', text, (value) => updateGlobal('max_per_dataset', value))} />}
+        {options.total_limit && <DatasetLimitField label="Max total" text={limitText('total', request.max_total)}
           effective={effective.max_total} disabled={disabled}
-          onError={(error) => setError('total', error)}
-          onChange={(value) => updateGlobal('max_total', value)} />}
+          onChange={(text) => updateLimit('total', text, (value) => updateGlobal('max_total', value))} />}
         <Field label="Default dataset fetch">
           <Select aria-label="Default dataset fetch" disabled={disabled} value={request.fetch ?? 'default'}
             onChange={(_, data) => {
@@ -139,10 +149,9 @@ export default function ScenarioDatasetTable({
                 <div>{hasProvider ? 'Provider available' : metadata ? 'Memory only' : 'Availability unknown'}</div></td>
               <td className={styles.cell}>{metadata?.logical_examples ?? 'Unknown'}</td>
               <td className={styles.cell}>{canEdit && options.per_dataset_limit
-                ? <DatasetLimitField label={`${source.name} limit`} value={source.max_size}
+                ? <DatasetLimitField label={`${source.name} limit`} text={limitText(`source:${source.name}`, source.max_size)}
                   effective={settings?.max_size ?? effective.max_per_dataset} disabled={disabled}
-                  onError={(error) => setError(source.name, error)}
-                  onChange={(value) => updateSource(source.name, { max_size: value })} />
+                  onChange={(text) => updateLimit(`source:${source.name}`, text, (value) => updateSource(source.name, { max_size: value }))} />
                 : settings?.max_size ?? 'all'}</td>
               <td className={styles.cell}>{canEdit
                 ? <Select aria-label={`${source.name} fetch`} disabled={disabled} value={source.fetch ?? 'default'}
@@ -156,7 +165,10 @@ export default function ScenarioDatasetTable({
                 </Select> : settings?.fetch ?? effective.fetch}</td>
               <td className={styles.cell}>{canSelect && <Button className={styles.button}
                 aria-label={`Remove ${source.name}`} disabled={disabled || selected.length <= 1}
-                onClick={() => onChange({ ...request, sources: selected.filter((item) => item.name !== source.name) })}>
+                onClick={() => {
+                  clearSourceDrafts(source.name)
+                  onChange({ ...request, sources: selected.filter((item) => item.name !== source.name) })
+                }}>
                 Remove
               </Button>}</td>
             </tr>
@@ -174,10 +186,11 @@ export default function ScenarioDatasetTable({
         <Button className={styles.button} disabled={disabled || !newName.trim()}
           onClick={() => {
             const name = newName.trim()
-            if (selected.some((source) => source.name === name)) { setError('selection', 'Duplicate dataset selection.'); return }
-            if (options.mode === 'subset' && !options.allowed_names.includes(name)) { setError('selection', 'Dataset is not allowed.'); return }
-            if (options.max_selected && options.max_selected > 1 && selected.length >= options.max_selected) { setError('selection', `Select at most ${options.max_selected} dataset(s).`); return }
-            setError('selection', null)
+            if (selected.some((source) => source.name === name)) { setSelectionError('Duplicate dataset selection.'); return }
+            if (options.mode === 'subset' && !options.allowed_names.includes(name)) { setSelectionError('Dataset is not allowed.'); return }
+            if (options.max_selected && options.max_selected > 1 && selected.length >= options.max_selected) { setSelectionError(`Select at most ${options.max_selected} dataset(s).`); return }
+            if (options.max_selected === 1) clearSourceDrafts()
+            else setSelectionError(null)
             onChange({ ...request, sources: options.max_selected === 1 ? [{ name }] : [...selected, { name }] })
             setNewName('')
           }}>Add source</Button>
@@ -185,8 +198,7 @@ export default function ScenarioDatasetTable({
           const { sources, ...edits } = request
           void sources
           onChange(edits)
-          setErrors({})
-          onValidationChange(null)
+          clearSourceDrafts()
         }}>Use default sources</Button>
       </div>}
     </section>

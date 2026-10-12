@@ -1,10 +1,25 @@
 import { expect, test, type Locator, type Page } from './_fixtures'
 import { mockVersion } from './_compatibility'
 
-import type { RegisteredScenario } from '../src/types'
+import type { RegisteredScenario, ScenarioDatasetRequest, ScenarioDatasetSettings } from '../src/types'
 
 import { READY_RUNTIME } from './_runtime'
 import { makeTarget } from './_targets'
+
+const DATASET_DEFAULTS: ScenarioDatasetSettings = {
+  sources: [{ name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+  max_per_dataset: 5, max_total: 5, fetch: 'if_missing', filters: {},
+}
+const DATASET_OPTIONS = {
+  mode: 'any' as const, allowed_names: [], per_dataset_limit: true,
+  total_limit: true, supports_overrides: true, source_settings: true, filters: true,
+}
+const DATASETS = {
+  items: [
+    { name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true, origins: [], logical_examples: null },
+    { name: 'custom_objectives', selection_key: 'dataset:named:custom_objectives', loaded: true, provider_available: false, origins: ['user'], logical_examples: 10 },
+  ],
+}
 
 const SCENARIO: RegisteredScenario = {
   scenario_name: 'numeric-controls',
@@ -18,16 +33,23 @@ const SCENARIO: RegisteredScenario = {
   default_technique: 'prompt_sending',
   default_techniques: ['prompt_sending'],
   technique_summaries: [{ name: 'prompt_sending', description: null, tags: [] }],
-  default_datasets: [],
+  default_datasets: ['harmbench'],
+  dataset_defaults: DATASET_DEFAULTS,
+  dataset_options: DATASET_OPTIONS,
   baseline_policy: 'disabled',
   include_baseline_by_default: false,
   supported_parameters: [
     { name: 'iterations', type_name: 'int', required: false, default: '2', choices: null, is_list: false },
     { name: 'temperature', type_name: 'float', required: false, default: '0.5', choices: null, is_list: false },
   ],
+  supported_parameter_names: [
+    'objective_target', 'scenario_techniques', 'dataset_config', 'dataset_overrides', 'memory_labels',
+    'max_concurrency', 'max_retries', 'include_baseline', 'iterations', 'temperature',
+  ],
   default_run_size: {
     dataset_size: { kind: 'indeterminate', reason: 'configuration_unavailable', detail: 'Population configuration is not available.' },
-    dataset_limit: { state: 'scenario_default' },
+    dataset_limit: { state: 'value', value: 5 },
+    dataset_defaults: DATASET_DEFAULTS, effective_datasets: DATASET_DEFAULTS, dataset_options: DATASET_OPTIONS,
     estimated_attack_count: null,
     components: [],
     datasets: [],
@@ -70,8 +92,28 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         ],
       },
       '/api/labels': { source: 'attacks', labels: {} },
+      '/api/datasets': DATASETS,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,
+    }
+    if (path.endsWith('/estimate')) {
+      const edits: ScenarioDatasetRequest = route.request().postDataJSON()?.datasets ?? {}
+      const limit = (value: ScenarioDatasetRequest['max_total'], fallback: number | 'all'): number | 'all' =>
+        typeof value === 'number' || value === 'all' ? value : fallback
+      const effective: ScenarioDatasetSettings = {
+        ...DATASET_DEFAULTS,
+        max_per_dataset: limit(edits.max_per_dataset, DATASET_DEFAULTS.max_per_dataset),
+        max_total: limit(edits.max_total, DATASET_DEFAULTS.max_total),
+        fetch: edits.fetch === 'never' || edits.fetch === 'if_missing' ? edits.fetch : DATASET_DEFAULTS.fetch,
+        sources: (edits.sources ?? DATASET_DEFAULTS.sources).map((source) => ({
+          name: source.name,
+          max_size: limit(source.max_size, DATASET_DEFAULTS.max_per_dataset),
+          fetch: source.fetch === 'never' || source.fetch === 'if_missing' ? source.fetch : DATASET_DEFAULTS.fetch,
+          configured_provider: false,
+        })),
+      }
+      await route.fulfill({ json: { ...SCENARIO.default_run_size, effective_datasets: effective } })
+      return
     }
     if (!(path in responses)) {
       await route.abort()
@@ -164,21 +206,40 @@ test('scenario steppers commit typed values before stepping and clamp at existin
   await expect(page.getByRole('spinbutton', { name: 'Max concurrency', exact: true })).toHaveValue('10')
 })
 
-test('native scenario dataset and shared dynamic parameter controls step once', async ({ page }) => {
+test('native shared dynamic parameter controls step once', async ({ page }) => {
   await page.goto(`/scanner/${SCENARIO.scenario_name}`)
-  const datasetSize = page.getByRole('spinbutton', { name: 'Max dataset size', exact: true })
-  await expectNativeSteps(datasetSize, 2)
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'iterations', exact: true }), 2)
   // The existing dynamic float input has native step=1 with a fractional base.
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'temperature', exact: true }), 0.5)
-  await datasetSize.fill('1')
-  await clickNativeSpinner(datasetSize, 'down')
-  await expect(datasetSize).toHaveValue('1')
-  await datasetSize.press('ArrowDown')
-  await expect(datasetSize).toHaveValue('1')
-  await datasetSize.fill('')
-  await datasetSize.press('Tab')
-  await expect(datasetSize).toHaveValue('')
+})
+
+test('dataset limits support default and all and keep invalid text blocking after source reset', async ({ page }, testInfo) => {
+  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  await expect(page.getByRole('table', { name: 'Selected datasets' })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Objective Target' }).selectOption('mock-target')
+  const total = page.getByRole('textbox', { name: 'Max total', exact: true })
+  await expect(total).toHaveValue('')
+  await page.getByRole('region', { name: 'Dataset configuration' }).screenshot({ path: testInfo.outputPath('datasets-default.png') })
+  await total.fill('all')
+  await page.getByRole('combobox', { name: 'Add dataset' }).fill('custom_objectives')
+  await page.getByRole('button', { name: 'Add source', exact: true }).click()
+  await page.getByRole('textbox', { name: 'custom_objectives limit' }).fill('8')
+  await page.getByRole('combobox', { name: 'custom_objectives fetch' }).selectOption('never')
+  await total.fill('12')
+  await expect(page.getByText('Default/effective: 12. Blank or default retains the scenario setting.')).toBeVisible()
+  await expect(page.getByText('Default/effective: 8. Blank or default retains the scenario setting.')).toBeVisible()
+  await page.getByRole('region', { name: 'Dataset configuration' }).screenshot({ path: testInfo.outputPath('datasets-edited.png') })
+  await total.fill('0')
+  await expect(page.getByRole('alert')).toContainText('Max total must be a positive integer')
+  await page.getByRole('button', { name: 'Use default sources' }).click()
+  await expect(total).toHaveValue('0')
+  await expect(page.getByRole('alert')).toContainText('Max total must be a positive integer')
+  await expect(page.getByRole('button', { name: 'Launch scan', exact: true })).toBeDisabled()
+  await page.getByRole('region', { name: 'Dataset configuration' }).screenshot({ path: testInfo.outputPath('datasets-invalid.png') })
+  await total.fill('default')
+  await expect(page.getByRole('alert')).not.toBeVisible()
+  await total.fill('')
+  await expect(total).toHaveValue('')
 })
 
 test('native Azure ML advanced controls retain steps and reset to default guidance', async ({ page }) => {

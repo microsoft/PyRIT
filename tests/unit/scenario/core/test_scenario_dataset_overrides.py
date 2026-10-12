@@ -3,6 +3,8 @@
 
 """Offline dataset contract coverage across Python, REST, scanner, and shell."""
 
+import ast
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,6 +24,7 @@ from pyrit.models import (
     DatasetSourceInput,
     ScenarioDatasetRequest,
     SeedObjective,
+    SeedPrompt,
 )
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry import ScenarioRegistry
@@ -34,6 +37,13 @@ from pyrit.scenario.scenarios.garak.api_key import ApiKey
 from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.figstep import FigStep
 from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
+from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectTechnique
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
+    DATASET_EXTRACTION_TEMPLATES,
+    SystemPromptExtraction,
+    SystemPromptExtractionTechnique,
+)
+from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 from pyrit.score import SubStringScorer
 
 
@@ -196,3 +206,74 @@ async def test_catalog_dataset_controls_do_not_depend_on_estimates() -> None:
     assert item.dataset_options.per_dataset_limit is False
     assert [source.name for source in item.dataset_defaults.sources] == ApiKey.required_datasets()
     assert item.dataset_defaults.max_total == 20
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("kind", ["system_prompt", "web", "prompt_inject"])
+async def test_synthesized_scenarios_build_only_from_matching_seeds(kind: str) -> None:
+    target = MockPromptTarget()
+    if kind == "system_prompt":
+        scenario = SystemPromptExtraction(prompt_cap="all")
+        techniques = [SystemPromptExtractionTechnique.DirectRequests]
+        expected = 2
+    elif kind == "web":
+        scenario = WebInjection(max_prompts_per_technique=100)
+        techniques = [WebInjectionTechnique.TaskXSS]
+        expected = 1
+    else:
+        scenario = PromptInject()
+        techniques = [PromptInjectTechnique.IgnorePrint]
+        expected = 1
+    seeds = []
+    for name in scenario.required_datasets() if kind != "web" else scenario._default_dataset_config.dataset_names:
+        for category in ("selected", "excluded"):
+            value = f"{category}:{name}"
+            seed_name = name
+            metadata = {"technique": "direct_requests"} if name == DATASET_EXTRACTION_TEMPLATES else {}
+            if kind == "prompt_inject":
+                value += " {{ goal_text }}" if name == PromptInject.TECHNIQUE_DATASET_NAME else " {{ technique_text }}"
+                seed_name = "ignore_print"
+            seeds.append(
+                SeedPrompt(
+                    value=value, name=seed_name, dataset_name=name, harm_categories=[category], metadata=metadata
+                )
+            )
+    memory = CentralMemory.get_memory_instance()
+    await memory.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+    args = {
+        "objective_target": target,
+        "scenario_techniques": techniques,
+        "include_baseline": False,
+        "dataset_overrides": ScenarioDatasetRequest(
+            filters={"harm_categories": ["selected"]}, fetch=DatasetFetchPolicy.NEVER
+        ),
+    }
+    if kind == "prompt_inject":
+        args["goal_texts"] = ["test goal"]
+    scenario.set_params_from_args(args=args)
+    with patch.object(memory, "get_seeds_async", side_effect=AssertionError("Estimate read seeds")):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.effective_datasets.filters == {"harm_categories": ["selected"]}
+    with patch.object(memory, "get_seeds_async", wraps=memory.get_seeds_async) as read:
+        await scenario.initialize_async()
+    assert all(call.kwargs.get("harm_categories") == ["selected"] for call in read.await_args_list)
+    groups = [group for attack in scenario._atomic_attacks for group in attack.seed_groups]
+    assert len(groups) == expected
+    assert all("excluded:" not in seed.value for group in groups for seed in group.seeds)
+    if kind == "prompt_inject":
+        assert scenario._technique_templates["ignore_print"].value.startswith("selected:")
+
+
+def test_scenarios_do_not_bypass_configured_seed_reads() -> None:
+    root = Path(__file__).parents[4] / "pyrit" / "scenario" / "scenarios"
+    direct_reads = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        direct_reads.extend(
+            f"{path.relative_to(root)}:{node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"get_seeds", "get_seeds_async", "get_seed_groups", "get_seed_groups_async"}
+        )
+    assert not direct_reads, f"Scenario seed reads must use the dataset configuration so filters apply: {direct_reads}"

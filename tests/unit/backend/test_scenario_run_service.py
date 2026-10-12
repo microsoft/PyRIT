@@ -190,6 +190,75 @@ def _make_request(
     )
 
 
+@pytest.mark.parametrize("supports_common_inputs", [True, False])
+async def test_prepare_and_restore_preserve_common_input_support_async(
+    patch_central_database: MagicMock, supports_common_inputs: bool
+) -> None:
+    declared = Scam.supported_parameters() if supports_common_inputs else []
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    registry.create_and_initialize_async = AsyncMock(return_value=MagicMock(spec=Scenario))
+    service = ScenarioRunService()
+    request = RunScenarioRequest(
+        scenario_name="test.support",
+        **({"target_name": "my_target"} if supports_common_inputs else {}),
+    )
+    with (
+        patch.object(Scam, "supported_parameters", return_value=declared),
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+        patch.object(service._configuration_resolver, "resolve_target") as resolve_target,
+    ):
+        await service._prepare_run_async(request=request)
+        kwargs = registry.create_and_initialize_async.call_args.kwargs
+        saved = kwargs["initial_metadata"][_svc_mod._LAUNCH_REQUEST_METADATA_KEY]
+        stored = make_scenario_result(
+            scenario_name="test.support",
+            techniques=["prompt_sending"],
+            datasets=[],
+            attack_results={},
+            metadata={_svc_mod._LAUNCH_REQUEST_METADATA_KEY: saved},
+        )
+        restored = service._restore_launch_request(stored=stored)
+        if supports_common_inputs:
+            resolve_target.assert_called_once()
+            assert kwargs["max_concurrency"] == restored.max_concurrency == 10
+            assert kwargs["max_retries"] == restored.max_retries == 0
+            assert restored.target_name == "my_target"
+            assert restored.include_baseline is True
+        else:
+            resolve_target.assert_not_called()
+            for name in ("objective_target", "max_concurrency", "max_retries", "include_baseline"):
+                assert name not in kwargs
+            assert restored.target_name is None
+            assert restored.max_concurrency is None
+            assert restored.max_retries is None
+            assert restored.include_baseline is None
+            assert restored.techniques is None
+            assert restored.dataset_names is None
+            assert restored.labels is None
+            registry.create_and_initialize_async.reset_mock()
+            await service._prepare_run_async(request=restored)
+            for name in ("objective_target", "max_concurrency", "max_retries", "include_baseline"):
+                assert name not in registry.create_and_initialize_async.call_args.kwargs
+    await service.close_async()
+
+
+async def test_prepare_requires_target_for_scenarios_that_declare_it_async(
+    patch_central_database: MagicMock,
+) -> None:
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = Scam
+    service = ScenarioRunService()
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+        pytest.raises(ValueError, match="requires an objective target"),
+    ):
+        await service._prepare_run_async(request=RunScenarioRequest(scenario_name="test.support"))
+    await service.close_async()
+
+
 @pytest.mark.parametrize(
     ("scenario_params", "rejected"),
     [
@@ -2314,6 +2383,15 @@ class TestScenarioRunServiceListRuns:
                         total_retries=3,
                         latest_attempt_timestamp=timestamp,
                         atomic_attack_names=("attack",),
+                        target_facing_attempts=0,
+                        target_facing_error_attempts=0,
+                        target_facing_retries=0,
+                        orchestration_attempts=0,
+                        orchestration_error_attempts=0,
+                        orchestration_retries=0,
+                        unknown_role_attempts=0,
+                        unknown_role_error_attempts=0,
+                        unknown_role_retries=0,
                     )
                 },
                 False,
@@ -2447,6 +2525,15 @@ class TestScenarioRunServiceListRuns:
                         total_retries=0,
                         latest_attempt_timestamp=timestamp,
                         atomic_attack_names=("attack-1", "attack-2"),
+                        target_facing_attempts=0,
+                        target_facing_error_attempts=0,
+                        target_facing_retries=0,
+                        orchestration_attempts=0,
+                        orchestration_error_attempts=0,
+                        orchestration_retries=0,
+                        unknown_role_attempts=0,
+                        unknown_role_error_attempts=0,
+                        unknown_role_retries=0,
                     )
                 },
                 False,
@@ -2580,6 +2667,15 @@ class TestScenarioRunServiceListRuns:
                     total_retries=4,
                     latest_attempt_timestamp=datetime(2026, 8, 7, tzinfo=UTC),
                     atomic_attack_names=("attack",),
+                    target_facing_attempts=0,
+                    target_facing_error_attempts=0,
+                    target_facing_retries=0,
+                    orchestration_attempts=0,
+                    orchestration_error_attempts=0,
+                    orchestration_retries=0,
+                    unknown_role_attempts=0,
+                    unknown_role_error_attempts=0,
+                    unknown_role_retries=0,
                 )
             }
         )
@@ -3789,6 +3885,15 @@ async def test_history_and_detail_retry_work_match_across_attempt_partitions(moc
         total_retries=5,
         latest_attempt_timestamp=timestamp + timedelta(seconds=2),
         atomic_attack_names=("attack",),
+        target_facing_attempts=0,
+        target_facing_error_attempts=0,
+        target_facing_retries=0,
+        orchestration_attempts=0,
+        orchestration_error_attempts=0,
+        orchestration_retries=0,
+        unknown_role_attempts=0,
+        unknown_role_error_attempts=0,
+        unknown_role_retries=0,
     )
     service = ScenarioRunService()
 
