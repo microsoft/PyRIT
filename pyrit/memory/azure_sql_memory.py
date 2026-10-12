@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import (
     Integer,
+    String,
     Unicode,
     and_,
     bindparam,
@@ -20,9 +21,11 @@ from sqlalchemy import (
     event,
     exists,
     func,
+    literal,
     literal_column,
     text,
 )
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.engine import make_url
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -43,10 +46,11 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
-from pyrit.models import ConversationStats
+from pyrit.models import AttackResultRole, ConversationStats
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
+    from sqlalchemy.sql import SQLColumnExpression
 
 logger = logging.getLogger(__name__)
 
@@ -350,9 +354,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         are_label_parts: list[str] = []
         are_bindparams: dict[str, str] = {}
 
-        for key, value in memory_labels.items():
-            are_param = f"are_ml_{key}"
-            are_label_parts.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') = :{are_param}")
+        for key_index, (key, value) in enumerate(memory_labels.items()):
+            path_param = f"are_ml_path_{key_index}"
+            are_param = f"are_ml_{key_index}"
+            are_label_parts.append(f'JSON_VALUE("AttackResultEntries".labels, :{path_param}) = :{are_param}')
+            are_bindparams[path_param] = f'$."{key}"'
             are_bindparams[are_param] = str(value)
 
         combined_are = " AND ".join(are_label_parts)
@@ -547,17 +553,19 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         are_label_conditions: list[str] = []
         are_bindparams: dict[str, str] = {}
 
-        for key, raw_value in labels.items():
+        for key_index, (key, raw_value) in enumerate(labels.items()):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
+            path_param = f"are_label_path_{key_index}"
+            are_bindparams[path_param] = f'$."{key}"'
             are_placeholders = []
             for idx, v in enumerate(values):
-                are_param = f"are_label_{key}_{idx}"
+                are_param = f"are_label_{key_index}_{idx}"
                 are_placeholders.append(f":{are_param}")
                 are_bindparams[are_param] = str(v)
             are_in = ", ".join(are_placeholders)
-            are_label_conditions.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') IN ({are_in})")
+            are_label_conditions.append(f'JSON_VALUE("AttackResultEntries".labels, :{path_param}) IN ({are_in})')
 
         are_parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
         if are_label_conditions:
@@ -803,7 +811,29 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """Return the persisted execution start without loading full scenario metadata."""
         return func.json_value(ScenarioResultEntry.scenario_metadata, "$.started_at")
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_id_order_expression(
+        self, *, attempt_id: "SQLColumnExpression[uuid.UUID]"
+    ) -> "SQLColumnExpression[str]":
+        # Native SQL Server UUID ordering differs from the SDK's canonical string comparison.
+        return func.lower(sql_cast(attempt_id, String(36))).collate("Latin1_General_100_BIN2")
+
+    def _get_scenario_role_match_condition(self, *, role_expression: Any, role: AttackResultRole) -> Any:
+        """
+        Return an exact case-sensitive and trailing-space-sensitive condition for AttackResultRole.
+
+        SQL Server pads strings for '=' comparisons and uses case-insensitive collation by default.
+        Binary collation ensures exact case matching, and DATALENGTH ensures trailing spaces or
+        malformed padding are not ignored.
+
+        Returns:
+            A SQL Server condition strictly matching the specified AttackResultRole.
+        """
+        return and_(
+            role_expression.collate("Latin1_General_100_BIN2") == role.value,
+            func.datalength(role_expression) == func.datalength(literal(role.value, type_=Unicode)),
+        )
+
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQL Server JSON expressions for persisted scenario attempt attribution."""
         atomic_name = func.coalesce(
             func.json_value(AttackResultEntry.attribution_data, '$."parent_collection"'),
@@ -813,12 +843,21 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             func.json_value(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
             "",
         )
-        seed_group_id = func.coalesce(
+        attributed_seed_group_id = func.nullif(
             func.json_value(AttackResultEntry.attribution_data, '$."seed_group_id"'),
-            AttackResultEntry.objective_sha256,
             "",
         )
-        return atomic_name, technique_hash, seed_group_id
+        identifier_seed_key = literal_column(
+            f"""(
+                SELECT STRING_AGG(CAST(JSON_VALUE([attempt_seed].[value], '$.hash') AS NVARCHAR(MAX)), ',')
+                    WITHIN GROUP (ORDER BY CAST([attempt_seed].[key] AS INT))
+                FROM OPENJSON(
+                    [{AttackResultEntry.__tablename__}].[atomic_attack_identifier],
+                    '$.children.seed_identifiers'
+                ) AS [attempt_seed]
+            )"""
+        )
+        return atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key
 
     def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
         """Return SQL Server run-plan expansions for planned units and planned seed groups."""

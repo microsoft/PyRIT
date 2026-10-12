@@ -137,6 +137,55 @@ def _response(text: str) -> list[Message]:
 class TestMultilingual:
     """Validate multilingual technique selection and converter construction."""
 
+    @pytest.mark.parametrize("converter_type", [Base64Converter, QRCodeConverter])
+    async def test_local_factory_wins_before_filtering_and_during_execution_async(
+        self,
+        *,
+        converter_type: type[Base64Converter] | type[QRCodeConverter],
+        mock_objective_target: PromptTarget,
+        mock_adversarial_chat: PromptTarget,
+        mock_objective_scorer: TrueFalseScorer,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        before = _build_multilingual_technique()
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        registered = AttackTechniqueFactory(
+            name=_PROMPT_SENDING,
+            attack_class=PromptSendingAttack,
+            description="Runtime override",
+            technique_tags=["runtime_only"],
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[converter_type()])
+                )
+            },
+        )
+        registry.instances.register_runtime(registered)
+        current = _build_multilingual_technique()
+        assert current is not before
+        assert current(_PROMPT_SENDING).description == before(_PROMPT_SENDING).description
+        assert current(_PROMPT_SENDING).tags == before(_PROMPT_SENDING).tags
+        assert "runtime_only" not in current.get_aggregate_tags()
+
+        with _patch_seed_groups(mock_memory_seed_groups):
+            scenario = Multilingual(adversarial_chat=mock_adversarial_chat, objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [current(_PROMPT_SENDING)],
+                    "languages": ["French"],
+                    "translation_strategies": [_TRANSLATION],
+                    "include_baseline": False,
+                }
+            )
+            await scenario.initialize_async()
+
+        assert len(scenario._atomic_attacks) == 1
+        assert [type(converter) for converter in _request_converters(scenario._atomic_attacks[0])] == [
+            TranslationConverter
+        ]
+        assert registry.instances.get(_PROMPT_SENDING) is registered
+
     @pytest.mark.parametrize("explicit_target", [False, True])
     def test_default_adversarial_usage(
         self, *, explicit_target: bool, mock_adversarial_chat: PromptTarget, mock_objective_scorer: TrueFalseScorer

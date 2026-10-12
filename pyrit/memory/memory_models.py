@@ -74,6 +74,7 @@ from pyrit.models import (
     SeedObjective,
     SeedOrigin,
     SeedPrompt,
+    SeedRecord,
     SeedSimulatedConversation,
     SeedType,
     TargetIdentifier,
@@ -201,12 +202,31 @@ class UTCDateTime(TypeDecorator[datetime]):
     A DateTime type that returns timezone-aware UTC datetimes.
 
     Databases such as SQLite store datetimes without timezone information and return naive
-    ``datetime`` objects. This decorator attaches UTC tzinfo on read so callers always receive
-    aware datetimes, removing the need to normalize at every read site.
+    ``datetime`` objects. This decorator stores every value as naive UTC and attaches UTC tzinfo
+    on read, so callers always receive aware datetimes, removing the need to normalize at every
+    read site.
     """
 
     impl = DateTime
     cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Any) -> datetime | None:
+        """
+        Convert an aware datetime to naive UTC before it is stored or compared.
+
+        The column has no timezone, so an aware value with another offset would otherwise be
+        stored as its local wall-clock time and read back as UTC. Naive values are taken as UTC.
+
+        Args:
+            value (datetime | None): The value being written or compared.
+            dialect (Any): The database dialect being used.
+
+        Returns:
+            datetime | None: The value as naive UTC, or unchanged if it was naive or None.
+        """
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
 
     def process_result_value(self, value: datetime | None, dialect: Any) -> datetime | None:
         """
@@ -1648,12 +1668,45 @@ class SeedEntry(Base):
             decoded = None
         return cleaned, decoded
 
-    def get_seed(self) -> Seed:
+    def get_seed_record(self) -> SeedRecord:
+        """
+        Project stored fields without reconstructing an executable seed.
+
+        Returns:
+            SeedRecord: Stored content, identifiers, and metadata, including raw configuration text.
+        """
+        metadata, response_json_schema = self._unpack_seed_metadata(self.prompt_metadata)
+        return SeedRecord(
+            id=self.id,
+            seed_type=self.seed_type,
+            value=self.value,
+            value_sha256=self.value_sha256,
+            data_type=self.data_type,
+            name=self.name,
+            dataset_name=self.dataset_name,
+            origin=SeedOrigin(self.origin),
+            harm_categories=self.harm_categories,
+            description=self.description,
+            authors=self.authors,
+            groups=self.groups,
+            source=self.source,
+            date_added=self.date_added,
+            added_by=self.added_by,
+            metadata=metadata,
+            prompt_group_id=self.prompt_group_id,
+            sequence=self.sequence,
+            role=self.role,
+            parameters=self.parameters,
+            conditions=self.conditions,
+            response_json_schema=response_json_schema,
+        )
+
+    def get_seed(self) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
         """
         Convert this database entry back into a Seed object.
 
         Returns:
-            Seed: The reconstructed seed object (SeedPrompt, SeedObjective, or SeedSimulatedConversation)
+            SeedPrompt | SeedObjective | SeedSimulatedConversation: The reconstructed seed object.
 
         Raises:
             ValueError: If persisted conditions are invalid or attached to a non-objective seed,

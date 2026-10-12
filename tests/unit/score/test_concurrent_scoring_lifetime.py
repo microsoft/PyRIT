@@ -6,6 +6,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 
 from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, MessageScorable
@@ -85,12 +86,14 @@ async def test_scoring_failure_drains_nested_work_before_returning(
         scoring_task = asyncio.create_task(invoke_async())
         try:
             with pytest.raises(failure_type, match="judge failed"):
-                await asyncio.wait_for(scoring_task, timeout=5)
+                await wait_for_completion_async(future=scoring_task)
             cleaned_up_at_return = finalized.is_set() and all(task.done() for task in started_tasks)
         finally:
             # Also drain the broken implementation so the regression leaves no orphan tasks.
             allow_completion.set()
-            await asyncio.gather(*started_tasks, return_exceptions=True)
+            if not scoring_task.done():
+                scoring_task.cancel()
+            await asyncio.gather(scoring_task, *started_tasks, return_exceptions=True)
 
     assert cleaned_up_at_return
     assert late_completions == []

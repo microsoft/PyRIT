@@ -61,6 +61,7 @@ def mock_api_client():
         all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
+        supported_parameter_names=[],
     )
     client.close_async = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
@@ -75,6 +76,7 @@ def mock_api_client():
         all_techniques=kw.get("all_techniques", []),
         default_datasets=kw.get("default_datasets", []),
         supported_parameters=kw.get("supported_parameters", []),
+        supported_parameter_names=[parameter.name for parameter in kw.get("supported_parameters", [])],
     )
     # Suppress unused-import warning for datetime/timezone helpers used by tests.
     _ = (datetime, timezone)
@@ -1189,6 +1191,34 @@ class TestDoScenarioResults:
 
 class TestShellScenarioParamFlow:
     """Regression tests: shell.do_run must forward scenario-declared parameters."""
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "",
+            " --max-dataset-size default",
+            " --max-dataset-size all",
+            " --max-dataset-size 7",
+            " --max-dataset-size ''",
+        ],
+    )
+    def test_run_preserves_total_limit_presence(
+        self, *, shell: tuple[pyrit_shell.PyRITShell, AsyncMock], flag: str
+    ) -> None:
+        s, client = shell
+        client.start_scenario_run_async = AsyncMock(return_value=TestDoRun._run_payload("CREATED"))
+        client.get_scenario_run_async = AsyncMock(return_value=TestDoRun._run_payload("COMPLETED"))
+        client.get_scenario_run_results_async = AsyncMock(return_value=TestDoRun._empty_scenario_result())
+        with (
+            patch("pyrit.cli._output.print_scenario_result_async", new_callable=AsyncMock),
+            patch("pyrit.cli._output.print_scenario_run_progress"),
+            patch("time.sleep"),
+        ):
+            s.do_run(f"foo --target t{flag}")
+        request = client.start_scenario_run_async.call_args.kwargs["request"]
+        expected = 7 if flag.endswith("7") else "all" if flag.endswith("all") else "default"
+        assert ("max_dataset_size" in request.model_fields_set) == bool(flag)
+        assert request.max_dataset_size == expected
 
     def test_run_passes_scenario_declared_params(self, shell):
         s, client = shell

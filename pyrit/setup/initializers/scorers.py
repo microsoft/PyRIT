@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 
 from azure.ai.contentsafety.models import TextCategory
 
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import SeedPrompt
 from pyrit.models.parameter import Parameter
 from pyrit.registry import ScorerRegistry, TargetRegistry
@@ -186,6 +187,15 @@ class ScorerInitializer(PyRITInitializer):
 
         Raises:
             RuntimeError: If the TargetRegistry is empty or hasn't been initialized.
+        """
+        await run_legacy_sync_async(self._register_scorers)
+
+    def _register_scorers(self) -> None:
+        """
+        Construct template-backed scorers without blocking the caller's event loop.
+
+        Raises:
+            RuntimeError: If the target registry is empty.
         """
         target_registry = TargetRegistry.get_registry_singleton()
 

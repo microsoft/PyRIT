@@ -21,10 +21,12 @@ import {
   versionApi,
   configurationApi,
   targetsApi,
+  techniquesApi,
   convertersApi,
   attacksApi,
   labelsApi,
   scenariosApi,
+  datasetsApi,
 } from "./api";
 
 describe("api service", () => {
@@ -368,6 +370,28 @@ describe("api service", () => {
       (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
 
       await expect(targetsApi.listTargets()).rejects.toThrow("Server error");
+    });
+  });
+
+  describe("techniquesApi", () => {
+    it("should list techniques with the default page limit", async () => {
+      const response = { data: { items: [], pagination: { limit: 50, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", { params: { limit: 50 } });
+    });
+
+    it("should forward the page limit and cursor", async () => {
+      const response = { data: { items: [], pagination: { limit: 10, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques(10, "last_technique")).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", {
+        params: { limit: 10, cursor: "last_technique" },
+      });
     });
   });
 
@@ -748,6 +772,7 @@ describe("api service", () => {
           baseline_policy: "enabled",
           include_baseline_by_default: true,
           supported_parameters: [],
+          supported_parameter_names: [],
         },
       };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
@@ -956,6 +981,37 @@ describe("api service", () => {
       expect(apiClient.post).toHaveBeenCalledTimes(1);
       expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/resume");
       expect(apiClient.get).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("datasetsApi", () => {
+    it("lists dataset summaries with loaded_only and does not send a selection key", async () => {
+      const mockResponse = {
+        data: {
+          items: [],
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await expect(datasetsApi.listDatasets({ loaded_only: true })).resolves.toEqual({ items: [] });
+
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: undefined,
+      });
+    });
+
+    it("forwards an abort signal and still does not send a selection key", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [] } });
+
+      await datasetsApi.listDatasets({ loaded_only: true }, controller.signal);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: controller.signal,
+      });
     });
   });
 });

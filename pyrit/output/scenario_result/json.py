@@ -2,10 +2,17 @@
 # Licensed under the MIT license.
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pyrit.models import AttackResult, ScenarioResult
-from pyrit.output._derivation import attack_score_display, group_success_rate, resolve_target_info, select_attacks
+from pydantic import TypeAdapter
+
+from pyrit.models import AttackResult, OutcomeStatistics, ScenarioProducerCounts, ScenarioResult
+from pyrit.output._derivation import (
+    attack_score_display,
+    resolve_target_info,
+    scenario_overview,
+    select_attacks,
+)
 from pyrit.output.scenario_result.base import ScenarioResultPrinterBase, ScenarioView
 from pyrit.output.sink import Sink
 
@@ -27,6 +34,9 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
     metrics come from an injected ``ScorerPrinterBase`` (the ``*MemoryPrinter`` leaf
     supplies a memory-backed one).
     """
+
+    _OUTCOME_ADAPTER: ClassVar[TypeAdapter[OutcomeStatistics | None]] = TypeAdapter(OutcomeStatistics | None)
+    _PRODUCER_ADAPTER: ClassVar[TypeAdapter[ScenarioProducerCounts | None]] = TypeAdapter(ScenarioProducerCounts | None)
 
     def __init__(
         self,
@@ -117,14 +127,17 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
         """
         target = resolve_target_info(result.objective_target_identifier)
 
-        display_groups = result.get_display_groups()
+        overview = scenario_overview(result)
         groups = [
             {
-                "name": group_name,
-                "num_results": len(group_results),
-                "success_rate": group_success_rate(group_results),
+                "name": group.name,
+                "num_objective_executions": group.objective_executions,
+                "num_attempts": group.attempts,
+                "success_rate": group.success_rate,
+                "outcomes": self._OUTCOME_ADAPTER.dump_python(group.outcomes, mode="json"),
+                "producer_counts": self._PRODUCER_ADAPTER.dump_python(group.producer_counts, mode="json"),
             }
-            for group_name, group_results in display_groups.items()
+            for group in overview.groups
         ]
 
         scorer_identifier = result.objective_scorer_identifier
@@ -152,8 +165,11 @@ class JsonScenarioResultPrinter(ScenarioResultPrinterBase):
             "scorer": scorer,
             "stats": {
                 "total_techniques": len(result.get_techniques_used()),
-                "total_results": sum(len(results) for results in result.attack_results.values()),
-                "overall_success_rate": result.objective_achieved_rate(),
+                "total_objective_executions": overview.objective_executions,
+                "total_attempts": overview.attempts,
+                "overall_success_rate": overview.success_rate,
+                "outcomes": self._OUTCOME_ADAPTER.dump_python(overview.outcomes, mode="json"),
+                "producer_counts": self._PRODUCER_ADAPTER.dump_python(overview.producer_counts, mode="json"),
                 "unique_objectives": len(result.get_objectives()),
             },
             "groups": groups,

@@ -6,7 +6,7 @@ import codecs
 import os
 import tempfile
 import wave
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -745,7 +745,7 @@ async def test_converter_guard_covers_only_selected_conversions_async(
     send = target._send_prompt_to_target_async
 
     @asynccontextmanager
-    async def guard_async(value: Converter) -> AsyncIterator[None]:
+    async def guard_async(value: Converter) -> AsyncGenerator[None, None]:
         guarded.append(value)
         active.add(value)
         try:
@@ -789,7 +789,7 @@ async def test_converter_guard_releases_on_failure_async(
     converter = Base64Converter()
 
     @asynccontextmanager
-    async def guard_async(value: Converter) -> AsyncIterator[None]:
+    async def guard_async(value: Converter) -> AsyncGenerator[None, None]:
         nonlocal active
         assert value is converter
         active = True

@@ -4,7 +4,7 @@
 """Offline backend for manual-send browser tests, with no real configuration or providers."""
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
@@ -27,7 +27,7 @@ async def _initialize_offline_async(self: ConfigurationLoader, *, raise_on_initi
 
 
 @asynccontextmanager
-async def _offline_lifespan_async(application: FastAPI) -> AsyncIterator[None]:
+async def _offline_lifespan_async(application: FastAPI) -> AsyncGenerator[None, None]:
     config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], env_akv_ref=[])
     with (
         patch.dict(os.environ, {"PYRIT_DEV_MODE": "true"}, clear=True),

@@ -46,9 +46,14 @@ class AttackResultAttribution:
             ``AtomicAttackEvaluationIdentifier``).
         seed_group_id (str | None): Optional logical seed-group fingerprint for
             per-task progress attribution.
+        attempt_index (int | None): Optional 1-based position of this result among the
+            children of an orchestration parent. Persisted into
+            ``AttackResultEntry.attribution_data``. ``SequentialAttack`` sets it for each
+            child attack it dispatches, e.g. ``2`` for the second child.
     """
 
     parent_id: str
     parent_collection: str
     parent_eval_hash: str | None = None
     seed_group_id: str | None = None
+    attempt_index: int | None = None

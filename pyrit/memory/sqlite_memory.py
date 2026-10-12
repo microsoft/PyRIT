@@ -368,18 +368,23 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     def _get_message_pieces_memory_label_conditions(self, *, memory_labels: dict[str, str]) -> list[Any]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by memory labels.
-        For SQLite, we use JSON_EXTRACT function to handle JSON fields.
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
-        Matches if labels are on the PromptMemoryEntry itself OR on any
-        AttackResultEntry that shares the same conversation_id.
+        All labels must match one AttackResultEntry that shares the same conversation_id.
 
         Returns:
             list: A list of SQLAlchemy conditions.
         """
         per_key_are_conditions = []
+        label_entries = func.json_each(AttackResultEntry.labels).table_valued("key", "value")
         for key, value in memory_labels.items():
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
-            per_key_are_conditions.append(are_col == str(value))
+            per_key_are_conditions.append(
+                select(1)
+                .select_from(label_entries)
+                .where(label_entries.c.key == key, label_entries.c.value == str(value))
+                .correlate(AttackResultEntry)
+                .exists()
+            )
         return [
             exists().where(
                 and_(
@@ -626,7 +631,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
-            are_col = func.json_extract(AttackResultEntry.labels, f"$.{key}")
+            are_col = func.json_extract(AttackResultEntry.labels, f'$."{key}"')
             per_key_are_conditions.append(are_col.in_(values))
 
         return and_(
@@ -834,7 +839,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         """Return the persisted execution start without loading full scenario metadata."""
         return func.json_extract(ScenarioResultEntry.scenario_metadata, "$.started_at")
 
-    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any]:
+    def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQLite JSON expressions for persisted scenario attempt attribution."""
         atomic_name = func.coalesce(
             func.json_extract(AttackResultEntry.attribution_data, '$."parent_collection"'),
@@ -844,12 +849,20 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             func.json_extract(AttackResultEntry.attribution_data, '$."parent_eval_hash"'),
             "",
         )
-        seed_group_id = func.coalesce(
+        attributed_seed_group_id = func.nullif(
             func.json_extract(AttackResultEntry.attribution_data, '$."seed_group_id"'),
-            AttackResultEntry.objective_sha256,
             "",
         )
-        return atomic_name, technique_hash, seed_group_id
+        seeds = func.json_each(
+            AttackResultEntry.atomic_attack_identifier,
+            "$.children.seed_identifiers",
+        ).table_valued("value", joins_implicitly=True)
+        identifier_seed_key = (
+            select(func.group_concat(func.json_extract(seeds.c.value, "$.hash"), ","))
+            .select_from(seeds)
+            .scalar_subquery()
+        )
+        return atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key
 
     def _get_scenario_plan_unit_subqueries(self, *, scenario_result_ids: Sequence[uuid.UUID]) -> tuple[Any, Any]:
         """Return SQLite run-plan expansions for planned units and planned seed groups."""

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.models import AttackSeedGroup
+from pyrit.models import AttackSeedGroup, ScenarioRunPlanGroupKind
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core._technique_resolution import (
     TechniqueResolutionError,
@@ -144,6 +144,7 @@ def build_baseline_atomic_attack(
         objective_scorer=cast("TrueFalseScorer", objective_scorer),
         memory_labels=memory_labels or {},
         display_group=display_group,
+        group_kind=ScenarioRunPlanGroupKind.BASELINE,
     )
 
 
@@ -186,6 +187,9 @@ def build_matrix_atomic_attacks(
 
     Scenarios needing extra axes (adversarial targets, caching, converter stacks) call
     ``MatrixAtomicAttackBuilder`` directly instead.
+
+    This synchronous builder can read attack templates from disk. Async callers
+    must offload construction, not their dataset reads or persistence.
 
     Args:
         context (ScenarioContext): The resolved runtime inputs for this run. Supplies the

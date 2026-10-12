@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import MemoryInterface
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
@@ -60,6 +61,7 @@ def fake_registry_memory():
         return [MagicMock(value=value) for value in packages_by_dataset.get(dataset_name, [])]
 
     memory = MagicMock(spec=MemoryInterface)
+    memory.get_seed_dataset_names_async = AsyncMock(side_effect=lambda: list(packages_by_dataset))
     memory.get_seeds_async = AsyncMock(side_effect=_get_seeds)
     memory.packages_by_dataset = packages_by_dataset
     return memory
@@ -234,15 +236,21 @@ class TestPackageHallucinationAtomicAttacks:
     ):
         fake_registry_memory.packages_by_dataset.pop(dataset_name)
 
-        async def _fetch_dataset_async(*, dataset_name: str) -> None:
+        async def store_dataset(**_: object) -> None:
             fake_registry_memory.packages_by_dataset[dataset_name] = packages
 
-        fetch_mock = AsyncMock(side_effect=_fetch_dataset_async)
-        with patch.object(DatasetConfiguration, "_fetch_dataset_async", new=fetch_mock):
+        provider = MagicMock(spec=SeedDatasetProvider)
+        provider.fetch_dataset_async.return_value = SeedDataset(
+            seeds=[SeedPrompt(value=value, dataset_name=dataset_name) for value in packages],
+            dataset_name=dataset_name,
+        )
+        fake_registry_memory.add_seed_datasets_to_memory_async.side_effect = store_dataset
+        with patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={dataset_name: provider}):
             scenario = PackageHallucination()
             await self._initialize(scenario, mock_objective_target, [technique], fake_registry_memory)
 
-        fetch_mock.assert_awaited_once_with(dataset_name=dataset_name)
+        provider.fetch_dataset_async.assert_awaited_once()
+        fake_registry_memory.add_seed_datasets_to_memory_async.assert_awaited_once()
         scorer = scenario._atomic_attacks[0].attack_technique.attack._objective_scorer
         assert scorer._ecosystem is ecosystem
 
@@ -278,7 +286,7 @@ class TestPackageHallucinationAtomicAttacks:
                 "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
                 return_value=empty_memory,
             ),
-            patch.object(DatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock),
+            patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock),
         ):
             with pytest.raises(ValueError):
                 scenario.set_params_from_args(
@@ -309,7 +317,7 @@ class TestPackageHallucinationAtomicAttacks:
                 "pyrit.scenario.core.dataset_configuration.CentralMemory.get_memory_instance",
                 return_value=corpus_only,
             ),
-            patch.object(DatasetConfiguration, "_fetch_dataset_async", new_callable=AsyncMock),
+            patch.object(DatasetConfiguration, "prepare_async", new_callable=AsyncMock),
         ):
             with pytest.raises(ValueError):
                 scenario.set_params_from_args(

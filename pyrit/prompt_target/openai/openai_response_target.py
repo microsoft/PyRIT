@@ -550,10 +550,11 @@ class OpenAIResponseTarget(OpenAITarget):
         """
         Construct a Message from a Response API response.
 
-        For a truncated response (see ``_is_truncated_response``), empty output sections are
-        tolerated, partial tool/function calls are skipped so an incomplete call cannot re-enter the
-        agentic loop, and a graceful empty text piece is appended when no visible response was
-        produced. Reasoning, any partial text, and structured refusals are always preserved.
+        Empty output sections are tolerated on a truncated response (see
+        ``_is_truncated_response``), where partial tool/function calls are also skipped so an
+        incomplete call cannot re-enter the agentic loop. Whenever no visible response was
+        produced — truncated or completed — a graceful empty text piece is appended. Reasoning,
+        any partial text, and structured refusals are always preserved.
 
         Args:
             response: The Response object from OpenAI SDK.
@@ -592,7 +593,16 @@ class OpenAIResponseTarget(OpenAITarget):
             if piece.original_value and piece.original_value_data_type != "reasoning":
                 has_visible_response = True
 
-        if truncated and not has_visible_response:
+        if not has_visible_response:
+            # Append a graceful empty marker piece and keep any reasoning pieces when a
+            # response with no readable section is found
+            if not truncated:
+                logger.warning(
+                    "Responses output for conversation %s completed with no readable section; "
+                    "returning an empty response marker. Reasoning-only output or a section type "
+                    "PyRIT does not model can cause this.",
+                    request.conversation_id,
+                )
             empty_piece = build_empty_truncated_response(request=request).message_pieces[0]
             extracted_response_pieces.append(empty_piece)
 

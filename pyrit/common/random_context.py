@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,7 @@ def random_execution(
     seed: int | None = None,
     owner: object | None = None,
     operation_key: str | None = None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """
     Establish an operation-local random context for a converter invocation.
 

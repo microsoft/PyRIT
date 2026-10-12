@@ -69,6 +69,74 @@ class _StubAttack:
         )
 
 
+def test_creation_capture_preserves_supplied_values_without_defaults() -> None:
+    arguments = {"max_turns": 0, "attack_converter_config": None}
+    tags: list[str] = []
+    factory = AttackTechniqueFactory(
+        name="captured",
+        attack_class=_StubAttack,
+        technique_tags=tags,
+        attack_kwargs=arguments,
+        uses_adversarial=False,
+        description=None,
+    )
+    calls = factory.get_creation_calls()
+    supplied = factory.get_creation_kwargs()
+    identifier = factory.get_identifier()
+    assert calls == [("AttackTechniqueFactory", supplied)]
+    assert supplied["attack_class"] is _StubAttack
+    assert supplied["technique_tags"] == []
+    assert supplied["attack_kwargs"] == {"max_turns": 0, "attack_converter_config": None}
+    assert supplied["uses_adversarial"] is False
+    assert supplied["description"] is None
+    assert "scorer_override_policy" not in supplied
+
+    arguments["max_turns"] = 9
+    tags.append("changed")
+    returned = factory.get_creation_kwargs()
+    returned["attack_kwargs"]["max_turns"] = 10
+    assert factory.get_creation_calls() == calls
+    assert factory.get_identifier() == identifier
+
+
+def test_creation_capture_retains_simulated_constructor_without_expanded_seeds() -> None:
+    factory = AttackTechniqueFactory.with_simulated_conversation(
+        name="crescendo_simulated",
+        description="Simulated conversation.",
+        technique_tags=["single_turn"],
+    )
+    calls = factory.get_creation_calls()
+    assert calls == [
+        (
+            "AttackTechniqueFactory.with_simulated_conversation",
+            {
+                "name": "crescendo_simulated",
+                "description": "Simulated conversation.",
+                "technique_tags": ["single_turn"],
+            },
+        )
+    ]
+    factory.add_technique_tags("core")
+    assert factory.get_creation_calls() == calls
+    assert set(factory.get_creation_kwargs()) == {"name", "description", "technique_tags"}
+
+
+def test_creation_capture_keeps_copy_methods_and_positional_prefix() -> None:
+    original = AttackTechniqueFactory.with_simulated_conversation(name="crescendo_simulated")
+    original_calls = original.get_creation_calls()
+    with_kwargs = original.with_attack_kwargs(attack_kwargs={"max_attempts_on_failure": 0})
+    with_prefix = original.with_adversarial_system_prompt_prefix("Static guidance.")
+    assert with_kwargs.get_creation_calls() == [
+        *original_calls,
+        ("with_attack_kwargs", {"attack_kwargs": {"max_attempts_on_failure": 0}}),
+    ]
+    assert with_prefix.get_creation_calls() == [
+        *original_calls,
+        ("with_adversarial_system_prompt_prefix", {"prefix": "Static guidance."}),
+    ]
+    assert original.get_creation_calls() == original_calls
+
+
 class TestFactoryInit:
     """Tests for AttackTechniqueFactory construction and validation."""
 
@@ -494,8 +562,8 @@ class TestFactoryCreate:
         assert cfg.request_converters == baked_request + extra
         assert cfg.response_converters == baked_response
 
-    def test_create_extra_request_converters_skipped_when_unsupported(self):
-        """Attacks that don't accept ``attack_converter_config`` silently ignore extras."""
+    def test_create_extra_request_converters_raise_when_unsupported(self):
+        """Attacks that don't accept ``attack_converter_config`` reject extras instead of dropping them."""
 
         class _NoConverterAttack:
             def __init__(self, *, objective_target, attack_scoring_config=None):
@@ -508,13 +576,12 @@ class TestFactoryCreate:
         target = MagicMock(spec=PromptTarget)
         extra = ConverterConfiguration.from_converters(converters=[Base64Converter()])
 
-        technique = factory.create(
-            objective_target=target,
-            attack_scoring_config=self._scoring(),
-            extra_request_converters=extra,
-        )
-
-        assert isinstance(technique, AttackTechnique)
+        with pytest.raises(ValueError, match="does not accept 'attack_converter_config'"):
+            factory.create(
+                objective_target=target,
+                attack_scoring_config=self._scoring(),
+                extra_request_converters=extra,
+            )
 
     def test_create_with_deferred_forward_ref_scoring_config_policy_raise(self):
         """Forward-referenced scoring config defined after factory init resolves and raises on incompatible type."""

@@ -17,7 +17,7 @@ from pyrit.models import AttackSeedGroup, DivergesFromRepetition, ScoringExpecta
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DivergenceScorer, TrueFalseScorer
@@ -122,8 +122,9 @@ class Divergence(Scenario):
             version=self.VERSION,
             technique_class=DivergenceTechnique,
             default_dataset_config=DivergenceDatasetConfiguration(
-                dataset_names=self.required_datasets(),
-                max_dataset_size=DivergenceDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
+                sources=[DatasetSource(name=name) for name in self.required_datasets()],
+                max_per_dataset="all",
+                max_total=DivergenceDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
             ),
             objective_scorer=objective_scorer or DivergenceScorer(),
             scenario_result_id=scenario_result_id,

@@ -13,9 +13,12 @@ import { compatibilityHeaders } from "./_compatibility";
 import type {
   AddMessageRequest,
   AddMessageResponse,
+  AttackSummary,
   ConversationMessagesResponse,
+  CreateAttackResponse,
   CreateConversationResponse,
   MessageSendStatus,
+  AttackConversationsResponse,
   TargetInstance,
 } from "@/types";
 import { readMessageSendResult } from "./_attacks";
@@ -160,20 +163,42 @@ async function sendFromComposer(page: Page, text?: string): Promise<AddMessageRe
   return readMessageSendResult(page.request, accepted);
 }
 
-async function createConversation(request: APIRequestContext, attackId: string): Promise<string> {
+async function createConversation(
+  request: APIRequestContext, attackId: string, message?: string,
+): Promise<string> {
   const response = await request.post(`/api/attacks/${attackId}/conversations`, {
     data: {}, headers: compatibilityHeaders(),
   });
   expect(response.status()).toBe(201);
   const created: CreateConversationResponse = await response.json();
+  if (message !== undefined) {
+    const stored = await request.post(`/api/attacks/${attackId}/messages`, {
+      headers: compatibilityHeaders(),
+      data: {
+        role: "user",
+        pieces: [{ data_type: "text", original_value: message }],
+        send: false,
+        target_conversation_id: created.conversation_id,
+      },
+    });
+    expect(stored.ok()).toBeTruthy();
+  }
   return created.conversation_id;
 }
 
 async function selectConversation(page: Page, conversationId: string): Promise<void> {
-  if (!await page.getByTestId("conversation-panel").isVisible()) {
+  const toggle = page.getByTestId("toggle-panel-btn");
+  await expect(toggle).toBeEnabled();
+  if (await toggle.getAttribute("aria-expanded") === "false") {
     await page.getByRole("button", { name: "Toggle conversations panel", exact: true }).click();
   }
-  await page.getByRole("button", { name: `Select conversation ${conversationId}`, exact: true }).click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const conversation = page.getByRole("button", { name: `Select conversation ${conversationId}`, exact: true });
+  await conversation.click();
+  await expect(page).toHaveURL((url: URL) => url.pathname.endsWith(`/conversations/${conversationId}`));
+  if (await toggle.getAttribute("aria-expanded") === "true") {
+    await expect(conversation).toHaveAttribute("aria-current", "true");
+  }
 }
 
 async function installDeferredFileReads(page: Page): Promise<void> {
@@ -216,6 +241,221 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(localTarget.registryName);
     await page.getByTitle("Chat", { exact: true }).click();
+  });
+
+  test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({
+    page, request, localTarget,
+  }) => {
+    let releaseRefresh: () => void = () => {};
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    let refreshStarted = false;
+    await page.route(/\/api\/attacks\/[^/?]+$/, async (route: Route) => {
+      if (route.request().method() === "GET") {
+        refreshStarted = true;
+        await refreshGate;
+      }
+      await route.continue();
+    });
+    try {
+      const first = await sendFromComposer(page, "Original conversation history");
+      const attackId = first.attack.attack_result_id;
+      await expect.poll(() => refreshStarted).toBe(true);
+      const otherId = await createConversation(request, attackId, "Selected conversation history");
+      const toggle = page.getByTestId("toggle-panel-btn");
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeDisabled();
+      const refreshed = page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/attacks/${attackId}`);
+      releaseRefresh();
+      const response = await refreshed;
+      expect(response.ok()).toBeTruthy();
+      const attack: AttackSummary = await response.json();
+      expect(attack.related_conversations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ conversation_id: otherId, conversation_type: "pruned" }),
+      ]));
+      await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeEnabled();
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+      await selectConversation(page, otherId);
+      const transcript = page.getByTestId("message-list");
+      await expect(transcript.getByText("Selected conversation history", { exact: true })).toBeVisible();
+      await expect(transcript.getByText("Original conversation history", { exact: true })).toHaveCount(0);
+      expect(localTarget.requestBodies).toHaveLength(1);
+    } finally {
+      releaseRefresh();
+    }
+  });
+
+  for (const viewport of [
+    { name: "desktop", width: 1280, height: 720 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    test.describe(`${viewport.name} conversation selection`, () => {
+      test.use({ viewport: { width: viewport.width, height: viewport.height } });
+
+      test("preserves historical drawer defaults after delayed metadata", async ({
+        page, request, localTarget,
+      }) => {
+        const first = await sendFromComposer(page, "Original conversation history");
+        await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeEnabled();
+        const attackId = first.attack.attack_result_id;
+        const otherId = await createConversation(request, attackId, "Selected conversation history");
+        let releaseMetadata: () => void = () => {};
+        const metadataGate = new Promise<void>((resolve) => { releaseMetadata = resolve; });
+        let metadataStarted = false;
+        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}`, async (route: Route) => {
+          if (route.request().method() === "GET") {
+            metadataStarted = true;
+            await metadataGate;
+          }
+          await route.continue();
+        });
+        try {
+          await page.goto(`/attacks/${attackId}`);
+          await expect.poll(() => metadataStarted).toBe(true);
+          await expect(page.getByText("Loading conversation...", { exact: true })).toBeVisible();
+          const toggle = page.getByTestId("toggle-panel-btn");
+          await expect(toggle).toHaveAttribute("aria-expanded", "false");
+          await expect(toggle).toBeDisabled();
+          releaseMetadata();
+
+          const transcript = page.getByTestId("message-list");
+          await expect(transcript.getByText("Original conversation history", { exact: true })).toBeVisible();
+          await expect(toggle).toHaveAttribute("aria-expanded", viewport.name === "narrow" ? "false" : "true");
+          if (viewport.name === "narrow") {
+            await expect(page.getByRole("dialog", { name: "Attack Conversations", exact: true })).toHaveCount(0);
+          } else {
+            await expect(page.getByRole("complementary", { name: "Attack Conversations", exact: true })).toBeVisible();
+            await expect(page.getByRole("button", {
+              name: `Select conversation ${first.attack.conversation_id}`, exact: true,
+            })).toHaveAttribute("aria-current", "true");
+          }
+
+          await selectConversation(page, otherId);
+          await expect(transcript.getByText("Selected conversation history", { exact: true })).toBeVisible();
+          await expect(transcript.getByText("Original conversation history", { exact: true })).toHaveCount(0);
+          expect(localTarget.requestBodies).toHaveLength(1);
+        } finally {
+          releaseMetadata();
+        }
+      });
+
+      test("selects a conversation while the drawer is closing", async ({
+        page, request, localTarget,
+      }) => {
+        const first = await sendFromComposer(page, "Original conversation history");
+        await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeEnabled();
+        const otherId = await createConversation(
+          request, first.attack.attack_result_id, "Selected conversation history",
+        );
+        const toggle = page.getByTestId("toggle-panel-btn");
+        await page.getByRole("button", { name: "Toggle conversations panel", exact: true }).click();
+        await expect(page.getByRole(viewport.name === "narrow" ? "dialog" : "complementary", {
+          name: "Attack Conversations", exact: true,
+        })).toBeVisible();
+        await expect(page.getByRole("button", { name: `Select conversation ${otherId}`, exact: true })).toBeVisible();
+        await page.getByRole("button", { name: "Close panel", exact: true }).click();
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+        await selectConversation(page, otherId);
+
+        const transcript = page.getByTestId("message-list");
+        await expect(transcript.getByText("Selected conversation history", { exact: true })).toBeVisible();
+        await expect(transcript.getByText("Original conversation history", { exact: true })).toHaveCount(0);
+        await expect(toggle).toHaveAttribute("aria-expanded", viewport.name === "narrow" ? "false" : "true");
+        if (viewport.name === "narrow") {
+          await expect(page.getByRole("dialog", { name: "Attack Conversations", exact: true })).toHaveCount(0);
+          await expect(page.getByRole("button", { name: "Toggle conversations panel", exact: true })).toBeFocused();
+        }
+        expect(localTarget.requestBodies).toHaveLength(1);
+      });
+    });
+  }
+
+  test("repeats and nests only the selected conversation through the real backend", async ({ page, request, localTarget }, testInfo) => {
+    let submissions = 0;
+    page.on("request", (outgoing: Request) => { if (isMessagePost(outgoing)) submissions += 1; });
+    const initial = await sendFromComposer(page, "History shared by the repeats");
+    const attackId = initial.attack.attack_result_id;
+    let selectedId = initial.messages.conversation_id;
+    const path = `/api/attacks/${encodeURIComponent(attackId)}`;
+    const readConversation = async (conversationId: string): Promise<ConversationMessagesResponse> => {
+      const response = await request.get(`${path}/messages?conversation_id=${encodeURIComponent(conversationId)}`, {
+        headers: compatibilityHeaders(),
+      });
+      expect(response.ok()).toBeTruthy();
+      return response.json();
+    };
+    let previousIds = [selectedId];
+    for (const count of [5, 3]) {
+      const before = new Map(await Promise.all(previousIds.map(async (id: string) => (
+        [id, await readConversation(id)] as const
+      ))));
+      const source = before.get(selectedId);
+      if (!source) throw new Error("Expected the selected history");
+      await expect(page.getByRole("button", { name: "Repetitions: 1", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Repetitions: 1", exact: true }).click();
+      for (let index = 1; index < count; index++) {
+        await page.getByRole("button", { name: "Increase repetitions", exact: true }).click();
+      }
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await page.getByTestId("chat-input").fill(`Repeat ${count}`);
+      const [submitted] = await Promise.all([
+        page.waitForResponse((response) => isMessagePost(response.request())),
+        page.getByTestId("chat-input").press("Enter"),
+      ]);
+      expect(submitted.status(), await submitted.text()).toBe(202);
+      const accepted: MessageSendStatus = await submitted.json();
+      expect(accepted.count).toBe(count);
+      expect(accepted.conversation_id).toBe(selectedId);
+      await readMessageSendResult(request, accepted);
+      const completedResponse = await request.get(`${path}/message-sends/${accepted.send_id}`, {
+        headers: compatibilityHeaders(),
+      });
+      const completed: MessageSendStatus = await completedResponse.json();
+      expect(completed.state).toBe("completed");
+      expect(completed.conversations).toHaveLength(count);
+      const repeatedIds = completed.conversations?.map((conversation) => conversation.conversation_id);
+      if (!repeatedIds) throw new Error("Expected committed conversation IDs");
+      expect(repeatedIds[0]).toBe(selectedId);
+      const sourceOrigins = source.messages.flatMap((message) => message.message_pieces.map(
+        (piece) => piece.original_prompt_id,
+      ));
+      for (const id of repeatedIds) {
+        const conversation = await readConversation(id);
+        expect(conversation.messages).toHaveLength(source.messages.length + 2);
+        expect(conversation.messages.slice(0, -2).flatMap((message) => message.message_pieces.map(
+          (piece) => piece.original_prompt_id,
+        ))).toEqual(sourceOrigins);
+        expect(conversation.messages.at(-2)?.message_pieces[0].original_value).toBe(`Repeat ${count}`);
+        await expect(page.getByRole("button", { name: `Open conversation ${id}`, exact: true })).toBeVisible();
+      }
+      for (const id of previousIds.filter((candidate: string) => candidate !== selectedId)) {
+        expect(await readConversation(id)).toEqual(before.get(id));
+      }
+      const listingResponse = await request.get(`${path}/conversations`, { headers: compatibilityHeaders() });
+      const listing: AttackConversationsResponse = await listingResponse.json();
+      expect(listing.conversations).toHaveLength(count === 5 ? 5 : 7);
+      previousIds = listing.conversations.map((conversation) => conversation.conversation_id);
+      selectedId = repeatedIds[1];
+      await selectConversation(page, selectedId);
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Repetitions: 1", exact: true })).toBeVisible();
+    }
+    expect(submissions).toBe(3);
+    expect(localTarget.requestBodies).toHaveLength(9);
+    await expect(page.getByText("Repeat 3", { exact: true })).toBeVisible();
+    await expect(page.getByText("Loading conversation...", { exact: true })).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("repeat-desktop.png"), animations: "disabled" });
+    if (await page.getByTestId("conversation-panel").isVisible()) {
+      await page.getByTestId("close-panel-btn").click();
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Repetitions: 1", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Increase repetitions", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("repeat-mobile.png"), animations: "disabled" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 
   test("accepts before target completion and continues after leaving chat", async ({ page, request, localTarget }) => {
@@ -276,6 +516,64 @@ test.describe("Chat processing recovery @seeded", () => {
     expect(localTarget.requestBodies).toHaveLength(1);
   });
 
+  test("keeps recovery on the submitted prompt without adding a user message", async ({ page, request, localTarget }) => {
+    localTarget.setProcessingFailure(true);
+    const failed = await sendFromComposer(page, "Explain the target error");
+    expect(failed.messages.target_response_status?.response_error).toBe("processing");
+    expect(failed.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const bubbles = page.getByTestId(/^message-bubble-/);
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first()).toContainText("Explain the target error");
+    await expect(bubbles.first().getByRole("button", { name: "Copy conversation", exact: true })).toBeVisible();
+    await expect(bubbles.last()).toContainText("JSONDecodeError");
+    await expect(bubbles.last().getByRole("button", { name: "Copy conversation", exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(bubbles).toHaveCount(2);
+    await expect(bubbles.first()).toContainText("Explain the target error");
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1280, height: 2800 });
+    await test.info().attach("detailed-target-error", {
+      body: await bubbles.last().screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    if (originalViewport) {
+      await page.setViewportSize(originalViewport);
+    }
+    const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
+    await disabledPrompt.click({ position: { x: 10, y: 10 } });
+    await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+    await test.info().attach("disabled-prompt-reasons", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    await page.keyboard.press("Escape");
+    await bubbles.first().getByRole("button", { name: "Copy conversation", exact: true }).click();
+    await test.info().attach("original-prompt-copy", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    const attackId = failed.attack.attack_result_id;
+    const [cloneResponse] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === `/api/attacks/${attackId}/conversations`),
+      page.getByRole("menuitem", { name: "New conversation", exact: true }).click(),
+    ]);
+    expect(cloneResponse.status()).toBe(201);
+    expect(cloneResponse.request().postDataJSON()).toEqual({});
+    const cloned: CreateConversationResponse = await cloneResponse.json();
+    await expect(page.getByTestId("chat-input")).toHaveValue("Explain the target error");
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+    await expect(bubbles).toHaveCount(0);
+    const historyResponse = await request.get(
+      `/api/attacks/${attackId}/messages?conversation_id=${cloned.conversation_id}`,
+      { headers: compatibilityHeaders() },
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: ConversationMessagesResponse = await historyResponse.json();
+    expect(history.messages).toHaveLength(0);
+    expect(localTarget.requestBodies).toHaveLength(1);
+  });
+
   for (const keepSafePrefix of [false, true]) {
     test(`recovers the latest failed draft without earlier errors, safe prefix ${keepSafePrefix}`, async ({
       page, request, localTarget,
@@ -302,9 +600,21 @@ test.describe("Chat processing recovery @seeded", () => {
       const laterResponse: AddMessageResponse = await later.json();
       expect(laterResponse.messages.target_response_status?.response_error).toBe("processing");
       await page.reload();
-      const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
+      const errorPiece = laterResponse.messages.messages.flatMap((message) => message.message_pieces)
+        .find((piece) => piece.response_error === "processing");
+      expect(errorPiece?.converted_value).toBeTruthy();
+      await expect(page.getByTestId("message-list")).toContainText(errorPiece?.converted_value ?? "");
+      await expect(page.getByRole("button", { name: "Edit in clean conversation", exact: true })).toHaveCount(0);
+      const disabledPrompt = page.getByLabel("Why the prompt box is disabled");
+      await disabledPrompt.hover({ position: { x: 5, y: 5 } });
+      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await disabledPrompt.click({ position: { x: 10, y: 10 } });
+      await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+      const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
       await expect(recover).toBeEnabled();
-      await expect(page.getByText(/history from the first failed prompt onward will be left out/i)).toBeVisible();
       await test.info().attach("processing-recovery", {
         body: await page.screenshot(),
         contentType: "image/png",
@@ -345,6 +655,115 @@ test.describe("Chat processing recovery @seeded", () => {
       if (keepSafePrefix) expect(targetContext).toContain("Earlier safe context");
     });
   }
+
+  for (const reload of [false, true]) {
+    test(`restores the failed prompt in a new attack without adding it to history, reload ${reload}`, async ({
+      page, request, localTarget,
+    }) => {
+      await sendFromComposer(page, "Safe context for the new attack");
+      localTarget.setProcessingFailure(true);
+      const failed = await sendFromComposer(page, "Edit this failed prompt");
+      const sourceAttackId = failed.attack.attack_result_id;
+      if (reload) await page.reload();
+      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+      const [savedResponse] = await Promise.all([
+        page.waitForResponse((response) => response.request().method() === "POST"
+          && new URL(response.url()).pathname === "/api/attacks/save-conversation"),
+        page.getByRole("menuitem", { name: "New attack", exact: true }).click(),
+      ]);
+      expect(savedResponse.status(), await savedResponse.text()).toBe(200);
+      const saved: AddMessageResponse = await savedResponse.json();
+      expect(saved.attack.attack_result_id).not.toBe(sourceAttackId);
+      expect(savedResponse.request().postDataJSON().messages).toHaveLength(2);
+      await expect(page).toHaveURL((url: URL) => url.pathname.includes(saved.attack.attack_result_id));
+      await expect(page.getByTestId("chat-input")).toHaveValue("Edit this failed prompt");
+      await expect(page.getByTestId("chat-input")).toBeEnabled();
+      await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(2);
+      const historyResponse = await request.get(
+        `/api/attacks/${saved.attack.attack_result_id}/messages?conversation_id=${saved.messages.conversation_id}`,
+        { headers: compatibilityHeaders() },
+      );
+      expect(historyResponse.ok()).toBeTruthy();
+      const history: ConversationMessagesResponse = await historyResponse.json();
+      expect(history.messages.map((message) => message.role)).toEqual(["user", "simulated_assistant"]);
+      expect(history.messages.flatMap((message) => message.message_pieces).some(
+        (piece) => piece.original_value === "Edit this failed prompt" || piece.response_error === "processing",
+      )).toBe(false);
+      expect(localTarget.requestBodies).toHaveLength(2);
+      localTarget.setProcessingFailure(false);
+      const retried = await sendFromComposer(page, "Revised prompt");
+      expect(retried.attack.attack_result_id).toBe(saved.attack.attack_result_id);
+      expect(retried.messages.target_response_status?.response_error).toBe("none");
+      const targetContext = localTarget.requestBodies.at(-1);
+      expect(targetContext).toContain("Safe context for the new attack");
+      expect(targetContext).toContain("Revised prompt");
+      expect(targetContext).not.toContain("Edit this failed prompt");
+      expect(targetContext).not.toMatch(/Traceback|JSONDecodeError/);
+    });
+  }
+
+  test("warns about lost converter choices when recovering a saved failure to a new attack", async ({
+    page, request, localTarget, imageConverterId,
+  }) => {
+    await page.getByTestId("file-input").setInputFiles({
+      name: "evidence.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAIAAAAuKetIAAAAaElEQVR4nNXOQREAIAzAsFJxCEMTAhGxB9coyNrnUiZxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEidxEufvwNQDpI4B3CU+2fUAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+    await page.getByTestId("toggle-converter-panel-btn").click();
+    const panel = page.getByTestId("converter-panel");
+    await panel.getByRole("tab", { name: "Image", exact: true }).click();
+    await panel.getByRole("combobox", { name: "Add converter", exact: true }).click();
+    await page.getByTestId(`converter-option-${imageConverterId}`).click();
+    await panel.getByRole("button", { name: "Convert", exact: true }).click();
+    await expect(page.getByTestId("converter-preview-result")).toBeVisible();
+    await panel.getByRole("button", { name: "Add converted value", exact: true }).click();
+    await panel.getByRole("button", { name: "Close converters", exact: true }).click();
+    localTarget.setProcessingFailure(true);
+    const failed = await sendFromComposer(page, "Restore the original image");
+    expect(failed.messages.target_response_status?.response_error).toBe("processing");
+    const originalImage = failed.messages.messages[0].message_pieces[1];
+    expect(originalImage.original_filename).toBeTruthy();
+    await page.reload();
+    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+    const [createdResponse] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && new URL(response.url()).pathname === "/api/attacks"),
+      page.getByRole("menuitem", { name: "New attack", exact: true }).click(),
+    ]);
+    expect(createdResponse.status()).toBe(201);
+    const created: CreateAttackResponse = await createdResponse.json();
+    expect(created.attack_result_id).not.toBe(failed.attack.attack_result_id);
+    expect(createdResponse.request().postDataJSON().target_registry_name).toBe(localTarget.registryName);
+    await expect(page).toHaveURL((url: URL) => url.pathname.includes(created.attack_result_id));
+    await expect(page.getByTestId("chat-input")).toHaveValue("Restore the original image");
+    await expect(page.getByRole("button", { name: `Remove ${originalImage.original_filename}`, exact: true })).toBeVisible();
+    await expect(page.getByText(/Converter choices could not be restored/)).toBeVisible();
+    await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
+    await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(0);
+    expect(localTarget.requestBodies).toHaveLength(1);
+    localTarget.setProcessingFailure(false);
+    const [retryRequest, retried] = await Promise.all([
+      page.waitForRequest(isMessagePost),
+      sendFromComposer(page),
+    ]);
+    const payload: AddMessageRequest = retryRequest.postDataJSON();
+    expect(payload.pieces).toHaveLength(2);
+    expect(payload.pieces.every((piece) => !piece.applied_converter_ids?.length)).toBe(true);
+    expect(retried.messages.messages[0].message_pieces[1].original_value)
+      .toBe(originalImage.original_value);
+    await expect(page.getByText(/Converter choices could not be restored/)).toHaveCount(0);
+    const historyResponse = await request.get(
+      `/api/attacks/${retried.attack.attack_result_id}/messages?conversation_id=${retried.messages.conversation_id}`,
+      { headers: compatibilityHeaders() },
+    );
+    expect(historyResponse.ok()).toBeTruthy();
+    const history: ConversationMessagesResponse = await historyResponse.json();
+    expect(history.messages).toHaveLength(2);
+  });
 
   test("waits for the selected conversation and exports only its history after a rejected send", async ({
     page, request,
@@ -452,7 +871,8 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId("remove-attachment-0").click();
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
     await selectConversation(page, first.attack.conversation_id);
-    const recover = page.getByRole("button", { name: "Edit in clean conversation", exact: true });
+    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+    const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
     await expect(recover).toBeEnabled();
     await page.evaluate(() => { document.documentElement.dataset.deferRecoveryReads = "true"; });
     try {

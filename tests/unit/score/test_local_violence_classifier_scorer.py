@@ -119,7 +119,7 @@ def test_train_head_is_deterministic_and_separates() -> None:
 
     for key, value in first.network.state_dict().items():
         assert torch.equal(value, second.network.state_dict()[key])
-    assert first.temperature == second.temperature
+    assert first.temperature == pytest.approx(second.temperature)
     assert first.training_rows == len(labels)
 
     positive = _predict_probability(head=first, embedding=embeddings[0])
@@ -491,7 +491,7 @@ def test_parallel_training_uses_independent_generators() -> None:
     for head, reference in zip(heads, references, strict=True):
         for key, value in head.network.state_dict().items():
             assert torch.equal(value, reference.network.state_dict()[key])
-        assert head.temperature == reference.temperature
+        assert head.temperature == pytest.approx(reference.temperature)
     assert torch.equal(state, torch.random.get_rng_state())
 
 

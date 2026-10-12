@@ -15,6 +15,22 @@
 #
 # ## Translating from Seeds for Attack Parameters
 #
+# A seed can carry an explicit expected-output criterion. Use `OutputMatchesScorer` as the
+# attack's objective scorer; the existing seed-to-parameter path carries the condition:
+#
+# ```python
+# from pyrit.models import Contains, OutputMatches, SeedObjective
+#
+# objective = SeedObjective(
+#     value="Make the target include the marker",
+#     conditions=(OutputMatches(matcher=Contains(value="marker")),),
+# )
+# ```
+#
+# The same condition in seed YAML is
+# `conditions: [{condition_type: output_matches, matcher: {matcher_type: contains, value: marker}}]`.
+# Case-insensitive matching and edge-whitespace normalization are the defaults.
+#
 # Most [executors](../executor/0_executor.md) make use of several parameters.
 #
 # 1. An **objective** - what you're trying to achieve

@@ -260,6 +260,9 @@ class RuntimeLifecycle:
 
     async def _shutdown_runtime_async(self) -> None:
         """Finish retained requests without cancelling their offloaded writes."""
+        service = peek_scenario_run_service()
+        if service:
+            service.stop_admission()
         pending = self.operations | self.management_operations
         if self.apply_task is not None:
             pending.add(self.apply_task)

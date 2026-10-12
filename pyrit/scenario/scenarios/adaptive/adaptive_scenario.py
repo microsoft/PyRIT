@@ -25,6 +25,7 @@ from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.models import (
     BoundedDatasetSize,
+    ScenarioRunPlanGroupKind,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
@@ -59,6 +60,7 @@ class AdaptiveScenario(Scenario):
     """
 
     VERSION: ClassVar[int]
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod
     @abstractmethod
@@ -210,6 +212,7 @@ class AdaptiveScenario(Scenario):
                     seed_groups=seed_groups,
                     techniques=techniques,
                     selector=self._selector,
+                    scenario_result_id=context.scenario_result_id,
                 )
             )
 
@@ -395,6 +398,7 @@ class AdaptiveScenario(Scenario):
         seed_groups: list[AttackSeedGroup],
         techniques: dict[str, TechniqueBundle],
         selector: TechniqueSelector,
+        scenario_result_id: str | None = None,
     ) -> list[AtomicAttack]:
         """
         Build one ``AtomicAttack`` per seed group with at least one
@@ -428,7 +432,7 @@ class AdaptiveScenario(Scenario):
             selector=selector,
             objective_scorer=self._objective_scorer,
             max_attempts_per_objective=self.params.get("max_attempts_per_objective", 3),
-            scenario_result_id=self._scenario_result_id,
+            scenario_result_id=scenario_result_id,
         )
 
         atomics: list[AtomicAttack] = []
@@ -454,6 +458,7 @@ class AdaptiveScenario(Scenario):
                     objective_scorer=self._objective_scorer,
                     memory_labels=dict(self._memory_labels),
                     display_group=dataset_name,
+                    group_kind=ScenarioRunPlanGroupKind.ADAPTIVE,
                 )
             )
 

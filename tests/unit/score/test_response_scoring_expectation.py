@@ -747,8 +747,8 @@ class _ConditionJudgmentScorer(SelfAskTrueFalseScorer):
     ) -> list[Score]:
         assert expectation is not None
         assert self.CONDITION_TYPE is not None
-        condition = self._get_required_condition(expectation=expectation, condition_type=self.CONDITION_TYPE)
-        return await self._score_piece_async(message_piece, objective=str(condition.model_dump()))
+        self._get_required_condition(expectation=expectation, condition_type=self.CONDITION_TYPE)
+        return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
 
 
 class _FirstJudgmentScorer(_ConditionJudgmentScorer):

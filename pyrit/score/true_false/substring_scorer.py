@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
+from pyrit.common.text_matching import ExactTextMatching, TextMatching
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (

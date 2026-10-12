@@ -3,7 +3,6 @@
 Learn how to use PyRIT's components to build red teaming workflows.
 
 :::::{grid} 1 1 2 3
-:gutter: 3
 
 ::::{card} 📦 Datasets
 :link: ./datasets/0_dataset
@@ -186,6 +185,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - `core` stays deliberately small so a default run doesn't print 200 techniques or take forever; the wider catalog lives in `extra` and is selected on demand. Users pick subsets by passing initializer tags (e.g. `core`, `extra`, `all`) or writing their own initializer, so different runs — including from the CLI — can register different technique sets without changing the catalog.
 - A technique tied to one scenario is fine; if it's pinned and non-reusable it can stay local to that scenario, but if another scenario could reuse it, promote it to a catalog module and tag it.
 - Tags describe a technique (behavioral tags like `single_turn`/`multi_turn`, owner tags like `airt`); they don't decide what a scenario runs. There is deliberately **no global `default` tag** — a default is scenario-relative, declared per scenario via `build_technique_class_from_factories` (the `factories` list is the pool, catalog tags become named aggregate presets, and `default_tags` / `default_names` set what runs when nothing is chosen).
+- Generated technique enums follow their factory pool's lifecycle. Registry-derived enums and their lazy exports are discarded on setup registry reset so new scenarios see the replacement catalog. Enums built exclusively from fixed scenario-owned factories, such as `DoctorTechnique` and `JailbreakTechnique`, retain their identity across registry resets, so previously imported members remain valid for new scenario instances.
 - Factories opt into additive request-converter composition with `supports_additional_request_converters=True`. This is a semantic capability, not just constructor-signature detection; the factory validates that opted-in attacks accept `attack_converter_config`.
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
@@ -248,7 +248,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - A target may observe an internal, caller-owned send context at the provider-invocation boundary,
   after target-side waits and immediately before irreversible provider I/O, but the caller owns any
   bootstrap-history identity, replay, or branching state.
-- HTTP targets and `LiteLLMChatTarget` can propagate a separate trace context for each send. `TargetTraceConfig` controls this
+- HTTP targets, `LiteLLMChatTarget`, and `WebSocketCopilotTarget` can propagate a separate trace context for each send. `TargetTraceConfig` controls this
   behavior, is off by default, and can use a caller-owned tracer. Enable it only for an endpoint that
   is known to accept W3C trace context. Targets record request trace metadata; the prompt normalizer
   persists it. Outbound request metadata is separate from chat role, so missing trace
@@ -286,16 +286,26 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
-- `pyrit.score.observation` owns acquisition and replay support, not evaluation.
-  `ObservationSource` is typed by the scorable it accepts; sources acquire evidence
-  and matchers decide whether it meets a condition. Its local SDK exporter
-  supports caller-owned, in-process capture, not a remote collector or durable store.
+- Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
+  root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
+  evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
+- Raw `ObservationSource` implementations acquire evidence without criteria.
+  `ConversationSource` captures whole-conversation references; the conversation scorer owns
+  role filtering and rendering. `TargetJudge` is a separate, expectation-bound collaborator:
+  scorers own prompts and verdict conversion, handlers own parsing, and the normalizer owns
+  transport and retries. The message-scoring boundary captures evidence explicitly in a
+  `JudgmentRequest`; the request and exchange do not read ambient scoring context.
+  When the judge's response is blocked, conversation scoring handles direct and message-triggered
+  calls the same way. If it returns an undetermined score, it retains the evidence snapshot.
+- The local SDK exporter supports caller-owned, in-process capture, not a remote collector or
+  durable store.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
 - Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets
   to their children; leaves reject unsupported conditions. Typed message scorers receive criteria
   through `_score_piece_with_expectation_async`; old objective-only hooks must not discard
-  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook.
+  conditions they claim to match. Subclasses of a migrated scorer must use its typed hook;
+  hidden legacy overrides fail at construction rather than silently changing a verdict.
 - A condition-based leaf declares one `CONDITION_TYPE` and requires exactly one condition of that
   type. Constructor-configured leaves declare none. Shared validation rejects missing and duplicate
   conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
@@ -327,7 +337,13 @@ The below talks about responsibilities of most modules in the PyRIT library
 - This is where cross-run analysis belongs: e.g. "which attack performed best for this objective?", "how often did a technique succeed?", or "which responses match known content?".
 - **Does not own**: live, in-attack decisions — any decision made *during* an attack is a scorer's job. Analytics only operates on stored results, after the fact.
 - Today it includes `ConversationAnalytics` (inspecting conversation history), `analyze_results` / `AttackStats` (aggregating outcomes across techniques), and text-matching strategies (`ExactTextMatching`, `ApproximateTextMatching`).
+- `compute_scenario_statistics` owns execution-unit identity (atomic attack, technique configuration, and seed group), latest-attempt selection, and historical retry/error counts. It passes selected outcomes to the shared outcome calculator. SDK callers, the GUI backend's run detail and progress views, and the console, JSON, and HTML reports present its results (`ScenarioExecutionStatistics`, `ScenarioExecutionUnit`, and `ScenarioProgressCounts` in `pyrit.models`). The GUI run-history list aggregates counts in SQL (`MemoryInterface._build_scenario_history_aggregate_statement`) so it can page over many runs, then uses the shared percentage helper; `tests/unit/analytics/test_scenario_statistics_parity.py` keeps the paths in agreement.
+- Scenario attempts are ordered by timestamp, then their canonical lowercase UUID string. SQL Server uses this string order rather than its native UUID order for history ranking and progress pagination. Explicit seed attribution wins; an objective alone matches a planned seed group only when that match is unique. Legacy runs with identifier-only seed identities are recounted with the shared analytics.
 - Shared analytics contracts (filters, dimensions, typed values, reports, facets, result pages, and `AttackStats`) live in `pyrit.models.analytics`. They validate data without querying memory or calculating statistics. `AttackResultSelection` defines selection modes without changing existing callers.
+- `compute_outcome_statistics` owns both success-rate denominators, totals, and shares. `success_rate_decided` (the explicit alias of `success_rate`) divides by successes plus failures; `success_rate_all` divides by all outcomes. `combine_outcome_statistics` revalidates and combines disjoint counts, never averages rates. Attack and scenario analytics share the same `OutcomeStatistics` model and calculations after independently selecting their populations. Models reject contradictory supplied totals/rates; they do not select populations or replace the supplied numbers.
+- `analyze_results` and `compute_technique_stats_async` remain maintained APIs. Their `include_outcome_statistics=True` option exposes the shared statistics directly; default `AttackStats` results retain their six-field shape. Existing scenario percentage fields also retain their defaults. Only the already-deprecated sync memory wrappers and `ScenarioResult.objective_achieved_rate` are scheduled for removal in 1.4.0.
+- [`AttackResultAnalytics`](./analytics/0_attack_results.md) provides async saved-result reports, lightweight result pages, and facet lookups. It supplies both shared success rates, display labels and exact additional drill-down predicates, and counts every saved result ID rather than latest scenario execution units. Memory owns cohort SQL and consistent projections; the SDK owns their interpretation.
+- Analytics facades sharing a memory instance share one loop-bound, bounded report/quick-query controller. Close that shared SDK lifetime before replacing or disposing memory; cancellation does not free a running query's slot before its actual session cleanup. SDK lifecycle is independent of backend runtime integration.
 - Filter-bound cursor and label-normalization helpers live in `pyrit.common.pagination`. The backend pagination module retains compatibility exports, including History's invalid-cursor first-page fallback.
 
 ## Auth
@@ -353,6 +369,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 - Components should access memory through `CentralMemory` rather than passing state directly between each other.
 - Memory backends are swappable too (e.g. SQLite or Azure SQL) without changing the components that use them.
 - Memory loads and locks observation evidence for model-owned validation, and owns atomic writes and reference cleanup.
+- Analytics readers return saved-outcome counts and lightweight metadata, or bounded typed profiles with a complete SQL fallback. They own native async sessions, consistent read views, and `QueryControl` database deadlines/interruption, not rate calculations or display labels.
 - **Does not own**: business logic or decisions. Memory stores and retrieves state; it doesn't decide what to send, how to score, or when to branch — components do that and persist results here.
 
 ## [Models](../contributing/11_memory_models)
@@ -394,6 +411,7 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
+- The registry accepts only explicitly supported external inputs, permits opaque Python objects only for in-process callers, and leaves component validation to constructors.
 
 ## [Setup](./setup/0_setup)
 

@@ -25,7 +25,7 @@ from pyrit.exceptions.retry_collector import (
 from pyrit.models import StrategyResultT
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, MutableMapping
+    from collections.abc import AsyncGenerator, MutableMapping
 
 StrategyContextT = TypeVar("StrategyContextT", bound="StrategyContext")
 
@@ -279,7 +279,7 @@ class Strategy(ABC, Generic[StrategyContextT, StrategyResultT]):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     @asynccontextmanager
-    async def _execution_context_async(self, context: StrategyContextT) -> AsyncIterator[None]:
+    async def _execution_context_async(self, context: StrategyContextT) -> AsyncGenerator[None, None]:
         """
         Manage the complete lifecycle of a strategy execution as an async context manager.
 

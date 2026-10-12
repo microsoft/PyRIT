@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
     from pyrit.score.observation.execution import NonReplayableObservationError
+    from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
+    from pyrit.score.true_false.file_write_scorer import FileWriteScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
     from pyrit.score.true_false.gandalf_scorer import GandalfScorer
     from pyrit.score.true_false.garak_exploitation_scorer import GarakExploitationDetector, GarakExploitationScorer
@@ -97,6 +99,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.manual_scorer import ManualScorer
     from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
+    from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
     from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
@@ -106,6 +109,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.regex.divergence_scorer import DivergenceScorer
     from pyrit.score.true_false.regex.escaped_ansi_output_scorer import EscapedAnsiOutputScorer
     from pyrit.score.true_false.regex.fentanyl_keyword_scorer import FentanylKeywordScorer
+    from pyrit.score.true_false.regex.known_bad_signature_scorer import KnownBadSignatureScorer
     from pyrit.score.true_false.regex.ldap_injection_output_scorer import LDAPInjectionOutputScorer
     from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
     from pyrit.score.true_false.regex.meth_keyword_scorer import MethKeywordScorer
@@ -156,6 +160,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
     "AudioFloatScaleScorer": "pyrit.score.float_scale.audio_float_scale_scorer",
@@ -195,12 +200,15 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "InsecureCodeScorer": "pyrit.score.float_scale.insecure_code_scorer",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
+    "FileWriteScorer": "pyrit.score.true_false.file_write_scorer",
+    "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
     "ObservationSource": "pyrit.score.observation.observation_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
     "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",
     "TraceAcquisitionError": "pyrit.score.observation.trace_client",
     "TraceClient": "pyrit.score.observation.trace_client",
     "JsonSchemaResponseHandler": "pyrit.score.response_handler",
+    "KnownBadSignatureScorer": "pyrit.score.true_false.regex.known_bad_signature_scorer",
     "LocalRefusalClassifierScorer": "pyrit.score.true_false.local_refusal_classifier_scorer",
     "LDAPInjectionOutputScorer": "pyrit.score.true_false.regex.ldap_injection_output_scorer",
     "LikertScaleEvalFiles": "pyrit.score.float_scale.self_ask_likert_scorer",

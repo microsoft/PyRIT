@@ -1,0 +1,80 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - "main"
+      - "releases/v*"
+  pull_request:
+    branches:
+      - "main"
+      - "releases/**"
+  merge_group:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * 1" # Mondays at 02:23 UTC
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Merge-group uploads can cancel this run after verifying that its candidate expired.
+      actions: write
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        id: analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: "/language:${{ matrix.language }}"
+          # A literal value is required by the action's failed-analysis diagnostic recovery.
+          upload: failure-only
+          post-processed-sarif-path: ${{ runner.temp }}/codeql-upload
+
+      - name: Publish CodeQL results
+        if: github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: ${{ runner.temp }}/codeql-upload/upload.sarif
+          category: "/language:${{ matrix.language }}"
+
+      - name: Publish merge-group CodeQL results
+        if: github.event_name == 'merge_group'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        timeout-minutes: 8
+        env:
+          ANALYSIS_OUTCOME: ${{ steps.analysis.outcome }}
+          SARIF_FILE: ${{ runner.temp }}/codeql-upload/upload.sarif
+          SARIF_CATEGORY: "/language:${{ matrix.language }}"
+        with:
+          retries: 0
+          script: |
+            const publish = require(require('node:path').resolve('build_scripts', 'codeql_merge_group.cjs'));
+            await publish({
+              github, context, core,
+              sarifFile: process.env.SARIF_FILE,
+              category: process.env.SARIF_CATEGORY,
+              analysisOutcome: process.env.ANALYSIS_OUTCOME,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              checkout: process.env.GITHUB_WORKSPACE,
+            });

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -15,7 +15,7 @@ _adversarial_target_override: ContextVar[PromptTarget | None] = ContextVar("adve
 
 
 @contextmanager
-def override_default_adversarial_target(target: PromptTarget | None) -> Iterator[None]:
+def override_default_adversarial_target(target: PromptTarget | None) -> Generator[None, None, None]:
     """
     Override the adversarial fallback for this execution scope.
 

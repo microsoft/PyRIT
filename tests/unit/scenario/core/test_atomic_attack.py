@@ -219,6 +219,32 @@ class TestAtomicAttackInitialization:
 class TestAtomicAttackExecution:
     """Tests for AtomicAttack execution methods."""
 
+    async def test_run_async_preserves_incomplete_result_ids(
+        self, mock_attack: AttackStrategy, sample_seed_groups: list[AttackSeedGroup]
+    ) -> None:
+        error = RuntimeError("execution failed")
+        executor_result = AttackExecutorResult(
+            completed_results=[],
+            incomplete_objectives=[("objective1", error), ("objective2", error)],
+            incomplete_result_ids=["confirmed-result-id", None],
+        )
+        atomic_attack = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="test",
+        )
+
+        with patch.object(
+            AttackExecutor,
+            "execute_attack_from_seed_groups_async",
+            new_callable=AsyncMock,
+            return_value=executor_result,
+        ):
+            result = await atomic_attack.run_async()
+
+        assert result.incomplete_objectives == executor_result.incomplete_objectives
+        assert result.incomplete_result_ids == executor_result.incomplete_result_ids
+
     async def test_run_async_with_valid_atomic_attack(self, mock_attack, sample_seed_groups, sample_attack_results):
         """Test successful execution of an atomic attack."""
         atomic_attack = AtomicAttack(

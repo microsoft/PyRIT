@@ -58,6 +58,10 @@ class TestFilterLifecycle:
         assert c.tags is None
         assert c.size is None
 
+    def test_empty_criteria_fails(self):
+        with pytest.raises(ValueError, match="criteria.*at least one"):
+            SeedDatasetFilter(criteria=[])
+
     def test_has_some_values(self):
         f = SeedDatasetFilter(size={"large"})
         assert f.criteria[0].size == {"large"}
@@ -262,6 +266,86 @@ class TestStrictMatchSingularFieldValidation:
                 criteria=[SeedDatasetMetadata(size={"small", "large"})],
                 strict_match=True,
             )
+
+
+class TestEmptySetAxisValidation:
+    """
+    Test that a filter axis given an empty set is rejected.
+
+    ``None`` means the axis is not requested. An empty set is not the same thing: it
+    matches no dataset without strict_match and every dataset with it, so one flag
+    would decide whether the filter returns nothing or everything.
+    """
+
+    def test_empty_tags_raises(self):
+        with pytest.raises(ValueError, match="empty set"):
+            SeedDatasetFilter(tags=set())
+
+    def test_empty_harm_categories_strict_raises(self):
+        with pytest.raises(ValueError, match="empty set"):
+            SeedDatasetFilter(harm_categories=set(), strict_match=True)
+
+    def test_empty_axis_in_criteria_list_raises(self):
+        with pytest.raises(ValueError, match="empty set"):
+            SeedDatasetFilter(criteria=[SeedDatasetMetadata(modalities=set())])
+
+    def test_all_empty_axes_are_reported_at_once(self):
+        """Every empty axis is named in one sorted message, not just the first one found."""
+        with pytest.raises(ValueError, match=r"Filter axes \['harm_categories', 'modalities'\]"):
+            SeedDatasetFilter(criteria=[SeedDatasetMetadata(modalities=set(), harm_categories=set())])
+
+    def test_all_tag_keeps_an_empty_axis_accepted(self):
+        """'all' bypasses every other field, so an empty axis beside it is ignored, not rejected."""
+        f = SeedDatasetFilter(tags={"all"}, harm_categories=set())
+        assert f.has_all_tag
+        assert f.criteria[0].harm_categories == set()
+
+    @pytest.mark.parametrize("strict_match", [True, False])
+    def test_all_tag_in_one_criterion_covers_an_empty_axis_in_another(self, strict_match):
+        """Composed criteria: one asks for everything, another has an empty axis."""
+        f = SeedDatasetFilter(
+            criteria=[
+                SeedDatasetMetadata(tags={"all"}),
+                SeedDatasetMetadata(modalities=set()),
+            ],
+            strict_match=strict_match,
+        )
+        assert f.has_all_tag
+
+    def test_all_tag_keeps_multi_valued_singular_fields(self):
+        """'all' leaves strict_match nothing to decide, so it must not raise on it.
+
+        size is singular, so {"small", "large"} under strict_match is rejected
+        everywhere else. Beside 'all' the tag has already bypassed the axis, and
+        the warning below says strict_match has no effect, so raising would
+        contradict the warning the caller is about to be given.
+        """
+        f = SeedDatasetFilter(tags={"all"}, size={"small", "large"}, strict_match=True)
+        assert f.has_all_tag
+        assert f.criteria[0].size == {"small", "large"}
+
+    def test_multi_valued_singular_fields_still_raise_without_all(self):
+        """The control: the same input without 'all' is still rejected."""
+        with pytest.raises(ValueError, match="logically impossible"):
+            SeedDatasetFilter(size={"small", "large"}, strict_match=True)
+
+    def test_empty_axis_message_covers_both_strict_match_outcomes(self):
+        """The message must not claim 'matches no dataset' unconditionally.
+
+        With strict_match an empty set matches every dataset that declares the
+        axis, so the old wording was wrong for half the flag's values.
+        """
+        with pytest.raises(ValueError) as exc:
+            SeedDatasetFilter(modalities=set(), strict_match=True)
+        message = str(exc.value)
+        assert "matches no dataset" in message
+        assert "every dataset that declares the axis" in message
+
+    def test_none_axis_is_still_accepted(self):
+        """None keeps its meaning: the axis is not requested."""
+        f = SeedDatasetFilter(size=None, harm_categories=None, strict_match=True)
+        assert f.criteria[0].size is None
+        assert f.criteria[0].harm_categories is None
 
 
 class TestFilterProperties:

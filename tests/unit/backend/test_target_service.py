@@ -297,23 +297,58 @@ class TestListTargetTypes:
         assert weights_parameter.is_list is True
         assert weights_parameter.required is False
 
-    async def test_types_preserve_registry_parameter_order_without_mutating_metadata(self) -> None:
+    async def test_types_keep_registry_parameter_order_without_mutating_metadata(self) -> None:
         service = TargetService()
         result = await service.list_target_types_async()
         metadata_by_name = {
             metadata.class_name: metadata for metadata in service._registry.get_all_registered_class_metadata()
         }
 
-        assert {entry.target_type for entry in result.items} == set(metadata_by_name)
         for entry in result.items:
-            registry_parameters = metadata_by_name[entry.target_type].parameters
-            assert [parameter.name for parameter in entry.parameters] == [
-                parameter.name for parameter in registry_parameters
-            ]
+            entry_names = [parameter.name for parameter in entry.parameters]
+            registry_names = [parameter.name for parameter in metadata_by_name[entry.target_type].parameters]
+            assert entry_names == [name for name in registry_names if name in entry_names]
 
         registry_openai = {parameter.name: parameter for parameter in metadata_by_name["OpenAIChatTarget"].parameters}
         assert registry_openai["endpoint"].required is False
         assert registry_openai["model_name"].required is False
+
+    async def test_types_expose_component_external_inputs(self) -> None:
+        service = TargetService()
+        result = await service.list_target_types_async()
+
+        parameters = {entry.target_type: {parameter.name for parameter in entry.parameters} for entry in result.items}
+        assert {"PlaywrightTarget", "PlaywrightCopilotTarget", "WebsocketTarget"}.isdisjoint(parameters)
+        assert "api_key" in parameters["OpenAIChatTarget"]
+        assert "custom_configuration" not in parameters["OpenAIChatTarget"]
+        assert "n_seconds" in parameters["OpenAIVideoTarget"]
+
+    async def test_registry_metadata_keeps_parameters_the_api_cannot_set(self) -> None:
+        metadata = TargetService()._registry.get_registered_class_metadata("OpenAIChatTarget")
+        assert metadata is not None
+        registry_parameters = {parameter.name: parameter for parameter in metadata.parameters}
+
+        assert not registry_parameters["custom_configuration"].is_external_input
+
+    async def test_types_describe_the_video_duration_as_an_int(self) -> None:
+        service = TargetService()
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "OpenAIVideoTarget")
+        n_seconds = next(
+            parameter for parameter in entry.model_dump(mode="json")["parameters"] if parameter["name"] == "n_seconds"
+        )
+        assert {key: n_seconds[key] for key in ("type_name", "is_list", "choices", "default", "required")} == {
+            "type_name": "int",
+            "is_list": False,
+            "choices": None,
+            "default": "4",
+            "required": False,
+        }
+        metadata = service._registry.get_registered_class_metadata("OpenAIVideoTarget")
+        assert metadata is not None
+        registry_n_seconds = next(parameter for parameter in metadata.parameters if parameter.name == "n_seconds")
+        assert "Literal['4', '8', '12']" in registry_n_seconds.type_name
 
     async def test_types_cold_and_warm_results_are_equal(self) -> None:
         service = TargetService()
@@ -361,13 +396,6 @@ class TestListTargetTypes:
                 False,
                 ["text/plain", "text/html"],
             ),
-            (
-                "PlaywrightCopilotTarget",
-                "copilot_type",
-                "CopilotType",
-                False,
-                ["consumer", "m365"],
-            ),
         ],
     )
     async def test_types_include_enum_parameters(
@@ -392,6 +420,32 @@ class TestListTargetTypes:
 
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
+
+    async def test_create_target_rejects_parameters_that_take_python_objects(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="text", type="TextTarget", params={"custom_configuration": {}})
+
+        with pytest.raises(ValueError, match="'custom_configuration' of 'TextTarget' cannot be set through the API"):
+            await service.create_target_async(request=request)
+
+        assert service.get_target_object(target_registry_name="text") is None
+
+    async def test_create_target_accepts_scalar_alternative_of_union(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            name="video",
+            type="OpenAIVideoTarget",
+            params={
+                "endpoint": "https://example.openai.azure.com/openai/v1",
+                "api_key": "test-key",
+                "model_name": "sora-2",
+                "n_seconds": 8,
+            },
+        )
+
+        await service.create_target_async(request=request)
+
+        assert service.get_target_object(target_registry_name="video")._n_seconds == "8"
 
     async def test_create_target_raises_for_invalid_type(self) -> None:
         """Test that create_target raises for invalid target type."""
@@ -464,12 +518,16 @@ class TestCreateTarget:
         assert service.get_target_object(target_registry_name="unmapped") is None
 
     async def test_create_target_delegates_construction_to_registry(self, sqlite_instance) -> None:
-        """Every target construction path is owned by the registry."""
+        """Every target construction path is owned by the registry, through its external-input path."""
         service = TargetService()
-        with patch.object(service._registry, "create_instance", wraps=service._registry.create_instance) as create:
+        with patch.object(
+            service._registry,
+            "create_instance_from_external_input",
+            wraps=service._registry.create_instance_from_external_input,
+        ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once()
+        create.assert_called_once_with("TextTarget", params={})
 
     async def test_create_gandalf_target_coerces_level_string(self, sqlite_instance) -> None:
         """A Gandalf level from the JSON request is coerced to its enum before construction."""
