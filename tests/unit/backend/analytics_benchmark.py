@@ -1,35 +1,30 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Measure the full analytics ASGI stack using only a new, disposable SQLite database."""
+"""Synthetic analytics workload shared by local SQLite unit tests."""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
-import json
 import math
 import os
 import platform
 import random
 import sqlite3
-import tempfile
 import time
 import uuid
 from collections import Counter
-from contextlib import contextmanager, suppress
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Sequence
+    from collections.abc import Mapping, Sequence
 
     import httpx
 
     from pyrit.backend.middleware.compatibility import CompatibilityAPI
-    from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
     from pyrit.memory import SQLiteMemory
     from pyrit.models import (
         AtomicAttackIdentifier,
@@ -68,9 +63,18 @@ class AnalyticsBenchmark:
     PAGE_SIZE: ClassVar[int] = 25
     RANDOM_SEED: ClassVar[int] = 20260914
 
-    def __init__(self, *, directory: Path, count: int) -> None:
-        """Retain workload settings; initialization refuses existing memory or database files."""
+    def __init__(
+        self,
+        *,
+        memory: SQLiteMemory,
+        app: CompatibilityAPI,
+        headers: Mapping[str, str],
+        count: int,
+    ) -> None:
+        """Retain fixture-owned resources without creating, replacing, or disposing memory."""
         from importlib.metadata import version
+
+        from pyrit import _compatibility
 
         self.environment = {
             "python": platform.python_version(),
@@ -83,13 +87,12 @@ class AnalyticsBenchmark:
                 name: version(name) for name in ("fastapi", "starlette", "pydantic", "SQLAlchemy", "aiosqlite", "httpx")
             },
             "journal_mode": "wal (explicitly set only on the new scratch database)",
+            "compatibility_id": headers.get(_compatibility.COMPATIBILITY_HEADER),
         }
-        self.directory = directory
-        self.path = directory / "analytics.sqlite"
         self.count = count
-        self.memory: SQLiteMemory | None = None
-        self.runtime: RuntimeLifecycle | None = None
-        self.app: CompatibilityAPI | None = None
+        self.memory = memory
+        self.app = app
+        self.headers = dict(headers)
         self.samples: dict[str, list[RequestSample]] = {kind: [] for kind in self.LIMITS}
         self.cold: dict[str, RequestSample] = {}
         self.failures: list[str] = []
@@ -108,14 +111,13 @@ class AnalyticsBenchmark:
         self.sql_statements = 0
 
     async def run_async(self, *, analysts: int, iterations: int) -> dict[str, Any]:
-        """Initialize, measure, and drain the production runtime before returning the measurements."""
+        """Seed and measure the workload; pytest fixtures own runtime and database cleanup."""
+        from sqlalchemy import event
+
+        await self._seed_async()
+        engine = self.memory._get_async_engine().sync_engine
+        event.listen(engine, "before_cursor_execute", self._record_statement)
         try:
-            await self._initialize_async()
-            await self._seed_async()
-            assert self.runtime is not None
-            await self.runtime.startup_async()
-            if self.runtime.state != "ready":
-                raise RuntimeError(f"Scratch runtime startup failed: {self.runtime.message}")
             await self._cold_async()
             started = time.perf_counter()
             writer = asyncio.create_task(self._write_async())
@@ -131,91 +133,15 @@ class AnalyticsBenchmark:
             await self._verify_final_async()
             return self._measurements(analysts=analysts, iterations=iterations, elapsed=elapsed)
         finally:
-            await self._close_async()
-
-    async def _close_async(self) -> None:
-        from pyrit.common.singleton import Singleton
-        from pyrit.memory import CentralMemory, SQLiteMemory
-
-        if self.runtime is not None:
-            await self.runtime.shutdown_async()
-        elif self.memory is not None:
-            await self.memory.dispose_engine_async()
-        if self.memory is not None:
-            if CentralMemory._memory_instance is self.memory:
-                CentralMemory._memory_instance = None
-            if Singleton._instances.get(SQLiteMemory) is self.memory:
-                del Singleton._instances[SQLiteMemory]
-
-    async def _initialize_async(self) -> None:
-        import aiofiles
-
-        from pyrit import _compatibility
-        from pyrit.backend.main import app as backend_app
-        from pyrit.backend.middleware.compatibility import CompatibilityAPI
-        from pyrit.backend.services.analytics_service import get_analytics_service
-        from pyrit.backend.services.configuration_file_service import ConfigurationFileService
-        from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-        from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
-        from pyrit.common.singleton import Singleton
-        from pyrit.memory import CentralMemory, SQLiteMemory
-        from pyrit.memory.memory_models import Base
-
-        if CentralMemory._memory_instance is not None or Singleton._instances.get(SQLiteMemory) is not None:
-            raise RuntimeError("Run the benchmark in a fresh process, never against an initialized memory instance")
-        if not CONFIGURATION_DIRECTORY_PATH.is_relative_to(self.directory):
-            raise RuntimeError("Run the CLI in its isolated environment before importing PyRIT configuration")
-        if get_analytics_service.cache_info().currsize or await asyncio.to_thread(self.path.exists):
-            raise RuntimeError("The benchmark requires an unused SDK and a new scratch database")
-        memory = SQLiteMemory(db_path=self.path, skip_schema_migration=True, _defer_initialization=True)
-        if not isinstance(memory, SQLiteMemory):
-            raise TypeError("Expected a new SQLite memory instance")
-        self.memory = memory
-        self.memory.results_path = str(self.directory)
-        await self.memory.initialize_async()
-        async with await self.memory.get_session_async() as session:
-            connection = await session.connection()
-            mode = (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one()
-            if mode != "wal":
-                raise RuntimeError("The disposable benchmark database could not enable WAL")
-            await connection.run_sync(Base.metadata.create_all)
-            await session.commit()
-        CentralMemory.set_memory_instance(self.memory)
-        config_path = self.directory / "config.yaml"
-        async with aiofiles.open(config_path, "w", encoding="utf-8") as config_file:
-            await config_file.write(
-                json.dumps(
-                    {
-                        "memory_db_type": "sqlite",
-                        "env_files": [],
-                        "env_akv_ref": [],
-                        "initializers": ["technique"],
-                        "initialization_scripts": [],
-                        "custom_initializers_source": str(self.directory / "initializers"),
-                        "silent": True,
-                    }
-                )
-            )
-        self.app = CompatibilityAPI(
-            routes=list(backend_app.router.routes),
-            middleware=backend_app.user_middleware,
-        )
-        self.app.exception_handlers.update(backend_app.exception_handlers)
-        self.app.state.compatibility_id = await asyncio.to_thread(_compatibility.get_compatibility_id)
-        self.environment["compatibility_id"] = self.app.state.compatibility_id
-        source = ConfigurationFileService(config_file_value=str(config_path))
-        self.app.state.configuration_file_service = source
-        self.runtime = RuntimeLifecycle(app=self.app, source=source)
-        self.app.state.runtime_lifecycle = self.runtime
+            event.remove(engine, "before_cursor_execute", self._record_statement)
 
     async def _seed_async(self) -> None:
-        from sqlalchemy import event, insert
+        from sqlalchemy import insert
 
         from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
         from pyrit.memory.memory_models import AttackResultEntry
         from pyrit.models import AttackResultMetadata, AttackResultRole
 
-        assert self.memory is not None
         memory = self.memory
         identifiers = self._identifiers()
         async with await self.memory.get_session_async() as session:
@@ -273,8 +199,6 @@ class AnalyticsBenchmark:
                 connection = await session.connection()
                 await connection.execute(insert(AttackResultEntry), rows)
                 await session.commit()
-        # Count post-seeding statements, including untimed startup/final verification.
-        event.listen(self.memory._get_async_engine().sync_engine, "before_cursor_execute", self._record_statement)
 
     @staticmethod
     def _identifiers() -> list[AtomicAttackIdentifier]:
@@ -329,22 +253,17 @@ class AnalyticsBenchmark:
             }
         }
 
-    async def _client_async(self, analyst: str) -> httpx.AsyncClient:
+    def _client(self, analyst: str) -> httpx.AsyncClient:
         import httpx
 
-        from pyrit import _compatibility
-
-        assert self.app is not None
-        # Read this client's packaged identity independently, never copy a server response.
-        identity = await asyncio.to_thread(_compatibility.get_compatibility_id)
         return httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app, raise_app_exceptions=False),
             base_url="http://benchmark",
-            headers={_compatibility.COMPATIBILITY_HEADER: identity, "X-Request-ID": f"benchmark-{analyst}"},
+            headers={**self.headers, "X-Request-ID": f"benchmark-{analyst}"},
         )
 
     async def _cold_async(self) -> None:
-        async with await self._client_async("cold") as client:
+        async with self._client("cold") as client:
             previous = None
             for kind in self.LIMITS:
                 sample, data = await self._request_async(client=client, kind=kind, previous=previous)
@@ -353,7 +272,7 @@ class AnalyticsBenchmark:
                     previous = data
 
     async def _analyst_async(self, *, index: int, iterations: int) -> None:
-        async with await self._client_async(str(index)) as client:
+        async with self._client(str(index)) as client:
             for _ in range(iterations):
                 previous = None
                 for kind in self.LIMITS:
@@ -472,7 +391,6 @@ class AnalyticsBenchmark:
 
         from pyrit.memory.memory_models import AttackResultEntry
 
-        assert self.memory is not None
         transaction = 0
         try:
             while not self.stop_writer.is_set():
@@ -527,7 +445,6 @@ class AnalyticsBenchmark:
 
         from pyrit.memory.memory_models import AttackResultEntry
 
-        assert self.memory is not None
         async with await self.memory.get_session_async() as session:
             rows = await session.execute(
                 select(AttackResultEntry.outcome, func.count()).group_by(AttackResultEntry.outcome)
@@ -540,7 +457,7 @@ class AnalyticsBenchmark:
             self.failures.append("Final SQL counts disagree with the exact seeded and committed write ledger")
         if conversations != math.ceil(self.count / 2):
             self.failures.append("The workload did not retain its distinct IDs sharing conversations")
-        async with await self._client_async("verification") as client:
+        async with self._client("verification") as client:
             for kind in ("report_attack", "report_converter"):
                 sample, report = await self._request_async(client=client, kind=kind)
                 self.verification.append(sample)
@@ -632,7 +549,7 @@ class AnalyticsBenchmark:
             "peak_concurrent_requests": self.peak_requests,
             "sql_statements": self.sql_statements,
             "sql_statement_scope": (
-                "SQLAlchemy cursor statements after seeding, including runtime reconciliation and final verification; "
+                "SQLAlchemy cursor statements after seeding, including cold requests and final verification; "
                 "driver-direct pragmas are excluded"
             ),
             "verification_requests": {
@@ -658,54 +575,3 @@ class AnalyticsBenchmark:
         self, connection: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
     ) -> None:
         self.sql_statements += 1
-
-
-@contextmanager
-def isolated_environment(directory: Path) -> Generator[None, None, None]:
-    """Isolate home/configuration and external auth before PyRIT imports, then restore the process environment."""
-    overrides = {
-        "HOME": str(directory),
-        "USERPROFILE": str(directory),
-        "ENTRA_TENANT_ID": "",
-        "ENTRA_CLIENT_ID": "",
-        "ENTRA_ALLOWED_GROUP_IDS": "",
-        "ENTRA_ADMIN_GROUP_ID": "",
-    }
-    previous = {name: os.environ.get(name) for name in overrides}
-    try:
-        os.environ.update(overrides)
-        yield
-    finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-
-
-def main() -> None:
-    """Print measurements and exit nonzero on errors, wrong counts, or unmet latency targets."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--results", type=int, default=100_000, help="Use 100000 for the representative gate")
-    parser.add_argument("--analysts", type=int, default=5)
-    parser.add_argument("--iterations", type=int, default=6)
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args()
-    if args.results < 100 or args.analysts < 1 or args.iterations < 1:
-        parser.error("Use at least 100 results and positive analyst/iteration counts")
-    cache = Path.cwd() / ".pytest_cache"
-    cache.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="analytics-benchmark-", dir=cache) as temporary:
-        with isolated_environment(Path(temporary)):
-            benchmark = AnalyticsBenchmark(directory=Path(temporary), count=args.results)
-            result = asyncio.run(benchmark.run_async(analysts=args.analysts, iterations=args.iterations))
-    serialized = json.dumps(result, indent=2)
-    if args.output:
-        args.output.write_text(serialized + "\n", encoding="utf-8")
-    print(serialized)
-    if not result["meets_latency_targets"]:
-        raise SystemExit(1)
-
-
-if __name__ == "__main__":
-    main()

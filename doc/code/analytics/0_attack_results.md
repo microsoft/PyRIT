@@ -433,22 +433,32 @@ shared-model JSON. These correctness tests are not performance evidence.
 
 ## Reproducible REST workload
 
-Run the benchmark in a fresh process from the repository root, after other heavy
-checks have finished. For a development checkout, first create its normal local
-compatibility stamp:
+The workload is a **unit test** because it uses only a temporary local SQLite
+database, with no Azure SQL, external services, or real credentials. Run the
+100,000-result performance case explicitly from the repository root after other
+heavy checks have finished:
 
 ```powershell
-uv run python -m build_scripts.stamp_compatibility --development
-uv run python -m build_scripts.benchmark_attack_analytics --results 100000 --analysts 5 --iterations 6 --output .pytest_cache\analytics-benchmark.json
+$env:RUN_ANALYTICS_PERFORMANCE_TESTS = "true"
+uv run pytest tests\unit\backend\test_analytics_benchmark.py::test_100k_attack_analytics_performance_async -q -s
+Remove-Item Env:\RUN_ANALYTICS_PERFORMANCE_TESTS
 ```
 
-The script owns a new temporary directory below `.pytest_cache`, a private home
-and configuration, and a new SQLite database built from the current schema.
-It refuses an existing database or initialized memory. It never reads the user's
-configuration/database, runs deployment migrations, or changes global database
-settings. WAL is explicitly enabled only on its disposable database. The actual
-runtime starts with local technique registration, then closes services and memory
-before the temporary directory is removed. No server or frontend is started.
+The latency gate is skipped in ordinary unit runs so unrelated CI load cannot
+turn a correctness check into a one-second performance assertion. The same module
+always runs a smaller SQLite workload with finite correctness budgets, plus
+tests that reject wrong counts, missing continuations, errors, and unmet thresholds.
+There is no separate build script or benchmark CLI.
+
+Pytest fixtures own a new temporary directory, configuration, and file-backed
+SQLite database built from the current schema. They scope CentralMemory using the
+existing unit-test isolation helper and never load the user's configuration or
+database, run deployment migrations, or change global database settings. WAL is
+explicitly enabled only on the disposable database. The actual runtime starts
+with local technique registration, then closes services and memory before the
+temporary directory is removed. Compatibility identity and headers use the
+existing backend test fixtures; no packaged development stamp is needed.
+No server or frontend is started.
 
 The deterministic data contains 100,000 result IDs, two per conversation, all
 outcomes and result roles, 100 skewed operations (the largest exceeds 60%), 50
@@ -466,34 +476,37 @@ Metadata profile limits remain transfer/work bounds; overflow still uses the
 complete SQL fallback.
 
 Timing includes request encoding, all production middleware (with external auth
-disabled only in the scratch process), admission/queueing, the real SDK and SQL,
+disabled only within the test fixture), admission/queueing, the real SDK and SQL,
 native session cleanup, shared response serialization, and client model
 validation. It excludes schema/seeding, runtime startup/shutdown, external
 authentication I/O, TCP/TLS/network, frontend/static serving, and final count
 verification. "Cold" means the first request of each class after seeding/startup,
 not flushed OS or SQLite caches.
 
-JSON output records environment/package versions, data shape, every measured
+The test prints its JSON report and saves it in pytest's cache at
+`.pytest_cache\v\analytics\attack-results`. It records environment/package
+versions, data shape, every measured
 sample, first-request/cold time, nearest-rank p95 and maximum per class, request
 success/error counts, concurrent callers, and committed writes. Final SQL and
 REST outcome counts must agree with the exact seed/write ledger. Pages must have
 distinct IDs, bounded output and correct recency/UUID order; continuations must
 follow the preceding page's cursor and seek past its anchor.
 
-The process exits nonzero for request/write errors, missing workload classes or
+The test fails for request/write errors, missing workload classes or
 continuations, incorrect counts/output, or p95 above **2 seconds per report
 shape** or **0.5 seconds for facets, first pages, or continuations**. Errors remain
-in timing samples and cannot pass through successful-only sampling. Smaller
-`--results`, `--analysts`, or `--iterations` settings are useful for smoke checks
-but are explicitly marked non-representative and do not establish the 100k/5-user
-performance gate.
+in timing samples and cannot pass through successful-only sampling. The ordinary
+smoke test is explicitly marked non-representative in its report and does not
+establish the 100k/5-user performance gate. The opt-in case retains production SDK
+budgets and always uses 100,000 results, five analysts, and six iterations.
 
-### Recorded 100k gate
+### Recorded pytest 100k gate
 
-Measured on **2026-10-12 at 03:50 UTC**, with the command above, against this
-changeset on base `40ac8ccf55e952d73b2a6425e754ba923220943c`. The local development
-compatibility stamp was `1.2.0.dev0+g40ac8ccf55e952d73b2a6425e754ba923220943c`;
-the working tree included the changes being measured.
+Measured on **2026-10-12 at 04:32 UTC**, using the pytest command above, on
+`941c469e9c5408095269c9978d7f5b3715ef1947` plus the test-only benchmark migration.
+The backend and client used the existing test compatibility identity
+`0.14.0+gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`. Compatibility middleware
+remained active; no external authentication or credentials were used.
 
 Environment: Windows 11 build 26200, 16 logical CPUs, AMD64 family 25/model 117;
 Python 3.14.4, SQLite 3.50.4, FastAPI 0.142.2, Starlette 1.7.0, Pydantic 2.13.5,
@@ -503,21 +516,23 @@ described above.
 
 | Workload | Cold (s) | Concurrent p95 (s) | Maximum (s) | Successful / error requests |
 |---|---:|---:|---:|---:|
-| Harm category x attack type report | 0.521531 | 1.709813 | 1.751549 | 31 / 0 |
-| Harm category x converter type report | 0.539402 | 1.775586 | 1.799107 | 31 / 0 |
-| Case-label facets | 0.104245 | 0.379066 | 0.388970 | 31 / 0 |
-| First result pages | 0.012752 | 0.282331 | 0.304525 | 31 / 0 |
-| Actual cursor continuations | 0.015458 | 0.091053 | 0.103298 | 31 / 0 |
+| Harm category x attack type report | 0.532240 | 1.286714 | 1.393029 | 31 / 0 |
+| Harm category x converter type report | 0.642124 | 1.467490 | 1.549224 | 31 / 0 |
+| Case-label facets | 0.122278 | 0.432149 | 0.462309 | 31 / 0 |
+| First result pages | 0.015427 | 0.323136 | 0.346352 | 31 / 0 |
+| Actual cursor continuations | 0.020298 | 0.067811 | 0.116328 | 31 / 0 |
 
 Each class has one cold request and 30 concurrent samples; p95/max refer to the
 concurrent samples. Both final verification requests also succeeded, for **157
 successful requests and zero errors** overall. The concurrent phase took
-17.842994 seconds and reached five overlapping callers. All 107 write
-transactions committed: 107 outcome updates and 53 inserts, with write p95
-0.151302 seconds and maximum 0.371907 seconds. Final SQL and both REST reports
+16.400626 seconds and reached five overlapping callers. All 106 write
+transactions committed: 106 outcome updates and 53 inserts, with write p95
+0.139829 seconds and maximum 0.303455 seconds. Final SQL and both REST reports
 matched the exact **100,053-result** write ledger. Temporary databases were removed.
+Pytest reported one passing performance test in 44.91 seconds including setup
+and teardown, which are excluded from the latency samples.
 
-The first measurement failed: report p95s were 2.985537/5.026765 seconds, facets
+The initial measurement before the query optimizations failed: report p95s were 2.985537/5.026765 seconds, facets
 1.360661 seconds, first pages 0.773046 seconds, and continuations 0.225980 seconds,
 with 20 HTTP 504 responses. SQL profiling identified repeated profile/fallback
 work, repeated identifier/JSON interpretation, and Unicode callbacks on ASCII
