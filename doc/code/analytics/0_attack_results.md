@@ -433,19 +433,18 @@ shared-model JSON. These correctness tests are not performance evidence.
 
 ## Reproducible REST workload
 
-The full REST/SDK/SQL performance workload is an **integration test**, using the
-existing `run_only_if_all_tests` marker and `RUN_ALL_TESTS` gate. It still uses only
-a temporary local SQLite database, with no Azure SQL or external credentials.
+The full REST/SDK/SQL performance workload is an **integration test** that runs
+by default with the integration suite. It uses only a temporary local SQLite
+database, with no Azure SQL or external credentials. No opt-in marker or
+environment variable is required.
 Run the 100,000-result case from the repository root after other heavy checks
 have finished:
 
 ```powershell
-$env:RUN_ALL_TESTS = "true"
 uv run pytest tests\integration\backend\test_attack_analytics_integration.py -q -s
-Remove-Item Env:\RUN_ALL_TESTS
 ```
 
-No new environment variable is required. The latency gate is outside ordinary
+The latency check is outside ordinary
 unit runs, so unrelated CI load cannot turn a correctness check into a one-second
 performance assertion. `tests/unit/backend/test_analytics_benchmark.py` retains a
 smaller SQLite workload with finite correctness budgets, plus tests that reject

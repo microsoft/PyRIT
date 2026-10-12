@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Full REST/SDK/SQLite analytics workload, gated with the existing integration-test policy."""
+"""Full REST/SDK/SQLite analytics workload, included in every integration-suite run."""
 
 import asyncio
 import json
@@ -14,7 +14,6 @@ from pyrit.backend.middleware.compatibility import CompatibilityAPI
 from pyrit.memory import SQLiteMemory
 
 
-@pytest.mark.run_only_if_all_tests
 async def test_100k_attack_analytics_performance_async(
     *,
     benchmark_app: CompatibilityAPI,
