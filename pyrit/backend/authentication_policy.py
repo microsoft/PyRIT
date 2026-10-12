@@ -8,15 +8,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from pyrit.common.authentication import (
+    AUTH_MODE_ENVIRONMENT_VARIABLE,
+    REQUIRED_ENTRA_ENVIRONMENT_VARIABLES,
+)
+
 AuthenticationMode = Literal["local", "entra"]
 
-_AUTH_MODE_VARIABLE = "PYRIT_AUTH_MODE"
-_REQUIRED_ENTRA_VARIABLES = (
-    "ENTRA_TENANT_ID",
-    "ENTRA_CLIENT_ID",
-    "ENTRA_ALLOWED_GROUP_IDS",
-)
-_ENTRA_VARIABLES = (*_REQUIRED_ENTRA_VARIABLES, "ENTRA_ADMIN_GROUP_ID")
+_ENTRA_VARIABLES = (*REQUIRED_ENTRA_ENVIRONMENT_VARIABLES, "ENTRA_ADMIN_GROUP_ID")
 _UNAUTHENTICATED_ADMIN_VARIABLE = "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"
 
 
@@ -44,18 +43,6 @@ class AuthenticationPolicy:
     def allowed_group_ids_csv(self) -> str:
         """Normalized group IDs for the frontend bootstrap contract."""
         return ",".join(self.allowed_group_ids)
-
-
-def should_default_to_local_authentication(*, environment: Mapping[str, str]) -> bool:
-    """
-    Determine whether a local launcher should explicitly select local authentication.
-
-    Returns:
-        bool: True only when no authentication intent or required Entra setting is present.
-    """
-    return not environment.get(_AUTH_MODE_VARIABLE, "").strip() and not any(
-        name in environment for name in _REQUIRED_ENTRA_VARIABLES
-    )
 
 
 def _parse_boolean_setting(*, environment: Mapping[str, str], name: str) -> bool:
@@ -88,10 +75,10 @@ def resolve_authentication_policy(*, environment: Mapping[str, str] | None = Non
             contradictory, or unsupported.
     """
     environment = os.environ if environment is None else environment
-    mode_raw = environment.get(_AUTH_MODE_VARIABLE, "").strip().casefold()
+    mode_raw = environment.get(AUTH_MODE_ENVIRONMENT_VARIABLE, "").strip().casefold()
     if mode_raw and mode_raw not in {"local", "entra"}:
         raise AuthenticationConfigurationError(
-            f"{_AUTH_MODE_VARIABLE} must be 'local' or 'entra'; received {mode_raw!r}."
+            f"{AUTH_MODE_ENVIRONMENT_VARIABLE} must be 'local' or 'entra'; received {mode_raw!r}."
         )
 
     tenant_id = environment.get("ENTRA_TENANT_ID", "").strip()
@@ -108,7 +95,7 @@ def resolve_authentication_policy(*, environment: Mapping[str, str] | None = Non
         if configured_entra_variables:
             joined_names = ", ".join(configured_entra_variables)
             raise AuthenticationConfigurationError(
-                f"{_AUTH_MODE_VARIABLE}=local cannot be combined with Entra settings: {joined_names}."
+                f"{AUTH_MODE_ENVIRONMENT_VARIABLE}=local cannot be combined with Entra settings: {joined_names}."
             )
         return AuthenticationPolicy(
             mode="local",
@@ -122,11 +109,12 @@ def resolve_authentication_policy(*, environment: Mapping[str, str] | None = Non
     }
     missing_settings = [name for name, value in required_values.items() if not value]
     if missing_settings:
-        if not mode_raw and not any(name in environment for name in _REQUIRED_ENTRA_VARIABLES):
+        if not mode_raw and not any(name in environment for name in REQUIRED_ENTRA_ENVIRONMENT_VARIABLES):
             raise AuthenticationConfigurationError(
                 "Authentication configuration is absent. For loopback-only local development, "
-                f"set {_AUTH_MODE_VARIABLE}=local. For a shared deployment, set "
-                f"{_AUTH_MODE_VARIABLE}=entra and configure {', '.join(_REQUIRED_ENTRA_VARIABLES)}."
+                f"set {AUTH_MODE_ENVIRONMENT_VARIABLE}=local. For a shared deployment, set "
+                f"{AUTH_MODE_ENVIRONMENT_VARIABLE}=entra and configure "
+                f"{', '.join(REQUIRED_ENTRA_ENVIRONMENT_VARIABLES)}."
             )
         raise AuthenticationConfigurationError(
             f"Incomplete Entra ID configuration: {', '.join(missing_settings)} must be set."

@@ -10,7 +10,6 @@ import pytest
 from pyrit.backend.authentication_policy import (
     AuthenticationConfigurationError,
     resolve_authentication_policy,
-    should_default_to_local_authentication,
 )
 
 
@@ -40,7 +39,6 @@ def test_resolve_authentication_policy_local_admin_override() -> None:
             "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "TRUE",
         }
     )
-
     assert policy.allow_unauthenticated_admin
 
 
@@ -127,22 +125,3 @@ def test_resolve_authentication_policy_rejects_invalid_boolean() -> None:
                 "PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "yes",
             }
         )
-
-
-@pytest.mark.parametrize(
-    "environment",
-    [
-        {"PYRIT_AUTH_MODE": "entra"},
-        {"ENTRA_TENANT_ID": "tenant"},
-        {"ENTRA_CLIENT_ID": ""},
-        {"ENTRA_ALLOWED_GROUP_IDS": "group"},
-    ],
-)
-def test_should_default_to_local_authentication_preserves_auth_configuration(
-    environment: Mapping[str, str],
-) -> None:
-    assert not should_default_to_local_authentication(environment=environment)
-
-
-def test_should_default_to_local_authentication_accepts_unconfigured_environment() -> None:
-    assert should_default_to_local_authentication(environment={"UNRELATED": "value"})

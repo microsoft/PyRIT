@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from pyrit.backend.authentication_policy import should_default_to_local_authentication
+from pyrit.common.authentication import should_default_to_local_authentication
 
 # Ensure emoji and other Unicode characters don't crash on Windows consoles
 # that use legacy encodings like cp1252. Characters that can't be encoded

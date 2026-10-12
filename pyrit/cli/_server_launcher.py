@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from pyrit.backend.authentication_policy import should_default_to_local_authentication
 from pyrit.cli._config_reader import DEFAULT_SERVER_STARTUP_TIMEOUT
+from pyrit.common.authentication import should_default_to_local_authentication
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
