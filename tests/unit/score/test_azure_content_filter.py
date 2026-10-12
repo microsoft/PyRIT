@@ -4,15 +4,24 @@
 
 import inspect
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from azure.ai.contentsafety.models import TextCategory
+from azure.ai.contentsafety.models import (
+    AnalyzeImageResult,
+    AnalyzeTextResult,
+    ImageCategoriesAnalysis,
+    TextCategoriesAnalysis,
+    TextCategory,
+)
+from azure.core.exceptions import HttpResponseError
+from PIL import Image
 from unit.mocks import get_audio_message_piece, get_image_message_piece, get_test_message_piece, store_message_async
 
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, Score
 from pyrit.score import MessageScorable
 from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -430,3 +439,93 @@ async def test_azure_content_filter_scorer_error_preserves_category_shape(patch_
     }
     assert all(score.is_undetermined for score in scores)
     assert all(score.score_metadata == {"azure_severity": 0} for score in scores)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("length", [1, 10001])
+async def test_text_sdk_response_round_trips_async(*, sqlite_instance: MemoryInterface, length: int) -> None:
+    scorer = AzureContentFilterScorer(
+        api_key="test-key",
+        endpoint="https://example.invalid",
+        harm_categories=[TextCategory.HATE, TextCategory.VIOLENCE],
+    )
+    responses = [
+        AnalyzeTextResult(
+            blocklists_match=[],
+            categories_analysis=[
+                TextCategoriesAnalysis(category=TextCategory.HATE, severity=0),
+                TextCategoriesAnalysis(category=TextCategory.VIOLENCE, severity=severity),
+            ],
+        )
+        for severity in ([2] if length == 1 else [2, 5])
+    ]
+    with patch.object(
+        scorer._azure_cf_client, "analyze_text", new_callable=AsyncMock, side_effect=responses
+    ) as analyze:
+        scores = await scorer.score_text_async("a" * length, objective="Assess harmful content")
+
+    assert analyze.await_count == len(responses)
+    assert "".join(call.args[0].text for call in analyze.await_args_list) == "a" * length
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(score.id) for score in scores])
+    assert len(scores) == len(stored) == 2
+    expected_severities = {"Hate": 0, "Violence": 2 if length == 1 else 5}
+    for score in stored:
+        assert score.score_category is not None
+        severity = expected_severities[score.score_category[0]]
+        assert score.get_value() == pytest.approx(severity / 7)
+        assert score.score_metadata == {"azure_severity": severity}
+        assert score.score_type == "float_scale"
+        assert score.objective == "Assess harmful content"
+        assert score.scorer_class_identifier == scorer.get_identifier()
+        original = next(original for original in scores if original.id == score.id)
+        assert score.score_rationale == original.score_rationale
+        assert score == Score.model_validate_json(original.model_dump_json())
+
+
+@pytest.fixture
+def content_safety_image(tmp_path: Path) -> Path:
+    path = tmp_path / "content-safety.png"
+    with Image.new("RGB", (64, 64)) as image:
+        image.save(path)
+    return path
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("severity", [0, 6])
+async def test_image_sdk_response_round_trips_async(
+    *, sqlite_instance: MemoryInterface, content_safety_image: Path, severity: int
+) -> None:
+    scorer = AzureContentFilterScorer(
+        api_key="test-key", endpoint="https://example.invalid", harm_categories=[TextCategory.VIOLENCE]
+    )
+    response = AnalyzeImageResult(categories_analysis=[ImageCategoriesAnalysis(category="Violence", severity=severity)])
+    with patch.object(
+        scorer._azure_cf_client, "analyze_image", new_callable=AsyncMock, return_value=response
+    ) as analyze:
+        scores = await scorer.score_image_async(str(content_safety_image))
+
+    analyze.assert_awaited_once()
+    assert analyze.await_args.args[0].image.content
+    assert analyze.await_args.args[0].output_type == "FourSeverityLevels"
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    assert stored[0].get_value() == severity / 6
+    assert stored[0].score_category == ["Violence"]
+    assert stored[0].score_metadata == {"azure_severity": severity}
+    assert stored[0] == Score.model_validate_json(scores[0].model_dump_json())
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_service_error_does_not_persist_a_score_async(sqlite_instance: MemoryInterface) -> None:
+    scorer = AzureContentFilterScorer(
+        api_key="test-key", endpoint="https://example.invalid", harm_categories=[TextCategory.HATE]
+    )
+    with patch.object(
+        scorer._azure_cf_client, "analyze_text", new_callable=AsyncMock, side_effect=HttpResponseError("service failed")
+    ):
+        with pytest.raises(RuntimeError, match="AzureContentFilterScorer.*service failed") as error:
+            await scorer.score_text_async("text")
+
+    assert isinstance(error.value.__cause__, HttpResponseError)
+    assert await sqlite_instance.get_scores_async(score_type="float_scale", include_intermediate=True) == []

@@ -20,8 +20,9 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
@@ -49,12 +50,65 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _capture_creation(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    """
+    Capture supplied factory arguments before a helper expands them into runtime settings.
+
+    Returns:
+        Callable[_P, _R]: The original callable with creation-input capture.
+    """
+    signature = inspect.signature(method)
+
+    @wraps(method)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        name = wrapped.__name__
+        arguments = signature.bind(*args, **kwargs).arguments
+        owner = arguments.pop(next(iter(signature.parameters)))
+        calls = []
+        if name == "__init__":
+            call = type(owner).__name__
+        elif isinstance(owner, AttackTechniqueFactory):
+            calls = owner.get_creation_calls()
+            call = name
+        else:
+            call = f"{owner.__name__}.{name}"
+        result = method(*args, **kwargs)
+        factory = result if isinstance(result, AttackTechniqueFactory) else owner
+        if not isinstance(factory, AttackTechniqueFactory):
+            raise TypeError("Creation capture requires an AttackTechniqueFactory constructor or copy method")
+        factory._creation_calls = [*calls, (call, _copy_creation_value(arguments))]
+        return result
+
+    return wrapped
+
+
+def _copy_creation_value(value: Any) -> Any:
+    """
+    Copy input containers without copying live components.
+
+    Returns:
+        Any: Independent containers with live values retained by reference.
+    """
+    if isinstance(value, dict):
+        return {key: _copy_creation_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_creation_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_creation_value(item) for item in value)
+    return value
 
 
 class AttackTechniqueFactory(Identifiable):
@@ -70,6 +124,9 @@ class AttackTechniqueFactory(Identifiable):
     construction time, catching typos and incompatible parameter names early.
     """
 
+    _creation_calls: list[tuple[str, dict[str, Any]]]
+
+    @_capture_creation
     def __init__(
         self,
         *,
@@ -188,6 +245,7 @@ class AttackTechniqueFactory(Identifiable):
         self._validate_score_feedback_override()
 
     @classmethod
+    @_capture_creation
     def with_simulated_conversation(
         cls,
         *,
@@ -465,6 +523,14 @@ class AttackTechniqueFactory(Identifiable):
         """The registry name for this technique."""
         return self._name
 
+    def get_creation_kwargs(self) -> dict[str, Any]:
+        """Return a copy of the supplied factory arguments, without adding defaults."""
+        return _copy_creation_value(self._creation_calls[-1][1])
+
+    def get_creation_calls(self) -> list[tuple[str, dict[str, Any]]]:
+        """Return the supplied constructor and copy-method inputs, without resolved defaults."""
+        return [(call, _copy_creation_value(arguments)) for call, arguments in self._creation_calls]
+
     @property
     def description(self) -> str | None:
         """Short human-readable summary of what the technique does, or None."""
@@ -592,6 +658,7 @@ class AttackTechniqueFactory(Identifiable):
         """Whether callers may safely append request converters to this technique."""
         return self._supports_additional_request_converters
 
+    @_capture_creation
     def with_attack_kwargs(self, *, attack_kwargs: dict[str, Any]) -> AttackTechniqueFactory:
         """
         Return a copy with the supplied attack constructor arguments merged in.
@@ -627,6 +694,7 @@ class AttackTechniqueFactory(Identifiable):
         """The required ``attack_scoring_config`` subtype, or ``None`` if any config is accepted."""
         return self._compatibility_helper.scoring_config_type
 
+    @_capture_creation
     def with_adversarial_system_prompt_prefix(self, prefix: str) -> AttackTechniqueFactory:
         """
         Return a copy of this factory with static guidance layered onto its adversarial prompt.
@@ -733,8 +801,8 @@ class AttackTechniqueFactory(Identifiable):
                 into the factory or supplied via
                 ``attack_converter_config_override``).  Unlike
                 ``attack_converter_config_override`` these are additive and never
-                replace the existing converters.  Only forwarded if the attack
-                class constructor accepts ``attack_converter_config``.
+                replace the existing converters.  Requires the attack class
+                constructor to accept ``attack_converter_config``.
 
         Returns:
             A fresh AttackTechnique with a newly-constructed attack technique.
@@ -743,9 +811,18 @@ class AttackTechniqueFactory(Identifiable):
             ValueError: If a create-time adversarial chat is supplied while the
                 factory already baked one, if ``scorer_override_policy`` is RAISE
                 and the scenario scorer is incompatible with the attack's type annotation,
-                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack.
+                or if ``use_score_as_feedback`` is set but no scoring config reaches the attack,
+                or if ``extra_request_converters`` is non-empty but the attack class doesn't
+                accept ``attack_converter_config``.
         """
         create_time_target: PromptTarget | None = adversarial_chat
+
+        if extra_request_converters and "attack_converter_config" not in self._compatibility_helper.accepted_params:
+            # These come from the caller's technique_converters, so dropping them would run a different setup.
+            raise ValueError(
+                f"Factory '{self._name}': {self._attack_class.__name__} does not accept 'attack_converter_config', "
+                f"so the extra request converters can't be applied."
+            )
 
         if create_time_target is not None and self._adversarial_chat is not None:
             raise ValueError(

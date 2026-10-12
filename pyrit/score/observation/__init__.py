@@ -11,6 +11,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 if TYPE_CHECKING:
     from pyrit.score.observation.conversation_source import ConversationSource
     from pyrit.score.observation.execution import NonReplayableObservationError
+    from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
@@ -20,6 +21,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationSource": "pyrit.score.observation.conversation_source",
     "InMemoryTraceClient": "pyrit.score.observation.trace_client",
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
+    "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
     "NonReplayableObservationError": "pyrit.score.observation.execution",
     "ObservationSource": "pyrit.score.observation.observation_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",

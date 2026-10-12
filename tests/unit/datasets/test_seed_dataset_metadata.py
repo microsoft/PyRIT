@@ -58,6 +58,10 @@ class TestFilterLifecycle:
         assert c.tags is None
         assert c.size is None
 
+    def test_empty_criteria_fails(self):
+        with pytest.raises(ValueError, match="criteria.*at least one"):
+            SeedDatasetFilter(criteria=[])
+
     def test_has_some_values(self):
         f = SeedDatasetFilter(size={"large"})
         assert f.criteria[0].size == {"large"}

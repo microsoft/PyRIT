@@ -67,6 +67,10 @@ For every mapper / serializer / DTO conversion:
 - It is fine to keep mock-based tests for fast coverage of branching logic. The real-object tests are a backstop against field-shape drift, not a replacement for the mock-based suite.
 - When `MagicMock` is unavoidable for a mapper test, pass `spec=RealModelClass` so attempted access to a removed field raises `AttributeError` immediately.
 
+## Scorer Contract Tests
+
+For provider-response and metadata regressions, exercise the scorer's public entry point with realistic responses, real `Score` / `UnvalidatedScore` conversion, and `sqlite_instance`. Mock only external I/O, not parsing, validation, aggregation, or persistence. Read persisted scores using explicit score IDs or filters (`get_scores_async()` without filters deliberately returns no scores). Assert verdict/value, category, rationale, and metadata, including after wrapper forwarding or metadata mutation. Parser-only tests and generic model-construction tests do not cover this boundary.
+
 ## Test Structure Preferences
 
 - **Standalone test functions preferred** over test classes (use classes only when `usefixtures` or grouping is needed)

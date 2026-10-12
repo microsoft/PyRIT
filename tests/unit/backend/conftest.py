@@ -24,7 +24,7 @@ def managed_media_path(*, sqlite_instance: SQLiteMemory, patch_central_database:
     path = Path(sqlite_instance.results_path) / "prompt-memory-entries" / "image.png"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"image")
-    return path
+    return path.resolve()
 
 
 @pytest.fixture(autouse=True)

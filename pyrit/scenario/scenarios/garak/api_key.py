@@ -31,6 +31,7 @@ from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConstraintError,
+    DatasetSource,
     ResolvedDataset,
 )
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
@@ -89,10 +90,14 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
 
         Args:
             **kwargs (Any): Arguments for ``DatasetAttackConfiguration``.
+
         """
         super().__init__(**kwargs)
         self._techniques: list[ApiKeyTechnique] = [ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey]
         self.excluded_values: tuple[str, ...] = ()
+
+    def _default_max_per_dataset(self) -> Literal["all"]:
+        return "all"
 
     def _set_techniques(self, techniques: Sequence[ApiKeyTechnique]) -> None:
         """Set the techniques whose populations are sampled."""
@@ -105,10 +110,10 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
         Returns:
             dict: Technique names mapped to their shared configuration cap.
         """
-        if self.max_dataset_size is None:
+        if self.max_total == "all":
             return {}
         return {
-            str(technique.value): [("combined configuration cap", self.max_dataset_size, "configuration")]
+            str(technique.value): [("combined configuration cap", self.max_total, "configuration")]
             for technique in self._techniques
         }
 
@@ -120,6 +125,8 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
             DatasetConstraintError: If the required corpus datasets are not selected.
         """
         super().validate_configuration()
+        if any(self.source_limit(source.name) != "all" for source in self.sources):
+            raise DatasetConstraintError("ApiKey ingredient sources must be uncapped; use max_total.")
         if set(self.dataset_names) != set(_CORPUS_DATASETS):
             raise DatasetConstraintError(
                 f"ApiKey requires exactly these datasets: {list(_CORPUS_DATASETS)}; inline seeds are not supported."
@@ -229,8 +236,9 @@ class ApiKey(Scenario):
             version=self.VERSION,
             technique_class=ApiKeyTechnique,
             default_dataset_config=ApiKeyDatasetConfiguration(
-                dataset_names=self.required_datasets(),
-                max_dataset_size=ApiKeyDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
+                sources=[DatasetSource(name=name) for name in self.required_datasets()],
+                max_per_dataset="all",
+                max_total=ApiKeyDatasetConfiguration.DEFAULT_MAX_DATASET_SIZE,
             ),
             objective_scorer=objective_scorer or CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS),
             scenario_result_id=scenario_result_id,
@@ -308,6 +316,8 @@ class ApiKey(Scenario):
         """
         attacks: list[AtomicAttack] = []
         for technique_name, seed_groups in context.seed_groups_by_dataset.items():
+            if not seed_groups:
+                continue
             converters = self._technique_converters.get(technique_name, [])
             converter_config = (
                 AttackConverterConfig(

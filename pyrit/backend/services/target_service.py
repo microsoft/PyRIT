@@ -188,9 +188,11 @@ class TargetService:
         """
         List all available target types from the target class registry.
 
-        Returns every constructible target with its derived constructor
-        parameters and the auth modes it supports, all projected from the
-        registry's ``TargetMetadata``. Deciding which entries to surface to a
+        Returns every target that external callers can build, with the
+        constructor parameters they may supply, each described in the form callers
+        send it, and the auth modes it supports, all projected from the registry's
+        ``TargetMetadata``; targets that need a Python object for a required
+        parameter are left out. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -201,14 +203,19 @@ class TargetService:
         items: list[TargetTypeEntry] = [
             TargetTypeEntry(
                 target_type=metadata.class_name,
-                parameters=self._project_target_parameters(
-                    target_type=metadata.class_name,
-                    parameters=metadata.parameters,
-                ),
+                parameters=[
+                    parameter.for_external_catalog()
+                    for parameter in self._project_target_parameters(
+                        target_type=metadata.class_name,
+                        parameters=metadata.parameters,
+                    )
+                    if parameter.is_external_input
+                ],
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
+            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
         ]
         return TargetTypeResponse(items=items)
 
@@ -265,7 +272,7 @@ class TargetService:
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
         self._registry.instances.validate_name_available(target_registry_name)
-        target_obj = self._registry.create_instance(request.type, **params)
+        target_obj = self._registry.create_instance_from_external_input(request.type, params=params)
         target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
         self._registry.instances.register(target_obj, name=target_registry_name)
         return target

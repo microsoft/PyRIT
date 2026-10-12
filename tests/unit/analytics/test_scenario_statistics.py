@@ -4,8 +4,12 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from pyrit.analytics import compute_outcome_statistics
 from pyrit.analytics.scenario_statistics import (
     ScenarioPlanLookup,
+    combine_execution_counts,
     compute_scenario_statistics,
     resolve_execution_unit,
 )
@@ -14,6 +18,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
+    ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -79,6 +84,107 @@ def test_empty_result_has_no_success_percentage() -> None:
     assert statistics.overall.completed == 0
     assert statistics.overall.success_percentage is None
     assert statistics.attempts == 0
+    assert statistics.overall.outcomes == compute_outcome_statistics({})
+
+
+def test_latest_outcomes_share_both_denominators_without_historical_errors() -> None:
+    result = make_scenario_result(
+        attack_results={
+            "one": [
+                _result(objective="A", outcome=AttackOutcome.ERROR),
+                _result(objective="A", outcome=AttackOutcome.SUCCESS, seconds=1),
+                _result(objective="B", outcome=AttackOutcome.FAILURE),
+            ],
+            "two": [
+                _result(objective="C", outcome=AttackOutcome.ERROR),
+                _result(objective="C", outcome=AttackOutcome.ERROR, seconds=1),
+                _result(objective="D", outcome=AttackOutcome.UNDETERMINED),
+            ],
+        },
+        display_group_map={"one": "group", "two": "group"},
+    )
+    statistics = compute_scenario_statistics(result)
+    expected = compute_outcome_statistics(dict.fromkeys(AttackOutcome, 1))
+    assert statistics.overall.outcomes == expected
+    assert statistics.display_groups["group"].outcomes == expected
+    assert combine_execution_counts(statistics.atomic_attacks.values()) == statistics.overall
+    assert statistics.overall.success_percentage == 25
+    assert statistics.overall.outcomes.success_rate == 0.5
+    assert statistics.overall.outcomes.success_rate_all == 0.25
+    assert statistics.overall.errors == 3
+    assert statistics.overall.outcomes.errors == 1
+    assert statistics.overall.retries == 2
+
+
+@pytest.mark.parametrize("outcome", list(AttackOutcome))
+def test_each_latest_outcome_uses_shared_statistics(outcome: AttackOutcome) -> None:
+    result = make_scenario_result(
+        attack_results={
+            "attack": [
+                _result(objective="A", outcome=AttackOutcome.FAILURE),
+                _result(objective="A", outcome=outcome, seconds=1),
+            ]
+        }
+    )
+    counts = compute_scenario_statistics(result).overall
+    assert counts.outcomes == compute_outcome_statistics({outcome: 1})
+    assert counts.completed == 1
+    assert counts.success_percentage == (100 if outcome is AttackOutcome.SUCCESS else 0)
+
+
+def test_combining_count_only_legacy_payloads_does_not_infer_failures_from_historical_errors(caplog) -> None:
+    legacy = ScenarioProgressCounts(completed=2, succeeded=1, errors=5, retries=4, success_percentage=50)
+    combined = combine_execution_counts([legacy])
+    assert combined.outcomes is None
+    assert combined.success_percentage == 50
+    assert combined.errors == 5
+    assert "without an outcome breakdown" in caplog.text
+
+
+def test_combining_unequal_scenario_groups_recomputes_both_denominators() -> None:
+    result = make_scenario_result(
+        attack_results={
+            "one": [_result(objective="A", outcome=AttackOutcome.SUCCESS)],
+            "two": [
+                _result(objective=str(index), outcome=outcome)
+                for index, outcome in enumerate([AttackOutcome.SUCCESS, AttackOutcome.FAILURE, AttackOutcome.ERROR])
+            ],
+        }
+    )
+    statistics = compute_scenario_statistics(result)
+    combined = combine_execution_counts(statistics.atomic_attacks.values())
+    assert combined.outcomes.success_rate == pytest.approx(2 / 3)
+    assert combined.outcomes.success_rate_all == 0.5
+    assert combined == statistics.overall
+
+
+@pytest.mark.parametrize("field", ["completed", "succeeded", "success_percentage"])
+def test_combining_revalidates_mutated_scenario_totals(field: str) -> None:
+    counts = ScenarioProgressCounts(
+        completed=2,
+        succeeded=1,
+        errors=1,
+        retries=0,
+        success_percentage=50,
+        outcomes=compute_outcome_statistics({"success": 1, "error": 1}),
+    )
+    setattr(counts, field, 10)
+    with pytest.raises(ValueError, match="completed|succeeded|success_percentage"):
+        combine_execution_counts([counts])
+
+
+@pytest.mark.parametrize("field", ["successes", "total_results", "success_rate_all"])
+def test_combining_revalidates_mutated_nested_outcomes(field: str) -> None:
+    counts = ScenarioProgressCounts(
+        completed=2,
+        succeeded=1,
+        errors=1,
+        retries=0,
+        outcomes=compute_outcome_statistics({"success": 1, "error": 1}),
+    )
+    setattr(counts.outcomes, field, 10)
+    with pytest.raises(ValueError):
+        combine_execution_counts([counts])
 
 
 def test_saved_plan_counts_planned_units_and_reports_unattributed_attempts() -> None:

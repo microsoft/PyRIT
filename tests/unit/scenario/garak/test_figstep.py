@@ -171,6 +171,7 @@ class TestFigStepDatasetResolution:
         )
         with (
             patch("pyrit.prompt_target.common.target_requirements.TargetRequirements.validate"),
+            patch.object(config, "prepare_async", new_callable=AsyncMock),
             patch.object(
                 DatasetAttackConfiguration,
                 "get_attack_groups_by_dataset_async",

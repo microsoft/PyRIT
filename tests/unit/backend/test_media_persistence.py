@@ -89,6 +89,22 @@ class TestValidateMediaPath:
 
         assert validate_media_path(path=str(path), allowed_root=root) == path.resolve()
 
+    def test_accepts_symlinked_results_directory(self, *, tmp_path: Path) -> None:
+        root = tmp_path / "results"
+        path = root / "prompt-memory-entries" / "image.png"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"image")
+        alias = tmp_path / "results-alias"
+        try:
+            alias.symlink_to(root, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"Cannot create symlink in this environment: {exc}")
+
+        assert (
+            validate_media_path(path=str(alias / "prompt-memory-entries" / "image.png"), allowed_root=alias)
+            == path.resolve()
+        )
+
     def test_checks_resolved_path_not_input_path(self, *, tmp_path: Path) -> None:
         root = tmp_path / "results"
         path = root / "prompt-memory-entries" / "image.png"
