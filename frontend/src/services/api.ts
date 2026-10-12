@@ -28,6 +28,7 @@ import type {
   CreateAttackResponse,
   AttackSummary,
   AttackListResponse,
+  DatasetListResponse,
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
@@ -572,6 +573,23 @@ export const scenariosApi = {
 
   resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
+}
+
+export const datasetsApi = {
+  /**
+   * Lists dataset summaries. Counts, modalities, and harm categories on the
+   * cards come from this payload; callers do not page seeds to compute them.
+   */
+  listDatasets: async (
+    { loaded_only }: { readonly loaded_only: boolean },
+    signal?: AbortSignal,
+  ): Promise<DatasetListResponse> => {
+    const response = await apiClient.get('/datasets', {
+      params: { loaded_only },
+      signal,
+    })
     return response.data
   },
 }

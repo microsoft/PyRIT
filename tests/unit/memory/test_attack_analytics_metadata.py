@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import re
-import time
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -30,7 +29,6 @@ from pyrit.memory.memory_models import (
     ScenarioResultEntry,
     TargetIdentifierEntry,
 )
-from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackAnalyticsDimension,
@@ -47,6 +45,7 @@ from pyrit.models import (
     ConverterIdentifier,
     TargetIdentifier,
 )
+from unit.memory.test_attack_analytics import control as _control
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
@@ -78,10 +77,6 @@ def _result(
             )
         ),
     )
-
-
-def _control() -> QueryControl:
-    return QueryControl(deadline=time.monotonic() + 30)
 
 
 def _filters(*, values: list[tuple[AttackAnalyticsDimension, str]]) -> AttackAnalyticsFilters:

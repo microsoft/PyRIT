@@ -308,3 +308,13 @@ class TestTextJailBreakLoadRandom:
                 instance = TextJailBreak.__new__(TextJailBreak)
                 with pytest.raises(ValueError, match="No jailbreak template with a single 'prompt' parameter"):
                     instance._load_random_template()
+
+
+def test_get_jailbreak_keeps_extra_kwargs_of_a_template_with_a_prompt_guard():
+    """Extra kwargs rendered at construction survive when the template guards the prompt with an if."""
+    jailbreak = TextJailBreak(
+        string_template="Style: {{ style }}. {% if prompt %}{{ prompt }}{% endif %}",
+        style="brief",
+    )
+
+    assert jailbreak.get_jailbreak("Explain rainbows") == "Style: brief. Explain rainbows"

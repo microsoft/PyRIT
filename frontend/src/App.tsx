@@ -22,6 +22,8 @@ import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
+import DatasetCatalog from './components/Datasets/DatasetCatalog'
+import DatasetSelection from './components/Datasets/DatasetSelection'
 import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
@@ -54,6 +56,8 @@ import { useTour } from './hooks/useTour'
 import {
   attackConversationRoutePath,
   attackRoutePath,
+  DATASET_DETAIL_PATH,
+  DATASETS_PATH,
   routerPathParamValue,
   scenarioRunProvenance,
   scenarioRunRoutePath,
@@ -70,6 +74,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   history: HISTORY_ATTACKS_PATH,
   registry: '/registry/targets',
   scenarios: '/scanner',
+  datasets: DATASETS_PATH,
   configuration: '/config',
 }
 
@@ -91,6 +96,12 @@ function viewFromPath(pathname: string): ViewName {
     || pathname.startsWith(`${VIEW_PATHS.scenarios}/`)
   ) {
     return 'scenarios'
+  }
+  if (
+    pathname === VIEW_PATHS.datasets
+    || pathname.startsWith(`${VIEW_PATHS.datasets}/`)
+  ) {
+    return 'datasets'
   }
   const match = (Object.entries(VIEW_PATHS) as [ViewName, string][]).find(
     ([, path]) => path === pathname,
@@ -735,6 +746,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               </Route>
               <Route path="/targets" element={<Navigate to="/registry/targets" replace />} />
               <Route path="/scanner" element={<ScenarioCatalog />} />
+              <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
+              <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
               <Route
                 path="/scanner/:scenarioName"
                 element={
