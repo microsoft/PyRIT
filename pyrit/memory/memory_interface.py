@@ -47,7 +47,7 @@ from sqlalchemy.orm.session import Session
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonScalar
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonScalar
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -6184,6 +6184,22 @@ class MemoryInterface(abc.ABC):
             Any: A statement selecting one aggregate row per scenario run with attempts.
         """
         atomic_name, technique_hash, attributed_seed_group_id, _ = self._get_scenario_attempt_unit_expressions()
+        parents = AttackResultEntry.__table__.alias("history_parents")
+        children = AttackResultEntry.__table__.alias("history_children")
+        links = JsonArrayItems(parents.c.attack_metadata, literal("$.child_attack_result_ids")).table_valued(
+            "key", "value", "type"
+        )
+        duplicate_errors = (
+            select(parents.c.id.label("parent_id"))
+            .select_from(JsonArrayJoin(parents, links, literal(True)))
+            .join(
+                children,
+                func.replace(sql_cast(children.c.id, String(36)), "-", "") == func.replace(links.c.value, "-", ""),
+            )
+            .where(parents.c.attribution_parent_id.in_(entry_ids), children.c.outcome == AttackOutcome.ERROR.value)
+            .distinct()
+            .subquery("history_duplicate_errors")
+        )
         # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
         # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
         # because SQL can't derive the logical seed group from those seeds.
@@ -6207,6 +6223,12 @@ class MemoryInterface(abc.ABC):
                 ).label("total_retries"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.result_role")).label("result_role"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.attempt_index")).label("attempt_index"),
+                case((duplicate_errors.c.parent_id.is_not(None), 1), else_=0).label("duplicates_child_error"),
+            )
+            .select_from(
+                AttackResultEntry.__table__.outerjoin(
+                    duplicate_errors, AttackResultEntry.id == duplicate_errors.c.parent_id
+                )
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -6239,7 +6261,8 @@ class MemoryInterface(abc.ABC):
                 )
             ),
         )
-        pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution), 1), else_=0)
+        independent_error = and_(units.c.outcome == AttackOutcome.ERROR.value, units.c.duplicates_child_error == 0)
+        pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
         is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
         is_error = units.c.outcome == AttackOutcome.ERROR.value
         unit_retries = (
@@ -6347,6 +6370,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.total_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.duplicates_child_error,
                 unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
                 literal(1).label("is_planned"),
@@ -6428,6 +6452,7 @@ class MemoryInterface(abc.ABC):
                 attempts.c.total_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.duplicates_child_error,
                 attempts.c.atomic_attack_name,
                 unplanned_group_id.label("unplanned_group_id"),
                 attempts.c.seed_group_id,
@@ -6455,6 +6480,7 @@ class MemoryInterface(abc.ABC):
             matched.c.total_retries,
             matched.c.result_role,
             matched.c.attempt_index,
+            matched.c.duplicates_child_error,
             func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
             # Runs outside the plan-resolution set keep their raw identity and stay counted.

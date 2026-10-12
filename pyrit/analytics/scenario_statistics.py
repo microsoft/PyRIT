@@ -74,6 +74,12 @@ class _CountableAttempt(Protocol):
     @property
     def attempt_index(self) -> int | None: ...
 
+    @property
+    def attack_result_id(self) -> str: ...
+
+    @property
+    def child_attack_result_ids(self) -> Sequence[str]: ...
+
 
 _AttemptT = TypeVar("_AttemptT", bound=_CountableAttempt)
 
@@ -155,6 +161,12 @@ class ScenarioAttempt:
     total_retries: int
     result_role: AttackResultRole | None
     attempt_index: int | None
+    child_attack_result_ids: tuple[str, ...]
+
+    @property
+    def attack_result_id(self) -> str:
+        """The persisted result ID."""
+        return self.attempt_id
 
 
 def load_scenario_run_plan(scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
@@ -263,6 +275,7 @@ def resolve_attack_result_attempt(
         total_retries=retries if isinstance(retries, int) else 0,
         result_role=AttackResultMetadata.from_metadata(metadata=attribution_data).result_role,
         attempt_index=AttackResultMetadata.from_metadata(metadata=attribution_data).attempt_index,
+        child_attack_result_ids=tuple(attack_result.metadata.get("child_attack_result_ids", ())),
     )
 
 
@@ -273,7 +286,19 @@ def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_Attemp
     Returns:
         Sequence[_AttemptT]: Target-facing or legacy attempts, or orchestration-only evidence.
     """
-    execution_attempts = [attempt for attempt in attempts if attempt.result_role != AttackResultRole.ORCHESTRATION]
+    by_id = {attempt.attack_result_id: attempt for attempt in attempts}
+    execution_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.result_role != AttackResultRole.ORCHESTRATION
+        or (
+            attempt.outcome == AttackOutcome.ERROR
+            and not any(
+                child_id in by_id and by_id[child_id].outcome == AttackOutcome.ERROR
+                for child_id in attempt.child_attack_result_ids
+            )
+        )
+    ]
     return execution_attempts if execution_attempts else attempts
 
 

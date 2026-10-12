@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 
+import pytest
+
 from pyrit.converter import ConverterResult
 from pyrit.converter.token_smuggling import (
     AsciiSmugglerConverter,
@@ -190,6 +192,86 @@ async def test_encode_decode_visible_hidden():
     # Check that the visible part and hidden part are correctly recovered.
     assert decoded_visible == visible_text
     assert decoded_hidden == hidden_text
+
+
+@pytest.mark.parametrize("embed_in_base", [True, False])
+@pytest.mark.parametrize("carrier", ["I ❤️ this ", "Done ✔️ ", "Hi \U0001f60a there "])
+async def test_decode_variation_selector_smuggler_ignores_emoji_selectors_before_payload(carrier, embed_in_base):
+    # Emoji such as U+2764 U+FE0F carry a presentation selector that is not part of the payload.
+    encode_converter = VariationSelectorSmugglerConverter(action="encode", embed_in_base=embed_in_base)
+    encoded_result = await encode_converter.convert_async(prompt="secret", input_type="text")
+
+    decode_converter = VariationSelectorSmugglerConverter(action="decode", embed_in_base=embed_in_base)
+    decoded_result = await decode_converter.convert_async(
+        prompt=carrier + encoded_result.output_text + " bye", input_type="text"
+    )
+
+    assert decoded_result.output_text == "secret"
+
+
+async def test_decode_variation_selector_smuggler_reads_payload_on_other_base_char():
+    encode_converter = VariationSelectorSmugglerConverter(action="encode", base_char_utf8="A")
+    encoded_result = await encode_converter.convert_async(prompt="secret", input_type="text")
+
+    decode_converter = VariationSelectorSmugglerConverter(action="decode")
+    decoded_result = await decode_converter.convert_async(prompt="Hi " + encoded_result.output_text, input_type="text")
+
+    assert decoded_result.output_text == "secret"
+
+
+@pytest.mark.parametrize("embed_in_base", [True, False])
+async def test_decode_variation_selector_smuggler_ignores_presentation_selector_on_base_char(embed_in_base):
+    encoder = VariationSelectorSmugglerConverter(base_char_utf8="A", embed_in_base=embed_in_base)
+    _, encoded = encoder.encode_message("secret")
+
+    decoder = VariationSelectorSmugglerConverter(action="decode", base_char_utf8="\u2764", embed_in_base=embed_in_base)
+    decoded_result = await decoder.convert_async(prompt=encoded + " thanks \u2764\ufe0f", input_type="text")
+
+    assert decoded_result.output_text == "secret"
+
+
+@pytest.mark.parametrize("base_char", ["\U0001f60a", "\u2764"])
+@pytest.mark.parametrize("embed_in_base", [True, False])
+@pytest.mark.parametrize("hidden", ["\x0e", "\x0f"])
+async def test_encode_decode_variation_selector_smuggler_presentation_selector_bytes(base_char, embed_in_base, hidden):
+    converter = VariationSelectorSmugglerConverter(base_char_utf8=base_char, embed_in_base=embed_in_base)
+
+    _, encoded = converter.encode_message(hidden)
+
+    assert converter.decode_message("Hi " + encoded) == hidden
+
+
+@pytest.mark.parametrize("encode_embed, decode_embed", [(True, False), (False, True)])
+async def test_decode_variation_selector_smuggler_across_separator_settings(encode_embed, decode_embed):
+    encoder = VariationSelectorSmugglerConverter(embed_in_base=encode_embed)
+    decoder = VariationSelectorSmugglerConverter(embed_in_base=decode_embed)
+
+    _, encoded = encoder.encode_message("secret")
+    _, combined = encoder.encode_visible_hidden(visible="I \u2764\ufe0f this ", hidden="secret")
+
+    assert decoder.decode_message("I \u2764\ufe0f this " + encoded) == "secret"
+    assert decoder.decode_visible_hidden(combined) == ("I \u2764\ufe0f this ", "secret")
+
+
+@pytest.mark.parametrize("embed_in_base", [True, False])
+@pytest.mark.parametrize("visible", ["Hi \U0001f60a there ", "Hi \U0001f60a❤️ there ", "\U0001f60a "])
+@pytest.mark.parametrize("hidden", ["secret", ""])
+async def test_encode_decode_visible_hidden_with_base_char_in_visible_text(visible, hidden, embed_in_base):
+    converter = VariationSelectorSmugglerConverter(embed_in_base=embed_in_base)
+
+    _, combined = converter.encode_visible_hidden(visible=visible, hidden=hidden)
+
+    assert converter.decode_visible_hidden(combined) == (visible, hidden)
+
+
+@pytest.mark.parametrize("visible", ["Hello", "Hello "])
+@pytest.mark.parametrize("hidden", ["secret", ""])
+async def test_encode_decode_visible_hidden_with_space_base_char_and_separator(visible, hidden):
+    converter = VariationSelectorSmugglerConverter(base_char_utf8=" ", embed_in_base=False)
+
+    _, combined = converter.encode_visible_hidden(visible=visible, hidden=hidden)
+
+    assert converter.decode_visible_hidden(combined) == (visible, hidden)
 
 
 async def test_embed_in_base_false_inserts_separator():

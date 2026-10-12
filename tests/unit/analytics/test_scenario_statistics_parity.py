@@ -65,6 +65,7 @@ class _Attempt:
     result_role: AttackResultRole | str = AttackResultRole.UNKNOWN
     total_retries: int = 0
     attempt_index: int | None = None
+    child_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -255,6 +256,12 @@ _HISTORIES = {
         plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
         attempts=[],
     ),
+    "ratio_that_floating_point_truncates_low": _History(
+        attempts=[
+            _Attempt("attack", f"O{index}", AttackOutcome.SUCCESS if index < 29 else AttackOutcome.FAILURE)
+            for index in range(100)
+        ],
+    ),
     "role_aware_accounting": _History(
         plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
         attempts=[
@@ -308,7 +315,14 @@ _HISTORIES = {
                 result_role=AttackResultRole.TARGET_FACING,
                 attempt_index=2,
             ),
-            _Attempt("attack", "A", AttackOutcome.ERROR, seed_group_id="a", result_role=AttackResultRole.ORCHESTRATION),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.ERROR,
+                seed_group_id="a",
+                result_role=AttackResultRole.ORCHESTRATION,
+                child_indices=(0, 1),
+            ),
         ],
     ),
 }
@@ -334,6 +348,7 @@ _EXPECTED_OVERALL = {
     "identifier_only_then_attributed_only": 100,
     "display_groups": 50,
     "empty_history": None,
+    "ratio_that_floating_point_truncates_low": 29,
     "role_aware_accounting": 100,
 }
 
@@ -357,6 +372,7 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
     )
     await memory.add_scenario_results_to_memory_async(scenario_results=[scenario_result])
     attack_results = []
+    result_ids = [attempt.attack_result_id or str(uuid.uuid4()) for attempt in history.attempts]
     for index, attempt in enumerate(history.attempts):
         attribution_data: dict[str, str | int] = {"parent_collection": attempt.atomic_attack_name}
         if attempt.attempt_index is not None:
@@ -382,7 +398,7 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
             )
         attack_results.append(
             AttackResult(
-                attack_result_id=attempt.attack_result_id or str(uuid.uuid4()),
+                attack_result_id=result_ids[index],
                 conversation_id=f"conversation-{index}",
                 objective=attempt.objective,
                 outcome=attempt.outcome,
@@ -391,6 +407,7 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
                 attribution_data=attribution_data,
                 atomic_attack_identifier=atomic_attack_identifier,
                 total_retries=attempt.total_retries,
+                metadata={"child_attack_result_ids": [result_ids[i] for i in attempt.child_indices]},
             )
         )
     if attack_results:

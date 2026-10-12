@@ -125,6 +125,18 @@ class TestScenarioResult:
         with pytest.warns(DeprecationWarning, match="compute_scenario_statistics"):
             assert sr.objective_achieved_rate() == 50
 
+    def test_objective_achieved_rate_truncates_the_exact_ratio(self):
+        results = [_make_attack_result(outcome=AttackOutcome.SUCCESS) for _ in range(29)]
+        results += [_make_attack_result(outcome=AttackOutcome.FAILURE) for _ in range(71)]
+        sr = make_scenario_result(
+            scenario_name="TestScenario",
+            objective_target_identifier=ComponentIdentifier.model_validate({}),
+            attack_results={"s1": results},
+            objective_scorer_identifier=ComponentIdentifier.model_validate({}),
+        )
+        with pytest.warns(DeprecationWarning, match="compute_scenario_statistics"):
+            assert sr.objective_achieved_rate() == 29
+
     def test_objective_achieved_rate_empty(self):
         sr = make_scenario_result(
             scenario_name="TestScenario",

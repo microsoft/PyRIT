@@ -907,6 +907,7 @@ class TestExecute:
         scenario = _scenario(scorer=scorer, target=target, retries_on_objective_failure=1)
         await scenario.initialize_async()
         atomic = scenario._atomic_attacks[0]
+        atomic.set_scenario_result_id(scenario._scenario_result_id)
         memory = CentralMemory.get_memory_instance()
         with patch.object(
             memory, "update_attack_result_by_id_async", side_effect=RuntimeError("identity write failed")
@@ -926,6 +927,26 @@ class TestExecute:
             result_selection=AttackResultSelection.ALL_RESULTS,
         )
         assert len(children) == 1
+        stored = (await memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id]))[0]
+        assert compute_scenario_statistics(stored).overall.errors == 1
+        aggregates = await memory.get_scenario_history_aggregates_async(
+            scenario_result_ids=[scenario._scenario_result_id],
+            plan_scenario_ids=[scenario._scenario_result_id],
+        )
+        assert aggregates[scenario._scenario_result_id].error_attempts == 1
+        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+
+        service = ScenarioRunService()
+        try:
+            detail = await service.get_run_from_storage_async(
+                scenario_result_id=scenario._scenario_result_id,
+                active_error=None,
+            )
+            assert detail.error_attacks == 1
+            assert len(detail.failed_attacks) == 1
+            assert "identity write failed" in detail.failed_attacks[0].error_message
+        finally:
+            await service.close_async()
 
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_resume_same_inputs_and_reject_changed_objective_async(
