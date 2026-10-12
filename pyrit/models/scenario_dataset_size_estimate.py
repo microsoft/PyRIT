@@ -8,6 +8,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pyrit.models.dataset_limit import ResolvedDatasetLimit
+
 
 class ScenarioDatasetSizeEstimateKind(str, Enum):
     """Meaning of a population budget."""
@@ -47,9 +49,9 @@ ScenarioDatasetSizeEstimate = Annotated[
 ]
 
 
-def scenario_dataset_size_from_limit(limit: int | None) -> BoundedDatasetSize | AllAvailableDatasetSize:
+def scenario_dataset_size_from_limit(limit: ResolvedDatasetLimit) -> BoundedDatasetSize | AllAvailableDatasetSize:
     """Return a finite-source budget from an optional selection limit."""
-    return AllAvailableDatasetSize() if limit is None else BoundedDatasetSize(value=limit)
+    return AllAvailableDatasetSize() if limit == "all" else BoundedDatasetSize(value=limit)
 
 
 class DatasetLimitState(str, Enum):

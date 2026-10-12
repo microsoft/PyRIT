@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, NonCallableMagicMock, call, create_autospec
 from uuid import UUID, uuid4
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import store_message_async
 
 from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation
@@ -1052,38 +1053,53 @@ async def test_self_ask_true_false_uses_fresh_copilot_session_after_unusable_rep
     client.stop.assert_awaited_once()
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 @pytest.mark.parametrize(
     "release_fails",
     [pytest.param(False, id="release-success"), pytest.param(True, id="release-failure")],
+)
+@pytest.mark.parametrize(
+    "watchdog_expires",
+    [pytest.param(False, id="normal-observation"), pytest.param(True, id="expired-watchdog")],
 )
 async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
     *,
     client: NonCallableMagicMock,
     release_fails: bool,
+    watchdog_expires: bool,
 ) -> None:
+    """Keep the original cancellation and retirement ownership even when test observation expires."""
     session = client.create_session.return_value
     session.send_and_wait.side_effect = TimeoutError("ambiguous mock send")
     release_error = RuntimeError("Synthetic session release failure")
     delete_started = asyncio.Event()
     release_delete = asyncio.Event()
+    cleanup_requested = asyncio.Event()
+    cleanup_started = asyncio.Event()
     delete_tasks: list[asyncio.Task[Any]] = []
     delete_count = 0
 
     async def delete_session_async(session_id: str) -> None:
         nonlocal delete_count
         delete_count += 1
+        delete_attempt = delete_count
         current_task = asyncio.current_task()
-        if current_task is not None:
-            delete_tasks.append(current_task)
-        if delete_count == 1:
+        assert current_task is not None
+        delete_tasks.append(current_task)
+        if delete_attempt == 1:
             delete_started.set()
         await release_delete.wait()
-        if delete_count == 1 and release_fails:
+        if delete_attempt == 1 and release_fails:
             raise release_error
 
     client.delete_session.side_effect = delete_session_async
     target = GitHubCopilotTarget(model_name="gpt-5-mini")
+
+    async def cleanup_target_for_test_async() -> None:
+        await cleanup_requested.wait()
+        cleanup_started.set()
+        await target.cleanup_target_async()
+
     send_task = asyncio.create_task(
         target.send_prompt_async(
             message=_user_message(
@@ -1092,30 +1108,41 @@ async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
             )
         )
     )
-    cleanup_started = asyncio.Event()
-
-    async def cleanup_target_for_test_async() -> None:
-        cleanup_started.set()
-        await target.cleanup_target_async()
-
-    cleanup_task: asyncio.Task[None] | None = None
+    cleanup_task = asyncio.create_task(cleanup_target_for_test_async())
+    delete_started_waiter = asyncio.create_task(delete_started.wait())
+    cleanup_started_waiter = asyncio.create_task(cleanup_started.wait())
+    observation_tasks = (delete_started_waiter, cleanup_started_waiter)
     try:
-        await asyncio.wait_for(delete_started.wait(), timeout=2.0)
-        send_task.cancel()
-        cleanup_task = asyncio.create_task(cleanup_target_for_test_async())
-        await asyncio.wait_for(cleanup_started.wait(), timeout=2.0)
+        await wait_for_completion_async(future=delete_started_waiter)
+        send_task.cancel("cancelled during session retirement")
+        cleanup_requested.set()
+        await wait_for_completion_async(future=cleanup_started_waiter)
 
         assert not send_task.done()
         assert not cleanup_task.done()
         client.delete_session.assert_awaited_once_with(session.session_id)
         client.stop.assert_not_awaited()
 
+        if watchdog_expires:
+            # Expire only the observers while SDK deletion is deliberately blocked.
+            for task in (send_task, cleanup_task):
+                with pytest.raises(TimeoutError, match="test watchdog expired"):
+                    await wait_for_completion_async(future=task, timeout=0)
+            assert not send_task.done()
+            assert not cleanup_task.done()
+            assert send_task.cancelling() == 1
+            assert cleanup_task.cancelling() == 0
+            assert all(not task.done() for task in delete_tasks)
+            client.delete_session.assert_awaited_once_with(session.session_id)
+            client.stop.assert_not_awaited()
+
         release_delete.set()
         with pytest.raises(asyncio.CancelledError) as exc_info:
-            await asyncio.wait_for(send_task, timeout=2.0)
+            await wait_for_completion_async(future=send_task)
+        assert exc_info.value.args == ("cancelled during session retirement",)
         if release_fails:
             assert exc_info.value.__cause__ is release_error
-        await asyncio.wait_for(cleanup_task, timeout=2.0)
+        await wait_for_completion_async(future=cleanup_task)
         expected_delete_calls = (
             [call(session.session_id), call(session.session_id)] if release_fails else [call(session.session_id)]
         )
@@ -1124,10 +1151,20 @@ async def test_cancelled_send_keeps_retirement_owned_until_cleanup_async(
         assert all(task.done() for task in delete_tasks)
     finally:
         release_delete.set()
-        tasks = {send_task, *delete_tasks}
-        if cleanup_task is not None:
-            tasks.add(cleanup_task)
-        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=2.0)
+        cleanup_requested.set()
+        for task in observation_tasks:
+            if not task.done():
+                task.cancel()
+        await wait_for_completion_async(
+            future=asyncio.gather(send_task, cleanup_task, *delete_tasks, *observation_tasks, return_exceptions=True)
+        )
+        owned_cleanup_task = target._cleanup_task
+        assert owned_cleanup_task is not None
+        await wait_for_completion_async(future=owned_cleanup_task)
+        assert target._active_target_operations == 0
+        assert all(
+            task.done() for task in (send_task, cleanup_task, owned_cleanup_task, *delete_tasks, *observation_tasks)
+        )
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -2134,7 +2171,7 @@ async def test_failed_startup_stop_preserves_cancellation_and_ownership_async(
             await asyncio.wait_for(target.cleanup_target_async(), timeout=2.0)
 
 
-@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("patch_central_database", "mock_copilot_startup_io")
 async def test_normalizer_stops_owned_client_when_startup_is_cancelled_async(
     *,
     sdk: Any,

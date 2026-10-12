@@ -38,6 +38,20 @@ def _make_non_text_message(
     )
 
 
+def _make_multipart_message(role: ChatMessageRole, pieces_data: list[tuple[str, PromptDataType]]) -> Message:
+    """Helper to create a multipart Message from (content, data_type) tuples."""
+    pieces = [
+        MessagePiece(
+            role=role,
+            original_value=content,
+            original_value_data_type=data_type,
+            converted_value_data_type=data_type,
+        )
+        for content, data_type in pieces_data
+    ]
+    return Message(message_pieces=pieces)
+
+
 class TestConversationContextNormalizerNormalizeStringAsync:
     """Tests for ConversationContextNormalizer.normalize_string_async."""
 
@@ -129,3 +143,38 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "developer: Prefer metric units" in result
         assert "assistant: Prefer metric units" not in result
+
+    async def test_multipart_user_message_is_one_turn(self):
+        """Test that a user message with several pieces opens a single turn."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_multipart_message("user", [("Describe this picture", "text"), ("bench.png", "image_path")]),
+            _make_message("assistant", "It shows a lab bench."),
+            _make_message("user", "What is on the bench?"),
+            _make_message("assistant", "Glassware."),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert result == (
+            "Turn 1:\n"
+            "user: Describe this picture\n"
+            "user: [Image_path]\n"
+            "assistant: It shows a lab bench.\n"
+            "Turn 2:\n"
+            "user: What is on the bench?\n"
+            "assistant: Glassware."
+        )
+
+    async def test_multipart_system_message_is_skipped(self):
+        """Test that every piece of a system message is skipped without opening a turn."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_multipart_message("system", [("Rule one", "text"), ("Rule two", "text")]),
+            _make_message("user", "Hello"),
+            _make_message("assistant", "Hi!"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert result == "Turn 1:\nuser: Hello\nassistant: Hi!"

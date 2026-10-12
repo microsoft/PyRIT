@@ -57,4 +57,33 @@ describe('fetchAllPages', () => {
     const fetchPage = jest.fn().mockRejectedValue(new Error('boom'))
     await expect(fetchAllPages(fetchPage)).rejects.toThrow('boom')
   })
+
+  it.each([null, undefined, ''])('rejects a missing cursor in complete-list mode (%s)', async (cursor) => {
+    const fetchPage = jest.fn().mockResolvedValue({
+      items: [1], pagination: { has_more: true, next_cursor: cursor },
+    })
+    await expect(fetchAllPages(fetchPage, undefined, undefined, true)).rejects.toThrow('invalid page cursor')
+  })
+
+  it('rejects repeated cursors in complete-list mode', async () => {
+    const fetchPage = jest.fn().mockResolvedValue({
+      items: [1], pagination: { has_more: true, next_cursor: 'same' },
+    })
+    await expect(fetchAllPages(fetchPage, undefined, undefined, true)).rejects.toThrow('invalid page cursor')
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects the page limit instead of returning an incomplete list', async () => {
+    const fetchPage = jest.fn().mockResolvedValue({
+      items: [1], pagination: { has_more: true, next_cursor: 'next' },
+    })
+    await expect(fetchAllPages(fetchPage, 1, undefined, true)).rejects.toThrow('page limit')
+  })
+
+  it('returns a complete list on the final allowed page and deduplicates keys', async () => {
+    const fetchPage = jest.fn()
+      .mockResolvedValueOnce({ items: [1, 2], pagination: { has_more: true, next_cursor: 'next' } })
+      .mockResolvedValueOnce({ items: [2, 3], pagination: { has_more: false } })
+    await expect(fetchAllPages(fetchPage, 2, String, true)).resolves.toEqual([1, 2, 3])
+  })
 })

@@ -21,7 +21,7 @@
 # %%
 from pyrit.output import output_scenario_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer, TechniqueInitializer
 
@@ -52,7 +52,7 @@ objective_target = OpenAIChatTarget()
 # %%
 from pyrit.scenario.airt import RapidResponse, RapidResponseTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_hate"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_hate")], max_total=1)
 
 scenario = RapidResponse()
 scenario.set_params_from_args(  # type: ignore
@@ -94,7 +94,7 @@ from pyrit.scenario.airt import Psychosocial, PsychosocialTechnique
 
 # Minimal demo: a single sub-harm, one technique (the bare simulated-crescendo base), and one
 # objective. Omit `scenario_techniques` to run the DEFAULT converter sweep across the full dataset.
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_imminent_crisis"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_imminent_crisis")], max_total=1)
 
 scenario = Psychosocial()
 scenario.set_params_from_args(  # type: ignore
@@ -133,7 +133,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Cyber, CyberTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_malware"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_malware")], max_total=1)
 
 scenario = Cyber()
 scenario.set_params_from_args(  # type: ignore
@@ -181,7 +181,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Jailbreak, JailbreakTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
 
 scenario = Jailbreak()
 scenario.set_params_from_args(  # type: ignore
@@ -228,7 +228,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Multilingual
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["harmbench"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="harmbench")], max_total=1)
 
 scenario = Multilingual()
 scenario.set_params_from_args(  # type: ignore
@@ -281,7 +281,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Leakage, LeakageTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_leakage"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_leakage")], max_total=1)
 
 scenario = Leakage()
 scenario.set_params_from_args(  # type: ignore
@@ -318,7 +318,7 @@ await output_scenario_async(scenario_result)
 # %%
 from pyrit.scenario.airt import Scam, ScamTechnique
 
-dataset_config = DatasetAttackConfiguration(dataset_names=["airt_scams"], max_dataset_size=1)
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_scams")], max_total=1)
 
 scenario = Scam()
 scenario.set_params_from_args(  # type: ignore
