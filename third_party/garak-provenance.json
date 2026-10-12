@@ -194,6 +194,27 @@
       ]
     },
     {
+      "path": "pyrit/datasets/seed_datasets/local/garak/snowball_graph_connectivity.prompt",
+      "revision": "cd87893be81bed4ced9afd86b88577289f4644bf",
+      "sources": [
+        "garak/data/graph_connectivity.json"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/snowball_primes.prompt",
+      "revision": "cd87893be81bed4ced9afd86b88577289f4644bf",
+      "sources": [
+        "garak/data/primality_testing.json"
+      ]
+    },
+    {
+      "path": "pyrit/datasets/seed_datasets/local/garak/snowball_senators.prompt",
+      "revision": "cd87893be81bed4ced9afd86b88577289f4644bf",
+      "sources": [
+        "garak/data/senator_search.json"
+      ]
+    },
+    {
       "path": "pyrit/datasets/seed_datasets/local/garak/system_prompt_extraction.prompt",
       "sources": [
         "garak/data/sysprompt_extraction/attacks.json"
@@ -306,6 +327,13 @@
       "sources": [
         "garak/detectors/packagehallucination.py",
         "garak/data/packagehallucination/rust_std_entries-1_84_0"
+      ]
+    },
+    {
+      "path": "pyrit/score/true_false/regex/snowball_scorer.py",
+      "revision": "cd87893be81bed4ced9afd86b88577289f4644bf",
+      "sources": [
+        "garak/detectors/snowball.py"
       ]
     }
   ]
