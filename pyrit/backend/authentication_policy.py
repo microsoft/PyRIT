@@ -46,6 +46,18 @@ class AuthenticationPolicy:
         return ",".join(self.allowed_group_ids)
 
 
+def should_default_to_local_authentication(*, environment: Mapping[str, str]) -> bool:
+    """
+    Determine whether a local launcher should explicitly select local authentication.
+
+    Returns:
+        bool: True only when no authentication intent or required Entra setting is present.
+    """
+    return not environment.get(_AUTH_MODE_VARIABLE, "").strip() and not any(
+        name in environment for name in _REQUIRED_ENTRA_VARIABLES
+    )
+
+
 def _parse_boolean_setting(*, environment: Mapping[str, str], name: str) -> bool:
     raw_value = environment.get(name, "").strip().casefold()
     if not raw_value:

@@ -15,6 +15,8 @@ import sys
 import time
 from pathlib import Path
 
+from pyrit.backend.authentication_policy import should_default_to_local_authentication
+
 # Ensure emoji and other Unicode characters don't crash on Windows consoles
 # that use legacy encodings like cp1252. Characters that can't be encoded
 # are replaced with '?' instead of raising UnicodeEncodeError.
@@ -182,7 +184,8 @@ def start_backend(*, config_file: str | None = None, initializers: list[str] | N
     # Set development mode environment variable
     env = os.environ.copy()
     env["PYRIT_DEV_MODE"] = "true"
-    env["PYRIT_AUTH_MODE"] = "local"
+    if should_default_to_local_authentication(environment=env):
+        env["PYRIT_AUTH_MODE"] = "local"
     # Force unbuffered output so init logs appear in real-time when piped
     env["PYTHONUNBUFFERED"] = "1"
 
@@ -238,12 +241,19 @@ def start_frontend():
     )
 
 
+def _parse_vite_port(output: str) -> int | None:
+    """Return the port from Vite's loopback-ready message."""
+    import re
+
+    match = re.search(r"Local:\s+http://[^:/\s]+:(\d+)", output)
+    return int(match.group(1)) if match else None
+
+
 def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:
     """Read Vite's stdout to find the actual port it bound to.
 
     Falls back to 3000 if detection times out.
     """
-    import re
     import selectors
 
     default_port = 3000
@@ -262,11 +272,10 @@ def _detect_frontend_port(frontend_process, *, timeout: int = 10) -> int:
                 if data:
                     collected += data
                     text = collected.decode(errors="replace")
-                    # Vite prints:  ➜  Local:   http://localhost:XXXX/
-                    match = re.search(r"Local:\s+http://localhost:(\d+)", text)
-                    if match:
+                    port = _parse_vite_port(text)
+                    if port is not None:
                         sel.close()
-                        return int(match.group(1))
+                        return port
             if frontend_process.poll() is not None:
                 break
 

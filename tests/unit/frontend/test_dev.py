@@ -38,6 +38,47 @@ def test_start_backend_selects_local_authentication() -> None:
     assert environment["PYRIT_AUTH_MODE"] == "local"
 
 
+def test_start_backend_preserves_explicit_entra_authentication() -> None:
+    module = _load_dev_module()
+    environment = {
+        "PYRIT_AUTH_MODE": "entra",
+        "ENTRA_TENANT_ID": "tenant",
+        "ENTRA_CLIENT_ID": "client",
+        "ENTRA_ALLOWED_GROUP_IDS": "group",
+    }
+    with (
+        patch.object(module.os, "chdir"),
+        patch.object(module.subprocess, "run"),
+        patch.object(module.subprocess, "Popen", return_value=MagicMock()) as popen,
+        patch.dict(os.environ, environment, clear=True),
+    ):
+        module.start_backend()
+
+    child_environment = popen.call_args.kwargs["env"]
+    assert child_environment["PYRIT_AUTH_MODE"] == "entra"
+    assert child_environment["ENTRA_TENANT_ID"] == "tenant"
+
+
+def test_start_backend_preserves_complete_entra_inference() -> None:
+    module = _load_dev_module()
+    environment = {
+        "ENTRA_TENANT_ID": "tenant",
+        "ENTRA_CLIENT_ID": "client",
+        "ENTRA_ALLOWED_GROUP_IDS": "group",
+    }
+    with (
+        patch.object(module.os, "chdir"),
+        patch.object(module.subprocess, "run"),
+        patch.object(module.subprocess, "Popen", return_value=MagicMock()) as popen,
+        patch.dict(os.environ, environment, clear=True),
+    ):
+        module.start_backend()
+
+    child_environment = popen.call_args.kwargs["env"]
+    assert "PYRIT_AUTH_MODE" not in child_environment
+    assert child_environment["ENTRA_TENANT_ID"] == "tenant"
+
+
 def test_start_frontend_binds_vite_to_loopback() -> None:
     module = _load_dev_module()
     process = MagicMock()
@@ -75,6 +116,13 @@ def test_forward_process_output_drains_child_pipe() -> None:
 
     assert not thread.is_alive()
     output.buffer.write.assert_called_once_with(b"vite ready\n")
+
+
+def test_parse_vite_port_accepts_loopback_ip_and_nondefault_port() -> None:
+    module = _load_dev_module()
+
+    assert module._parse_vite_port("  ➜  Local:   http://127.0.0.1:3001/\n") == 3001
+    assert module._parse_vite_port("  ➜  Local:   http://localhost:3002/\n") == 3002
 
 
 def test_vite_defaults_to_loopback() -> None:
