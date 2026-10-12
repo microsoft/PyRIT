@@ -358,11 +358,11 @@ class TestWordIndexSelectionStrategy:
         # "quick brown" starts at index 4 and ends at index 15
         assert result == (4, 15)
 
-    def test_identifier_params_are_order_independent(self):
+    def test_identifier_params_preserve_index_order(self):
         left = WordIndexSelectionStrategy(indices=[2, 0])
         right = WordIndexSelectionStrategy(indices=[0, 2])
-        assert left.get_identifier_params() == right.get_identifier_params()
-        assert left.get_identifier_params() == {"indices": [0, 2]}
+        assert left.get_identifier_params() == {"indices": [2, 0]}
+        assert right.get_identifier_params() == {"indices": [0, 2]}
 
 
 class TestWordKeywordSelectionStrategy:

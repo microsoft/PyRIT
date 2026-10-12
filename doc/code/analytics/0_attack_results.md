@@ -124,6 +124,23 @@ separate: an error followed by a successful retry contributes one historical err
 but no latest-unit error. Never derive the decided denominator by subtracting
 historical errors from completed units.
 
+### Scenario producer accounting
+
+Scenario counts also expose `producer_counts`, separating target-facing,
+orchestration, and unknown-role attempts, errors, and persisted retries.
+The overall producer totals include all saved attempts, including unmatched
+configurations and superseded results. Atomic-name producer totals include all
+configurations recorded with that name. Display groups use the resolved saved
+plan or, for unmatched configurations, the saved `display_group_map`.
+
+These populations do not change planned units, latest-attempt outcomes, or
+success-rate denominators. Configuration-specific progress groups only include
+attempts whose group attribution resolves unambiguously; `unattributed_attempts`
+still identifies rows excluded from logical-unit counts. JSON and HTML reports
+present the same producer counts. A target-facing preparation error is a producer
+attempt, not proof of a physical target request. Unknown or malformed roles stay
+in the unknown bucket rather than being inferred from conversation presence.
+
 Scenario progress projections and JSON reports preserve the shared `outcomes`
 object; existing displayed percentages do not change. Count-only scenario payloads
 from older callers deserialize with `outcomes=None` because their latest-outcome
