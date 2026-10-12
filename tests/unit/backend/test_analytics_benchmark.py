@@ -1,15 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Local SQLite performance workload and ordinary unit coverage of its failure gates."""
+"""Local SQLite smoke coverage and unit tests of the integration workload's failure gates."""
 
-import asyncio
-import json
-import os
-import tempfile
-from collections.abc import AsyncGenerator, Iterator
 from functools import partial
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -17,87 +11,18 @@ import pytest
 
 from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._execution import AnalyticsExecution
-from pyrit.backend.main import app as backend_app
 from pyrit.backend.middleware.compatibility import CompatibilityAPI
-from pyrit.backend.services.analytics_service import get_analytics_service
-from pyrit.backend.services.configuration_file_service import ConfigurationFileService
-from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.memory import SQLiteMemory
-from pyrit.memory.memory_models import Base
 from pyrit.models import AttackAnalyticsResultsQuery
-from unit.backend.analytics_benchmark import AnalyticsBenchmark, RequestSample, percentile95
-from unit.conftest import _use_sqlite_memory
+from unit.backend.analytics_benchmark import (  # noqa: F401
+    AnalyticsBenchmark,
+    RequestSample,
+    benchmark_app,
+    benchmark_directory,
+    percentile95,
+    sqlite_instance,
+)
 from unit.memory.test_attack_analytics import make_result
-
-
-@pytest.fixture
-def benchmark_directory(tmp_path: Path) -> Iterator[Path]:
-    with tempfile.TemporaryDirectory(prefix="analytics-benchmark-", dir=tmp_path) as temporary:
-        directory = Path(temporary)
-        (directory / "config.yaml").write_text(
-            json.dumps(
-                {
-                    "memory_db_type": "sqlite",
-                    "env_files": [],
-                    "env_akv_ref": [],
-                    "initializers": ["technique"],
-                    "initialization_scripts": [],
-                    "custom_initializers_source": str(directory / "initializers"),
-                    "silent": True,
-                }
-            ),
-            encoding="utf-8",
-        )
-        yield directory
-
-
-@pytest.fixture
-async def sqlite_instance(benchmark_directory: Path) -> AsyncGenerator[SQLiteMemory, None]:
-    """Use file-backed SQLite for concurrent WAL readers; all files remain fixture-owned."""
-    memory = SQLiteMemory.__new__(SQLiteMemory)
-    with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=benchmark_directory / "analytics.sqlite", skip_schema_migration=True)
-    memory.results_path = str(benchmark_directory)
-    memory.disable_embedding()
-    try:
-        async with await memory.get_session_async() as session:
-            connection = await session.connection()
-            assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
-            await connection.run_sync(Base.metadata.create_all)
-            await session.commit()
-        with _use_sqlite_memory(memory):
-            yield memory
-    finally:
-        await memory.dispose_engine_async()
-
-
-@pytest.fixture
-async def benchmark_app(
-    *, benchmark_directory: Path, sqlite_instance: SQLiteMemory, compatibility_id: str
-) -> AsyncGenerator[CompatibilityAPI, None]:
-    """Exercise production routes, middleware, startup and shutdown with isolated test configuration."""
-    assert get_analytics_service.cache_info().currsize == 0
-    with (
-        patch.dict(
-            os.environ,
-            {"ENTRA_CLIENT_ID": "", "ENTRA_TENANT_ID": "", "ENTRA_ALLOWED_GROUP_IDS": "", "ENTRA_ADMIN_GROUP_ID": ""},
-        ),
-        patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", benchmark_directory / "missing-default.yaml"),
-    ):
-        app = CompatibilityAPI(routes=list(backend_app.router.routes), middleware=backend_app.user_middleware)
-        app.exception_handlers.update(backend_app.exception_handlers)
-        app.state.compatibility_id = compatibility_id
-        source = ConfigurationFileService(config_file_value=str(benchmark_directory / "config.yaml"))
-        app.state.configuration_file_service = source
-        runtime = RuntimeLifecycle(app=app, source=source)
-        app.state.runtime_lifecycle = runtime
-        try:
-            await runtime.startup_async()
-            assert runtime.state == "ready", runtime.message
-            yield app
-        finally:
-            await runtime.shutdown_async()
-        assert get_analytics_service.cache_info().currsize == 0
 
 
 @pytest.fixture
@@ -123,7 +48,7 @@ async def test_local_sqlite_workload_counts_requests_writes_and_continuations_as
 ) -> None:
     budgets = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
     workload = AnalyticsBenchmark(memory=sqlite_instance, app=benchmark_app, headers=compatibility_headers, count=1_000)
-    # This ordinary unit test checks semantics; only the opt-in test asserts production latency.
+    # Unit tests check semantics; the integration workload asserts production latency.
     with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=budgets):
         report = await workload.run_async(analysts=5, iterations=1)
     assert not workload.failures
@@ -135,27 +60,6 @@ async def test_local_sqlite_workload_counts_requests_writes_and_continuations_as
     for measurement in report["workloads"].values():
         assert measurement["successful_requests"] == 6
         assert measurement["error_requests"] == measurement["not_sent"] == 0
-
-
-@pytest.mark.skipif(
-    os.getenv("RUN_ANALYTICS_PERFORMANCE_TESTS", "").lower() != "true",
-    reason="Set RUN_ANALYTICS_PERFORMANCE_TESTS=true to run the isolated 100k-result latency gate",
-)
-async def test_100k_attack_analytics_performance_async(
-    *,
-    benchmark_app: CompatibilityAPI,
-    sqlite_instance: SQLiteMemory,
-    compatibility_headers: dict[str, str],
-    pytestconfig: pytest.Config,
-) -> None:
-    workload = AnalyticsBenchmark(
-        memory=sqlite_instance, app=benchmark_app, headers=compatibility_headers, count=100_000
-    )
-    report = await workload.run_async(analysts=5, iterations=6)
-    await asyncio.to_thread(pytestconfig.cache.set, "analytics/attack-results", report)
-    print(json.dumps(report, indent=2))
-    assert report["representative_workload"]
-    assert report["meets_latency_targets"], "\n".join(report["failures"])
 
 
 def test_nearest_rank_percentile_preserves_threshold_precision() -> None:

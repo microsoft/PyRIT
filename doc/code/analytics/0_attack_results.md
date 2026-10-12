@@ -433,24 +433,27 @@ shared-model JSON. These correctness tests are not performance evidence.
 
 ## Reproducible REST workload
 
-The workload is a **unit test** because it uses only a temporary local SQLite
-database, with no Azure SQL, external services, or real credentials. Run the
-100,000-result performance case explicitly from the repository root after other
-heavy checks have finished:
+The full REST/SDK/SQL performance workload is an **integration test**, using the
+existing `run_only_if_all_tests` marker and `RUN_ALL_TESTS` gate. It still uses only
+a temporary local SQLite database, with no Azure SQL or external credentials.
+Run the 100,000-result case from the repository root after other heavy checks
+have finished:
 
 ```powershell
-$env:RUN_ANALYTICS_PERFORMANCE_TESTS = "true"
-uv run pytest tests\unit\backend\test_analytics_benchmark.py::test_100k_attack_analytics_performance_async -q -s
-Remove-Item Env:\RUN_ANALYTICS_PERFORMANCE_TESTS
+$env:RUN_ALL_TESTS = "true"
+uv run pytest tests\integration\backend\test_attack_analytics_integration.py -q -s
+Remove-Item Env:\RUN_ALL_TESTS
 ```
 
-The latency gate is skipped in ordinary unit runs so unrelated CI load cannot
-turn a correctness check into a one-second performance assertion. The same module
-always runs a smaller SQLite workload with finite correctness budgets, plus
-tests that reject wrong counts, missing continuations, errors, and unmet thresholds.
-There is no separate build script or benchmark CLI.
+No new environment variable is required. The latency gate is outside ordinary
+unit runs, so unrelated CI load cannot turn a correctness check into a one-second
+performance assertion. `tests/unit/backend/test_analytics_benchmark.py` retains a
+smaller SQLite workload with finite correctness budgets, plus tests that reject
+wrong counts, missing continuations, errors, and unmet thresholds. Both tiers
+reuse the same workload and isolated database/runtime fixtures. There is no
+separate build script or benchmark CLI.
 
-Pytest fixtures own a new temporary directory, configuration, and file-backed
+The workload's pytest fixtures own a new temporary directory, configuration, and file-backed
 SQLite database built from the current schema. They scope CentralMemory using the
 existing unit-test isolation helper and never load the user's configuration or
 database, run deployment migrations, or change global database settings. WAL is
@@ -459,6 +462,9 @@ with local technique registration, then closes services and memory before the
 temporary directory is removed. Compatibility identity and headers use the
 existing backend test fixtures; no packaged development stamp is needed.
 No server or frontend is started.
+The integration suite's normal bootstrap still applies. For a local-only run
+without discovering user dotenv files, the existing `PYTHON_DOTENV_DISABLED=1`
+setting can be used; it does not control whether the test runs.
 
 The deterministic data contains 100,000 result IDs, two per conversation, all
 outcomes and result roles, 100 skewed operations (the largest exceeds 60%), 50
@@ -497,16 +503,18 @@ continuations, incorrect counts/output, or p95 above **2 seconds per report
 shape** or **0.5 seconds for facets, first pages, or continuations**. Errors remain
 in timing samples and cannot pass through successful-only sampling. The ordinary
 smoke test is explicitly marked non-representative in its report and does not
-establish the 100k/5-user performance gate. The opt-in case retains production SDK
+establish the 100k/5-user performance gate. The integration case retains production SDK
 budgets and always uses 100,000 results, five analysts, and six iterations.
 
-### Recorded pytest 100k gate
+### Recorded integration 100k gate
 
-Measured on **2026-10-12 at 04:32 UTC**, using the pytest command above, on
-`941c469e9c5408095269c9978d7f5b3715ef1947` plus the test-only benchmark migration.
+Measured on **2026-10-12 at 05:02 UTC**, using the integration pytest command above, on
+`9b4d3cd66ff348a22b73a1aacb3af8895185f255` plus the integration-test migration.
 The backend and client used the existing test compatibility identity
 `0.14.0+gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`. Compatibility middleware
-remained active; no external authentication or credentials were used.
+remained active; no external authentication or credentials were used. The
+existing `PYTHON_DOTENV_DISABLED=1` setting disabled ambient dotenv discovery
+during verification.
 
 Environment: Windows 11 build 26200, 16 logical CPUs, AMD64 family 25/model 117;
 Python 3.14.4, SQLite 3.50.4, FastAPI 0.142.2, Starlette 1.7.0, Pydantic 2.13.5,
@@ -516,20 +524,20 @@ described above.
 
 | Workload | Cold (s) | Concurrent p95 (s) | Maximum (s) | Successful / error requests |
 |---|---:|---:|---:|---:|
-| Harm category x attack type report | 0.532240 | 1.286714 | 1.393029 | 31 / 0 |
-| Harm category x converter type report | 0.642124 | 1.467490 | 1.549224 | 31 / 0 |
-| Case-label facets | 0.122278 | 0.432149 | 0.462309 | 31 / 0 |
-| First result pages | 0.015427 | 0.323136 | 0.346352 | 31 / 0 |
-| Actual cursor continuations | 0.020298 | 0.067811 | 0.116328 | 31 / 0 |
+| Harm category x attack type report | 0.592885 | 1.715601 | 1.795298 | 31 / 0 |
+| Harm category x converter type report | 0.647190 | 1.803894 | 1.928105 | 31 / 0 |
+| Case-label facets | 0.154327 | 0.462593 | 0.542402 | 31 / 0 |
+| First result pages | 0.016283 | 0.415984 | 0.419032 | 31 / 0 |
+| Actual cursor continuations | 0.019692 | 0.204494 | 0.206378 | 31 / 0 |
 
 Each class has one cold request and 30 concurrent samples; p95/max refer to the
 concurrent samples. Both final verification requests also succeeded, for **157
 successful requests and zero errors** overall. The concurrent phase took
-16.400626 seconds and reached five overlapping callers. All 106 write
-transactions committed: 106 outcome updates and 53 inserts, with write p95
-0.139829 seconds and maximum 0.303455 seconds. Final SQL and both REST reports
-matched the exact **100,053-result** write ledger. Temporary databases were removed.
-Pytest reported one passing performance test in 44.91 seconds including setup
+19.426444 seconds and reached five overlapping callers. All 125 write
+transactions committed: 125 outcome updates and 62 inserts, with write p95
+0.154500 seconds and maximum 0.222849 seconds. Final SQL and both REST reports
+matched the exact **100,062-result** write ledger. Temporary databases were removed.
+Pytest reported one passing performance test in 52.78 seconds including setup
 and teardown, which are excluded from the latency samples.
 
 The initial measurement before the query optimizations failed: report p95s were 2.985537/5.026765 seconds, facets

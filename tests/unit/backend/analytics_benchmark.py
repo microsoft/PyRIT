@@ -1,26 +1,32 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Synthetic analytics workload shared by local SQLite unit tests."""
+"""Synthetic analytics workload and fixtures shared by local SQLite tests."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import platform
 import random
 import sqlite3
+import tempfile
 import time
 import uuid
 from collections import Counter
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
+from unittest.mock import patch
+
+import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
 
     import httpx
 
@@ -41,6 +47,86 @@ class RequestSample:
     seconds: float
     status: int | None
     error: str | None
+
+
+@pytest.fixture
+def benchmark_directory(tmp_path: Path) -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="analytics-benchmark-", dir=tmp_path) as temporary:
+        directory = Path(temporary)
+        (directory / "config.yaml").write_text(
+            json.dumps(
+                {
+                    "memory_db_type": "sqlite",
+                    "env_files": [],
+                    "env_akv_ref": [],
+                    "initializers": ["technique"],
+                    "initialization_scripts": [],
+                    "custom_initializers_source": str(directory / "initializers"),
+                    "silent": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        yield directory
+
+
+@pytest.fixture
+async def sqlite_instance(benchmark_directory: Path) -> AsyncGenerator[SQLiteMemory, None]:
+    """Use file-backed SQLite for concurrent WAL readers; all files remain fixture-owned."""
+    from pyrit.memory import SQLiteMemory
+    from pyrit.memory.memory_models import Base
+    from unit.conftest import _use_sqlite_memory
+
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=benchmark_directory / "analytics.sqlite", skip_schema_migration=True)
+    memory.results_path = str(benchmark_directory)
+    memory.disable_embedding()
+    try:
+        async with await memory.get_session_async() as session:
+            connection = await session.connection()
+            assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
+            await connection.run_sync(Base.metadata.create_all)
+            await session.commit()
+        with _use_sqlite_memory(memory):
+            yield memory
+    finally:
+        await memory.dispose_engine_async()
+
+
+@pytest.fixture
+async def benchmark_app(
+    *, benchmark_directory: Path, sqlite_instance: SQLiteMemory, compatibility_id: str
+) -> AsyncGenerator[CompatibilityAPI, None]:
+    """Exercise production routes, middleware, startup and shutdown with isolated test configuration."""
+    from pyrit.backend.main import app as backend_app
+    from pyrit.backend.middleware.compatibility import CompatibilityAPI
+    from pyrit.backend.services.analytics_service import get_analytics_service
+    from pyrit.backend.services.configuration_file_service import ConfigurationFileService
+    from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
+
+    assert get_analytics_service.cache_info().currsize == 0
+    with (
+        patch.dict(
+            os.environ,
+            {"ENTRA_CLIENT_ID": "", "ENTRA_TENANT_ID": "", "ENTRA_ALLOWED_GROUP_IDS": "", "ENTRA_ADMIN_GROUP_ID": ""},
+        ),
+        patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH", benchmark_directory / "missing-default.yaml"),
+    ):
+        app = CompatibilityAPI(routes=list(backend_app.router.routes), middleware=backend_app.user_middleware)
+        app.exception_handlers.update(backend_app.exception_handlers)
+        app.state.compatibility_id = compatibility_id
+        source = ConfigurationFileService(config_file_value=str(benchmark_directory / "config.yaml"))
+        app.state.configuration_file_service = source
+        runtime = RuntimeLifecycle(app=app, source=source)
+        app.state.runtime_lifecycle = runtime
+        try:
+            await runtime.startup_async()
+            assert runtime.state == "ready", runtime.message
+            yield app
+        finally:
+            await runtime.shutdown_async()
+        assert get_analytics_service.cache_info().currsize == 0
 
 
 def percentile95(values: Sequence[float]) -> float:
