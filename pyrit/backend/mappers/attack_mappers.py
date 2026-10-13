@@ -32,6 +32,12 @@ from pyrit.backend.models.attacks import (
     MessageView,
     ScoreView,
 )
+from pyrit.backend.services.media_persistence import (
+    MediaAccessDeniedError,
+    results_container_url,
+    validate_blob_media_url,
+)
+from pyrit.common.azure_storage import redact_url_credentials
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
@@ -123,18 +129,28 @@ async def _get_sas_for_container_async(*, container_url: str) -> str:
 
 async def _sign_blob_url_async(*, blob_url: str) -> str:
     """
-    Append a read-only SAS token to an Azure Blob Storage URL.
+    Append a read-only SAS token to an Azure Blob Storage URL in the results container.
 
-    Non-blob URLs (local paths, data URIs, etc.) are returned unchanged.
+    Non-blob URLs (local paths, data URIs, etc.) and blob URLs outside the media
+    subdirectories of the results container are returned unchanged, so the server
+    only signs the result media it manages.
 
     Args:
         blob_url: The raw Azure Blob Storage URL.
 
     Returns:
         The URL with an appended SAS query string, or the original value for
-        non-blob URLs.
+        other URLs.
     """
     if not _is_azure_blob_url(blob_url):
+        return blob_url
+    results_container = results_container_url()
+    if results_container is None:
+        return blob_url
+    try:
+        validate_blob_media_url(url=blob_url, container_url=results_container)
+    except MediaAccessDeniedError:
+        logger.debug("Not signing a blob URL outside the results container: %s", redact_url_credentials(blob_url))
         return blob_url
 
     parsed = urlparse(blob_url)
