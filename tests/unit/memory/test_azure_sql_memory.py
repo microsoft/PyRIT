@@ -586,9 +586,10 @@ def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
     sql = str(statement.compile(dialect=mssql.dialect())).upper()
 
     assert (
-        "HISTORY_UNITS.TIMESTAMP DESC, "
-        "LOWER(CAST(HISTORY_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
+        "HISTORY_CLASSIFIED_UNITS.TIMESTAMP DESC, "
+        "LOWER(CAST(HISTORY_CLASSIFIED_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
     ) in sql
+    assert "HISTORY_CLASSIFIED_UNITS.ATTEMPT_INDEX IS NULL" in sql
 
 
 def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
@@ -947,3 +948,38 @@ def test_init_prod_with_skip_schema_migration_still_checks():
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+def test_scenario_history_aggregate_uses_sql_server_json_value(memory_interface: AzureSQLMemory) -> None:
+    from sqlalchemy.dialects import mssql
+
+    statement = memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()], plan_entry_ids=[uuid.uuid4()]
+    )
+    compiled = statement.compile(dialect=memory_interface.engine.dialect)
+    compiled_str = str(compiled).lower()
+    assert "json_value" in compiled_str
+    assert "$.result_role" in compiled.params.values()
+    assert "latin1_general_100_bin2" in compiled_str
+    assert "datalength" in compiled_str
+
+    mssql_compiled = str(statement.compile(dialect=mssql.dialect())).lower()
+    assert "collate latin1_general_100_bin2" in mssql_compiled
+    assert "datalength" in mssql_compiled
+
+
+def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guard(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    from sqlalchemy import column
+    from sqlalchemy.dialects import mssql
+
+    from pyrit.models import AttackResultRole
+
+    col = column("result_role")
+    condition = memory_interface._get_scenario_role_match_condition(
+        role_expression=col, role=AttackResultRole.TARGET_FACING
+    )
+    compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
+    assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql

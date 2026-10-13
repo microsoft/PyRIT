@@ -216,6 +216,11 @@ The first check covers production code, matching the CI typing hook. The second 
 checks unit tests and is the scope of `make ty`. Pytest and ty both resolve test helpers
 from the `tests` directory; use tier-root imports such as `from unit.mocks import MockPromptTarget`.
 
+CI runs `make ty` once in the Ubuntu pre-commit job with all extras and Python 3.11,
+the minimum supported version. It runs for every pull request, merge-queue entry, and
+push to `main`, including test-only changes. The existing production-only typing hook
+still runs on all three operating systems.
+
 Checking all test tiers and build scripts is a separate, wider diagnostic scope:
 
 ```powershell

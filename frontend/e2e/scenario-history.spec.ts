@@ -535,13 +535,14 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     const primaryNavigation = page.getByRole("navigation", { name: "Primary" });
     const primaryButtons = primaryNavigation.getByRole("button");
     await expect(primaryNavigation.getByRole("button", { name: "Configuration" })).toBeVisible();
-    await expect(primaryButtons).toHaveCount(6);
+    await expect(primaryButtons).toHaveCount(7);
     expect(await primaryButtons.evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("aria-label")))).toEqual([
       "Home",
       "Chat",
       "History",
       "Scanner",
+      "Datasets",
       "Registry",
       "Configuration",
     ]);

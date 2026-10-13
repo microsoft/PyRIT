@@ -20,6 +20,7 @@ from sqlalchemy import (
     event,
     exists,
     func,
+    literal,
     literal_column,
     text,
 )
@@ -44,7 +45,7 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
-from pyrit.models import ConversationStats
+from pyrit.models import AttackResultRole, ConversationStats
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -810,6 +811,22 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     ) -> "SQLColumnExpression[str]":
         # Native SQL Server UUID ordering differs from the SDK's canonical string comparison.
         return func.lower(sql_cast(attempt_id, String(36))).collate("Latin1_General_100_BIN2")
+
+    def _get_scenario_role_match_condition(self, *, role_expression: Any, role: AttackResultRole) -> Any:
+        """
+        Return an exact case-sensitive and trailing-space-sensitive condition for AttackResultRole.
+
+        SQL Server pads strings for '=' comparisons and uses case-insensitive collation by default.
+        Binary collation ensures exact case matching, and DATALENGTH ensures trailing spaces or
+        malformed padding are not ignored.
+
+        Returns:
+            A SQL Server condition strictly matching the specified AttackResultRole.
+        """
+        return and_(
+            role_expression.collate("Latin1_General_100_BIN2") == role.value,
+            func.datalength(role_expression) == func.datalength(literal(role.value, type_=Unicode)),
+        )
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQL Server JSON expressions for persisted scenario attempt attribution."""

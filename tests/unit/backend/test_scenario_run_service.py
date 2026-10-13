@@ -371,6 +371,7 @@ def mock_all_registries(mock_memory):
     mock_scenario_class = MagicMock(return_value=mock_scenario_instance)
     mock_scenario_instance._technique_class = MagicMock()
     mock_scenario_instance._default_dataset_config = MagicMock()
+    mock_scenario_instance.supported_parameters.return_value = Scenario.supported_parameters()
 
     mock_sr = MagicMock()
     mock_sr.get_class.return_value = mock_scenario_class
@@ -2367,6 +2368,15 @@ class TestScenarioRunServiceListRuns:
                         total_retries=3,
                         latest_attempt_timestamp=timestamp,
                         atomic_attack_names=("attack",),
+                        target_facing_attempts=0,
+                        target_facing_error_attempts=0,
+                        target_facing_retries=0,
+                        orchestration_attempts=0,
+                        orchestration_error_attempts=0,
+                        orchestration_retries=0,
+                        unknown_role_attempts=0,
+                        unknown_role_error_attempts=0,
+                        unknown_role_retries=0,
                     )
                 },
                 False,
@@ -2500,6 +2510,15 @@ class TestScenarioRunServiceListRuns:
                         total_retries=0,
                         latest_attempt_timestamp=timestamp,
                         atomic_attack_names=("attack-1", "attack-2"),
+                        target_facing_attempts=0,
+                        target_facing_error_attempts=0,
+                        target_facing_retries=0,
+                        orchestration_attempts=0,
+                        orchestration_error_attempts=0,
+                        orchestration_retries=0,
+                        unknown_role_attempts=0,
+                        unknown_role_error_attempts=0,
+                        unknown_role_retries=0,
                     )
                 },
                 False,
@@ -2633,6 +2652,15 @@ class TestScenarioRunServiceListRuns:
                     total_retries=4,
                     latest_attempt_timestamp=datetime(2026, 8, 7, tzinfo=UTC),
                     atomic_attack_names=("attack",),
+                    target_facing_attempts=0,
+                    target_facing_error_attempts=0,
+                    target_facing_retries=0,
+                    orchestration_attempts=0,
+                    orchestration_error_attempts=0,
+                    orchestration_retries=0,
+                    unknown_role_attempts=0,
+                    unknown_role_error_attempts=0,
+                    unknown_role_retries=0,
                 )
             }
         )
@@ -3842,6 +3870,15 @@ async def test_history_and_detail_retry_work_match_across_attempt_partitions(moc
         total_retries=5,
         latest_attempt_timestamp=timestamp + timedelta(seconds=2),
         atomic_attack_names=("attack",),
+        target_facing_attempts=0,
+        target_facing_error_attempts=0,
+        target_facing_retries=0,
+        orchestration_attempts=0,
+        orchestration_error_attempts=0,
+        orchestration_retries=0,
+        unknown_role_attempts=0,
+        unknown_role_error_attempts=0,
+        unknown_role_retries=0,
     )
     service = ScenarioRunService()
 

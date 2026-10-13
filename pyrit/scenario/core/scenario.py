@@ -30,6 +30,8 @@ from pyrit.models import (
     AllAvailableDatasetSize,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
+    AttackResultSelection,
     AttackSeedGroup,
     BoundedDatasetSize,
     DatasetLimitInput,
@@ -144,6 +146,9 @@ class Scenario(ABC):
     #: Whether the scenario applies ``technique_converters``. Scenarios that don't set this to
     #: False so the parameter isn't declared, and passing it fails instead of being ignored.
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = True
+
+    #: Maximum number of resolved concrete techniques; None leaves the selection unrestricted.
+    MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -838,6 +843,15 @@ class Scenario(ABC):
         self._scenario_techniques = self._resolve_scenario_techniques(
             scenario_techniques=params.get("scenario_techniques")
         )
+        limit = self.MAX_CONCRETE_TECHNIQUES
+        if limit is not None:
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+                raise ValueError(f"{type(self).__name__}.MAX_CONCRETE_TECHNIQUES must be a positive integer")
+            if len(self._scenario_techniques) > limit:
+                raise ValueError(
+                    f"{type(self).__name__} accepts at most {limit} concrete technique(s); "
+                    f"received {[technique.value for technique in self._scenario_techniques]}."
+                )
         self._technique_converters = params.get("technique_converters") or {}
         self._validate_runtime_configuration()
 
@@ -1283,8 +1297,8 @@ class Scenario(ABC):
         ``parent_eval_hash`` was introduced (or by callers that don't supply
         one) match name-only as a backward-compatible fallback.
 
-        ``ERROR`` rows and rows carrying an ``AttackPreparationFailure`` are
-        excluded: neither reached the objective target, so both stay pending.
+        Child rows cannot complete their parent unit. ``ERROR`` rows and rows carrying
+        an ``AttackPreparationFailure`` also stay pending.
 
         Returns:
             dict[tuple[str, str | None], set[str]]: Completed objective hashes keyed by
@@ -1298,7 +1312,9 @@ class Scenario(ABC):
         if not self._scenario_result_id:
             return {}
 
-        rows = await self._memory.get_attack_results_async(scenario_result_id=self._scenario_result_id)
+        rows = await self._memory.get_attack_results_async(
+            scenario_result_id=self._scenario_result_id, result_selection=AttackResultSelection.ALL_RESULTS
+        )
         completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
         for row in rows:
             # ERROR rows hit infrastructure problems, and preparation failures never reached the
@@ -1308,6 +1324,8 @@ class Scenario(ABC):
             # are measured results of a deterministic configuration; retrying them would re-send
             # the objective on every resume without ever converging.
             if row.outcome == AttackOutcome.ERROR or not row.attribution_data or not row.objective:
+                continue
+            if AttackResultMetadata.from_metadata(metadata=row.attribution_data).attempt_index is not None:
                 continue
             if AttackPreparationFailure.from_result(result=row) is not None:
                 continue
