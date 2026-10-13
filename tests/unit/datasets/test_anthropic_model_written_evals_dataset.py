@@ -14,6 +14,7 @@ from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset i
     _AnthropicModelWrittenEvalsDataset,
 )
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.memory import SQLiteMemory
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
 
 _MODULE = "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset"
@@ -28,6 +29,72 @@ _MANIFEST = (
     "sycophancy/sycophancy_on_political_typology_quiz.jsonl",
     "winogenerated/winogenerated_examples.jsonl",
 )
+
+_PAPER_AUTHORS = [
+    "Ethan Perez",
+    "Sam Ringer",
+    "Kamile Lukosiute",
+    "Karina Nguyen",
+    "Edwin Chen",
+    "Scott Heiner",
+    "Craig Pettit",
+    "Catherine Olsson",
+    "Sandipan Kundu",
+    "Saurav Kadavath",
+    "Andy Jones",
+    "Anna Chen",
+    "Benjamin Mann",
+    "Brian Israel",
+    "Bryan Seethor",
+    "Cameron McKinnon",
+    "Christopher Olah",
+    "Da Yan",
+    "Daniela Amodei",
+    "Dario Amodei",
+    "Dawn Drain",
+    "Dustin Li",
+    "Eli Tran-Johnson",
+    "Guro Khundadze",
+    "Jackson Kernion",
+    "James Landis",
+    "Jamie Kerr",
+    "Jared Mueller",
+    "Jeeyoon Hyun",
+    "Joshua Landau",
+    "Kamal Ndousse",
+    "Landon Goldberg",
+    "Liane Lovitt",
+    "Martin Lucas",
+    "Michael Sellitto",
+    "Miranda Zhang",
+    "Neerav Kingsland",
+    "Nelson Elhage",
+    "Nicholas Joseph",
+    "Noemi Mercado",
+    "Nova DasSarma",
+    "Oliver Rausch",
+    "Robin Larson",
+    "Sam McCandlish",
+    "Scott Johnston",
+    "Shauna Kravec",
+    "Sheer El Showk",
+    "Tamera Lanham",
+    "Timothy Telleen-Lawton",
+    "Tom Brown",
+    "Tom Henighan",
+    "Tristan Hume",
+    "Yuntao Bai",
+    "Zac Hatfield-Dodds",
+    "Jack Clark",
+    "Samuel R. Bowman",
+    "Amanda Askell",
+    "Roger Grosse",
+    "Danny Hernandez",
+    "Deep Ganguli",
+    "Evan Hubinger",
+    "Nicholas Schiefer",
+    "Jared Kaplan",
+]
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +165,27 @@ def _rows_for_source(source: str, **_kwargs: object) -> list[dict]:
             }
         ]
     raise AssertionError(f"unexpected fetch: {source}")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_complete_paper_attribution_survives_seed_storage(sqlite_instance: SQLiteMemory) -> None:
+    loader = _AnthropicModelWrittenEvalsDataset()
+    with patch.object(loader, "_fetch_from_url", side_effect=_rows_for_source):
+        dataset = await loader.fetch_dataset_async(cache=False)
+
+    groups = ["Anthropic", "Surge AI", "Machine Intelligence Research Institute"]
+    assert len(dataset.seeds) == 6
+    for seed in dataset.seeds:
+        assert seed.authors == _PAPER_AUTHORS
+        assert seed.groups == groups
+
+    await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="paper-attribution-test")
+    stored = await sqlite_instance.get_seeds_async(dataset_name=loader.dataset_name)
+    assert len(stored) == len(dataset.seeds)
+    for seed in stored:
+        assert seed.authors == _PAPER_AUTHORS
+        assert seed.groups == groups
+        assert seed.source == "https://github.com/anthropics/evals"
 
 
 class TestAnthropicModelWrittenEvalsDataset:
