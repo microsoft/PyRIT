@@ -3,7 +3,7 @@
 
 """Adversarial target resolution validates without changing execution scopes."""
 
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +14,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedObjective
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit
-from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
+from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
 from pyrit.registry import TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource, Scenario
@@ -27,7 +27,11 @@ from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
+from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
 from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectDatasetConfiguration
+from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
+from pyrit.scenario.scenarios.garak.web_injection import WebInjection
 from pyrit.score import TrueFalseScorer
 from unit.mocks import MockPromptTarget
 
@@ -213,3 +217,58 @@ def test_resolve_adversarial_target_rejects_invalid_selection_without_changing_s
         with pytest.raises(ValueError, match=message):
             ScenarioConfigurationResolver.resolve_adversarial_target(target_name=selection)
         assert get_default_adversarial_target() is outer
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, WebInjection, PackageHallucination])
+@pytest.mark.parametrize("limit", [12, "all"])
+async def test_total_limit_reaches_generated_objective_selection(
+    *, scenario_class: type[Scenario], limit: DatasetLimit
+) -> None:
+    with (
+        patch.object(Scenario, "_get_default_objective_scorer", return_value=MagicMock(spec=TrueFalseScorer)),
+    ):
+        request = ScenarioDatasetRequest(max_total=limit)
+        resolved = ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="test", scenario_class=scenario_class, datasets=request
+        )
+        scenario = scenario_class()
+        scenario.set_params_from_args(args=resolved)
+        estimate = await scenario.get_run_size_estimate_async()
+    assert resolved["dataset_overrides"] is request
+    assert estimate.effective_datasets.max_total == limit
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, WebInjection, PackageHallucination])
+async def test_fixed_source_names_reach_scenarios_through_dataset_overrides(scenario_class: type[Scenario]) -> None:
+    with patch.object(Scenario, "_get_default_objective_scorer", return_value=MagicMock(spec=TrueFalseScorer)):
+        names = [source.name for source in scenario_class().get_default_dataset_settings().sources]
+        resolved = ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="test",
+            scenario_class=scenario_class,
+            datasets=ScenarioDatasetRequest(sources=[DatasetSourceInput(name=name) for name in names]),
+        )
+        scenario = scenario_class()
+        scenario.set_params_from_args(args=resolved)
+        estimate = await scenario.get_run_size_estimate_async()
+    assert [source.name for source in estimate.effective_datasets.sources] == names
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"max_total": 3},
+        {"sources": [{"name": "garak_exploitation_sql_injection"}]},
+        {"filters": {"data_types": ["text"]}},
+    ],
+)
+def test_dataset_overrides_are_rejected_for_a_fixed_dataset_scenario(overrides: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="dataset_overrides"):
+        resolved = ScenarioConfigurationResolver.resolve_configuration(
+            scenario_name="garak.exploitation",
+            scenario_class=Exploitation,
+            datasets=ScenarioDatasetRequest(**overrides),
+        )
+        Exploitation().set_params_from_args(args=resolved)

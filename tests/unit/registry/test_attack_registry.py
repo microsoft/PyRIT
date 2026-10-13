@@ -29,7 +29,7 @@ from pyrit.models.parameter import ComponentType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, RegistryMetadata, TargetRegistry
 from pyrit.score import SubStringScorer
-from tests.unit.mocks import MockPromptTarget
+from unit.mocks import MockPromptTarget
 
 
 class CustomAttack(PromptSendingAttack):

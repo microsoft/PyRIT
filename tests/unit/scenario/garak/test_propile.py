@@ -9,6 +9,7 @@ from typing import Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
@@ -37,7 +38,6 @@ from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ProPILETechnique,
 )
 from pyrit.score import OutputMatchesScorer, SubStringScorer
-from tests.unit.mocks import MockPromptTarget
 
 RECORDS = ProPILEDatasetConfiguration.RECORD_DATASET_NAME
 TEMPLATES = ProPILEDatasetConfiguration.TEMPLATE_DATASET_NAME

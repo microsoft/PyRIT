@@ -255,6 +255,15 @@ class TestRemoteDatasetLoader:
             result = loader._fetch_from_public_url(source="https://example.com/data.csv", file_type="csv")
         assert result == [{"header1": "value1", "header2": "value2"}]
 
+    def test_fetch_from_public_url_passes_request_timeout(self):
+        loader = ConcreteRemoteLoader()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '[{"key": "value"}]'
+        with patch("requests.get", return_value=mock_response) as mock_get:
+            loader._fetch_from_public_url(source="https://example.com/data.json", file_type="json")
+        assert mock_get.call_args.kwargs["timeout"] == loader.REQUEST_TIMEOUT_SECONDS
+
     def test_fetch_from_public_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
         mock_response = MagicMock()
@@ -317,6 +326,23 @@ class TestFetchZipFromUrl:
 
         assert result["folder/a.jsonl"] == [{"a": 1}, {"a": 2}]
         assert result["folder/b.jsonl"] == [{"b": 3}]
+
+    async def test_zip_download_passes_request_timeout(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"x.json": '[{"k": "v"}]'})
+
+        mock_get = MagicMock(return_value=self._mock_streaming_response(zip_bytes))
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            mock_get,
+        ):
+            loader = ConcreteRemoteLoader()
+            await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=False)
+
+        assert mock_get.call_args.kwargs["timeout"] == loader.REQUEST_TIMEOUT_SECONDS
 
     async def test_caches_zip_on_disk(self, tmp_path, monkeypatch):
         monkeypatch.setattr(

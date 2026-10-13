@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, NonCallableMagicMock, call, create_autospec
 from uuid import UUID, uuid4
 
 import pytest
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import get_defined_tasks, wait_for_completion_async
 from unit.mocks import store_message_async
 
 from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation
@@ -895,8 +895,7 @@ async def test_reset_during_cleanup_propagates_only_selected_session_failure_asy
         release_a.set()
         release_b.set()
         tasks = {cleanup_task}
-        if reset_task is not None:
-            tasks.add(reset_task)
+        tasks.update(get_defined_tasks(reset_task))
         await asyncio.gather(*tasks, return_exceptions=True)
 
 

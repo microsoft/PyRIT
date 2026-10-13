@@ -1828,7 +1828,7 @@ export default function ChatWindow({
           </MessageBar>
         )}
         <div hidden={editDraft !== null}>
-        {recoveredDraftWarningConversationId === viewedConversationId && (
+        {Boolean(recoveredDraftWarningConversationId) && recoveredDraftWarningConversationId === viewedConversationId && (
           <MessageBar intent="warning">
             <MessageBarBody>Converter choices could not be restored. Select and apply converters again before sending.</MessageBarBody>
           </MessageBar>

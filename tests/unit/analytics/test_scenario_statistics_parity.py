@@ -64,6 +64,8 @@ class _Attempt:
     seconds: int | None = None
     result_role: AttackResultRole | str = AttackResultRole.UNKNOWN
     total_retries: int = 0
+    attempt_index: int | None = None
+    child_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -275,10 +277,60 @@ _HISTORIES = {
             ),
         ],
     ),
+    "compound_failure": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            *[
+                _Attempt(
+                    "attack",
+                    "A",
+                    AttackOutcome.FAILURE,
+                    seed_group_id="a",
+                    result_role=AttackResultRole.TARGET_FACING,
+                    attempt_index=index,
+                )
+                for index in range(1, 4)
+            ],
+            _Attempt(
+                "attack", "A", AttackOutcome.FAILURE, seed_group_id="a", result_role=AttackResultRole.ORCHESTRATION
+            ),
+        ],
+    ),
+    "compound_late_error": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=1,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.ERROR,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=2,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.ERROR,
+                seed_group_id="a",
+                result_role=AttackResultRole.ORCHESTRATION,
+                child_indices=(0, 1),
+            ),
+        ],
+    ),
 }
 
 # Effective-unit success percentages each history must report everywhere (None: no completed unit).
 _EXPECTED_OVERALL = {
+    "compound_failure": 0,
+    "compound_late_error": 0,
     "retry_and_resume_recovered": 100,
     "unrecovered_errors": 50,
     "legacy_identities_without_plan": 66,
@@ -320,8 +372,11 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
     )
     await memory.add_scenario_results_to_memory_async(scenario_results=[scenario_result])
     attack_results = []
+    result_ids = [attempt.attack_result_id or str(uuid.uuid4()) for attempt in history.attempts]
     for index, attempt in enumerate(history.attempts):
-        attribution_data: dict[str, str] = {"parent_collection": attempt.atomic_attack_name}
+        attribution_data: dict[str, str | int] = {"parent_collection": attempt.atomic_attack_name}
+        if attempt.attempt_index is not None:
+            attribution_data["attempt_index"] = attempt.attempt_index
         if attempt.eval_hash is not None:
             attribution_data["parent_eval_hash"] = attempt.eval_hash
         if attempt.seed_group_id is not None:
@@ -343,7 +398,7 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
             )
         attack_results.append(
             AttackResult(
-                attack_result_id=attempt.attack_result_id or str(uuid.uuid4()),
+                attack_result_id=result_ids[index],
                 conversation_id=f"conversation-{index}",
                 objective=attempt.objective,
                 outcome=attempt.outcome,
@@ -352,6 +407,7 @@ async def _persist(memory: MemoryInterface, history: _History) -> str:
                 attribution_data=attribution_data,
                 atomic_attack_identifier=atomic_attack_identifier,
                 total_retries=attempt.total_retries,
+                metadata={"child_attack_result_ids": [result_ids[i] for i in attempt.child_indices]},
             )
         )
     if attack_results:
@@ -369,6 +425,14 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     [scenario_result] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
     sdk = compute_scenario_statistics(scenario_result)
     assert sdk.overall.success_percentage == expected
+    if history_name == "compound_failure":
+        assert sdk.attempts == 3
+        assert sdk.overall.retries == 2
+        assert sdk.overall.errors == 0
+    if history_name == "compound_late_error":
+        assert sdk.attempts == 2
+        assert sdk.overall.retries == 1
+        assert sdk.overall.errors == 1
 
     # API: run detail, history list (SQL aggregate), and live progress
     service = ScenarioRunService()
@@ -388,6 +452,8 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert list_item.total_retries == detail.total_retries == sdk.overall.retries
     assert progress.summary.overall.succeeded == sdk.overall.succeeded
     assert progress.summary.overall.errors == sdk.overall.errors
+    if history_name.startswith("compound_"):
+        assert detail.error_attacks == list_item.error_attacks == sdk.overall.errors
     assert progress.summary.overall.outcomes == sdk.overall.outcomes
     assert progress.summary.overall.producer_counts == sdk.overall.producer_counts
     assert list_item.producer_counts == sdk.overall.producer_counts
@@ -430,6 +496,46 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
         assert progress_groups == sdk_groups
         for group in progress.summary.display_groups:
             assert group.outcomes == sdk.display_groups[group.display_group].outcomes
+
+
+async def test_child_without_envelope_cannot_complete_unit_on_any_surface_async(sqlite_instance) -> None:
+    history = _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=1,
+            )
+        ],
+    )
+    run_id = await _persist(sqlite_instance, history)
+    result = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id]))[0]
+    statistics = compute_scenario_statistics(result)
+    assert statistics.overall.completed == 0
+    assert statistics.attempts == 1
+    aggregates = await sqlite_instance.get_scenario_history_aggregates_async(
+        scenario_result_ids=[run_id],
+        plan_scenario_ids=[run_id],
+    )
+    assert aggregates[run_id].completed_units == 0
+    service = ScenarioRunService()
+    try:
+        detail = await service.get_run_from_storage_async(scenario_result_id=run_id, active_error=None)
+        progress = await service.get_run_progress_from_storage_async(
+            scenario_result_id=run_id,
+            since=None,
+            limit=500,
+            active_group_ids=[],
+        )
+        assert detail.completed_attacks == 0
+        assert progress.summary.overall.completed == 0
+        assert progress.summary.atomic_groups[0].status == "INCOMPLETE"
+    finally:
+        await service.close_async()
 
 
 async def test_historical_attempt_counts_stay_separate_from_units(sqlite_instance) -> None:
@@ -841,13 +947,13 @@ async def test_same_name_producers_survive_unmatched_configuration(
     report = JsonScenarioResultPrinter().build(scenario)
     [report_group] = report["groups"]
     assert report_group["name"] == "reported"
-    assert report_group["num_attempts"] == 4
+    assert report_group["num_attempts"] == 3
     assert report_group["num_objective_executions"] == 1
     assert report_group["producer_counts"] == expected
     html = await HtmlScenarioReportPrinter().render_async(
         build_scenario_full_payload(result=scenario, overview=report, entries=[])
     )
-    assert "<td>reported</td><td>1</td>\n      <td>4</td>\n      <td>2</td>" in html
+    assert "<td>reported</td><td>1</td>\n      <td>3</td>\n      <td>2</td>" in html
 
     service = ScenarioRunService()
     try:

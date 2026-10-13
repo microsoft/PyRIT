@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_progress_read_model import ScenarioProgressReadModel
 from pyrit.executor.attack import PromptSendingAttack
@@ -56,7 +57,6 @@ from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
 from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
-from tests.unit.mocks import MockPromptTarget
 
 
 class _TwoTechniqueDefault(ScenarioTechnique):

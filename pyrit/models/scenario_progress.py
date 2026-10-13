@@ -268,8 +268,10 @@ class ScenarioExecutionStatistics(BaseModel):
     atomic_attacks: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
     #: Counts keyed by display group label.
     display_groups: dict[str, ScenarioProgressCounts] = Field(default_factory=dict)
-    #: Total persisted attempts, including superseded ones.
+    #: Actual execution attempts, including superseded ones but not duplicate orchestration envelopes.
     attempts: int = Field(default=0, ge=0)
+    #: Actual attempts per recorded atomic attack name, without duplicate orchestration envelopes.
+    atomic_attack_attempts: dict[str, int] = Field(default_factory=dict)
     #: Attempts excluded from logical-unit counts, but retained in producer counts.
     unattributed_attempts: int = Field(default=0, ge=0)
 

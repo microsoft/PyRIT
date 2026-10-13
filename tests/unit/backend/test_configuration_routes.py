@@ -3,6 +3,7 @@
 
 """Tests for backend configuration file routes."""
 
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +24,7 @@ from pyrit.backend.services.environment_file_service import EnvironmentFileServi
 
 
 @pytest.fixture
-def client(compatibility_headers: dict[str, str]) -> TestClient:
+def client(compatibility_headers: dict[str, str]) -> Iterator[TestClient]:
     """Create a test client for the FastAPI app."""
     app.dependency_overrides[require_admin] = lambda: None
     try:

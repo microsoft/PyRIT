@@ -11,6 +11,7 @@ import {
   DialogSurface,
   DialogTitle,
   Field,
+  Radio,
   MessageBar,
   MessageBarBody,
   mergeClasses,
@@ -294,6 +295,10 @@ function buildEstimateRequest({
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
     return { ok: false, error: 'Select at least one technique.' }
   }
+  if (supportsParameter(scenario, 'scenario_techniques')
+    && scenario.max_concrete_techniques != null && techniques.length > scenario.max_concrete_techniques) {
+    return { ok: false, error: `Select at most ${scenario.max_concrete_techniques} concrete technique(s).` }
+  }
 
   let scenarioParams: Record<string, unknown> | null = null
   if (dynamicParameters.length > 0) {
@@ -569,6 +574,7 @@ function ScenarioLaunchForm({
   const supportsConcurrency = supportsParameter(scenario, 'max_concurrency')
   const supportsRetries = supportsParameter(scenario, 'max_retries')
   const isBaselineForbidden = scenario.baseline_policy === 'forbidden'
+  const singleTechnique = scenario.max_concrete_techniques === 1
 
   const [targetName, setTargetName] = useState(() => {
     if (defaultObjectiveTarget && targets.some((target: TargetInstance) =>
@@ -852,6 +858,10 @@ function ScenarioLaunchForm({
     } else {
       setSelectedTechniques((current) => {
         if (checked) {
+          if (singleTechnique) return [technique.name]
+          if (scenario.max_concrete_techniques != null && current.length >= scenario.max_concrete_techniques) {
+            return current
+          }
           return current.includes(technique.name)
             ? current
             : [...current, technique.name]
@@ -874,6 +884,10 @@ function ScenarioLaunchForm({
     const memberNames = new Set(
       members.filter((technique) => !technique.isBaseline).map((technique) => technique.name),
     )
+    if (shouldSelect && scenario.max_concrete_techniques != null
+      && new Set([...selectedTechniques, ...memberNames]).size > scenario.max_concrete_techniques) {
+      return
+    }
     setSelectedTechniques((current) => {
       const selected = new Set(current)
       for (const name of memberNames) {
@@ -934,7 +948,13 @@ function ScenarioLaunchForm({
     setPreviewOpen(true)
   }
 
-  const techniqueSelectionInvalid = supportsTechniques && selectedTechniques.length === 0
+  const techniqueSelectionOverLimit = supportsTechniques && scenario.max_concrete_techniques != null
+    && selectedTechniques.length > scenario.max_concrete_techniques
+  const techniqueSelectionError = supportsTechniques && selectedTechniques.length === 0
+    ? 'Select at least one attack technique.'
+    : techniqueSelectionOverLimit
+    ? `Select at most ${scenario.max_concrete_techniques} concrete technique(s).`
+    : null
   const displayedEstimateNotes = estimateNotes(estimateState)
   const displayedEstimate = estimateFromState(estimateState)
   const selectedTechniqueCount = (supportsTechniques ? selectedTechniques.length : 0)
@@ -1050,11 +1070,13 @@ function ScenarioLaunchForm({
                 Techniques
               </Text>
               {supportsTechniques && <Text size={200} className={styles.hint}>
-                Select individual techniques, or use a tag to select or clear all techniques with that tag.
+                {singleTechnique
+                  ? 'Select exactly one technique. Baseline comparison is optional and separate.'
+                  : 'Select individual techniques, or use a tag to select or clear all techniques with that tag.'}
               </Text>}
-              {techniqueSelectionInvalid && (
+              {techniqueSelectionError && (
                 <Text className={styles.errorText} role="alert">
-                  Select at least one attack technique.
+                  {techniqueSelectionError}
                 </Text>
               )}
               <div className={styles.techniqueList} role="group" aria-label="Techniques">
@@ -1062,14 +1084,27 @@ function ScenarioLaunchForm({
                   const selected = isTechniqueSelected(technique)
                   return (
                     <div className={styles.techniqueOption} key={technique.name}>
-                    <Checkbox
+                    {singleTechnique && !technique.isBaseline ? (
+                      <Radio
+                        className={styles.selectionControl}
+                        name={`${formId}-technique`}
+                        label={technique.name}
+                        value={technique.name}
+                        checked={selected && !techniqueSelectionOverLimit}
+                        disabled={submitting || technique.disabled}
+                        onChange={() => handleTechniqueChange(technique, true)}
+                        data-testid={`technique-${technique.name}`}
+                      />
+                    ) : <Checkbox
                       className={styles.selectionControl}
                       label={technique.name}
                       checked={selected}
-                      disabled={submitting || technique.disabled}
+                      disabled={submitting || technique.disabled || (!technique.isBaseline && !selected
+                        && scenario.max_concrete_techniques != null
+                        && selectedTechniques.length >= scenario.max_concrete_techniques)}
                       onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
                       data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
-                    />
+                    />}
                     <div className={styles.techniqueDetails}>
                       {technique.description && (
                         <Text size={200} className={styles.hint}>{technique.description}</Text>
@@ -1081,6 +1116,14 @@ function ScenarioLaunchForm({
                               (candidate) => !candidate.disabled && candidate.tags.includes(tag),
                             )
                             const tagSelected = tagMembers.length > 0 && tagMembers.every(isTechniqueSelected)
+                            const exceedsLimit = scenario.max_concrete_techniques != null
+                              && new Set([
+                                ...selectedTechniques,
+                                ...tagMembers.filter((candidate) => !candidate.isBaseline).map((candidate) => candidate.name),
+                              ]).size > scenario.max_concrete_techniques
+                            if (singleTechnique) {
+                              return <Badge key={tag} size="small" appearance="outline">{techniqueSetName(tag)}</Badge>
+                            }
                             return (
                               <ToggleButton
                                 className={styles.techniqueTag}
@@ -1088,7 +1131,7 @@ function ScenarioLaunchForm({
                                 size="small"
                                 appearance="outline"
                                 checked={tagSelected}
-                                disabled={submitting || tagMembers.length === 0}
+                                disabled={submitting || tagMembers.length === 0 || (!tagSelected && exceedsLimit)}
                                 onClick={() => handleTagChange(tag)}
                                 aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
                               >
@@ -1254,7 +1297,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
