@@ -27,6 +27,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
+from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -151,22 +152,29 @@ async def test_crescendo_construction_keeps_initialization_responsive_async(
     def build(**kwargs: Any) -> AttackTechnique:
         loop.call_soon_threadsafe(entered.set)
         assert threading.get_ident() != backend_thread
-        if not release.wait(5):
-            raise TimeoutError("Crescendo construction was not released.")
+        release.wait()
         return original_build(**kwargs)
 
     with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
         _patch_base_seed_groups(_make_seed_groups()),
         patch.object(scenario, "_build_crescendo_technique", side_effect=build),
     ):
         initialize = asyncio.create_task(scenario.initialize_async())
         try:
-            await asyncio.wait_for(entered.wait(), 5)
+            # Readiness includes setup and thread scheduling, not just event-loop responsiveness.
+            await asyncio.wait_for(entered.wait(), 30)
+            heartbeat = asyncio.Event()
+            loop.call_soon(heartbeat.set)
+            await asyncio.wait_for(heartbeat.wait(), 5)
             assert not initialize.done()
+            assert not release.is_set()
             release.set()
-            await asyncio.wait_for(initialize, 5)
+            await asyncio.wait_for(initialize, 30)
         finally:
             release.set()
+            if not initialize.done():
+                initialize.cancel()
             await asyncio.gather(initialize, return_exceptions=True)
     assert [attack.atomic_attack_name for attack in scenario._atomic_attacks] == ["imminent_crisis_crescendo"]
 
@@ -234,7 +242,9 @@ async def test_total_estimate_uses_initialization_cap_async(
         return list(seeds_by_dataset[dataset_name])
 
     config = DatasetAttackConfiguration(
-        sources=[DatasetSource(name=name) for name in seeds_by_dataset],
+        sources=[
+            DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS if sub_harm == "all" or harm.name == sub_harm
+        ],
         max_per_dataset="all",
         max_total=outer_limit,
     )
@@ -299,9 +309,9 @@ async def test_backend_total_one_rejects_both_sub_harms_before_reads_async(
         scenario_name="airt.psychosocial",
         scenario_class=MagicMock(return_value=scenario),
         objective_target=mock_objective_target,
-        max_dataset_size=1,
+        datasets=ScenarioDatasetRequest(max_total=1),
     )
-    assert args["dataset_config"].max_total == 1
+    assert args["dataset_overrides"].max_total == 1
     scenario.set_params_from_args(args=args)
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
@@ -356,7 +366,7 @@ async def test_backend_total_one_allows_one_selected_sub_harm_async(mock_objecti
         scenario_name="airt.psychosocial",
         scenario_class=MagicMock(return_value=scenario),
         objective_target=mock_objective_target,
-        max_dataset_size=1,
+        datasets=ScenarioDatasetRequest(max_total=1),
     )
     scenario.set_params_from_args(
         args={**args, "sub_harm": "imminent_crisis", "scenario_techniques": [PsychosocialTechnique.NoConverter]}
@@ -667,9 +677,40 @@ class TestPsychosocialCrossProduct:
             await scenario.initialize_async()
         assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
 
+    async def test_dataset_subset_narrows_the_sub_harms_async(self, *, mock_objective_target: PromptTarget) -> None:
+        scenario = _scenario_with_mock_scorers()
+        with _patch_base_seed_groups(_make_seed_groups()):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "dataset_config": DatasetAttackConfiguration(
+                        sources=[DatasetSource(name="airt_licensed_therapist")]
+                    ),
+                }
+            )
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+            await scenario.initialize_async()
+        assert list(scenario._dataset_config.dataset_names) == ["airt_licensed_therapist"]
+        assert {a.display_group for a in scenario._atomic_attacks} == {"licensed_therapist"}
+        assert [dataset.name for dataset in estimate.datasets] == ["airt_licensed_therapist"]
+
+    async def test_sub_harm_without_its_dataset_is_rejected_async(self, *, mock_objective_target: PromptTarget) -> None:
+        scenario = _scenario_with_mock_scorers()
+        with pytest.raises(DatasetConstraintError, match="needs 'airt_imminent_crisis'"):
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "sub_harm": "imminent_crisis",
+                    "dataset_config": DatasetAttackConfiguration(
+                        sources=[DatasetSource(name="airt_licensed_therapist")]
+                    ),
+                }
+            )
+            await scenario.initialize_async()
+
     async def test_unrelated_source_is_rejected(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
-        with pytest.raises(DatasetConstraintError, match="sub-harm datasets"):
+        with pytest.raises(DatasetConstraintError, match="Psychosocial sub_harm 'all' needs"):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,

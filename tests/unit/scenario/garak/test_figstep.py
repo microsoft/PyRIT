@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.converter import Base64Converter, Converter
@@ -23,7 +24,6 @@ from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.garak import FigStep, FigStepTechnique  # type: ignore[ty:unresolved-import]
 from pyrit.scenario.scenarios.garak.figstep import DEFAULT_MAX_DATASET_SIZE
 from pyrit.score import TrueFalseScorer
-from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_id(name: str) -> ComponentIdentifier:

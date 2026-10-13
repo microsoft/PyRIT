@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -174,6 +175,20 @@ class TestODINDatasetInit:
 
 class TestODINDatasetFetch:
     """Test fetch_dataset_async and data transformation."""
+
+    async def test_fetch_non_string_timestamp_async(
+        self, *, api_key: str, single_page_response: dict[str, Any]
+    ) -> None:
+        report = single_page_response["threat_feeds"][0]
+        report["disclosed_at"] = 1720000000
+        loader = _ODINDataset(api_key=api_key)
+        mock_resp = _make_mock_response(json_data=single_page_response)
+        with patch("requests.get", return_value=mock_resp):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        assert len(dataset.seeds) == 3
+        assert all(seed.date_added is None for seed in dataset.seeds if seed.name == report["title"])
+        assert dataset.seeds[2].date_added is not None
 
     async def test_fetch_no_api_key_raises(self):
         with patch.dict("os.environ", {}, clear=True):

@@ -824,6 +824,7 @@ export interface DatasetInfo {
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
   objectives: number | null
@@ -839,7 +840,57 @@ export interface DatasetListResponse {
 
 // --- Scenarios ---
 
+export type ScenarioDatasetLimit = number | 'all' | 'default'
+export type DatasetFetchPolicy = 'never' | 'if_missing'
+
+export interface ScenarioDatasetSourceInput {
+  name: string
+  max_size?: ScenarioDatasetLimit | null
+  fetch?: DatasetFetchPolicy | 'default' | null
+}
+
+export interface ScenarioDatasetRequest {
+  sources?: ScenarioDatasetSourceInput[] | null
+  max_per_dataset?: ScenarioDatasetLimit | null
+  max_total?: ScenarioDatasetLimit | null
+  fetch?: DatasetFetchPolicy | 'default' | null
+  filters?: Record<string, string[]> | null
+}
+
+export interface ScenarioDatasetOptions {
+  mode: 'any' | 'subset' | 'fixed'
+  allowed_names: string[]
+  max_selected?: number | null
+  per_dataset_limit: boolean
+  total_limit: boolean
+  supports_overrides: boolean
+  filters: boolean
+  source_settings?: boolean
+}
+
+export interface ScenarioDatasetSourceSettings {
+  name: string
+  max_size: number | 'all'
+  fetch: DatasetFetchPolicy
+  configured_provider: boolean
+}
+
+export interface ScenarioDatasetSettings {
+  sources: ScenarioDatasetSourceSettings[]
+  max_per_dataset: number | 'all'
+  max_total: number | 'all'
+  fetch: DatasetFetchPolicy
+  filters: Record<string, string[]>
+}
+
+export interface ScenarioDatasetLoadResponse {
+  settings: ScenarioDatasetSettings
+  items: DatasetInfo[]
+}
+
 export interface RegisteredScenario {
+  /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
+  max_concrete_techniques?: number | null
   scenario_name: string
   scenario_type: string
   scenario_version: number
@@ -852,6 +903,8 @@ export interface RegisteredScenario {
   all_techniques: string[]
   technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   uses_default_adversarial_target: boolean
@@ -881,6 +934,7 @@ export interface RunScenarioRequest {
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
   max_concurrency?: number
   max_retries?: number
   include_baseline?: boolean | null
@@ -926,6 +980,9 @@ export interface ScenarioRunSizeEstimateResponse {
   status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
   dataset_size: ScenarioDatasetSizeEstimate
   dataset_limit: DatasetLimitInput
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
+  effective_datasets?: ScenarioDatasetSettings
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -942,6 +999,7 @@ export interface ScenarioRunSizeEstimateRequest {
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
 }

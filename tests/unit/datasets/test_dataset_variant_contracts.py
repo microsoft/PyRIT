@@ -10,8 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from tests.end_to_end import test_all_datasets as dataset_tests
+from end_to_end import test_all_datasets as dataset_tests
 
 _LANGUAGE_TEXT = {
     "en": "Please describe the scene in this image.",

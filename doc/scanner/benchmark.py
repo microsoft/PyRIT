@@ -34,7 +34,7 @@
 #   --target openai_chat \
 #   --adversarial-targets adversarial_chat \
 #   --techniques role_play_video_game \
-#   --max-dataset-size 1
+#   --max-total 1
 # ```
 #
 # Pass multiple `--adversarial-targets` values to compare across models in a single run.

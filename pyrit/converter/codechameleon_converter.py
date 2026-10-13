@@ -272,8 +272,8 @@ class CodeChameleonConverter(Converter):
             if node_dict is None:
                 return None
             node = TreeNode(node_dict['value'])
-            node.left = helper(json.loads(node_dict['left'])) if node_dict['left'] else None
-            node.right = helper(json.loads(node_dict['right'])) if node_dict['right'] else None
+            node.left = helper(node_dict['left']) if node_dict['left'] else None
+            node.right = helper(node_dict['right']) if node_dict['right'] else None
             return node
 
         return helper(json.loads(problem_description))
@@ -324,7 +324,11 @@ class CodeChameleonConverter(Converter):
         """
     The following is the decryption function.
     ```python
+    import json
+
     def decryption(encrypted_problem):
+        if isinstance(encrypted_problem, str):
+            encrypted_problem = json.loads(encrypted_problem)
         # Create an empty sentence
         sentence = [''] * len(encrypted_problem)
         # Iterate through the list and place each word at the correct position

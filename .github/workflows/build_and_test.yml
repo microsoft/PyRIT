@@ -83,6 +83,10 @@ jobs:
           fi
           uv run pre-commit run --all-files
 
+      - name: Check production and unit typing
+        if: matrix.os == 'ubuntu-latest'
+        run: make ty
+
   # Main job runs only if pre-commit succeeded
   main-job:
     strategy:
