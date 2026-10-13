@@ -8,7 +8,7 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.targets import (
@@ -20,6 +20,20 @@ from pyrit.backend.services.target_service import get_target_service
 from pyrit.models.catalog.target import TargetInstance
 
 router = APIRouter(prefix="/targets", tags=["targets"])
+
+
+def _target_upload_directory(request: Request) -> str | None:
+    """
+    Return the folder the server lets API-created targets upload files from.
+
+    Args:
+        request: The incoming FastAPI request.
+
+    Returns:
+        str | None: The configured folder, or None when the server configures none.
+    """
+    directory: str | None = getattr(request.app.state, "target_upload_directory", None)
+    return directory
 
 
 @router.get(
@@ -52,7 +66,7 @@ async def list_targets(  # pyrit-async-suffix-exempt
         500: {"model": ProblemDetail, "description": "Internal server error"},
     },
 )
-async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exempt
+async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-async-suffix-exempt
     """
     List target types projected from ``TargetRegistry`` metadata.
 
@@ -60,7 +74,7 @@ async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exemp
         TargetTypeResponse: Available target types and build parameters.
     """
     service = get_target_service()
-    return await service.list_target_types_async()
+    return await service.list_target_types_async(upload_directory=_target_upload_directory(request))
 
 
 @router.post(
@@ -75,7 +89,9 @@ async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exemp
     },
 )
 async def create_target(
-    request: CreateTargetRequest,
+    *,
+    body: CreateTargetRequest,
+    request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
@@ -91,7 +107,7 @@ async def create_target(
     service = get_target_service()
 
     try:
-        return await service.create_target_async(request=request)
+        return await service.create_target_async(request=body, upload_directory=_target_upload_directory(request))
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

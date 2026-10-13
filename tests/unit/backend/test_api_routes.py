@@ -1223,6 +1223,24 @@ class TestTargetRoutes:
 
             assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
+    def test_target_routes_pass_server_upload_folder(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch.object(client.app.state, "target_upload_directory", "/srv/uploads", create=True),
+        ):
+            mock_service = MagicMock()
+            mock_service.list_target_types_async = AsyncMock(return_value=TargetTypeResponse(items=[]))
+            mock_service.create_target_async = AsyncMock(side_effect=ValueError("Set target_upload_directory"))
+            mock_get_service.return_value = mock_service
+
+            types_response = client.get("/api/targets/types")
+            create_response = client.post("/api/targets", json={"type": "HTTPXAPITarget", "params": {}})
+
+        assert types_response.status_code == status.HTTP_200_OK
+        assert create_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert mock_service.list_target_types_async.call_args.kwargs["upload_directory"] == "/srv/uploads"
+        assert mock_service.create_target_async.call_args.kwargs["upload_directory"] == "/srv/uploads"
+
     def test_get_target_success(self, client: TestClient) -> None:
         """Test getting a target by ID."""
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:

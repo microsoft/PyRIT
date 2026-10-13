@@ -29,6 +29,7 @@ from pyrit.backend.models.targets import (
 from pyrit.common import REQUIRED_VALUE
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.parameter import Parameter
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,8 @@ class TargetService:
         Environment-backed values remain optional in Python constructors so targets
         can resolve them from dotenv configuration. The GUI must still collect them
         explicitly, so the API marks those values required without changing the
-        target constructor signatures.
+        target constructor signatures. The upload folder of a target that uploads
+        local files is set by the server, so it is left out.
 
         Args:
             target_type (str): Registered target class name.
@@ -182,9 +184,10 @@ class TargetService:
         return [
             parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
             for parameter in parameters
+            if parameter.name != target_cls.upload_directory_parameter
         ]
 
-    async def list_target_types_async(self) -> TargetTypeResponse:
+    async def list_target_types_async(self, *, upload_directory: str | None = None) -> TargetTypeResponse:
         """
         List all available target types from the target class registry.
 
@@ -192,9 +195,14 @@ class TargetService:
         constructor parameters they may supply, each described in the form callers
         send it, and the auth modes it supports, all projected from the registry's
         ``TargetMetadata``; targets that need a Python object for a required
-        parameter are left out. Deciding which entries to surface to a
+        parameter are left out, and so are targets that upload local files when the
+        server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
+
+        Args:
+            upload_directory (str | None): Folder the server lets API-created targets upload files
+                from, or None when the server configures none.
 
         Returns:
             TargetTypeResponse containing all available target classes.
@@ -216,10 +224,60 @@ class TargetService:
             )
             for metadata in metadata_items
             if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+            and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
         ]
         return TargetTypeResponse(items=items)
 
-    async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
+    def _has_upload_directory(self, *, target_type: str, upload_directory: str | None) -> bool:
+        """
+        Return whether a target type uploads no local files or the server gives it an upload folder.
+
+        Args:
+            target_type (str): Registered target class name.
+            upload_directory (str | None): Folder the server configured for uploads, if any.
+
+        Returns:
+            bool: False when the type uploads local files and the server configures no folder.
+        """
+        return upload_directory is not None or self._registry.get_class(target_type).upload_directory_parameter is None
+
+    @staticmethod
+    def _apply_upload_directory(
+        *,
+        target_type: str,
+        target_cls: type[PromptTarget],
+        params: dict[str, Any],
+        upload_directory: str | None,
+    ) -> None:
+        """
+        Give a target that uploads local files the server's upload folder.
+
+        Args:
+            target_type (str): Registered target class name.
+            target_cls (type[PromptTarget]): Target class being created.
+            params (dict[str, Any]): Constructor parameters, updated in place.
+            upload_directory (str | None): Folder the server configured for uploads, if any.
+
+        Raises:
+            ValueError: If the caller supplied the upload folder, or the server configures none.
+        """
+        parameter_name = target_cls.upload_directory_parameter
+        if parameter_name is None:
+            return
+        if parameter_name in params:
+            raise ValueError(
+                f"Parameter '{parameter_name}' of '{target_type}' is set by the server and cannot be supplied."
+            )
+        if upload_directory is None:
+            raise ValueError(
+                f"Target type '{target_type}' uploads files from the server. Set target_upload_directory in the "
+                "server configuration to create it through the API, or register it in Python or with an initializer."
+            )
+        params[parameter_name] = upload_directory
+
+    async def create_target_async(
+        self, *, request: CreateTargetRequest, upload_directory: str | None = None
+    ) -> TargetInstance:
         """
         Create a new target instance from API request.
 
@@ -227,23 +285,29 @@ class TargetService:
         reference resolution, and construction are owned by the
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
         by the target classes themselves. This service only enforces the
-        request-level auth contract: for ``identity`` it confirms the target
+        request-level contract: for ``identity`` it confirms the target
         supports it and omits the api_key plus any registry-flagged
         identity-conflicting parameters so the target validates its own
-        endpoint and authenticates itself. The response is built before the
-        target is registered, so a failed request leaves no registered target.
+        endpoint and authenticates itself, and a target that uploads local files
+        gets the server's upload folder, which callers cannot choose. The response
+        is built before the target is registered, so a failed request leaves no
+        registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
+            upload_directory: Folder the server lets API-created targets upload files from,
+                or None when the server configures none.
 
         Returns:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not registered or identity auth is
-                requested but unsupported by the target type. Construction errors
-                (unknown params, incompatible inner targets, unrecognized identity
-                endpoints) are raised by the registry / target classes.
+            ValueError: If the target type is not registered, identity auth is
+                requested but unsupported by the target type, or a target that
+                uploads local files is requested with its upload folder or while
+                the server configures none. Construction errors (unknown params,
+                incompatible inner targets, unrecognized identity endpoints) are
+                raised by the registry / target classes.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -267,6 +331,9 @@ class TargetService:
                     if parameter.identity_conflicting:
                         params.pop(parameter.name, None)
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        self._apply_upload_directory(
+            target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
+        )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.

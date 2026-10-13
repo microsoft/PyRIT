@@ -6,6 +6,7 @@ Tests for backend target service.
 """
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -417,6 +418,25 @@ class TestListTargetTypes:
         assert parameter.type_name == type_name
         assert parameter.choices == choices
 
+    async def test_types_leave_out_upload_targets_without_server_upload_folder(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        target_types = {item.target_type for item in result.items}
+        assert "HTTPXAPITarget" not in target_types
+        assert "HTTPTarget" in target_types
+
+    async def test_types_list_upload_targets_without_their_upload_folder(self, tmp_path: Path) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async(upload_directory=str(tmp_path))
+
+        entry = next(item for item in result.items if item.target_type == "HTTPXAPITarget")
+        parameter_names = {parameter.name for parameter in entry.parameters}
+        assert "allowed_upload_directory" not in parameter_names
+        assert "file_path" in parameter_names
+
 
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
@@ -623,6 +643,47 @@ class TestCreateTarget:
 
         assert result.identifier.model_name == "my-gpt4o-deployment"
         assert result.identifier.underlying_model_name == "gpt-4o"
+
+    async def test_create_upload_target_requires_server_upload_folder(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="upload", type="HTTPXAPITarget", params={"http_url": "https://example.com"})
+
+        with pytest.raises(ValueError, match="Set target_upload_directory in the server configuration"):
+            await service.create_target_async(request=request)
+
+        assert service.get_target_object(target_registry_name="upload") is None
+
+    async def test_create_upload_target_rejects_caller_upload_folder(self, sqlite_instance, tmp_path: Path) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            name="upload",
+            type="HTTPXAPITarget",
+            params={"http_url": "https://example.com", "allowed_upload_directory": "/"},
+        )
+
+        with pytest.raises(ValueError, match="'allowed_upload_directory' of 'HTTPXAPITarget' is set by the server"):
+            await service.create_target_async(request=request, upload_directory=str(tmp_path))
+
+        assert service.get_target_object(target_registry_name="upload") is None
+
+    async def test_create_upload_target_uses_server_upload_folder(self, sqlite_instance, tmp_path: Path) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="upload", type="HTTPXAPITarget", params={"http_url": "https://example.com"})
+
+        await service.create_target_async(request=request, upload_directory=str(tmp_path))
+
+        target = service.get_target_object(target_registry_name="upload")
+        assert target.allowed_upload_directory == tmp_path.resolve()
+
+    async def test_create_target_without_uploads_ignores_server_upload_folder(
+        self, sqlite_instance, tmp_path: Path
+    ) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="text", type="TextTarget", params={})
+
+        await service.create_target_async(request=request, upload_directory=str(tmp_path))
+
+        assert service.get_target_object(target_registry_name="text") is not None
 
 
 class TestCreateTargetEntraAuth:
