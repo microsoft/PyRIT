@@ -13,7 +13,6 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import text, update
 
-from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._profile_aggregation import ProfileAggregation
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsProfile, RawAnalyticsReport
@@ -28,6 +27,7 @@ from pyrit.models import (
 from unit.memory.test_attack_analytics import control, make_result
 
 if TYPE_CHECKING:
+    from pyrit.analytics import AttackResultAnalytics
     from pyrit.memory import SQLiteMemory
 
 
@@ -300,16 +300,15 @@ async def test_exact_reader_cap_and_overflow_keep_complete_sql_parity(
 
 @pytest.mark.parametrize("compare", [None, "converter_type", "attack_type"])
 async def test_sdk_report_matches_sql_fallback(
-    mixed_reader: AttackAnalyticsReader, sqlite_instance: SQLiteMemory, compare: str | None
+    mixed_reader: AttackAnalyticsReader, analytics: AttackResultAnalytics, compare: str | None
 ) -> None:
     query = AttackAnalyticsQuery(
         group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
         compare_by=AttackAnalyticsDimension(name=compare) if compare else None,
     )
-    async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
-        fast = await analytics.query_async(query=query)
-        with patch.object(AttackAnalyticsReader, "MAX_COMPACT_PROFILES", 0):
-            sql = await analytics.query_async(query=query)
+    fast = await analytics.query_async(query=query)
+    with patch.object(AttackAnalyticsReader, "MAX_COMPACT_PROFILES", 0):
+        sql = await analytics.query_async(query=query)
     fields = {
         "summary",
         "groups",

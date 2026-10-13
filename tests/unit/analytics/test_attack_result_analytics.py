@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
-from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +12,6 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.analytics import AttackResultAnalytics, compute_scenario_statistics
-from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions.analytics_exception import AnalyticsBusyException, AnalyticsDataException
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
@@ -38,26 +36,9 @@ from unit.memory.test_attack_analytics import make_result, predicate
 from unit.mocks import make_scenario_result
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from pyrit.memory.query_control import QueryControl
-
-
-@pytest.fixture
-async def analytics(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResultAnalytics, None]:
-    """
-    Run real SQLite correctness checks with bounded test time, not a production latency requirement.
-
-    Full-suite contention must not turn filter/count assertions into one-second
-    benchmarks. Default budgets and expiration/cleanup are tested independently
-    in test_execution.py. Admission capacities and native database work are unchanged.
-    """
-    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
-    with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
-        async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
-            yield analytics
 
 
 @pytest.fixture
