@@ -134,6 +134,21 @@ export function draftAttachment(piece: ConversationDraftPiece): MessageAttachmen
   }
 }
 
+export function draftMessageToInput(message: ConversationDraftMessage): { text: string; attachments: MessageAttachment[] } {
+  const pieces = message.pieces.map((piece: ConversationDraftPiece) => piece.converted_value === undefined ? piece : {
+    ...piece,
+    original_value: piece.converted_value,
+    data_type: piece.converted_value_data_type ?? piece.data_type,
+    file: undefined,
+    previewUrl: undefined,
+  })
+  return {
+    text: pieces.filter((piece: ConversationDraftPiece) => !isPathDataType(piece.data_type))
+      .map((piece: ConversationDraftPiece) => piece.original_value).join('\n'),
+    attachments: pieces.filter((piece: ConversationDraftPiece) => isPathDataType(piece.data_type)).map(draftAttachment),
+  }
+}
+
 export function attachmentDraft(attachment: MessageAttachment): ConversationDraftPiece {
   return {
     draftId: attachment.draftId ?? generateClientId(),

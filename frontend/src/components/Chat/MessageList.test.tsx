@@ -111,6 +111,22 @@ describe("MessageList", () => {
     expect(screen.getByText("Hello, how are you?")).toBeInTheDocument();
   });
 
+  it.each(["system", "developer", "simulated_tool"])("should allow branching at a %s turn", async (role: Message["role"]) => {
+    const user = userEvent.setup();
+    const onCopyToNewConversation = jest.fn();
+    const onUseInTechnique = jest.fn();
+    render(<TestWrapper><MessageList messages={[{
+      role, content: "Context", timestamp: new Date().toISOString(),
+    }]} onCopyToInput={jest.fn()} onCopyToNewConversation={onCopyToNewConversation}
+      onUseInTechnique={onUseInTechnique} /></TestWrapper>);
+    await user.click(screen.getByRole("button", { name: "Copy conversation" }));
+    await user.click(screen.getByRole("menuitem", { name: "New conversation" }));
+    expect(onCopyToNewConversation).toHaveBeenCalledWith(0);
+    await user.click(screen.getByRole("button", { name: "Copy conversation" }));
+    await user.click(screen.getByRole("menuitem", { name: "Technique.execute" }));
+    expect(onUseInTechnique).toHaveBeenCalledWith(0);
+  });
+
   it("should render user messages", () => {
     const userMessages: Message[] = [
       {

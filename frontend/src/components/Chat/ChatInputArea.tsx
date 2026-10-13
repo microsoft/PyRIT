@@ -164,9 +164,6 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const draftRevisionRef = useRef(0)
   const previousConversionRevisionKeyRef = useRef(conversionRevisionKey)
   const inputDisabledReasons = [...disabledReasons]
-  if (!activeTarget && disabled) {
-    inputDisabledReasons.push('No target is selected. Select a target to enter a prompt.')
-  }
   if (disabled && inputDisabledReasons.length === 0) {
     inputDisabledReasons.push('The prompt box is temporarily unavailable. Wait for the current operation to finish.')
   }

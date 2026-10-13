@@ -43,6 +43,7 @@ interface MessageListProps {
   onCopyToInput?: (messageIndex: number) => void
   onCopyToNewConversation?: (messageIndex: number) => void
   onCopyToNewAttack?: (messageIndex: number) => void
+  onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
   newConversationDisabledReason?: string
   /** True while loading a historical attack's messages */
@@ -542,7 +543,7 @@ function getRenderMessagePieces(message: Message, messageIndex: number): RenderM
 }
 
 export default function MessageList({
-  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, copyConversationDisabled = false,
+  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   newConversationDisabledReason, isLoading, globalMarkdown = false,
 }: MessageListProps) {
   const styles = useMessageListStyles()
@@ -767,7 +768,7 @@ export default function MessageList({
 
               {!message.isLoading && !message.error && (
                 <div className={styles.messageActions} data-testid={`message-actions-${index}`}>
-                  {onCopyToInput && (isUser || isSimulated || message.role === 'assistant') && (
+                  {onCopyToInput && (
                     <Menu>
                       <MenuTrigger disableButtonEnhancement>
                         <Button
@@ -789,6 +790,9 @@ export default function MessageList({
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
                           title="Copy the conversation through this message into a new attack"
                           onClick={() => onCopyToNewAttack?.(index)}>New attack</MenuItem>
+                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
+                          title="Save a copy through this message and copy its ID for a technique"
+                          onClick={() => onUseInTechnique(index)}>Technique.execute</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>
                   )}

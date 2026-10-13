@@ -88,19 +88,21 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("should explain a missing target when the disabled composer is clicked", async () => {
+  it("should allow drafting without a target and keep Send disabled without a warning box", async () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <ChatInputArea {...defaultProps} activeTarget={null} disabled />
+        <ChatInputArea {...defaultProps} activeTarget={null} sendDisabled />
       </TestWrapper>
     );
 
-    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("textbox")).toBeEnabled();
     expect(getSendButton()).toBeDisabled();
+    await user.type(screen.getByRole("textbox"), "Unsent draft");
     expect(screen.queryByText(/No target is selected/)).not.toBeInTheDocument();
-    await user.click(screen.getByLabelText("Why the prompt box is disabled"));
-    expect(screen.getByRole("listitem")).toHaveTextContent("No target is selected.");
+    expect(screen.queryByLabelText("Why the prompt box is disabled")).not.toBeVisible();
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
   it("should show all disabled reasons on hover and keyboard activation", async () => {
@@ -110,7 +112,7 @@ describe("ChatInputArea", () => {
     const composer = screen.getByLabelText("Why the prompt box is disabled");
     await user.hover(composer);
     expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("This conversation contains a target error.")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     composer.focus();

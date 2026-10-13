@@ -1,9 +1,25 @@
 import type { ConversationDraftMessage, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
-import { draftConverterInputs, draftDataTypes, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
+import { draftConverterInputs, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it('moves text and media to the composer without losing converted content or local files', () => {
+    const file = new File(['image'], 'image.png', { type: 'image/png' })
+    const prompt = draftMessageToInput({
+      id: 'user', role: 'user', pieces: [
+        { draftId: 'text', data_type: 'text', original_value: 'Original', converted_value: 'Converted' },
+        { draftId: 'file', data_type: 'image_path', original_value: '', file, previewUrl: 'blob:local' },
+        { draftId: 'converted', data_type: 'text', original_value: 'Image prompt',
+          converted_value: 'output.png', converted_value_data_type: 'image_path' },
+      ],
+    })
+    expect(prompt.text).toBe('Converted')
+    expect(prompt.attachments).toHaveLength(2)
+    expect(prompt.attachments[0]).toMatchObject({ file, url: 'blob:local' })
+    expect(prompt.attachments[1]).toMatchObject({ sourceValue: 'output.png', sourceDataType: 'image_path' })
+  })
+
   it.each([
     ['assistant', 'simulated_assistant'],
     ['tool', 'simulated_tool'],

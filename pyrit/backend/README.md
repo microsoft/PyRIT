@@ -32,6 +32,14 @@ The API will be available at `http://localhost:8000`
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Saved conversations
+
+`GET /api/attacks/conversations/{conversation_id}` returns the saved chat history
+and its owning attack. The scanner uses this read-only lookup to open its
+conversation editor. Missing IDs and conversations outside a saved chat return
+404. Saving from the scanner creates a copy through `POST /api/attacks/save-conversation`;
+it does not change the source or send to a target.
+
 ### Techniques
 
 | Endpoint | Result |

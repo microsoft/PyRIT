@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
@@ -25,12 +26,13 @@ from pyrit.backend.models.attacks import (
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
 from pyrit.backend.models.targets import TargetListResponse
+from pyrit.backend.routes.attacks import get_saved_conversation_async as get_saved_conversation_route_async
 from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.target_service import TargetService
 from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.memory.memory_models import PromptMemoryEntry
-from pyrit.models import Conversation, MessagePiece, PromptDataType, Score
+from pyrit.models import Conversation, ConversationReference, ConversationType, MessagePiece, PromptDataType, Score
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.models.target.target_capabilities import TargetCapabilities
@@ -97,6 +99,101 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestConversationEditor:
+    @pytest.mark.parametrize("related", [False, True])
+    async def test_lookup_saved_conversation_and_edit_copy_async(
+        self, *, sqlite_instance: SQLiteMemory, related: bool
+    ) -> None:
+        service = AttackService()
+        source = await service.save_conversation_async(request=draft())
+        if related:
+            branch = draft(value="Related history")
+            branch.destination = "same_attack"
+            branch.attack_result_id = source.attack.attack_result_id
+            source = await service.save_conversation_async(request=branch)
+
+        loaded = await service.get_saved_conversation_async(conversation_id=source.messages.conversation_id)
+        assert loaded is not None
+        assert loaded.attack.attack_result_id == source.attack.attack_result_id
+        assert loaded.messages == source.messages
+        request = draft(value="Edited copy")
+        request.source_attack_result_id = loaded.attack.attack_result_id
+        request.source_conversation_id = uuid.UUID(loaded.messages.conversation_id)
+        request.messages[0].pieces[0].source_piece_id = loaded.messages.messages[0].message_pieces[0].id
+        copied = await service.save_conversation_async(request=request)
+        assert copied.messages.conversation_id != loaded.messages.conversation_id
+        assert copied.messages.messages[0].message_pieces[0].original_value == "Edited copy"
+        assert await service.get_saved_conversation_async(conversation_id=loaded.messages.conversation_id) == loaded
+
+        with patch("pyrit.backend.routes.attacks.get_attack_service", return_value=service):
+            response = await get_saved_conversation_route_async(conversation_id=loaded.messages.conversation_id)
+        assert response == loaded
+
+    async def test_lookup_missing_or_unowned_conversation_async(self, sqlite_instance: SQLiteMemory) -> None:
+        service = AttackService()
+        missing = str(uuid.uuid4())
+        assert await service.get_saved_conversation_async(conversation_id=missing) is None
+        unowned = str(uuid.uuid4())
+        await sqlite_instance.add_message_pieces_to_memory_async(
+            message_pieces=[MessagePiece(role="user", original_value="Standalone history", conversation_id=unowned)]
+        )
+        assert await service.get_saved_conversation_async(conversation_id=unowned) is None
+        with patch("pyrit.backend.routes.attacks.get_attack_service", return_value=service):
+            with pytest.raises(HTTPException) as error:
+                await get_saved_conversation_route_async(conversation_id=missing)
+        assert error.value.status_code == 404
+
+    @pytest.mark.parametrize("conversation_type", [ConversationType.ADVERSARIAL, ConversationType.PREPARATION])
+    async def test_lookup_excludes_internal_conversation_async(self, conversation_type: ConversationType) -> None:
+        service = AttackService()
+        source = await service.save_conversation_async(request=draft())
+        internal = str(uuid.uuid4())
+        source.attack.related_conversations.add(
+            ConversationReference(conversation_id=internal, conversation_type=conversation_type)
+        )
+        with (
+            patch.object(
+                service._memory,
+                "get_conversation_metadata_async",
+                new_callable=AsyncMock,
+                return_value=Conversation(conversation_id=internal, attack_result_id=source.attack.attack_result_id),
+            ),
+            patch.object(service, "get_attack_async", new_callable=AsyncMock, return_value=source.attack),
+            patch.object(service, "get_conversation_messages_async", new_callable=AsyncMock) as messages,
+        ):
+            assert await service.get_saved_conversation_async(conversation_id=internal) is None
+            messages.assert_not_awaited()
+
+    @pytest.mark.parametrize("bound", [False, True])
+    async def test_copy_keeps_existing_target_async(
+        self, *, editor_target: MockPromptTarget, sqlite_instance: SQLiteMemory, bound: bool
+    ) -> None:
+        service = AttackService()
+        initial = draft()
+        initial.messages[0].role = "system"
+        initial.target_registry_name = "selected" if bound else None
+        source = await service.save_conversation_async(request=initial)
+        request = draft()
+        request.destination = "same_attack"
+        request.attack_result_id = source.attack.attack_result_id
+        request.source_attack_result_id = source.attack.attack_result_id
+        request.source_conversation_id = uuid.UUID(source.messages.conversation_id)
+        request.target_registry_name = "selected" if bound else None
+        request.messages = initial.messages
+
+        saved = await service.save_conversation_async(request=request)
+
+        assert saved.attack.attack_result_id == source.attack.attack_result_id
+        assert saved.messages.conversation_id != source.messages.conversation_id
+        assert saved.messages.messages[0].role == "system"
+        assert saved.attack.target_unbound is (not bound)
+        original = await sqlite_instance.get_conversation_metadata_async(
+            conversation_id=source.messages.conversation_id
+        )
+        copied = await sqlite_instance.get_conversation_metadata_async(conversation_id=saved.messages.conversation_id)
+        assert original is not None and copied is not None
+        assert original.target_identifier == copied.target_identifier
+        assert editor_target.prompt_sent == []
+
     @pytest.mark.parametrize("data_type", ["audio_path", "video_path", "binary_path"])
     @pytest.mark.parametrize("same_attack", [False, True])
     @pytest.mark.parametrize("converted", [False, True])

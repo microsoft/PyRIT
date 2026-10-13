@@ -536,11 +536,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       lastResponseMessagePieceId: null,
       status: 'success',
     })
-    // Replace when promoting an empty /chat to its attack url (first message);
+    // Replace when promoting an empty /chat to its conversation URL (first message);
     // push when branching from an existing attack so Back returns to the source.
     // Keep sends blocked until the new route exposes the created attack's identity.
     startCreatedAttackTransition(() => {
-      navigate(attackRoutePath(arId), { replace: routeAttackId === null })
+      navigate(attackConversationRoutePath(arId, convId), { replace: routeAttackId === null })
     })
   }, [activeTarget, generation, routeAttackId, navigate, startCreatedAttackTransition])
 

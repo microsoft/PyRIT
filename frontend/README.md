@@ -21,6 +21,28 @@ refreshes do not override your open/closed choice. Creating, copying, or repeati
 conversations still opens the desktop drawer. On narrow screens the drawer opens
 only when requested and closes after selecting a conversation.
 
+Each saved turn, including a system turn, has a **Copy conversation** menu.
+**New conversation** and **New attack** copy history through that turn, open the
+conversation panel, and select the copy at its full
+`/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
+within a target-free attack keeps it target-free until you send a prompt.
+When you save an edited conversation, its final user turn moves to the prompt
+box instead of saved history. You can enter and edit prompts without a target.
+Send stays disabled until you select a target; no target-warning box is shown.
+
+**Technique.execute** saves a target-free copy through the selected turn
+and opens `/scanner/technique.execute?prepended_conversation_id={conversation_id}`.
+The scanner configuration fills **prepended_conversation_id** from this URL.
+There is no clipboard step, and opening the configuration does not launch a scan.
+Select **Add new conversation** beside that field to build simulated history,
+or **Edit conversation** to load its current history. **Add to attack** saves all
+turns to a new conversation and updates the field. It does not change the source
+history, send prompts, or launch a scan. These controls are not in Registry.
+The **Apply converters to conversation** toggle beside **Edit conversation** is
+off by default and disabled when the conversation ID is empty. When enabled,
+request converters run on the stored history during the scan, without changing
+the source conversation. New outgoing turns are always converted.
+
 ## Dataset catalog
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
