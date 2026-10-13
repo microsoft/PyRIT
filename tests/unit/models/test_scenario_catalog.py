@@ -38,8 +38,9 @@ def test_run_size_estimate_compatibility_alias_is_canonical_model() -> None:
 
 def test_run_size_estimate_preserves_legacy_total_and_serializes_additively() -> None:
     """The original total field remains available beside the canonical structured fields."""
+    legacy_input: dict[str, int] = {"estimated_attack_count": 6}
     estimate = ScenarioRunSizeEstimate(
-        estimated_attack_count=6,
+        **legacy_input,
         components=[
             ScenarioRunSizeComponent(
                 label="Techniques",
@@ -184,7 +185,7 @@ def test_run_size_estimate_requires_exact_total_to_match_components() -> None:
     with pytest.raises(ValidationError, match="components total 6, not 7"):
         ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Exact,
-            estimated_attack_count=7,
+            total_attack_count=7,
             components=[ScenarioRunSizeComponent(label="Techniques", count=6)],
         )
 
@@ -195,7 +196,7 @@ def test_run_size_estimate_requires_exact_bounds_to_match_total(field_name: str)
     with pytest.raises(ValidationError, match=f"{field_name} to equal total_attack_count"):
         ScenarioRunSizeEstimate(
             status=ScenarioRunSizeEstimateStatus.Exact,
-            estimated_attack_count=6,
+            total_attack_count=6,
             components=[ScenarioRunSizeComponent(label="Techniques", count=6)],
             **{field_name: 5},
         )
@@ -296,7 +297,7 @@ def test_non_exact_run_size_rejects_total(status: ScenarioRunSizeEstimateStatus)
     with pytest.raises(ValidationError, match="cannot include total_attack_count"):
         ScenarioRunSizeEstimate(
             status=status,
-            estimated_attack_count=1,
+            total_attack_count=1,
             components=[ScenarioRunSizeComponent(label="Candidate", count=1)],
         )
 

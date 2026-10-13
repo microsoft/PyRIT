@@ -12,6 +12,7 @@ import httpx
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
+from unit.mocks import MockPromptTarget
 
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
 from pyrit.prompt_target import (
@@ -39,7 +40,6 @@ from pyrit.prompt_target.common.target_capabilities import (
     UnsupportedCapabilityBehavior,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from tests.unit.mocks import MockPromptTarget
 
 
 class _RealValidationTarget(PromptTarget):

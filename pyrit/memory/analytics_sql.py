@@ -51,13 +51,18 @@ class UnicodeLower(FunctionElement[str]):
 @compiles(UnicodeLower, "sqlite")
 def _sqlite_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -> str:
     """
-    Compile the SQLite function registered on each memory connection.
+    Keep ASCII text in SQLite and use the registered Unicode function otherwise.
 
     Returns:
-        str: A Unicode-aware lowercase expression.
+        str: Exact Unicode-aware lowercasing without a Python/GIL callback for ASCII text.
     """
     value = _arguments(element, compiler, **kwargs)[0]
-    return f"{UnicodeLower.SQLITE_FUNCTION_NAME}({value})"
+    # Byte/character lengths differ for Unicode and embedded NULs. Non-text
+    # values keep the existing Python conversion rather than SQLite's stringification.
+    return (
+        f"CASE WHEN typeof({value}) = 'text' AND length(CAST({value} AS BLOB)) = length({value}) "
+        f"THEN lower({value}) ELSE {UnicodeLower.SQLITE_FUNCTION_NAME}({value}) END"
+    )
 
 
 @compiles(UnicodeLower, "mssql")

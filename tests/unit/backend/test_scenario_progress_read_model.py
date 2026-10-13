@@ -54,6 +54,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import (
     TechniqueBundle,
 )
 from pyrit.score import Scorer, SubStringScorer
+from unit.async_utils import get_defined_tasks
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
 
@@ -237,7 +238,7 @@ async def test_cancelled_waiter_preserves_global_refresh_lock() -> None:
         assert not read_model._cache_lock.locked()
     finally:
         release.set()
-        tasks = [task for task in (owner, waiter, successor) if task is not None]
+        tasks = get_defined_tasks(owner, waiter, successor)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

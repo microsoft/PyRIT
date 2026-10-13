@@ -21,17 +21,22 @@ def _row(
     jailbreak_query: str = "jailbreak text",
     image_path: str = "llm_transfer_attack/img_001.png",
     fmt: str = "Image+Text",
-    transfer_attack_type: str = "SD",
+    from_source: str = "GPT Generate",
+    transfer_from_llm: bool = True,
     row_id: int = 1,
 ) -> dict:
+    # Mirrors the upstream column set exactly:
+    # id, jailbreak_query, redteam_query, format, policy, image_path, from, selected_mini, transfer_from_llm
     return {
         "id": row_id,
-        "policy": policy,
-        "redteam_query": redteam_query,
         "jailbreak_query": jailbreak_query,
-        "image_path": image_path,
+        "redteam_query": redteam_query,
         "format": fmt,
-        "transfer_attack_type": transfer_attack_type,
+        "policy": policy,
+        "image_path": image_path,
+        "from": from_source,
+        "selected_mini": True,
+        "transfer_from_llm": transfer_from_llm,
     }
 
 
@@ -105,9 +110,41 @@ async def test_fetch_dataset_happy_path(tmp_path):
     # Per-row trace-back metadata reaches all three
     for seed in dataset.seeds:
         assert seed.metadata["source_format"] == "Image+Text"
-        assert seed.metadata["transfer_attack_type"] == "SD"
+        assert seed.metadata["from"] == "GPT Generate"
+        assert seed.metadata["transfer_from_llm"] is True
         assert seed.metadata["policy"] == "Hate Speech"
         assert seed.metadata["row_id"] == "1"
+        # Regression: this key never existed upstream and used to be emitted as "".
+        assert "transfer_attack_type" not in seed.metadata
+
+
+async def test_fetch_dataset_metadata_keeps_mllm_row_provenance(tmp_path):
+    image_rel = "mllm_attack/img_002.png"
+    _setup_zip_dir(tmp_path, [image_rel])
+    loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
+    rows = [_row(image_path=image_rel, from_source="MLLM Attack", transfer_from_llm=False, row_id=2)]
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    for seed in dataset.seeds:
+        assert seed.metadata["from"] == "MLLM Attack"
+        assert seed.metadata["transfer_from_llm"] is False
+
+
+async def test_fetch_dataset_metadata_omits_missing_transfer_flag(tmp_path):
+    image_rel = "img.png"
+    _setup_zip_dir(tmp_path, [image_rel])
+    loader = _JailbreakV28KDataset(zip_dir=str(tmp_path))
+    row = _row(image_path=image_rel)
+    del row["transfer_from_llm"]
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=[row])):
+        dataset = await loader.fetch_dataset_async()
+
+    for seed in dataset.seeds:
+        assert seed.metadata["from"] == "GPT Generate"
+        assert "transfer_from_llm" not in seed.metadata
 
 
 async def test_fetch_dataset_filters_by_harm_category(tmp_path):

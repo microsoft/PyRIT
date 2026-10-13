@@ -95,21 +95,21 @@ def mock_runtime_env():
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockObjectiveTarget")
     return mock
 
 
 @pytest.fixture
-def mock_objective_scorer() -> TrueFalseCompositeScorer:
+def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseCompositeScorer)
     mock.get_identifier.return_value = _mock_scorer_id("MockObjectiveScorer")
     return mock
 
 
 @pytest.fixture
-def mock_adversarial_target() -> PromptTarget:
+def mock_adversarial_target() -> MagicMock:
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock

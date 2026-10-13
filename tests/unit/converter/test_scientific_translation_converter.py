@@ -12,7 +12,7 @@ from pyrit.prompt_target import PromptTarget
 
 
 @pytest.fixture
-def mock_target() -> PromptTarget:
+def mock_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[

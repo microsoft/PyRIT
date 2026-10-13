@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.converter import Base64Converter
@@ -42,7 +43,6 @@ from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique
 from pyrit.scenario.scenarios.technique.execute import Execute, _build_execute_technique
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
-from tests.unit.mocks import MockPromptTarget
 
 
 @pytest.fixture

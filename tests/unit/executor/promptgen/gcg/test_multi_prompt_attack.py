@@ -14,10 +14,12 @@ attack_manager_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.base.attack_manager",
     reason="GCG optional dependencies (torch, mlflow, etc.) not installed",
 )
-IndividualPromptAttack = attack_manager_mod.IndividualPromptAttack
-MultiPromptAttack = attack_manager_mod.MultiPromptAttack
-ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
-EvaluateAttack = attack_manager_mod.EvaluateAttack
+from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
+    EvaluateAttack,
+    IndividualPromptAttack,
+    MultiPromptAttack,
+    ProgressiveMultiPromptAttack,
+)
 
 
 class _StubMultiPromptAttack:
@@ -95,7 +97,7 @@ def _make_worker(*, name: str) -> SimpleNamespace:
 def test_attack_manager_initializes_exact_log_schema(
     *,
     tmp_path: Path,
-    attack_class: type[Any],
+    attack_class: type[IndividualPromptAttack | ProgressiveMultiPromptAttack | EvaluateAttack],
     additional_kwargs: dict[str, Any],
     expected_param_keys: list[str],
 ) -> None:
@@ -153,7 +155,7 @@ def test_attack_manager_initializes_exact_log_schema(
 def test_attack_manager_records_run_params_before_creating_mpa(
     *,
     tmp_path: Path,
-    attack_class: type[Any],
+    attack_class: type[IndividualPromptAttack | ProgressiveMultiPromptAttack],
     additional_kwargs: dict[str, Any],
 ) -> None:
     logfile = tmp_path / "attack.json"

@@ -26,6 +26,7 @@ from sqlalchemy import (
     Unicode,
     and_,
     case,
+    column,
     exists,
     false,
     func,
@@ -47,7 +48,7 @@ from sqlalchemy.orm.session import Session
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonScalar
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonContainer, JsonScalar
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -3620,7 +3621,7 @@ class MemoryInterface(abc.ABC):
                 require full-string equality instead. If None, all values are returned.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
                 and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
-                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                elements (case-insensitive) rather than substrings within decoded list elements. Defaults to False
                 (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -4038,7 +4039,11 @@ class MemoryInterface(abc.ABC):
                 )
             )
         else:
-            conditions.extend(field.contains(value) for value in values)
+            items = JsonArrayItems(JsonContainer(field, "$")).table_valued(column("value", Unicode))
+            conditions.extend(
+                select(1).select_from(items).where(items.c.value.contains(value)).correlate_except(items).exists()
+                for value in values
+            )
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:
         """
@@ -8504,6 +8509,9 @@ class MemoryInterface(abc.ABC):
     ) -> Sequence[Seed]:
         """
         Retrieve a list of seed prompts based on the specified filters.
+
+        List filters match substrings within decoded elements, not their JSON representation.
+        Substring matching retains the backend's LIKE case and wildcard semantics.
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.
