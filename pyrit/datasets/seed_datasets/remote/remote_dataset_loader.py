@@ -188,8 +188,8 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         if not date_str:
             return None
         try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
+            return datetime.fromisoformat(date_str)
+        except (ValueError, TypeError, AttributeError):
             return None
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
