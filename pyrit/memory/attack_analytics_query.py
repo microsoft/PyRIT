@@ -758,9 +758,11 @@ class AttackAnalyticsQueryCompiler:
             return _Source(value=value, label=value, insensitive=True)
         if name is AttackAnalyticsDimensionName.OBJECTIVE_TARGET:
             value = self.root.c.objective_target_eval_hash_v1
+            # Model-less targets record a blank model name; fall through to the class name so
+            # the SDK's short-hash suffix makes the label readable without endpoint details.
             label = func.coalesce(
-                self.target.c.model_name,
-                self._target_property(path="params.model_name", embedded=embedded),
+                func.nullif(func.trim(self.target.c.model_name), ""),
+                func.nullif(func.trim(self._target_property(path="params.model_name", embedded=embedded)), ""),
                 self.target.c.class_name,
                 self._target_property(path="class_name", embedded=embedded),
                 value,

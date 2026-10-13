@@ -138,6 +138,19 @@ their names. The frozen v1 evaluation rules match
 in place when evaluation rules evolve: add a new versioned column, backfill,
 and explicit selection policy instead of silently changing historical groups.
 
+v1 had one pre-release correction before it shipped in a release. Targets
+without a model name (HTTP, Gandalf and other non-LLM targets) carry no
+behavioral settings, so the original rules merged every such target of a
+class into one group. v1 now keys a target with no nonempty
+`underlying_model_name` or `model_name` by its content hash, after unwrapping
+a wrapper to its first inner target. Targets with a model name keep their
+original key. Revision `3f6a9d2c8b1e` recomputes stored keys for databases
+that already applied `901e6c7bf9d4`, so existing databases, fresh installs, and
+new writes agree. Its downgrade keeps the corrected keys. Objective-target
+labels skip blank model names and fall back to the class name, which the SDK
+suffixes with a short key. With this correction the v1 definition is frozen
+again.
+
 Filters OR values within each predicate (converter `ALL` is the exception) and AND
 separate predicates, including repeated dimensions. Missing metadata, recorded
 empty converter pipelines, and real empty strings retain different typed keys.

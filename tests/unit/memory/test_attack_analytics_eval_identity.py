@@ -42,6 +42,7 @@ from pyrit.models import (
     ObjectiveTargetEvaluationIdentifier,
     TargetIdentifier,
 )
+from pyrit.prompt_target import GandalfLevel, GandalfTarget, HTTPTarget
 
 if TYPE_CHECKING:
     from pyrit.memory import SQLiteMemory
@@ -101,6 +102,88 @@ def test_target_evaluation_v1_is_frozen_to_the_current_marker_rules() -> None:
         ObjectiveTargetAnalyticsIdentityV1.hash(identifier=wrapped)
         == ObjectiveTargetEvaluationIdentifier(wrapped).eval_hash
     )
+
+
+def _model_less(*, class_name: str, endpoint: str, model_name: str = "") -> TargetIdentifier:
+    return TargetIdentifier(class_name=class_name, class_module="tests", model_name=model_name, endpoint=endpoint)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_targets_without_a_model_name_fall_back_to_their_content_hash() -> None:
+    bank = HTTPTarget(http_request="POST /chat HTTP/1.1\nHost: bank.example\n\n{PROMPT}").get_identifier()
+    hr = HTTPTarget(http_request="POST /ask HTTP/1.1\nHost: hr.example\n\n{PROMPT}").get_identifier()
+    level_one = GandalfTarget(level=GandalfLevel.LEVEL_1).get_identifier()
+    level_seven = GandalfTarget(level=GandalfLevel.LEVEL_7).get_identifier()
+    blank = _model_less(class_name="MockTarget", endpoint="https://blank.example", model_name="   ")
+    wrapped = TargetIdentifier(class_name="RoundRobinTarget", class_module="tests", targets=[bank])
+
+    keys = {
+        name: ObjectiveTargetAnalyticsIdentityV1.hash(identifier=identifier)
+        for name, identifier in {
+            "bank": bank,
+            "hr": hr,
+            "level_one": level_one,
+            "level_seven": level_seven,
+            "blank": blank,
+        }.items()
+    }
+
+    assert len(set(keys.values())) == 5
+    assert keys["bank"] == TargetIdentifier.from_component_identifier(bank).hash
+    assert keys["level_one"] == TargetIdentifier.from_component_identifier(level_one).hash
+    assert keys["blank"] == blank.hash
+    assert ObjectiveTargetAnalyticsIdentityV1.hash(identifier=wrapped) == keys["bank"]
+    # Targets with a model name keep the behavioral key, so deployments still merge.
+    assert ObjectiveTargetAnalyticsIdentityV1.hash(
+        identifier=_target(deployment="deploy-a", endpoint="https://one.example")
+    ) == ObjectiveTargetAnalyticsIdentityV1.hash(
+        identifier=_target(deployment="deploy-b", endpoint="https://two.example")
+    )
+
+
+async def test_model_less_targets_group_filter_facet_and_label_apart_async(sqlite_instance: SQLiteMemory) -> None:
+    bank = _model_less(class_name="HTTPTarget", endpoint="https://bank.example")
+    hr = _model_less(class_name="HTTPTarget", endpoint="https://hr.example")
+    model = _target(deployment="deploy-a", endpoint="https://one.example")
+    results = [
+        _result(index=1, target=bank, outcome=AttackOutcome.SUCCESS, operation="night"),
+        _result(index=2, target=bank, outcome=AttackOutcome.SUCCESS, operation="day"),
+        _result(index=3, target=hr, outcome=AttackOutcome.FAILURE, operation="night"),
+        _result(index=4, target=model, outcome=AttackOutcome.FAILURE, operation="day"),
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    axis = AttackAnalyticsDimension(name="objective_target")
+    bank_key, hr_key, model_key = (ObjectiveTargetAnalyticsIdentityV1.hash(identifier=t) for t in (bank, hr, model))
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(group_by=axis), control=_control())
+    groups = {group.option.key.value: group for group in report.groups}
+    bank_filter = AttackAnalyticsFilters(
+        dimensions=[AttackAnalyticsFilter(dimension=axis, values=[groups[bank_key].option.key])]
+    )
+    drilled = await reader.report_async(
+        query=AttackAnalyticsQuery(filters=bank_filter, group_by=AttackAnalyticsDimension(name="operation")),
+        control=_control(),
+    )
+    facets = await reader.facets_async(query=AttackAnalyticsFacetQuery(dimension=axis), control=_control())
+
+    assert {key: group.counts for key, group in groups.items()} == {
+        bank_key: {"success": 2},
+        hr_key: {"failure": 1},
+        model_key: {"failure": 1},
+    }
+    assert groups[bank_key].option.label == groups[hr_key].option.label == "HTTPTarget"
+    assert groups[model_key].option.label == "deploy-a"
+    assert all("example" not in (group.option.label or "") for group in report.groups)
+    assert {group.option.key.value: group.counts for group in drilled.groups} == {
+        "night": {"success": 1},
+        "day": {"success": 1},
+    }
+    assert {item.key.value: item.label for item in facets.items} == {
+        bank_key: "HTTPTarget",
+        hr_key: "HTTPTarget",
+        model_key: "deploy-a",
+    }
 
 
 async def test_evaluation_groups_filters_facets_and_pages_share_result_identity(sqlite_instance: SQLiteMemory) -> None:
