@@ -15,3 +15,4 @@ class SeedDatasetSummary:
     modalities: tuple[str, ...]
     harm_categories: tuple[str, ...]
     has_unlabeled_harm_categories: bool
+    origins: tuple[str, ...] = ()

@@ -174,8 +174,24 @@ Options:
 - Ingredients must remain complete. Use `max_per_dataset="all"` and no finite source
   `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.
 - Use `with_overrides()` instead of reconstructing a subclass or mutating its defaults.
+- Clients and Python use `ScenarioDatasetRequest` through the common `dataset_overrides`
+  parameter. `dataset_config` still replaces the default; overrides apply on top.
+- Resolve parameter/technique-dependent names in `_resolve_default_dataset_config()`,
+  before overrides, validation, and preparation. Do not rewrite user selections in validators.
+- Declare `DATASET_OPTIONS` (or parameter-aware `get_dataset_options()`): `ANY` only for
+  generic named populations, `SUBSET` for approved alternatives, `FIXED` for ingredients.
+  Disable limits that would truncate ingredients. Compound source edits are ambiguous;
+  preserve child shaping/caps and allow only supported global edits.
+- Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
+  These are response projections, not incoming edit state. Never read seeds for projections.
+  The catalog reads options and defaults from registry metadata, never from an estimate.
+- Resume replays the saved launch request; the stored run plan fixes the selected seed groups,
+  so caps and fetch policies cannot change a resumed run. Dataset names are checked by the
+  stored scenario identity. Resume never prepares datasets.
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
+- Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.
+  Scenario code must not call memory seed-read methods directly; the scenario contract test enforces this.
 - `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
 
 `max_dataset_size` is an exact alias for `max_total`; it does not disable source caps.

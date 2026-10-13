@@ -12,6 +12,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import (
     CapabilityName,
     OpenAIChatTarget,
@@ -65,6 +66,9 @@ def mock_dataset_config(mock_memory_seed_groups):
     mock_config.with_overrides.return_value = mock_config
     mock_config.sources = ()
     mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=attack_seed_groups)
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_scam": attack_seed_groups})
     mock_config.dataset_names = ["airt_scam"]

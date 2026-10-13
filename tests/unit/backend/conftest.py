@@ -13,6 +13,7 @@ from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.backend.services.analytics_service import close_analytics_service_async, get_analytics_service
 from pyrit.backend.services.attack_service import get_attack_service
+from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.memory import SQLiteMemory
@@ -34,8 +35,8 @@ async def analytics_service(sqlite_instance: SQLiteMemory) -> AsyncGenerator[Att
 @pytest.fixture(autouse=True)
 def isolated_manual_message_services() -> Iterator[None]:
     """Keep cached service owners bound to this test's memory and event loop."""
-    for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler):
+    for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler, get_dataset_service):
         factory.cache_clear()
     yield
-    for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler):
+    for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler, get_dataset_service):
         factory.cache_clear()

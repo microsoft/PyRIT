@@ -5,7 +5,21 @@ from unittest.mock import patch
 
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_session import MemorySession
-from pyrit.models import SeedPrompt
+from pyrit.models import SeedOrigin, SeedPrompt
+
+
+async def test_dataset_origins_aggregate_without_seed_hydration(sqlite_instance: MemoryInterface) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedPrompt(value="local", dataset_name="mixed", origin=SeedOrigin.LOCAL),
+            SeedPrompt(value="unknown", dataset_name="mixed", origin=SeedOrigin.UNKNOWN),
+        ],
+        added_by="test",
+    )
+    with patch.object(sqlite_instance, "get_seeds_async", side_effect=AssertionError("No hydration")):
+        summaries = await sqlite_instance.get_seed_dataset_summaries_async()
+    assert summaries[0].origins == ("local", "unknown")
+    assert summaries[0].logical_examples == summaries[0].seed_pieces == 2
 
 
 async def test_get_seed_dataset_summaries_avoids_metadata_row_multiplication(

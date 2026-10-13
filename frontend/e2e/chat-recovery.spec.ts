@@ -240,7 +240,7 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTitle("Registry", { exact: true }).click();
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(localTarget.registryName);
-    await page.getByTitle("Chat", { exact: true }).click();
+    await page.getByTitle("Technique.execute", { exact: true }).click();
   });
 
   test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({

@@ -302,5 +302,5 @@ for technique, n in total_picks.most_common():
 # # Use specific datasets and limit size
 # pyrit_scan --scenario TextAdaptive --target openai_chat \
 #     --datasets airt_hate airt_violence \
-#     --max-dataset-size 10
+#     --max-total 10
 # ```
