@@ -586,8 +586,8 @@ def _page_fill_colors(pdf_path: Path) -> list[set[tuple[int, int, int]]]:
     reader = PdfReader(pdf_path)
     return [
         {
-            tuple(round(float(channel) * 255) for channel in match)
-            for match in _FILL_COLOR_OP.findall(page.get_contents().get_data())
+            (round(float(red) * 255), round(float(green) * 255), round(float(blue) * 255))
+            for red, green, blue in _FILL_COLOR_OP.findall(page.get_contents().get_data())
         }
         for page in reader.pages
     ]
