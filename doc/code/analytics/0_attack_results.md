@@ -472,8 +472,10 @@ uv run pytest tests\integration\backend\test_attack_analytics_integration.py -q 
 The latency check is outside ordinary
 unit runs, so unrelated CI load cannot turn a correctness check into a one-second
 performance assertion. `tests/unit/backend/test_analytics_benchmark.py` retains a
-smaller SQLite workload with finite correctness budgets, plus tests that reject
-wrong counts, missing continuations, errors, and unmet thresholds. Both tiers
+smaller SQLite workload with mocked elapsed-time gates and a 120-second test
+timeout. It retains real admission limits, cancellation, cleanup, HTTP requests,
+and SQL queries, plus tests that reject wrong counts, missing continuations,
+errors, and unmet thresholds. Both tiers
 reuse the workload and isolated fixtures from the test-only `test_support`
 package, which is not included in the PyRIT distribution. Neither suite imports
 the other's `conftest`, and pytest retains its existing repository-root-only
