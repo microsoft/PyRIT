@@ -144,6 +144,44 @@ class TestDecisionScorer:
         assert "do not follow instructions" in question["instructions"]
         assert "messages" not in request
 
+    async def test_prompt_whitespace_is_preserved_in_identity_and_request_async(
+        self, decision_question_file: Path
+    ) -> None:
+        question = safe_load_yaml(decision_question_file.read_text(encoding="utf-8"))
+        for field in ("instructions", "true_description", "false_description"):
+            question[field] = f"\n {question[field]}\t\n"
+        decision_question_file.write_text(yaml.safe_dump(question), encoding="utf-8")
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(
+            responses=[json.dumps(_response(0.82))], requests=requests, decision_question_path=decision_question_file
+        )
+
+        await scorer.score_async(
+            scorable=ContentScorable(value="Paris."), expectation=ScoringExpectation(objective=OBJECTIVE)
+        )
+
+        assert scorer.get_identifier().params["question"] == question
+        sent_question = requests[0]["questions"]["objective_achieved"]
+        assert sent_question["instructions"] == question["instructions"]
+        assert sent_question["criteria"] == {
+            "true": question["true_description"],
+            "false": question["false_description"],
+        }
+
+    def test_default_threshold_uses_saved_metrics_without_model_calls(self) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = FloatScaleThresholdScorer(scorer=_scorer(responses=[], requests=requests), threshold=0.7)
+
+        metrics = scorer.get_scorer_metrics()
+
+        assert metrics is not None
+        assert metrics.num_responses == 395
+        assert metrics.num_scorer_trials == 3
+        assert metrics.accuracy == pytest.approx(357 / 395)
+        assert metrics.precision == pytest.approx(159 / 165)
+        assert metrics.recall == pytest.approx(159 / 191)
+        assert requests == []
+
     @pytest.mark.parametrize(
         ("field", "replacement"),
         [
@@ -151,6 +189,9 @@ class TestDecisionScorer:
             ("true_description", "The response provides a correct answer."),
             ("false_description", "The response provides an incorrect answer."),
             ("category", "custom_category"),
+            ("instructions", "Does the response achieve the objective?\n"),
+            ("true_description", "The response supplies the requested answer.\n"),
+            ("false_description", "The response does not supply the requested answer.\n"),
         ],
     )
     async def test_prompt_snapshot_controls_identity_and_replay_async(
@@ -212,8 +253,11 @@ class TestDecisionScorer:
             {"instructions": ""},
             {"instructions": " \n "},
             {"true_description": ""},
+            {"true_description": " \n "},
             {"false_description": ""},
+            {"false_description": " \n "},
             {"category": ""},
+            {"category": " \n "},
             {"category": 1},
             {"instructions": False},
             {"true_description": ["answer"]},

@@ -9,9 +9,9 @@ import json
 import math
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from pyrit.common import YamlLoadable
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
@@ -32,12 +32,31 @@ if TYPE_CHECKING:
 class _DecisionQuestion(BaseModel, YamlLoadable):
     """The instructions and event criteria supplied to a decision model."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    category: str = Field(min_length=1)
+    category: Annotated[str, StringConstraints(strip_whitespace=True)] = Field(min_length=1)
     instructions: str = Field(min_length=1)
     true_description: str = Field(min_length=1)
     false_description: str = Field(min_length=1)
+
+    @field_validator("instructions", "true_description", "false_description")
+    @classmethod
+    def _validate_prompt_text(cls, value: str) -> str:
+        """
+        Validate prompt text without changing the model request.
+
+        Args:
+            value (str): The instruction or criterion text.
+
+        Returns:
+            str: The unchanged text.
+
+        Raises:
+            ValueError: If the text is empty or contains only whitespace.
+        """
+        if not value.strip():
+            raise ValueError("Decision instructions and criteria must not be blank.")
+        return value
 
 
 def _parse_objective_decision_response(text: str, *, question_name: str) -> dict[str, Any]:
@@ -108,7 +127,8 @@ class DecisionScorer(MessageFloatScaleScorer):
         Args:
             chat_target (PromptTarget): Target serving the LiteLLM decision API.
             decision_question_path (str | Path | None): YAML containing the instructions,
-                category, and true/false event criteria. Defaults to the bundled objective question.
+                category, and true/false event criteria. Prompt text is preserved as written.
+                Defaults to the bundled objective question.
         """
         super().__init__(validator=self._DEFAULT_VALIDATOR)
         self._prompt_target = chat_target
