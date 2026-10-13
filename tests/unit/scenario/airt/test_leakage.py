@@ -10,6 +10,7 @@ import pytest
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
@@ -53,6 +54,9 @@ def mock_dataset_config(mock_memory_seeds):
     mock_config.with_overrides.return_value = mock_config
     mock_config.sources = ()
     mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_leakage": seed_groups})
     mock_config.dataset_names = ["airt_leakage"]
     return mock_config

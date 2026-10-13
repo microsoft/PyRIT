@@ -43,10 +43,10 @@ test("waits for a matching packaged stamp before sending business requests", asy
   });
   await page.goto("/");
   await expect(page.getByRole("status")).toContainText("Checking frontend and backend compatibility");
-  await expect(page.getByTitle("Chat", { exact: true })).not.toBeVisible();
+  await expect(page.getByTitle("Technique.execute", { exact: true })).not.toBeVisible();
   expect(requests).toHaveLength(0);
   releaseVersion();
-  await expect(page.getByTitle("Chat", { exact: true })).toBeVisible();
+  await expect(page.getByTitle("Technique.execute", { exact: true })).toBeVisible();
   await expect.poll(() => requests.length).toBeGreaterThan(0);
 });
 
@@ -62,7 +62,7 @@ for (const [name, payload] of [
     });
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "PyRIT compatibility blocked" })).toBeVisible();
-    await expect(page.getByTitle("Chat", { exact: true })).not.toBeVisible();
+    await expect(page.getByTitle("Technique.execute", { exact: true })).not.toBeVisible();
     expect(requests).toHaveLength(0);
   });
 }
@@ -81,7 +81,7 @@ for (const [status, type] of [
       await route.fulfill({ status, json: { type, expected: otherCompatibilityId(), actual: getCompatibilityId() } });
     });
     await page.goto("/");
-    await expect(page.getByTitle("Chat", { exact: true })).toBeVisible();
+    await expect(page.getByTitle("Technique.execute", { exact: true })).toBeVisible();
     await page.evaluate(async () => {
       const modulePath = "/src/services/api.ts";
       const { apiClient } = await import(modulePath);
@@ -92,7 +92,7 @@ for (const [status, type] of [
     await expect(page.getByRole("heading", { name: "PyRIT compatibility blocked" })).toBeVisible();
     await expect(page.getByRole("alertdialog")).toContainText(getCompatibilityId());
     await expect(page.getByRole("alertdialog")).toContainText(otherCompatibilityId());
-    await expect(page.getByTitle("Chat", { exact: true })).not.toBeVisible();
+    await expect(page.getByTitle("Technique.execute", { exact: true })).not.toBeVisible();
     expect(mutations).toBe(1);
   });
 }
