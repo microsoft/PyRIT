@@ -67,12 +67,19 @@ jobs:
       matrix:
         include:
           - project: mock
+            config: playwright.config.ts
             shard: 1
             total: 2
           - project: mock
+            config: playwright.config.ts
             shard: 2
             total: 2
           - project: seeded
+            config: playwright.config.ts
+            shard: 1
+            total: 1
+          - project: analytics
+            config: playwright.analytics.config.ts
             shard: 1
             total: 1
     outputs:
@@ -119,8 +126,12 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      - name: Build the isolated analytics frontend
+        if: matrix.project == 'analytics'
+        run: npm run build
+
       - name: Run E2E shard (no credentials needed)
-        run: npx playwright test --fail-on-flaky-tests --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}
+        run: npx playwright test --fail-on-flaky-tests --config=${{ matrix.config }} --project=${{ matrix.project }} --shard=${{ matrix.shard }}/${{ matrix.total }}
         env:
           CI: true
           # Mock specs still use the backend for auth bootstrap and some API calls.

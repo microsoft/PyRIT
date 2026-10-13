@@ -13,6 +13,11 @@ jest.mock("axios", () => ({
   })),
 }));
 
+jest.mock("./compatibility", () => {
+  const actual = jest.requireActual<typeof import("./compatibility")>("./compatibility");
+  return { ...actual, compatibility: new actual.CompatibilityStore(`1.2.0.dev0+g${"a".repeat(40)}`) };
+});
+
 import {
   apiClient,
   authApi,
@@ -27,7 +32,11 @@ import {
   labelsApi,
   scenariosApi,
   datasetsApi,
+  analyticsApi,
 } from "./api";
+import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
+import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
   // Interceptor functions are registered at module-load time.
@@ -157,6 +166,42 @@ describe("api service", () => {
       );
 
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe("analyticsApi", () => {
+    it("should pass SDK payloads and cancellation through the shared client without aggregation", async () => {
+      const controller = new AbortController();
+      const report = makeAnalyticsReport();
+      const results = makeAnalyticsResults();
+      const facets = makeAnalyticsFacets();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: report })
+        .mockResolvedValueOnce({ data: results }).mockResolvedValueOnce({ data: facets });
+      const query = { filters: DEFAULT_ANALYTICS_VIEW.filters };
+      expect(await analyticsApi.query(query, controller.signal)).toBe(report);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/query", query, { signal: controller.signal });
+      const pageQuery = { ...query, cursor: "opaque", limit: 25 };
+      expect(await analyticsApi.results(pageQuery, controller.signal)).toBe(results);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/results", pageQuery, { signal: controller.signal });
+      const facetQuery = { ...query, dimension: DEFAULT_ANALYTICS_VIEW.groupBy, offset: 50 };
+      expect(await analyticsApi.facets(facetQuery, controller.signal)).toBe(facets);
+      expect(apiClient.post).toHaveBeenLastCalledWith("/analytics/attacks/facets", facetQuery, { signal: controller.signal });
+      expect(apiClient.post).toHaveBeenCalledTimes(3);
+    });
+
+    it("should attach the packaged compatibility identity to analytics business requests", async () => {
+      await compatibility.verify(async () => ({ compatibility_id: compatibility.bundledId }));
+      for (const operation of ["query", "results", "facets"]) {
+        const headers = new Map<string, string>();
+        await requestInterceptor({ headers, method: "post", url: `/analytics/attacks/${operation}` });
+        expect(headers.get(COMPATIBILITY_HEADER)).toBe(compatibility.bundledId);
+      }
+    });
+
+    it("should surface analytics failures without a success-shaped fallback", async () => {
+      const failure = new Error("Deadline exceeded");
+      (apiClient.post as jest.Mock).mockRejectedValueOnce(failure);
+      await expect(analyticsApi.query({})).rejects.toBe(failure);
     });
   });
 

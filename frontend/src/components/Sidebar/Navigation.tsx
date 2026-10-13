@@ -14,6 +14,7 @@ import {
   HomeRegular,
   SettingsRegular,
   HistoryRegular,
+  DataBarVerticalRegular,
   PersonFeedbackRegular,
   ScriptRegular,
   TargetRegular,
@@ -30,6 +31,7 @@ export type ViewName =
   | 'home'
   | 'chat'
   | 'history'
+  | 'analytics'
   | 'registry'
   | 'configuration'
   | 'scenarios'
@@ -101,6 +103,17 @@ export default function Navigation({
           aria-label="History"
           aria-current={currentView === 'history' ? 'page' : undefined}
           onClick={() => onNavigate('history')}
+        />
+
+        <Button
+          className={styles.navButton}
+          data-active={currentView === 'analytics'}
+          appearance="subtle"
+          icon={<DataBarVerticalRegular />}
+          title="Analytics"
+          aria-label="Analytics"
+          aria-current={currentView === 'analytics' ? 'page' : undefined}
+          onClick={() => onNavigate('analytics')}
         />
 
         <Button
