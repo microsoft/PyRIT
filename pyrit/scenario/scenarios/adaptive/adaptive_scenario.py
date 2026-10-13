@@ -31,7 +31,6 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
-from pyrit.models.identifiers import compute_inner_attack_eval_hash
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
@@ -309,14 +308,11 @@ class AdaptiveScenario(Scenario):
         ``seed_technique`` and ``adversarial_chat`` so the dispatcher can
         reproduce the static ``AtomicAttack`` execution path per attempt.
 
-        Default technique keys are eval hashes derived from the inner attack's
-        identifier (run through ``AtomicAttackEvaluationIdentifier`` so seeds,
-        scorers, and operational target params are excluded). The same hash is
-        auto-stamped on every persisted ``AttackResultEntry.atomic_attack_identifier``
-        by the executor, which lets the selector aggregate historical success
-        rates by behavioral configuration. Techniques that permit dataset
-        adaptation use their full behavioral technique identity instead; the
-        dispatcher supplies that same identity to the child result recording path.
+        Technique keys use the full behavioral technique identity, including
+        technique-owned prompts and adaptation rules. Dataset seeds, scorers,
+        and operational target parameters are excluded. The dispatcher supplies
+        the same identity when recording child results, so saved choices and
+        historical success rates refer to the same behavioral configuration.
 
         For factories whose attack class narrows ``attack_scoring_config`` to a
         specific subtype (e.g. ``TAPAttackScoringConfig`` for TAP), this method
@@ -368,14 +364,10 @@ class AdaptiveScenario(Scenario):
                 objective_target=objective_target,
                 attack_scoring_config=scoring_config,
             )
-            technique_identifier = technique.get_identifier() if technique.requirements.adaptation is not None else None
-            eval_hash = (
-                AtomicAttackEvaluationIdentifier(
-                    AtomicAttackIdentifier.build(technique_identifier=technique_identifier)
-                ).eval_hash
-                if technique_identifier is not None
-                else compute_inner_attack_eval_hash(attack=technique.attack)
-            )
+            technique_identifier = technique.get_identifier()
+            eval_hash = AtomicAttackEvaluationIdentifier(
+                AtomicAttackIdentifier.build(technique_identifier=technique_identifier)
+            ).eval_hash
             adversarial_chat = factory.adversarial_chat
             if adversarial_chat is None and factory.uses_adversarial:
                 adversarial_chat = get_default_adversarial_target()

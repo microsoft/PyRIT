@@ -20,12 +20,15 @@ from __future__ import annotations
 import copy
 import inspect
 import logging
+from dataclasses import replace
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
+from pyrit.common import get_global_default_values
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -689,20 +692,69 @@ class AttackTechniqueFactory(Identifiable):
         """
         merged_attack_kwargs = dict(self._attack_kwargs)
         merged_attack_kwargs.update(attack_kwargs)
-        return AttackTechniqueFactory(
-            name=self._name,
-            attack_class=self._attack_class,
-            description=self._description,
-            technique_tags=self._technique_tags,
-            attack_kwargs=merged_attack_kwargs,
-            adversarial_chat=self._adversarial_chat,
-            adversarial_system_prompt=self._adversarial_system_prompt,
-            adversarial_seed_prompt=self._adversarial_seed_prompt,
-            seed_technique=self._seed_technique,
-            requirements=self._requirements,
-            uses_adversarial=self._uses_adversarial,
-            supports_additional_request_converters=self._supports_additional_request_converters,
-            scorer_override_policy=self._scorer_override_policy,
+        factory = copy.copy(self)
+        factory._identifier = None
+        factory._technique_tags = list(self._technique_tags)
+        factory._attack_kwargs = merged_attack_kwargs
+        factory._validate_kwargs()
+        return factory
+
+    def with_extra_turns(self, *, turns: int) -> AttackTechniqueFactory:
+        """
+        Return a factory with the new-turn budget extended by stored assistant turns.
+
+        Args:
+            turns (int): Number of assistant turns already in the history.
+
+        Returns:
+            AttackTechniqueFactory: A modified copy, or this factory if no extension applies.
+
+        Raises:
+            ValueError: If turns is negative or the effective max_turns is not an integer.
+        """
+        if turns < 0:
+            raise ValueError("Extra turns must be nonnegative")
+        if not turns or "max_turns" not in self._compatibility_helper.accepted_params:
+            return self
+        if "max_turns" in self._attack_kwargs:
+            configured = self._attack_kwargs["max_turns"]
+        else:
+            found, configured = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="max_turns"
+            )
+            if not found:
+                configured = inspect.signature(self._attack_class.__init__).parameters["max_turns"].default
+        if not isinstance(configured, int) or isinstance(configured, bool):
+            raise ValueError(f"Factory '{self._name}' requires an integer max_turns to extend history")
+        return self.with_attack_kwargs(attack_kwargs={"max_turns": configured + turns})
+
+    def with_prepended_history_converters(self, *, enabled: bool) -> AttackTechniqueFactory:
+        """
+        Return a copy with request conversion of prepended history enabled or disabled.
+
+        Existing role scope and history formatting are preserved when enabled.
+
+        Args:
+            enabled (bool): Whether to apply request converters to prepended messages.
+
+        Returns:
+            AttackTechniqueFactory: A configured copy, or this factory when enabled.
+
+        Raises:
+            ValueError: If the attack cannot accept a prepended-conversation policy.
+        """
+        if enabled:
+            return self
+        if "prepended_conversation_config" not in self._compatibility_helper.accepted_params:
+            raise ValueError(f"Factory '{self._name}' cannot configure prepended history conversion")
+        config = self._attack_kwargs.get("prepended_conversation_config")
+        if config is None:
+            _, config = get_global_default_values().get_default_value(
+                class_type=self._attack_class, parameter_name="prepended_conversation_config"
+            )
+        config = config or PrependedConversationConfig()
+        return self.with_attack_kwargs(
+            attack_kwargs={"prepended_conversation_config": replace(config, apply_converters_to_roles=[])}
         )
 
     @property

@@ -75,6 +75,21 @@ class AttackResultAnalytics:
         self._controller: AnalyticsExecution | None = None
         self._closed = False
 
+    @property
+    def has_active_work(self) -> bool:
+        """
+        Whether this facade's shared controller still owns admitted work or cleanup.
+
+        This includes work whose caller timed out or was cancelled. Reading the
+        status never creates a controller or opens a session.
+        """
+        return self._controller is not None and self._controller.has_active_work
+
+    @property
+    def is_closed(self) -> bool:
+        """Whether this facade is terminal and its attached controller has finished draining."""
+        return self._closed or (self._controller is not None and self._controller.is_closed)
+
     async def __aenter__(self) -> Self:
         """
         Acquire the shared execution lifetime without opening a database session.

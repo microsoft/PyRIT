@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from string import Formatter
 from typing import TYPE_CHECKING
 
@@ -48,6 +49,21 @@ def _format_answer_pattern(*, pattern: str, answer: AnswerMatches) -> str | None
     return pattern.format(**fields)
 
 
+def _contains_whole_token(*, text: str, response: str) -> bool:
+    """
+    Check whether the text occurs in the response without being part of a longer word.
+
+    Returns:
+        bool: True when the text occurs, ignoring case, and is not joined to an adjacent word character.
+    """
+    pattern = re.escape(text)
+    if re.match(r"\w", text):
+        pattern = rf"(?<!\w){pattern}"
+    if re.search(r"\w\Z", text):
+        pattern = rf"{pattern}(?!\w)"
+    return re.search(pattern, response, flags=re.IGNORECASE) is not None
+
+
 class QuestionAnswerScorer(MessageTrueFalseScorer):
     """
     A class that represents a question answering scorer.
@@ -71,8 +87,9 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
 
         Args:
             correct_answer_matching_patterns (list[str]): A list of patterns to check for in the response. If any
-                pattern is found in the response, the score will be True. These patterns should be format strings
-                that will be formatted with the AnswerMatches fields. Defaults to CORRECT_ANSWER_MATCHING_PATTERNS.
+                pattern is found in the response, and is not part of a longer word, the score will be True. These
+                patterns should be format strings that will be formatted with the AnswerMatches fields. Defaults to
+                CORRECT_ANSWER_MATCHING_PATTERNS.
             category (list[str] | None): Optional list of categories for the score. Defaults to None.
             validator (ScorerPromptValidator | None): Custom validator. Defaults to None.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
@@ -124,7 +141,7 @@ class QuestionAnswerScorer(MessageTrueFalseScorer):
             text = _format_answer_pattern(pattern=pattern, answer=answer)
             if text is None:
                 continue
-            if text.lower() in message_piece.converted_value.lower():
+            if _contains_whole_token(text=text, response=message_piece.converted_value):
                 result = True
                 matching_text = text.lower()
                 break

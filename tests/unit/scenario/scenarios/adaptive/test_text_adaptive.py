@@ -40,7 +40,7 @@ from pyrit.scenario.scenarios.adaptive.selectors import (
     TechniqueSelector,
 )
 from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
-from pyrit.score import TrueFalseScorer
+from pyrit.score import SubStringScorer, TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
@@ -920,6 +920,52 @@ class TestTextAdaptiveBaselinePolicy:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestTextAdaptiveResume:
+    @pytest.mark.parametrize("simulated", [False, True])
+    async def test_resume_rejects_changed_technique_prompt_async(self, *, simulated: bool) -> None:
+        target = MockPromptTarget()
+        scorer = SubStringScorer(substring="default")
+        source = _make_seed_group(value="objective")
+
+        def make_factory(prompt: str) -> AttackTechniqueFactory:
+            if simulated:
+                return AttackTechniqueFactory.with_simulated_conversation(
+                    name="many_shot",
+                    adversarial_chat=target,
+                    adversarial_chat_system_prompt=SeedPrompt(
+                        value=prompt + " {{ objective }} {{ max_turns }}", parameters=["objective", "max_turns"]
+                    ),
+                )
+            return AttackTechniqueFactory(
+                name="many_shot",
+                attack_class=PromptSendingAttack,
+                seed_technique=AttackTechniqueSeedGroup.from_system_prompt(prompt),
+            )
+
+        async def initialize_async(
+            *, factory: AttackTechniqueFactory, scenario_result_id: str | None = None
+        ) -> TextAdaptive:
+            scenario = TextAdaptive(objective_scorer=scorer, scenario_result_id=scenario_result_id)
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "scenario_techniques": [scenario.get_technique_class()("many_shot")],
+                    "include_baseline": False,
+                    "dataset_config": DatasetAttackConfiguration(seed_groups=[source]),
+                }
+            )
+            with patch.object(scenario, "_get_attack_technique_factories", return_value={"many_shot": factory}):
+                await scenario.initialize_async()
+            return scenario
+
+        original_factory = make_factory("Answer briefly.")
+        changed_factory = make_factory("Answer in uppercase.")
+        assert original_factory.get_identifier().hash != changed_factory.get_identifier().hash
+        original = await initialize_async(factory=original_factory)
+        unchanged = await initialize_async(factory=original_factory, scenario_result_id=original._scenario_result_id)
+        assert unchanged._build_run_plan() == original._build_run_plan()
+        with pytest.raises(ValueError, match="unavailable|reconstructable"):
+            await initialize_async(factory=changed_factory, scenario_result_id=original._scenario_result_id)
+
     async def _initialize_scenario_async(
         self,
         *,

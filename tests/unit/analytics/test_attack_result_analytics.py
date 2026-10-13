@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
-from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +12,6 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.analytics import AttackResultAnalytics, compute_scenario_statistics
-from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions.analytics_exception import AnalyticsBusyException, AnalyticsDataException
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
@@ -38,26 +36,9 @@ from unit.memory.test_attack_analytics import make_result, predicate
 from unit.mocks import make_scenario_result
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from pyrit.memory.query_control import QueryControl
-
-
-@pytest.fixture
-async def analytics(sqlite_instance: SQLiteMemory) -> AsyncGenerator[AttackResultAnalytics, None]:
-    """
-    Run real SQLite correctness checks with bounded test time, not a production latency requirement.
-
-    Full-suite contention must not turn filter/count assertions into one-second
-    benchmarks. Default budgets and expiration/cleanup are tested independently
-    in test_execution.py. Admission capacities and native database work are unchanged.
-    """
-    execution = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
-    with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=execution):
-        async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
-            yield analytics
 
 
 @pytest.fixture
@@ -67,6 +48,24 @@ async def mixed_results(sqlite_instance: SQLiteMemory) -> None:
     await sqlite_instance.add_attack_results_to_memory_async(
         attack_results=[make_result(index=index, outcome=outcome) for index, outcome in enumerate(outcomes, 1)]
     )
+
+
+async def test_lifecycle_status_is_lazy_and_shared_after_binding_async(sqlite_instance: SQLiteMemory) -> None:
+    first = AttackResultAnalytics(memory=sqlite_instance)
+    unused = AttackResultAnalytics(memory=sqlite_instance)
+    assert not first.has_active_work
+    assert not first.is_closed
+    assert first._controller is None
+    await unused.close_async()
+    assert unused.is_closed
+    assert not first.is_closed
+    async with first:
+        async with AttackResultAnalytics(memory=sqlite_instance) as second:
+            assert not first.has_active_work
+            assert not second.is_closed
+        assert first.is_closed
+        assert not first.has_active_work
+    assert second.is_closed
 
 
 @pytest.mark.usefixtures("mixed_results")

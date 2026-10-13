@@ -1033,7 +1033,7 @@ class TestGetBehavioralKey:
 
     def test_key_includes_class_name(self) -> None:
         """Test that the behavioral key includes the target's class name."""
-        from tests.unit.mocks import MockPromptTarget
+        from unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()
         key = get_behavioral_key(target)

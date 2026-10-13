@@ -586,9 +586,10 @@ def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
     sql = str(statement.compile(dialect=mssql.dialect())).upper()
 
     assert (
-        "HISTORY_UNITS.TIMESTAMP DESC, "
-        "LOWER(CAST(HISTORY_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
+        "HISTORY_CLASSIFIED_UNITS.TIMESTAMP DESC, "
+        "LOWER(CAST(HISTORY_CLASSIFIED_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
     ) in sql
+    assert "HISTORY_CLASSIFIED_UNITS.ATTEMPT_INDEX IS NULL" in sql
 
 
 def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(

@@ -5,10 +5,12 @@
 
 import asyncio
 import functools
+import random
 from typing import Any, ClassVar
 from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
@@ -43,11 +45,10 @@ from pyrit.scenario import (
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
-from tests.unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(
@@ -243,6 +244,65 @@ def test_subclass_implementing_build_atomic_attacks_async_is_concrete():
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestScenarioCompatibilityPolicy:
+    @pytest.mark.parametrize("change", ["none", "planned", "unsampled"])
+    @pytest.mark.parametrize("include_baseline", [False, True])
+    async def test_strict_resume_checks_only_sampled_groups_async(self, *, change: str, include_baseline: bool) -> None:
+        class MatrixScenario(ConcreteScenario):
+            BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Enabled
+
+            async def _resolve_seed_groups_by_dataset_async(
+                self, *, apply_sampling: bool = True
+            ) -> dict[str, list[AttackSeedGroup]]:
+                return await self._dataset_config.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+
+            async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+                return build_matrix_atomic_attacks(context=context, objective_scorer=self._objective_scorer)
+
+        target = MockPromptTarget()
+        selected = AttackSeedGroup(seeds=[SeedObjective(value="selected")])
+        unsampled = AttackSeedGroup(seeds=[SeedObjective(value="unsampled"), SeedPrompt(value="extra prompt")])
+        config = DatasetAttackConfiguration(seed_groups=[selected, unsampled], max_total=1)
+        factory = AttackTechniqueFactory(
+            name="test",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
+        )
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+
+        def make_scenario(*, scenario_result_id: str | None = None) -> MatrixScenario:
+            scenario = MatrixScenario(
+                version=1, objective_scorer=SubStringScorer(substring="default"), scenario_result_id=scenario_result_id
+            )
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": target,
+                    "dataset_config": config,
+                    "scenario_techniques": [scenario._technique_class("test")],
+                    "include_baseline": include_baseline,
+                    "incompatible_technique_policy": "raise",
+                }
+            )
+            return scenario
+
+        with patch.object(registry, "get_factories_or_raise", return_value={"test": factory}):
+            original = make_scenario()
+            with patch("pyrit.scenario.core.dataset_configuration.random.sample", side_effect=random.Random(1).sample):
+                await original.initialize_async()
+            original_plan = original._build_run_plan()
+            assert original_plan.atomic_groups[0].seed_group_ids == [selected.logical_id]
+            if change == "planned":
+                selected.seeds.append(SeedPrompt(value="changed planned input"))
+            elif change == "unsampled":
+                unsampled.seeds.append(SeedPrompt(value="changed unsampled input", sequence=1))
+            resumed = make_scenario(scenario_result_id=original._scenario_result_id)
+            if change == "planned":
+                with pytest.raises(ValueError, match="cannot resume: missing 1 planned seed group"):
+                    await resumed.initialize_async()
+            else:
+                await resumed.initialize_async()
+                assert resumed._build_run_plan() == original_plan
+                assert resumed._atomic_attacks[0].seed_groups == [selected]
+
     @pytest.mark.parametrize(
         ("class_default", "override", "expected"),
         [
@@ -1718,7 +1778,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
         with pytest.raises(
             ValueError,
-            match=r"cannot resume: atomic group 'strategy' is missing 1 planned seed group",
+            match=r"cannot resume: missing 1 planned seed group",
         ):
             await resumed.initialize_async()
 

@@ -263,7 +263,9 @@ config, memory labels, baseline flag, and seed groups), snapshots them into an i
 half-initialized `self._*` state to build attacks — read everything from `context`.
 
 On resume, `context.stored_run_plan` carries the original plan. Restore committed
-per-input technique choices from it instead of selecting again.
+per-input technique choices from it instead of selecting again. The base restores
+the planned source population before builders check compatibility. Saved adaptive
+choices must identify the full technique, including its prompts, not only its inner attack.
 
 ### Zero-boilerplate matrix scenarios
 

@@ -390,6 +390,13 @@ def test_print_scenario_run_progress_with_known_totals(capsys):
     assert "30%" in captured.out
 
 
+def test_print_scenario_run_progress_truncates_the_exact_ratio(capsys):
+    run = _make_run(status=ScenarioRunState.IN_PROGRESS, total_attacks=100, completed_attacks=29)
+    _output.print_scenario_run_progress(run=run)
+    captured = capsys.readouterr()
+    assert "units: 29/100 (29%)" in captured.out
+
+
 def test_print_scenario_run_progress_uses_ascii_for_limited_console():
     run = _make_run(
         status=ScenarioRunState.IN_PROGRESS,

@@ -360,10 +360,8 @@ class TestBuildAttackAsync:
 @pytest.mark.usefixtures("patch_central_database")
 class TestEvalHashRoundTrip:
     """
-    Pin the load-bearing invariant that ``compute_inner_attack_eval_hash``
-    (used by ``AdaptiveScenario._build_techniques_dict`` to key the
-    ``techniques`` dict and by the selector to look up historical stats)
-    equals the ``eval_hash`` the executor stamps on persisted child rows.
+    Pin the invariant that a selector's technique key equals the evaluation
+    hash on persisted child results, for packaged techniques and bare attacks.
 
     If the prediction helper and the write path ever drift (e.g. a new
     field is added to the eval-hash rule on one side only), the selector
@@ -373,18 +371,37 @@ class TestEvalHashRoundTrip:
     end-to-end and asserts the round-trip holds.
     """
 
-    async def test_predicted_hash_matches_persisted_row_async(self, *, sqlite_instance: SQLiteMemory) -> None:
+    @pytest.mark.parametrize("packaged", [False, True])
+    async def test_predicted_hash_matches_persisted_row_async(
+        self, *, packaged: bool, sqlite_instance: SQLiteMemory
+    ) -> None:
         from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory.memory_models import AttackResultEntry
         from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.models.identifiers import compute_inner_attack_eval_hash
-        from tests.unit.mocks import MockPromptTarget
 
         live_target = MockPromptTarget()
         attack = PromptSendingAttack(objective_target=live_target)
-        predicted_hash = compute_inner_attack_eval_hash(attack=attack)
+        if packaged:
+            technique = AttackTechnique(
+                attack=attack,
+                seed_technique=AttackTechniqueSeedGroup.from_system_prompt("Answer briefly."),
+            )
+            technique_identifier = technique.get_identifier()
+            predicted_hash = AtomicAttackEvaluationIdentifier(
+                AtomicAttackIdentifier.build(technique_identifier=technique_identifier)
+            ).eval_hash
+            bundle = TechniqueBundle(
+                attack=attack,
+                name="prompt_sending",
+                seed_technique=technique.seed_technique,
+                technique_identifier=technique_identifier,
+            )
+        else:
+            predicted_hash = compute_inner_attack_eval_hash(attack=attack)
+            bundle = TechniqueBundle(attack=attack, name="prompt_sending")
 
-        bundles = {predicted_hash: TechniqueBundle(attack=attack, name="prompt_sending")}
+        bundles = {predicted_hash: bundle}
         dispatcher = AdaptiveTechniqueDispatcher(
             objective_target=live_target,
             techniques=bundles,
@@ -394,7 +411,8 @@ class TestEvalHashRoundTrip:
 
         sg = AttackSeedGroup(seeds=[SeedObjective(value="say hello")])
         sequential = await dispatcher.build_attack_async(seed_group=sg)
-        assert sequential.get_identifier().hash == AttackStrategy._build_identifier(sequential).hash
+        if not packaged:
+            assert sequential.get_identifier().hash == AttackStrategy._build_identifier(sequential).hash
         await sequential.execute_async(objective="say hello")
 
         async with await sqlite_instance.get_session_async() as session:
@@ -422,7 +440,7 @@ class TestEvalHashRoundTrip:
             assert stamped_hash == predicted_hash, (
                 f"Selector-side eval_hash ({predicted_hash}) drifted from executor-stamped "
                 f"eval_hash ({stamped_hash}) on persisted row {row.id}. "
-                f"compute_inner_attack_eval_hash and AtomicAttackIdentifier.build must agree."
+                f"The selector key and persisted child identity must agree."
             )
 
     @pytest.mark.parametrize("fail", [False, True])

@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.converter import SearchReplaceConverter
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -23,7 +24,6 @@ from pyrit.scenario.scenarios.garak.latent_injection import (
     LatentInjectionTechnique,
 )
 from pyrit.score import SubStringScorer
-from tests.unit.mocks import MockPromptTarget
 
 
 def _config(**kwargs: Any) -> LatentInjectionDatasetConfiguration:
