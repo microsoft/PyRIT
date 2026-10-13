@@ -66,6 +66,7 @@ def _metadata_to_registered_scenario(
             aggregate: list(expansion) for aggregate, expansion in metadata.aggregate_technique_expansions
         },
         all_techniques=list(metadata.all_techniques),
+        max_concrete_techniques=metadata.max_concrete_techniques,
         technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
         supported_parameters=[
@@ -73,6 +74,7 @@ def _metadata_to_registered_scenario(
             for parameter in metadata.supported_parameters
             if parameter.is_external_input
         ],
+        supported_parameter_names=[parameter.name for parameter in metadata.supported_parameters],
         baseline_policy=metadata.baseline_policy,
         include_baseline_by_default=metadata.include_baseline_by_default,
         uses_default_adversarial_target=metadata.uses_default_adversarial_target,

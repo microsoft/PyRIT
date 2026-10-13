@@ -16,12 +16,14 @@ attack_manager_mod = pytest.importorskip(
 )
 torch = pytest.importorskip("torch", reason="torch not installed")
 
-MultiPromptAttack = attack_manager_mod.MultiPromptAttack
-OptimizationRunState = attack_manager_mod.OptimizationRunState
-ProgressiveMultiPromptAttack = attack_manager_mod.ProgressiveMultiPromptAttack
-ProgressiveScheduleState = attack_manager_mod.ProgressiveScheduleState
-RngBundle = attack_manager_mod.RngBundle
-StopReason = attack_manager_mod.StopReason
+from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
+    MultiPromptAttack,
+    OptimizationRunState,
+    ProgressiveMultiPromptAttack,
+    ProgressiveScheduleState,
+    RngBundle,
+    StopReason,
+)
 
 
 def _bare_multi_prompt_attack(step_results: list[tuple[str, float]]) -> MultiPromptAttack:
@@ -56,7 +58,10 @@ def _track_acceptance(attack: MultiPromptAttack) -> None:
 
     def tracking_step(**kwargs: Any) -> tuple[str, float]:
         attack._acceptance_snapshots.append(attack.control_str)  # type: ignore[attr-defined]
-        return real_step(**kwargs)
+        control, loss = real_step(**kwargs)
+        assert isinstance(control, str)
+        assert isinstance(loss, float)
+        return control, loss
 
     attack.step = MagicMock(side_effect=tracking_step)  # type: ignore[assignment]
 

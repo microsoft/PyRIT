@@ -710,6 +710,7 @@ class TestSetupPhase:
         call_args = mock_adversarial_chat.set_system_prompt_async.call_args
         assert "Test objective" in call_args.kwargs["system_prompt"]
         assert "15" in call_args.kwargs["system_prompt"]  # Check for the max_turns value
+        assert "Prior Conversation Context" not in call_args.kwargs["system_prompt"]
         assert call_args.kwargs["conversation_id"] == basic_context.session.adversarial_chat_conversation_id
 
     async def test_setup_handles_prepended_conversation_with_refusal(

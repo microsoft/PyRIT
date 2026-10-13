@@ -68,6 +68,35 @@ async def test_question_answer_scorer_score_async(
     assert not message.get_piece().prompt_metadata
 
 
+@pytest.mark.parametrize(
+    ("correct_answer", "correct_answer_label", "response", "expected_score"),
+    [
+        ("1", "1", "Option 2: 1000", False),
+        ("10000", "3", "Option 0: 1000000", False),
+        ("Vitamin B", "0", "Option 3: Vitamin B12", False),
+        ("Paris", "1", "Option 11: Parisian", False),
+        ("1", "1", "Option 1: 1", True),
+        ("10000", "3", "3: 10000", True),
+        ("Vitamin B", "0", "Vitamin B.", True),
+        ("Paris", "1", "The answer is PARIS", True),
+        ("Paris, France", "1", "1:Paris", True),
+    ],
+)
+async def test_question_answer_scorer_ignores_matches_inside_longer_words_async(
+    correct_answer: str, correct_answer_label: str, response: str, expected_score: bool
+) -> None:
+    expectation = ScoringExpectation(
+        conditions=[AnswerMatches(correct_answer=correct_answer, correct_answer_label=correct_answer_label)]
+    )
+    message = await store_message_async(Message.from_prompt(prompt=response, role="assistant"))
+
+    scores = await QuestionAnswerScorer().score_async(
+        scorable=MessageScorable.from_message(message), expectation=expectation
+    )
+
+    assert scores[0].get_value() is expected_score
+
+
 @pytest.mark.parametrize("expectation", [None, ScoringExpectation(), ScoringExpectation(objective="Paris")])
 async def test_question_answer_requires_typed_condition_async(expectation: ScoringExpectation | None) -> None:
     scorer = QuestionAnswerScorer()

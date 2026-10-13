@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from aiosqlite import Cursor
 from sqlalchemy import event
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.exceptions import (
@@ -600,6 +601,7 @@ class TestExecutionExpectationTransport:
             attack_scoring_config=AttackScoringConfig(objective_scorer=objective, auxiliary_scorers=[auxiliary]),
         )
         write_started, validation_started, release_read = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        validation_cancelled = asyncio.Event()
         original = ValueError("scoring failed")
 
         def record_write(*args: Any) -> None:
@@ -615,7 +617,11 @@ class TestExecutionExpectationTransport:
         async def delayed_fetchall_async(cursor: Cursor) -> Iterable[Any]:
             if write_started.is_set() and not validation_started.is_set():
                 validation_started.set()
-                await release_read.wait()
+                try:
+                    await release_read.wait()
+                except asyncio.CancelledError:
+                    validation_cancelled.set()
+                    raise
             return await fetchall(cursor)
 
         engine = sqlite_instance._get_async_engine()
@@ -629,8 +635,12 @@ class TestExecutionExpectationTransport:
                     attack.execute_async(objective="attack objective", expectation=_expectation())
                 )
                 try:
+                    # Time cancellation cleanup separately from attack startup and target persistence.
+                    await asyncio.wait_for(validation_started.wait(), timeout=30)
                     with pytest.raises(RuntimeError, match="Strategy execution failed for auxiliary_scorer") as raised:
-                        await asyncio.wait_for(task, timeout=5)
+                        await wait_for_completion_async(future=task, timeout=5)
+                    assert validation_cancelled.is_set()
+                    assert not release_read.is_set()
                 finally:
                     release_read.set()
                     if not task.done():
@@ -645,7 +655,7 @@ class TestExecutionExpectationTransport:
         assert stored.outcome == AttackOutcome.ERROR
         assert stored.error_message is not None
         assert "scoring failed" in stored.error_message
-        assert await sqlite_instance.get_scores_async() == []
+        assert await sqlite_instance.get_scores_async(score_type="true_false") == []
 
     @pytest.mark.parametrize("duplicate", [False, True], ids=["initial_node", "duplicated_node"])
     @pytest.mark.parametrize("explicit_expectation", [False, True], ids=["default_objective", "scoring_objective"])

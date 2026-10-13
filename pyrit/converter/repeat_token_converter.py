@@ -44,15 +44,27 @@ class RepeatTokenConverter(Converter):
             token_to_repeat (str): The string to be repeated.
             times_to_repeat (int): The number of times the string will be repeated.
             token_insert_mode (str, optional): The mode of insertion for the repeated token.
-                Can be "split", "prepend", "append", or "repeat".
+
+        Raises:
+            ValueError: If ``token_to_repeat`` is not a non-empty string, ``times_to_repeat`` is not an
+                integer >= 1, or ``token_insert_mode`` is not one of the allowed modes.
         """
+        if not isinstance(token_to_repeat, str) or not token_to_repeat.strip():
+            raise ValueError("token_to_repeat must be a non-empty string.")
+
+        if not isinstance(times_to_repeat, int) or isinstance(times_to_repeat, bool) or times_to_repeat < 1:
+            raise ValueError("times_to_repeat must be an integer greater than or equal to 1.")
+
+        mode = "split" if token_insert_mode is None else token_insert_mode
+        valid_modes = {"split", "prepend", "append", "repeat"}
+        if not isinstance(mode, str) or mode not in valid_modes:
+            raise ValueError(f"Invalid token_insert_mode '{token_insert_mode}'. Must be one of: {sorted(valid_modes)}.")
+
         self._token_to_repeat = " " + token_to_repeat.strip()
         self._times_to_repeat = times_to_repeat
-        self._token_insert_mode = token_insert_mode if token_insert_mode else "split"
-        if not token_insert_mode:
-            token_insert_mode = "split"
+        self._token_insert_mode = mode
 
-        match token_insert_mode:
+        match mode:
             case "split":
                 # function to split prompt on first punctuation (.?! only), preserve punctuation, 2 parts max.
                 def insert(text: str) -> list[str]:

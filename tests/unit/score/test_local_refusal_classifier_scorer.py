@@ -357,7 +357,7 @@ def test_windows_cover_all_serialized_response_tokens(encoder: _LayaEncoder, com
 def test_real_tokenizer_window_coverage(
     encoder: _LayaEncoder, common: MagicMock, objective: str, long_response: bool
 ) -> None:
-    from transformers import BertTokenizer
+    from transformers.models.bert.tokenization_bert import BertTokenizer
 
     tokens = [
         "[PAD]",

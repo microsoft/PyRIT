@@ -152,13 +152,21 @@ class TestComicJailbreakDataset:
             assert len(seed.authors) == 3
             assert seed.groups == ["Singapore University of Technology and Design"]
 
-    async def test_fetch_dataset_missing_goal_raises(self):
-        mock_data = [{"Target": "Sure", "Behavior": "Test", "Category": "Test"}]
+    @pytest.mark.parametrize("missing_key", ["Goal", "Category"])
+    async def test_fetch_dataset_missing_goal_raises(self, missing_key: str) -> None:
+        example = _make_example()
+        del example[missing_key]
+        mock_data = [example]
         loader = _ComicJailbreakDataset(templates=["article"])
 
-        with patch.object(loader, "_fetch_from_url", return_value=mock_data):
-            with pytest.raises(ValueError, match="Missing keys"):
+        with (
+            patch.object(loader, "_fetch_from_url", return_value=mock_data),
+            patch.object(loader, "_fetch_template_async", new_callable=AsyncMock, return_value="/fake/template.png"),
+            patch.object(loader, "_render_comic_async", new_callable=AsyncMock) as render,
+        ):
+            with pytest.raises(ValueError, match=f"Missing keys in example: {missing_key}"):
                 await loader.fetch_dataset_async()
+            render.assert_not_awaited()
 
     async def test_fetch_dataset_empty_goal_skipped(self):
         mock_data = [_make_example(Goal="  ")]

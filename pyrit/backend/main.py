@@ -27,6 +27,7 @@ from pyrit.backend.middleware.compatibility import CompatibilityAPI, Compatibili
 from pyrit.backend.middleware.request_size import RequestSizeLimitMiddleware
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import (
+    analytics,
     attacks,
     auth,
     configuration,
@@ -121,6 +122,7 @@ app.add_middleware(SecurityHeadersMiddleware, dev_mode=DEV_MODE)
 
 
 # Include API routes
+app.include_router(analytics.router, prefix="/api", tags=["analytics"])
 app.include_router(attacks.router, prefix="/api", tags=["attacks"])
 app.include_router(message_sends.router, prefix="/api", tags=["attacks"])
 app.include_router(configuration.router, prefix="/api", tags=["config"])

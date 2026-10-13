@@ -621,6 +621,38 @@ async def test_token_converter_preserves_word_boundaries_on_round_trip():
     assert converter.decode(encoded.output_text) == original
 
 
+@pytest.mark.parametrize(
+    "original",
+    ["e-mail", "well-known", "self-harm", "Self-Harm", "a - b", "-lead", "trail-", "double--dash", "---"],
+)
+async def test_token_converter_round_trips_literal_hyphens(original: str):
+    # Regression test: a plaintext hyphen is the same character as the delimiter that
+    # joins code words, so without escaping "e-mail" encodes to the same text as
+    # "email" and decodes as "email".
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
+
+    encoded = await converter.convert_async(prompt=original)
+    assert converter.decode(encoded.output_text) == original
+
+
+async def test_token_converter_literal_hyphen_is_distinct_from_delimiter():
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
+
+    hyphenated = (await converter.convert_async(prompt="e-mail")).output_text
+    joined = (await converter.convert_async(prompt="email")).output_text
+    assert hyphenated != joined
+    assert hyphenated == f"{converter.mapping['e']}--{joined[len(converter.mapping['e']) + 1 :]}"
+
+
+def test_token_converter_teaching_instructions_explain_hyphen_escape():
+    mock_tokenizer = _mock_tokenizer({word: i for i, word in enumerate(_PLAIN_VOCAB_WORDS)})
+    converter = TokenBijectionConverter(tokenizer=mock_tokenizer, seed=3)
+
+    assert "two hyphens (--)" in converter.get_teaching_instructions()
+
+
 def test_token_converter_excludes_sentencepiece_continuation_fragments():
     # SentencePiece-style vocabs mark word-initial tokens with "▁"; bare tokens are
     # mid-word continuation fragments and should never be selected as standalone "words".
