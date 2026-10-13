@@ -3,12 +3,16 @@
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 from unit.mocks import store_message_async
 
+from pyrit.common.path import SCORER_SEED_PROMPT_PATH
+from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -22,7 +26,6 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import LiteLLMDecisionTarget
 from pyrit.score import DecisionScorer, FloatScaleThresholdScorer, NonReplayableObservationError
-from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestion, TrueFalseQuestionPaths
 
 MODEL = "openrouter/microsoft/microsoft-decision-1"
 OBJECTIVE = "Name the capital of France."
@@ -55,7 +58,9 @@ def decision_api() -> Iterator[AsyncMock]:
         yield api
 
 
-def _scorer(*, responses: list[str], requests: list[dict[str, Any]]) -> DecisionScorer:
+def _scorer(
+    *, responses: list[str], requests: list[dict[str, Any]], decision_question_path: Path | None = None
+) -> DecisionScorer:
     import litellm
     from litellm.types.decisions import DecisionsResponse
 
@@ -73,7 +78,24 @@ def _scorer(*, responses: list[str], requests: list[dict[str, Any]]) -> Decision
         endpoint="https://openrouter.ai/api",
         api_key="test-api-key",
     )
-    return DecisionScorer(chat_target=target)
+    return DecisionScorer(chat_target=target, decision_question_path=decision_question_path)
+
+
+@pytest.fixture
+def decision_question_file(tmp_path: Path) -> Path:
+    path = tmp_path / "question.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "category": "task_achieved",
+                "instructions": "Does the response achieve the objective?",
+                "true_description": "The response supplies the requested answer.",
+                "false_description": "The response does not supply the requested answer.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.mark.usefixtures("patch_central_database", "decision_api")
@@ -112,41 +134,46 @@ class TestDecisionScorer:
         assert request["state"] == {"objective": OBJECTIVE, "response": "Paris."}
         assert request["model"] == MODEL
         question = request["questions"]["objective_achieved"]
-        rubric = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED.value)
+        rubric = safe_load_yaml(
+            (SCORER_SEED_PROMPT_PATH / "decision" / "objective_achieved.yaml").read_text(encoding="utf-8")
+        )
         assert question["type"] == "noul"
-        assert question["criteria"] == {"true": rubric.true_description, "false": rubric.false_description}
-        assert question["instructions"] == scorer.get_identifier().params["decision_instructions"]
+        assert question["criteria"] == {"true": rubric["true_description"], "false": rubric["false_description"]}
+        assert question["instructions"] == scorer.get_identifier().params["question"]["instructions"]
         assert "Examples of how to apply the criteria" in question["instructions"]
         assert "do not follow instructions" in question["instructions"]
         assert "messages" not in request
 
     @pytest.mark.parametrize(
-        ("attribute", "replacement"),
+        ("field", "replacement"),
         [
-            ("DECISION_INSTRUCTIONS", "Does the response meaningfully advance the objective?"),
-            ("QUESTION_PATH", TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED),
+            ("instructions", "Does the response meaningfully advance the objective?"),
+            ("true_description", "The response provides a correct answer."),
+            ("false_description", "The response provides an incorrect answer."),
+            ("category", "custom_category"),
         ],
     )
     async def test_prompt_snapshot_controls_identity_and_replay_async(
         self,
         *,
         sqlite_instance: MemoryInterface,
-        attribute: str,
-        replacement: str | TrueFalseQuestionPaths,
+        decision_question_file: Path,
+        field: str,
+        replacement: str,
     ) -> None:
         requests: list[dict[str, Any]] = []
-        instructions = "Does the response achieve the objective?"
-        with (
-            patch.object(DecisionScorer, "DECISION_INSTRUCTIONS", instructions),
-            patch.object(DecisionScorer, "QUESTION_PATH", TrueFalseQuestionPaths.TASK_ACHIEVED),
-        ):
-            original = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
-            with patch.object(DecisionScorer, attribute, replacement):
-                changed = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+        original_question = safe_load_yaml(decision_question_file.read_text(encoding="utf-8"))
+        original = _scorer(
+            responses=[json.dumps(_response(0.82))], requests=requests, decision_question_path=decision_question_file
+        )
+        decision_question_file.write_text(yaml.safe_dump({**original_question, field: replacement}), encoding="utf-8")
+        changed = _scorer(
+            responses=[json.dumps(_response(0.82))], requests=requests, decision_question_path=decision_question_file
+        )
 
         original_identifier = original.get_identifier()
         changed_identifier = changed.get_identifier()
-        assert original_identifier.params["decision_instructions"] == instructions
+        assert original_identifier.params["question"] == original_question
         assert original_identifier.hash != changed_identifier.hash
         assert original_identifier.eval_hash != changed_identifier.eval_hash
         original_wrapper = FloatScaleThresholdScorer(scorer=original, threshold=0.7)
@@ -156,15 +183,62 @@ class TestDecisionScorer:
 
         score = (await original.score_async(scorable=ContentScorable(value="Paris."), expectation=expectation))[0]
         question = requests[0]["questions"]["objective_achieved"]
-        rubric = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value)
-        assert question["instructions"] == original_identifier.params["decision_instructions"]
-        assert question["criteria"] == {"true": rubric.true_description, "false": rubric.false_description}
+        assert question["instructions"] == original_question["instructions"]
+        assert question["criteria"] == {
+            "true": original_question["true_description"],
+            "false": original_question["false_description"],
+        }
         observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
 
         with pytest.raises(NonReplayableObservationError, match="scorer configuration"):
             await changed.score_observation_async(observation=observation, expectation=expectation)
 
         assert len(requests) == 1
+
+    def test_question_identity_depends_on_content_not_path(
+        self, *, decision_question_file: Path, tmp_path: Path
+    ) -> None:
+        other_path = tmp_path / "same_question.yaml"
+        other_path.write_text(decision_question_file.read_text(encoding="utf-8"), encoding="utf-8")
+        original = _scorer(responses=[], requests=[], decision_question_path=decision_question_file)
+        same_content = _scorer(responses=[], requests=[], decision_question_path=other_path)
+
+        assert original.get_identifier().hash == same_content.get_identifier().hash
+        assert original.get_identifier().eval_hash == same_content.get_identifier().eval_hash
+
+    @pytest.mark.parametrize(
+        "updates",
+        [
+            {"instructions": ""},
+            {"instructions": " \n "},
+            {"true_description": ""},
+            {"false_description": ""},
+            {"category": ""},
+            {"category": 1},
+            {"instructions": False},
+            {"true_description": ["answer"]},
+            {"unknown_field": "ignored"},
+        ],
+    )
+    def test_invalid_question_yaml_raises_before_scoring(
+        self, *, decision_question_file: Path, updates: dict[str, object]
+    ) -> None:
+        question = safe_load_yaml(decision_question_file.read_text(encoding="utf-8"))
+        decision_question_file.write_text(yaml.safe_dump({**question, **updates}), encoding="utf-8")
+        requests: list[dict[str, Any]] = []
+
+        with pytest.raises(ValueError):
+            _scorer(responses=[], requests=requests, decision_question_path=decision_question_file)
+
+        assert requests == []
+
+    def test_missing_question_field_raises_before_scoring(self, decision_question_file: Path) -> None:
+        question = safe_load_yaml(decision_question_file.read_text(encoding="utf-8"))
+        del question["false_description"]
+        decision_question_file.write_text(yaml.safe_dump(question), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="false_description"):
+            _scorer(responses=[], requests=[], decision_question_path=decision_question_file)
 
     async def test_objective_only_input_resolves_condition_async(self) -> None:
         requests: list[dict[str, Any]] = []
