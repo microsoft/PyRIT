@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
     from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
     from pyrit.score.float_scale.azure_content_filter_scorer import AzureContentFilterScorer
+    from pyrit.score.float_scale.decision_scorer import DecisionScorer
     from pyrit.score.float_scale.float_scale_fallback_scorer import FloatScaleFallbackScorer
     from pyrit.score.float_scale.float_scale_score_aggregator import (
         FloatScaleScoreAggregator,
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
     from pyrit.score.float_scale.local_violence_classifier_scorer import LocalViolenceClassifierScorer
-    from pyrit.score.float_scale.microsoft_decision_objective_scorer import MicrosoftDecisionObjectiveScorer
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
     from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
@@ -177,6 +177,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ConversationScorer": "pyrit.score.conversation_scorer",
     "AgentThreatRulesScorer": "pyrit.score.true_false.regex.agent_threat_rules_scorer",
     "CredentialLeakScorer": "pyrit.score.true_false.regex.credential_leak_scorer",
+    "DecisionScorer": "pyrit.score.float_scale.decision_scorer",
     "DecodingScorer": "pyrit.score.true_false.decoding_scorer",
     "DivergenceScorer": "pyrit.score.true_false.regex.divergence_scorer",
     "EscapedAnsiOutputScorer": "pyrit.score.true_false.regex.escaped_ansi_output_scorer",
@@ -227,7 +228,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MessageScorableResolver": "pyrit.score.message_scorable_resolver",
     "MessageScorable": "pyrit.score.scorable",
     "MessageScorer": "pyrit.score.message_scorer",
-    "MicrosoftDecisionObjectiveScorer": "pyrit.score.float_scale.microsoft_decision_objective_scorer",
     "NonReplayableObservationError": "pyrit.score.observation.execution",
     "MethKeywordScorer": "pyrit.score.true_false.regex.meth_keyword_scorer",
     "MetricsType": "pyrit.score.scorer_evaluation.metrics_type",

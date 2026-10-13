@@ -302,10 +302,10 @@ ENV_TARGET_CONFIGS: list[TargetConfig] = [
         model_var="OPEN_ROUTER_CLAUDE_MODEL",
     ),
     TargetConfig(
-        registry_name="open_router_microsoft_decision",
+        registry_name="microsoft_decision",
         target_class=LiteLLMDecisionTarget,
-        endpoint_var="OPEN_ROUTER_DECISION_ENDPOINT",
-        key_var="OPENROUTER_KEY",
+        endpoint_var="MICROSOFT_DECISION_ENDPOINT",
+        key_var="MICROSOFT_DECISION_KEY",
         default_endpoint="https://openrouter.ai/api",
         extra_kwargs={"model_name": "openrouter/microsoft/microsoft-decision-1"},
     ),

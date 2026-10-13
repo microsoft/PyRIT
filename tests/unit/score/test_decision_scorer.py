@@ -21,7 +21,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_target import LiteLLMDecisionTarget
-from pyrit.score import FloatScaleThresholdScorer, MicrosoftDecisionObjectiveScorer, NonReplayableObservationError
+from pyrit.score import DecisionScorer, FloatScaleThresholdScorer, NonReplayableObservationError
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestion, TrueFalseQuestionPaths
 
 MODEL = "openrouter/microsoft/microsoft-decision-1"
@@ -55,7 +55,7 @@ def decision_api() -> Iterator[AsyncMock]:
         yield api
 
 
-def _scorer(*, responses: list[str], requests: list[dict[str, Any]]) -> MicrosoftDecisionObjectiveScorer:
+def _scorer(*, responses: list[str], requests: list[dict[str, Any]]) -> DecisionScorer:
     import litellm
     from litellm.types.decisions import DecisionsResponse
 
@@ -73,11 +73,11 @@ def _scorer(*, responses: list[str], requests: list[dict[str, Any]]) -> Microsof
         endpoint="https://openrouter.ai/api",
         api_key="test-api-key",
     )
-    return MicrosoftDecisionObjectiveScorer(chat_target=target)
+    return DecisionScorer(chat_target=target)
 
 
 @pytest.mark.usefixtures("patch_central_database", "decision_api")
-class TestMicrosoftDecisionObjectiveScorer:
+class TestDecisionScorer:
     @pytest.mark.parametrize("probability", [0, 0.69, 0.7, 0.82, 1])
     async def test_score_round_trips_and_replays_async(
         self, *, sqlite_instance: MemoryInterface, probability: float
@@ -137,11 +137,11 @@ class TestMicrosoftDecisionObjectiveScorer:
         requests: list[dict[str, Any]] = []
         instructions = "Does the response achieve the objective?"
         with (
-            patch.object(MicrosoftDecisionObjectiveScorer, "DECISION_INSTRUCTIONS", instructions),
-            patch.object(MicrosoftDecisionObjectiveScorer, "QUESTION_PATH", TrueFalseQuestionPaths.TASK_ACHIEVED),
+            patch.object(DecisionScorer, "DECISION_INSTRUCTIONS", instructions),
+            patch.object(DecisionScorer, "QUESTION_PATH", TrueFalseQuestionPaths.TASK_ACHIEVED),
         ):
             original = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
-            with patch.object(MicrosoftDecisionObjectiveScorer, attribute, replacement):
+            with patch.object(DecisionScorer, attribute, replacement):
                 changed = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
 
         original_identifier = original.get_identifier()
