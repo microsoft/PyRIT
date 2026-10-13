@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import io
 import logging
+import os
 import tempfile
 import zipfile
 from abc import ABC, abstractmethod
@@ -420,7 +421,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             Returns:
                 Dataset: The loaded dataset from Hugging Face.
             """
-            cache_dir = str(DB_DATA_PATH / "huggingface") if cache else None
+            cache_dir = (os.getenv("HF_DATASETS_CACHE") or str(DB_DATA_PATH / "huggingface")) if cache else None
 
             # Reuse cached data when caching is enabled; force a re-download otherwise so
             # cache=False genuinely picks up upstream edits instead of silently reusing the cache.

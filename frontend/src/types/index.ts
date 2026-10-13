@@ -883,6 +883,11 @@ export interface ScenarioDatasetSettings {
   filters: Record<string, string[]>
 }
 
+export interface ScenarioDatasetLoadResponse {
+  settings: ScenarioDatasetSettings
+  items: DatasetInfo[]
+}
+
 export interface RegisteredScenario {
   scenario_name: string
   scenario_type: string

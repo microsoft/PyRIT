@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import PromptDataType, SeedRecord, SeedType
+from pyrit.models.scenario_dataset import ScenarioDatasetSettings
 
 
 class DatasetInfo(BaseModel):
@@ -47,6 +48,13 @@ class DatasetListResponse(BaseModel):
     """Response for listing available datasets."""
 
     items: list[DatasetInfo] = Field(..., description="List of available datasets")
+
+
+class ScenarioDatasetLoadResponse(BaseModel):
+    """Selected dataset settings and metadata after an explicit load."""
+
+    settings: ScenarioDatasetSettings
+    items: list[DatasetInfo]
 
 
 class SeedExampleSummary(BaseModel):

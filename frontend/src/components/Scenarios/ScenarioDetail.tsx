@@ -11,7 +11,6 @@ import {
   DialogSurface,
   DialogTitle,
   Field,
-  Input,
   MessageBar,
   MessageBarBody,
   mergeClasses,
@@ -154,13 +153,6 @@ const BASELINE_TECHNIQUE: ScenarioTechniqueSummary = {
   tags: ['baseline', 'single_turn'],
 }
 
-function parseDatasetNames(datasetOverride: string): string[] {
-  return datasetOverride
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-}
-
 function formatParameterPreview(value: ParameterFormValue | undefined): string {
   if (Array.isArray(value)) {
     return value.length > 0 ? value.join(', ') : 'Not set'
@@ -242,8 +234,6 @@ interface BuildEstimateRequestInput {
   scenarioParamValues: Record<string, ParameterFormValue>
   datasetEdits: ScenarioDatasetRequest
   datasetError: string | null
-  harmCategoriesFilter: string
-  dataTypesFilter: string
   includeBaseline: boolean
 }
 
@@ -299,8 +289,6 @@ function buildEstimateRequest({
   scenarioParamValues,
   datasetEdits,
   datasetError,
-  harmCategoriesFilter,
-  dataTypesFilter,
   includeBaseline,
 }: BuildEstimateRequestInput): BuildEstimateRequestResult {
   if (supportsParameter(scenario, 'scenario_techniques') && techniques.length === 0) {
@@ -331,14 +319,7 @@ function buildEstimateRequest({
   if (scenario.uses_default_adversarial_target && adversarialTargetName) {
     request.adversarial_target_name = adversarialTargetName
   }
-  const harmCategories = supportsDatasets ? parseDatasetNames(harmCategoriesFilter) : []
-  const dataTypes = supportsDatasets ? parseDatasetNames(dataTypesFilter) : []
-  if (harmCategories.length > 0 || dataTypes.length > 0) {
-    request.datasets = { ...datasetEdits, filters: {
-      ...(harmCategories.length > 0 ? { harm_categories: harmCategories } : {}),
-      ...(dataTypes.length > 0 ? { data_types: dataTypes } : {}),
-    } }
-  } else if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
+  if (supportsDatasets && Object.keys(datasetEdits).length > 0) {
     request.datasets = datasetEdits
   }
   if (scenarioParams) {
@@ -630,8 +611,16 @@ function ScenarioLaunchForm({
     total_limit: scenario.default_run_size.dataset_limit.state !== 'not_applicable',
     supports_overrides: true, filters: true,
   }
-  const [harmCategoriesFilter, setHarmCategoriesFilter] = useState('')
-  const [dataTypesFilter, setDataTypesFilter] = useState('')
+  const selectedDatasetNames = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
+  const datasetSelectionKey = JSON.stringify(selectedDatasetNames)
+  const reloadDatasetMetadata = datasetMetadata.reload
+  const previousDatasetSelection = useRef(datasetSelectionKey)
+  useEffect(() => {
+    if (previousDatasetSelection.current !== datasetSelectionKey) {
+      previousDatasetSelection.current = datasetSelectionKey
+      reloadDatasetMetadata()
+    }
+  }, [datasetSelectionKey, reloadDatasetMetadata])
   const [maxConcurrency, setMaxConcurrency] = useState(DEFAULT_MAX_CONCURRENCY)
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
   const [scenarioParamValues, setScenarioParamValues] = useState<Record<string, ParameterFormValue>>(() =>
@@ -694,8 +683,6 @@ function ScenarioLaunchForm({
       scenarioParamValues,
       datasetEdits,
       datasetError,
-      harmCategoriesFilter,
-      dataTypesFilter,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
     }),
     [
@@ -703,9 +690,7 @@ function ScenarioLaunchForm({
       baselineChecked,
       datasetEdits,
       datasetError,
-      dataTypesFilter,
       dynamicParameters,
-      harmCategoriesFilter,
       isBaselineForbidden,
       scenario,
       scenarioParamValues,
@@ -723,8 +708,6 @@ function ScenarioLaunchForm({
       scenarioParamValues,
       datasetEdits,
       datasetError,
-      harmCategoriesFilter,
-      dataTypesFilter,
       maxConcurrency,
       maxRetries,
       includeBaseline: isBaselineForbidden ? false : baselineChecked,
@@ -735,9 +718,7 @@ function ScenarioLaunchForm({
       baselineChecked,
       datasetEdits,
       datasetError,
-      dataTypesFilter,
       dynamicParameters,
-      harmCategoriesFilter,
       isBaselineForbidden,
       labels,
       maxConcurrency,
@@ -958,10 +939,11 @@ function ScenarioLaunchForm({
   const displayedEstimate = estimateFromState(estimateState)
   const selectedTechniqueCount = (supportsTechniques ? selectedTechniques.length : 0)
     + (supportsBaseline && baselineChecked && !isBaselineForbidden ? 1 : 0)
-  const previewDatasets = (datasetEdits.sources ?? effectiveDatasets.sources).map((source) => source.name)
+  const previewDatasets = (datasetEdits.sources ?? datasetDefaults.sources).map((source) => source.name)
   const previewDatasetNames = previewDatasets.length > 0 ? previewDatasets : scenario.default_datasets
-  const previewHarmCategories = parseDatasetNames(harmCategoriesFilter)
-  const previewDataTypes = parseDatasetNames(dataTypesFilter)
+  const previewFilters = { ...datasetDefaults.filters, ...datasetEdits.filters }
+  const previewHarmCategories = previewFilters.harm_categories ?? []
+  const previewDataTypes = previewFilters.data_types ?? []
 
   return (
     <section
@@ -1129,8 +1111,24 @@ function ScenarioLaunchForm({
             </section>
             )}
 
+            {(supportsDatasets || datasetDefaults.sources.length > 0) && (
+            <section className={styles.section} aria-labelledby="datasets-section-title">
+              <Text id="datasets-section-title" as="h2" size={400} weight="semibold">Datasets</Text>
+              <ScenarioDatasetTable
+                request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
+                options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
+                datasets={datasetMetadata.items} disabled={submitting}
+                loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
+                preparing={datasetMetadata.preparing} loadError={datasetMetadata.loadError}
+                loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null}
+                onLoad={() => { if (estimateRequest) void datasetMetadata.loadSelected(scenario.scenario_name, estimateRequest) }}
+                onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
+              />
+            </section>
+            )}
+
             {(dynamicParameters.length > 0 || scenario.uses_default_adversarial_target
-              || supportsDatasets || supportsConcurrency || supportsRetries) && (
+              || supportsConcurrency || supportsRetries) && (
             <section className={styles.section} aria-labelledby="parameters-section-title">
               <Text id="parameters-section-title" as="h2" size={400} weight="semibold">
                 Parameters
@@ -1158,42 +1156,6 @@ function ScenarioLaunchForm({
                     placeholder="Use server default"
                     disabled={submitting}
                   />
-                )}
-                {supportsDatasets && (
-                <>
-                <ScenarioDatasetTable
-                  request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
-                  options={datasetOptions} datasets={datasetMetadata.items} disabled={submitting}
-                  loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
-                  onReload={datasetMetadata.reload} onChange={setDatasetEdits} onValidationChange={setDatasetError}
-                />
-                <Field
-                  label="Harm categories"
-                  hint="Comma-separated values. A seed must match every listed category."
-                >
-                  <Input
-                    className={styles.control}
-                    value={harmCategoriesFilter}
-                    disabled={submitting || !datasetOptions.supports_overrides || !datasetOptions.filters}
-                    placeholder="cyber, violence"
-                    onChange={(_, data) => setHarmCategoriesFilter(data.value)}
-                    data-testid="harm-categories-filter-input"
-                  />
-                </Field>
-                <Field
-                  label="Data types"
-                  hint="Comma-separated values. A seed can match any listed data type."
-                >
-                  <Input
-                    className={styles.control}
-                    value={dataTypesFilter}
-                    disabled={submitting || !datasetOptions.supports_overrides || !datasetOptions.filters}
-                    placeholder="text, image_path"
-                    onChange={(_, data) => setDataTypesFilter(data.value)}
-                    data-testid="data-types-filter-input"
-                  />
-                </Field>
-                </>
                 )}
                 {supportsConcurrency && <Field label="Max concurrency">
                   <SingleStepSpinButton
@@ -1292,7 +1254,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionInvalid || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

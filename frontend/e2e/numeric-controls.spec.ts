@@ -17,7 +17,8 @@ const DATASET_OPTIONS = {
 const DATASETS = {
   items: [
     { name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true, origins: [], logical_examples: null },
-    { name: 'custom_objectives', selection_key: 'dataset:named:custom_objectives', loaded: true, provider_available: false, origins: ['user'], logical_examples: 10 },
+    { name: 'custom_objectives', selection_key: 'dataset:named:custom_objectives', loaded: true, provider_available: false,
+      origins: ['user'], logical_examples: 10, modalities: ['text', 'image_path'], harm_categories: [], has_unlabeled_harm_categories: false },
   ],
 }
 
@@ -58,6 +59,7 @@ const SCENARIO: RegisteredScenario = {
 }
 
 async function mockNumericControlApis(page: Page): Promise<void> {
+  let datasetItems = DATASETS.items.map((item) => ({ ...item }))
   // No backend, model calls, or connections to another worktree's HMR server.
   await page.routeWebSocket('**/*', (socket) => socket.close())
   await page.route('**/api/**', async (route) => {
@@ -92,9 +94,18 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         ],
       },
       '/api/labels': { source: 'attacks', labels: {} },
-      '/api/datasets': DATASETS,
+      '/api/datasets': { items: datasetItems },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,
+    }
+    if (path.endsWith('/datasets/load')) {
+      const edits: ScenarioDatasetRequest = route.request().postDataJSON()?.datasets ?? {}
+      const names = (edits.sources ?? DATASET_DEFAULTS.sources).map((source) => source.name)
+      datasetItems = datasetItems.map((item) => names.includes(item.name)
+        ? { ...item, loaded: true, logical_examples: 200, modalities: ['text'], harm_categories: ['malware'] }
+        : item)
+      await route.fulfill({ json: { settings: DATASET_DEFAULTS, items: datasetItems.filter((item) => names.includes(item.name)) } })
+      return
     }
     if (path.endsWith('/estimate')) {
       const edits: ScenarioDatasetRequest = route.request().postDataJSON()?.datasets ?? {}
@@ -213,33 +224,41 @@ test('native shared dynamic parameter controls step once', async ({ page }) => {
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'temperature', exact: true }), 0.5)
 })
 
-test('dataset limits support default and all and keep invalid text blocking after source reset', async ({ page }, testInfo) => {
+test('dataset sources and explicit loading are separate from Parameters', async ({ page }, testInfo) => {
   await page.goto(`/scanner/${SCENARIO.scenario_name}`)
-  await expect(page.getByRole('table', { name: 'Selected datasets' })).toBeVisible()
-  await page.getByRole('combobox', { name: 'Objective Target' }).selectOption('mock-target')
-  const total = page.getByRole('textbox', { name: 'Max total', exact: true })
-  await expect(total).toHaveValue('')
-  await page.getByRole('region', { name: 'Dataset configuration' }).screenshot({ path: testInfo.outputPath('datasets-default.png') })
-  await total.fill('all')
-  await page.getByRole('combobox', { name: 'Add dataset' }).fill('custom_objectives')
-  await page.getByRole('button', { name: 'Add source', exact: true }).click()
-  await page.getByRole('textbox', { name: 'custom_objectives limit' }).fill('8')
-  await page.getByRole('combobox', { name: 'custom_objectives fetch' }).selectOption('never')
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  await expect(section.getByRole('table', { name: 'Selected datasets' })).toBeVisible()
+  await expect(section.getByRole('columnheader', { name: 'Size' })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5')
+  await expect(section.getByText('Load dataset to see details', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Parameters' }).getByRole('table')).toHaveCount(0)
+  await expect(section.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveText('Up to 5')
+  await expect(section.getByText('Details and advanced settings')).toHaveCount(0)
+  await section.screenshot({ path: testInfo.outputPath('datasets-default.png') })
+  await section.getByRole('button', { name: 'Load datasets' }).click()
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
+  await expect(section.getByRole('switch')).toHaveCount(0)
+  await expect(section.getByRole('button', { name: 'Filter harm category malware' })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Filter data type Text' })).toBeVisible()
+  await section.screenshot({ path: testInfo.outputPath('datasets-loaded.png') })
+  await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
+  const total = page.getByRole('textbox', { name: 'Maximum objectives', exact: true })
   await total.fill('12')
-  await expect(page.getByText('Default/effective: 12. Blank or default retains the scenario setting.')).toBeVisible()
-  await expect(page.getByText('Default/effective: 8. Blank or default retains the scenario setting.')).toBeVisible()
-  await page.getByRole('region', { name: 'Dataset configuration' }).screenshot({ path: testInfo.outputPath('datasets-edited.png') })
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await section.screenshot({ path: testInfo.outputPath('datasets-custom.png') })
+  await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
   await total.fill('0')
-  await expect(page.getByRole('alert')).toContainText('Max total must be a positive integer')
-  await page.getByRole('button', { name: 'Use default sources' }).click()
-  await expect(total).toHaveValue('0')
-  await expect(page.getByRole('alert')).toContainText('Max total must be a positive integer')
+  await total.press('Escape')
+  await section.getByRole('button', { name: 'Reset datasets' }).click()
+  await expect(section.getByRole('alert')).toContainText('Maximum objectives must be a positive integer')
   await expect(page.getByRole('button', { name: 'Launch scan', exact: true })).toBeDisabled()
-  await page.getByRole('region', { name: 'Dataset configuration' }).screenshot({ path: testInfo.outputPath('datasets-invalid.png') })
-  await total.fill('default')
-  await expect(page.getByRole('alert')).not.toBeVisible()
-  await total.fill('')
-  await expect(total).toHaveValue('')
+  await section.screenshot({ path: testInfo.outputPath('datasets-invalid.png') })
+  await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
+  await expect(total).toHaveValue('0')
+  await page.getByRole('button', { name: 'Reset to 5', exact: true }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(section.getByRole('alert')).not.toBeVisible()
 })
 
 test('native Azure ML advanced controls retain steps and reset to default guidance', async ({ page }) => {
@@ -265,6 +284,43 @@ test('native Azure ML advanced controls retain steps and reset to default guidan
   const resetTemperature = dialog.getByRole('spinbutton', { name: 'Temperature', exact: true })
   await expect(resetTemperature).toHaveValue('')
   await expect(resetTemperature).toHaveAttribute('placeholder', 'Defaults to 1.0')
+})
+
+test('dataset rows add immediately, edit in place, share filters, and reset without loading', async ({ page }) => {
+  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  await section.getByRole('combobox', { name: 'Add dataset' }).click()
+  await page.getByRole('option', { name: 'custom_objectives', exact: true }).click()
+  await expect(section.getByText('custom_objectives', { exact: true })).toBeVisible()
+  await section.getByRole('button', { name: 'Remove harmbench' }).click()
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
+  await section.getByRole('button', { name: 'Edit custom_objectives objective limit' }).click()
+  await page.getByRole('textbox', { name: 'custom_objectives objective limit' }).fill('3')
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(section.getByRole('button', { name: 'Edit custom_objectives objective limit' })).toHaveText('Up to 3 of 10')
+  await section.getByRole('button', { name: 'Filter data type Image' }).click()
+  await expect(section.getByRole('button', { name: 'Filter data type Text' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(section.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+  await expect(section.getByText('Filters:', { exact: true })).toHaveCount(0)
+  await section.getByRole('button', { name: 'Reset datasets' }).click()
+  await expect(section.getByText('harmbench', { exact: true })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Remove type filter text' })).toHaveCount(0)
+})
+
+test('dataset manual loading keeps an explicit load-on-start switch override', async ({ page }) => {
+  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  const policy = section.getByRole('switch', { name: 'Load missing data when the scan starts' })
+  await expect(policy).toBeChecked()
+  await policy.click()
+  const load = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/datasets/load'))
+  await section.getByRole('button', { name: 'Load datasets' }).click()
+  const request = await load
+  expect(request.postDataJSON().datasets.fetch).toBe('never')
+  expect(request.postDataJSON().datasets.sources[0].fetch).toBe('never')
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
+  await expect(policy).toHaveCount(0)
 })
 
 test('native round-robin weights step once and preserve bounds and integer validation', async ({ page }) => {

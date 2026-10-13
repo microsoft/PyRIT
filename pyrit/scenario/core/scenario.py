@@ -53,7 +53,12 @@ from pyrit.models import (
     config_hash,
 )
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
-from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings
+from pyrit.models.scenario_dataset import (
+    DatasetFetchPolicy,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -63,6 +68,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -681,6 +687,9 @@ class Scenario(ABC):
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
         budget = self._get_run_size_budget()
+        cap = self._dataset_config.max_total
+        if cap != "all" and isinstance(budget, BoundedDatasetSize):
+            budget = BoundedDatasetSize(value=min(cap, budget.value))
         dataset_limit = self._get_dataset_limit_input()
         if isinstance(budget, IndeterminateDatasetSize):
             return ScenarioRunSizeEstimate.unavailable(
@@ -762,7 +771,7 @@ class Scenario(ABC):
 
     def _get_dataset_limit_input(self) -> DatasetLimitInput:
         """Return the editable limit, never an aggregate population budget."""
-        if not self.USES_DATASET_SIZE_LIMIT:
+        if not self.get_dataset_options().total_limit:
             return DatasetLimitInput(state=DatasetLimitState.NotApplicable)
         limit = self._dataset_config.max_total
         return DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit != "all" else DatasetLimitInput()
@@ -894,6 +903,17 @@ class Scenario(ABC):
         """Return the default dataset settings for the current parameters, without reading memory."""
         return project_dataset_settings(self._resolve_default_dataset_config())
 
+    async def load_datasets_async(self) -> ScenarioDatasetSettings:
+        """
+        Load missing selected datasets explicitly, without creating or executing a run.
+
+        Returns:
+            ScenarioDatasetSettings: Resolved settings, with the scan's policies unchanged.
+        """
+        self._resolve_runtime_configuration(require_objective_target=False)
+        await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
+        return project_dataset_settings(self._dataset_config)
+
     def _validate_runtime_configuration(self) -> None:
         """
         Check resolved parameters for preview and launch without reading datasets.
@@ -902,10 +922,18 @@ class Scenario(ABC):
             ValueError: If an ingredient-only scenario receives per-dataset limits.
         """
         self._dataset_config.validate_configuration()
+        cap = self._dataset_config.max_total
+        minimum = max(1, len(self._get_required_objective_keys()))
+        if cap != "all" and cap < minimum:
+            raise ValueError(f"Select at least {minimum} objectives, or select fewer techniques.")
         if not self.USES_DATASET_SIZE_LIMIT and any(
             self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
         ):
             raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+
+    def _get_required_objective_keys(self) -> list[str]:
+        """Return population names that must retain at least one objective."""
+        return []
 
     @final
     async def initialize_async(self) -> None:
@@ -969,6 +997,15 @@ class Scenario(ABC):
         else:
             await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
+        if not is_resume and self._dataset_config.max_total != "all":
+            count = sum(len(groups) for groups in seed_groups_by_dataset.values())
+            if count > self._dataset_config.max_total:
+                seed_groups_by_dataset = sample_with_coverage(
+                    groups_by_dataset=seed_groups_by_dataset,
+                    cap=self._dataset_config.max_total,
+                    required_keys=self._get_required_objective_keys(),
+                    key=lambda name, _: name,
+                )
         # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
         new_result_id = uuid.uuid4()
         context = self._build_scenario_context(

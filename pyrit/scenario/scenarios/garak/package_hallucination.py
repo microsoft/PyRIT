@@ -140,9 +140,7 @@ class PackageHallucination(Scenario):
     """
 
     VERSION: int = 3
-    DATASET_OPTIONS = ScenarioDatasetOptions(
-        mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, total_limit=False
-    )
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # The plain code request is not an adversarial baseline to compare against, so no baseline.
@@ -227,6 +225,9 @@ class PackageHallucination(Scenario):
         """Return the combined generated-prompt cap for the selected languages."""
         return BoundedDatasetSize(value=self._max_prompts_per_language * len(self._scenario_techniques))
 
+    def _get_required_objective_keys(self) -> list[str]:
+        return [technique.value for technique in self._scenario_techniques]
+
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
         Estimate generated prompts from the per-language cap without loading the corpus.
@@ -235,18 +236,21 @@ class PackageHallucination(Scenario):
             ScenarioRunSizeEstimate: Combined budget for the selected languages.
         """
         assert isinstance(budget, BoundedDatasetSize)
+        components = [
+            ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
+            for technique in self._scenario_techniques
+        ]
+        if budget.value < sum(component.count for component in components):
+            components = [ScenarioRunSizeComponent(label="Selected generated objectives", count=budget.value)]
         return ScenarioRunSizeEstimate(
             total_attack_count=budget.value,
-            components=[
-                ScenarioRunSizeComponent(label=technique.value, count=self._max_prompts_per_language)
-                for technique in self._scenario_techniques
-            ],
+            components=components,
             datasets=[
                 ScenarioDatasetSummary(name=technique.value, kind="synthesized")
                 for technique in self._scenario_techniques
             ],
             effective_parameters={"max_prompts_per_language": self._max_prompts_per_language},
-            note="The generated-prompt cap applies per language. Dataset size limits do not apply.",
+            note="The objective limit caps all selected languages; the per-language generation cap also applies.",
         )
 
     @staticmethod

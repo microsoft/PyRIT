@@ -43,6 +43,7 @@ import type {
   RunScenarioRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
+  ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
@@ -480,6 +481,14 @@ export const labelsApi = {
 }
 
 export const scenariosApi = {
+  loadDatasets: async (
+    scenarioName: string, request: ScenarioRunSizeEstimateRequest,
+  ): Promise<ScenarioDatasetLoadResponse> => {
+    const response = await apiClient.post(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/datasets/load`, request, { timeout: 300_000 },
+    )
+    return response.data
+  },
   /**
    * Lists one page of the scenario catalog. Callers that need the full
    * catalog should follow `pagination.next_cursor` until `has_more` is false.

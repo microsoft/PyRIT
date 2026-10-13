@@ -99,9 +99,7 @@ class SystemPromptExtraction(Scenario):
     """
 
     VERSION: int = 1
-    DATASET_OPTIONS = ScenarioDatasetOptions(
-        mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, total_limit=False
-    )
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Template-dominated like the Doctor/Jailbreak scenarios: the bare system prompt with no
@@ -159,6 +157,7 @@ class SystemPromptExtraction(Scenario):
             technique_class=SystemPromptExtractionTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 max_per_dataset="all",
+                max_total=self._prompt_cap,
                 sources=[
                     DatasetSource(name=name)
                     for name in [
@@ -181,7 +180,7 @@ class SystemPromptExtraction(Scenario):
 
     def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """Return the shared cap on system-prompt and template combinations."""
-        return scenario_dataset_size_from_limit(self._prompt_cap)
+        return scenario_dataset_size_from_limit(self._dataset_config.max_total)
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
@@ -196,7 +195,7 @@ class SystemPromptExtraction(Scenario):
             components=[ScenarioRunSizeComponent(label="System-prompt/template combinations", count=count)],
             datasets=[ScenarioDatasetSummary(name="System-prompt/template combinations", kind="synthesized")],
             effective_parameters={"prompt_cap": budget.value},
-            note="The prompt cap is shared across all selected categories. Dataset size limits do not apply.",
+            note="The objective limit is shared across all selected categories.",
         )
 
     def _sample_system_prompts(self, seeds_by_dataset: dict[str, list[Seed]]) -> list[str]:
@@ -238,15 +237,14 @@ class SystemPromptExtraction(Scenario):
         Build the (system prompt x template) seed groups, keyed by technique category.
 
         Mirrors garak: every selected (system prompt x template) combination is enumerated across
-        all selected categories, then randomly sampled down to ``prompt_cap`` when it is set.
+        all selected categories, then sampled down to the configured objective limit.
         Surviving combinations are grouped by category so each becomes one atomic attack. Resolving
         them here (rather than via the dataset config) means the base owns the single seed sample
         shared across the atomic attacks.
 
         Args:
-            apply_sampling (bool): Accepted for base-class compatibility but unused — the prompt-cap
-                sampling is already deterministic (``random.Random(self._random_seed)``), so resume
-                reproduces the same set without a ``max_dataset_size`` sampling path.
+            apply_sampling (bool): Apply the objective limit on fresh runs. Resume resolves
+                the full population so the stored run plan can restore its selected objectives.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique category value.
@@ -275,8 +273,9 @@ class SystemPromptExtraction(Scenario):
                 f"{DATASET_EXTRACTION_TEMPLATES}) are loaded into CentralMemory before running."
             )
 
-        if self._prompt_cap != "all" and len(combinations) > self._prompt_cap:
-            combinations = random.Random(self._random_seed).sample(combinations, self._prompt_cap)
+        cap = self._dataset_config.max_total
+        if apply_sampling and cap != "all" and len(combinations) > cap:
+            combinations = random.Random(self._random_seed).sample(combinations, cap)
 
         seed_groups_by_category: dict[str, list[AttackSeedGroup]] = {}
         for category, system_prompt, template in combinations:

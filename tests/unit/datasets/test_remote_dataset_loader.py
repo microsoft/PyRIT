@@ -435,3 +435,33 @@ class TestFetchFromHuggingFaceDownloadMode:
 
         assert mock_load.call_args.kwargs["download_mode"] == DownloadMode.FORCE_REDOWNLOAD
         assert mock_load.call_args.kwargs["cache_dir"] is None
+
+    @pytest.mark.parametrize("cache", [False, True])
+    async def test_custom_cache_directory_respects_cache_flag(self, cache: bool) -> None:
+        from datasets import DownloadMode
+
+        loader = ConcreteRemoteLoader()
+        with (
+            patch.dict("os.environ", {"HF_DATASETS_CACHE": "short-cache"}),
+            patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load,
+        ):
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=cache)
+
+        assert mock_load.call_args.kwargs["cache_dir"] == ("short-cache" if cache else None)
+        assert mock_load.call_args.kwargs["download_mode"] == (
+            DownloadMode.REUSE_DATASET_IF_EXISTS if cache else DownloadMode.FORCE_REDOWNLOAD
+        )
+
+    @pytest.mark.parametrize("value", ["", None])
+    async def test_default_cache_directory_without_override(self, value: str | None) -> None:
+        from pyrit.common.path import DB_DATA_PATH
+
+        environment = {} if value is None else {"HF_DATASETS_CACHE": value}
+        loader = ConcreteRemoteLoader()
+        with (
+            patch.dict("os.environ", environment, clear=True),
+            patch("pyrit.datasets.seed_datasets.remote.remote_dataset_loader.load_dataset") as mock_load,
+        ):
+            await loader._fetch_from_huggingface_async(dataset_name="owner/ds", split="train", cache=True)
+
+        assert mock_load.call_args.kwargs["cache_dir"] == str(DB_DATA_PATH / "huggingface")

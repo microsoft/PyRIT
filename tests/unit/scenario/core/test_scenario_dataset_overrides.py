@@ -36,7 +36,7 @@ from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
 from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.figstep import FigStep
-from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
+from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination, PackageHallucinationTechnique
 from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectTechnique
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
     DATASET_EXTRACTION_TEMPLATES,
@@ -168,7 +168,7 @@ async def test_resume_replays_saved_selection_without_preparation() -> None:
         (ApiKey, {"max_per_dataset": 1}, "per-dataset"),
         (ApiKey, {"sources": [{"name": "harmbench"}]}, "fixed"),
         (Encoding, {"sources": [{"name": "garak_slur_terms_en"}]}, "ambiguous"),
-        (PackageHallucination, {"max_total": 1}, "total dataset"),
+        (PackageHallucination, {"max_per_dataset": 1}, "per-dataset"),
     ],
 )
 async def test_constrained_scenarios_reject_unsupported_overrides_before_preparation(
@@ -262,6 +262,88 @@ async def test_synthesized_scenarios_build_only_from_matching_seeds(kind: str) -
     assert all("excluded:" not in seed.value for group in groups for seed in group.seeds)
     if kind == "prompt_inject":
         assert scenario._technique_templates["ignore_print"].value.startswith("selected:")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("kind", ["system_prompt", "web", "packages"])
+async def test_generated_objective_limits_preserve_ingredients_and_resume(kind: str) -> None:
+    scorer = SubStringScorer(substring="yes")
+    if kind == "system_prompt":
+        scenario = SystemPromptExtraction(objective_scorer=scorer)
+        techniques = [SystemPromptExtractionTechnique.DirectRequests]
+    elif kind == "web":
+        scenario = WebInjection(objective_scorer=scorer)
+        techniques = [WebInjectionTechnique.TaskXSS, WebInjectionTechnique.MarkdownURIImageExfilExtended]
+    else:
+        scenario = PackageHallucination(objective_scorer=scorer)
+        techniques = [PackageHallucinationTechnique.Rust, PackageHallucinationTechnique.Python]
+    args = {
+        "objective_target": MockPromptTarget(),
+        "scenario_techniques": techniques,
+        "include_baseline": False,
+        "dataset_overrides": ScenarioDatasetRequest(max_total=3, fetch=DatasetFetchPolicy.NEVER),
+    }
+    scenario.set_params_from_args(args=args)
+    memory = CentralMemory.get_memory_instance()
+    with patch.object(memory, "get_seeds_async", side_effect=AssertionError("Estimate read seeds")):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.estimated_attack_count == 3
+    assert estimate.dataset_limit.value == 3
+    names = [source.name for source in estimate.effective_datasets.sources]
+    seeds = [
+        SeedPrompt(
+            value=f"{name}-{index} <language> <task>" if name.endswith("_stubs") else f"{name}-{index}",
+            dataset_name=name,
+            metadata={"technique": "direct_requests"} if name == DATASET_EXTRACTION_TEMPLATES else {},
+        )
+        for name in names
+        for index in range(4)
+    ]
+    await memory.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+    await scenario.initialize_async()
+    assert sum(len(attack.seed_groups) for attack in scenario._atomic_attacks) == 3
+    assert all(attack.seed_groups for attack in scenario._atomic_attacks)
+    for name in names:
+        assert len(await memory.get_seeds_async(dataset_name=name)) == 4
+    plan = scenario._build_run_plan()
+    resumed = type(scenario)(objective_scorer=scorer, scenario_result_id=scenario._scenario_result_id)
+    resumed.set_params_from_args(args=args)
+    with patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("Resume prepared data")):
+        await resumed.initialize_async()
+    assert resumed._build_run_plan() == plan
+
+    uncapped = type(scenario)(objective_scorer=scorer)
+    uncapped.set_params_from_args(
+        args={**args, "dataset_overrides": ScenarioDatasetRequest(max_total="all", fetch=DatasetFetchPolicy.NEVER)}
+    )
+    await uncapped.initialize_async()
+    assert sum(len(attack.seed_groups) for attack in uncapped._atomic_attacks) > 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [WebInjection, PackageHallucination])
+@pytest.mark.parametrize("operation", ["estimate", "load", "initialize"])
+async def test_generated_limits_reject_missing_technique_coverage_before_loading(
+    *, scenario_class: type[Scenario], operation: str
+) -> None:
+    scenario = scenario_class()
+    scenario.set_params_from_args(
+        args={
+            "objective_target": MockPromptTarget(),
+            "scenario_techniques": [scenario._technique_class.ALL],
+            "dataset_overrides": ScenarioDatasetRequest(max_total=1),
+        }
+    )
+    with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("Prepared datasets")),
+        pytest.raises(ValueError, match="Select at least .* objectives"),
+    ):
+        if operation == "estimate":
+            await scenario.get_run_size_estimate_async()
+        elif operation == "load":
+            await scenario.load_datasets_async()
+        else:
+            await scenario.initialize_async()
 
 
 def test_scenarios_do_not_bypass_configured_seed_reads() -> None:
