@@ -188,6 +188,46 @@ pieces, system prompts, and converter preview input) and free-form values (promp
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
 
+### Input Validation and Trust Boundary
+
+The backend accepts requests from other machines, so it checks request values before it
+uses them:
+
+- Request bodies, URLs, and fields have the limits above.
+- Targets, converters, and scorers accept only the parameters their type catalogs list
+  (`GET /api/targets/types`, `GET /api/converters/types`, `GET /api/scorers/types`), in the
+  form listed there. Each component checks the values it receives; a `ValueError` from its
+  constructor returns **400**.
+- Media values in messages, previews, and prepended conversations must be uploaded content,
+  a URL, or a file in this server's media folders (`prompt-memory-entries` and
+  `seed-prompt-entries` under the memory results path), the folders `GET /api/media` serves.
+  Converter file parameters must be uploaded content, or an Azure Blob URL where the
+  parameter accepts one.
+- When results are stored in Azure Blob Storage, media URLs and converter file URLs must name
+  a file in those folders of the results container, and the server signs only those URLs for
+  display.
+- `HuggingFaceChatTarget`, which loads model code on the server, cannot be created through
+  the API. `HTTPXAPITarget`, which uploads local files, can be created through the API only
+  when `target_upload_directory` is set in `.pyrit_conf`; it then uploads files only from that
+  folder, and callers cannot change it. Register targets that need other settings in Python
+  or with an initializer.
+
+API callers are trusted operators, so these are intentional exceptions:
+
+- Callers choose target endpoints, headers, raw HTTP requests, and redirects, and converters
+  that accept URLs may download them. The backend does not restrict network destinations (no
+  host allow-list, private-network blocking, or DNS pinning); limit outbound network access in
+  the deployment instead.
+- Prompt content is not filtered; it is adversarial test data by design.
+- Any file type can be stored as a payload. `GET /api/media` renders only known image, audio,
+  and video types inline; everything else downloads as a file.
+- `GET /api/media` does not require authentication so the browser can load media. It serves
+  only files from the media folders above.
+- Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
+  an administrator and `allow_custom_initializers: true`.
+- `GitHubCopilotTarget.working_directory` and `LocalRefusalClassifierScorer.model_id` may name
+  local folders; callers set them like any other operator setting.
+
 ## Strict Lockstep Compatibility
 
 The backend, CLI, and frontend bundle use one stamped identity:
