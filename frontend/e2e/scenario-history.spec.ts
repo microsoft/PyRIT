@@ -543,7 +543,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     expect(await primaryButtons.evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute("aria-label")))).toEqual([
       "Home",
-      "Chat",
+      "Technique.execute",
       "History",
       "Scanner",
       "Datasets",
