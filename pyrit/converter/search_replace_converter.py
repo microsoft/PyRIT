@@ -20,13 +20,38 @@ class SearchReplaceConverter(Converter):
         Initialize the converter with the specified regex pattern and replacement phrase(s).
 
         Args:
-            pattern (str): The regex pattern to replace.
+            pattern (str): The regex pattern to replace. Empty patterns match at every character boundary.
             replace (str | list[str]): The new phrase to replace with. Can be a single string or a list of strings.
                 If a list is provided, a random element will be chosen for replacement.
             regex_flags (int): Regex flags to use for the replacement. Defaults to 0 (no flags).
+
+        Raises:
+            ValueError: If ``pattern`` is not a string or contains invalid regex syntax,
+                ``replace`` is not a string or non-empty list of strings, or ``regex_flags`` is not an integer.
         """
+        if not isinstance(pattern, str):
+            raise ValueError("pattern must be a string.")
+
+        if not isinstance(regex_flags, int) or isinstance(regex_flags, bool):
+            raise ValueError("regex_flags must be an integer.")
+
+        try:
+            self._compiled_regex = re.compile(pattern, flags=regex_flags)
+        except (re.error, OverflowError) as e:
+            raise ValueError(f"Invalid regex pattern or flags: {e}") from e
+
+        if isinstance(replace, str):
+            self._replace_list = [replace]
+        elif isinstance(replace, list):
+            if not replace:
+                raise ValueError("replace cannot be an empty list.")
+            if not all(isinstance(item, str) for item in replace):
+                raise ValueError("All items in replace list must be strings.")
+            self._replace_list = list(replace)
+        else:
+            raise ValueError("replace must be a string or a non-empty list of strings.")
+
         self._pattern = pattern
-        self._replace_list = [replace] if isinstance(replace, str) else replace
         self._regex_flags = regex_flags
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -40,6 +65,7 @@ class SearchReplaceConverter(Converter):
             params={
                 "pattern": self._pattern,
                 "replace_list": self._replace_list,
+                "regex_flags": self._regex_flags,
             },
         )
 
@@ -63,5 +89,6 @@ class SearchReplaceConverter(Converter):
         replace = self._get_random_generator(stream="replacement").choice(self._replace_list)
 
         return ConverterResult(
-            output_text=re.sub(self._pattern, replace, prompt, flags=self._regex_flags), output_type="text"
+            output_text=self._compiled_regex.sub(replace, prompt),
+            output_type="text",
         )

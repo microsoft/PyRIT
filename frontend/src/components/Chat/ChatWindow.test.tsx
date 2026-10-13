@@ -5141,6 +5141,40 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByTestId("conversation-panel")).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("should preserve the operator's panel choice after a late conversation update, narrow %s", async (isNarrowScreen: boolean) => {
+    const user = userEvent.setup();
+    mockMatchMedia(isNarrowScreen);
+    const props = {
+      ...defaultProps,
+      attackResultId: "ar-late-conversations",
+      conversationId: "conv-main",
+      activeConversationId: "conv-main",
+      relatedConversationCount: 0,
+    };
+    const rendered = render(
+      <TestWrapper><ChatWindow {...props} /></TestWrapper>
+    );
+    const toggleButton = screen.getByRole("button", { name: "Toggle conversations panel" });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(toggleButton);
+    await user.click(await screen.findByRole("button", { name: "Close panel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole(isNarrowScreen ? "dialog" : "complementary", {
+        name: "Attack Conversations",
+      })).not.toBeInTheDocument();
+    });
+
+    rendered.rerender(
+      <TestWrapper><ChatWindow {...props} relatedConversationCount={1} /></TestWrapper>
+    );
+
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole(isNarrowScreen ? "dialog" : "complementary", {
+      name: "Attack Conversations",
+    })).not.toBeInTheDocument();
+  });
+
   it("should keep the mobile drawer closed until requested and restore focus after Escape", async () => {
     const user = userEvent.setup();
     mockMatchMedia(true);
@@ -7010,6 +7044,41 @@ describe("ChatWindow Integration", () => {
       await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
         destination: 'new_attack', labels: { ...defaultProps.labels, operation: "config_op_v2" },
       })))
+    })
+  })
+
+  describe('converter restoration warning', () => {
+    it('does not show converter restoration warning on fresh empty chat with no conversation', async () => {
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={mockTarget}
+            attackResultId={null}
+            conversationId={null}
+            activeConversationId={null}
+            defaultsReady={true}
+          />
+        </TestWrapper>,
+      )
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument()
+      expect(screen.getByText('There are no messages in this conversation yet.')).toBeInTheDocument()
+    })
+
+    it('does not show converter restoration warning while fresh chat is loading without active target', async () => {
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={null}
+            attackResultId={null}
+            conversationId={null}
+            activeConversationId={null}
+            defaultsReady={false}
+          />
+        </TestWrapper>,
+      )
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument()
     })
   })
 })

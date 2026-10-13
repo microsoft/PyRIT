@@ -308,7 +308,31 @@ def test_get_message_pieces_memory_label_conditions_bind_params(uninitialized_me
         memory_labels={"operation": "test_op"}
     )
     params = conditions[0].compile().params
-    assert params == {"are_ml_operation": "test_op"}
+    assert params == {"are_ml_path_0": '$."operation"', "are_ml_0": "test_op"}
+
+
+def test_label_conditions_bind_whole_keys_with_dot_or_hyphen(uninitialized_memory_interface: AzureSQLMemory):
+    """Allowlisted keys with ``.`` or ``-`` build a query that looks up each whole key."""
+    attack_condition = uninitialized_memory_interface._get_attack_result_label_condition(
+        labels={"team.name": ["red", "blue"], "run-id": "r1"}
+    )
+    assert attack_condition.compile().params == {
+        "are_label_path_0": '$."team.name"',
+        "are_label_0_0": "red",
+        "are_label_0_1": "blue",
+        "are_label_path_1": '$."run-id"',
+        "are_label_1_0": "r1",
+    }
+
+    piece_condition = uninitialized_memory_interface._get_message_pieces_memory_label_conditions(
+        memory_labels={"team.name": "red", "run-id": "r1"}
+    )[0]
+    assert piece_condition.compile().params == {
+        "are_ml_path_0": '$."team.name"',
+        "are_ml_0": "red",
+        "are_ml_path_1": '$."run-id"',
+        "are_ml_1": "r1",
+    }
 
 
 async def test_update_entries_async(memory_interface: AzureSQLMemory):
@@ -421,7 +445,7 @@ def test_get_attack_result_label_condition_with_string_value(memory_interface: A
     """String values produce a single-placeholder IN clause with the stringified value."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
     params = condition.compile().params
-    assert params == {"are_label_operator_0": "roakey"}
+    assert params == {"are_label_path_0": '$."operator"', "are_label_0_0": "roakey"}
 
 
 def test_get_attack_result_label_condition_with_sequence_value(memory_interface: AzureSQLMemory):
@@ -429,9 +453,10 @@ def test_get_attack_result_label_condition_with_sequence_value(memory_interface:
     condition = memory_interface._get_attack_result_label_condition(labels={"operation": ["op_a", "op_b", "op_c"]})
     params = condition.compile().params
     assert params == {
-        "are_label_operation_0": "op_a",
-        "are_label_operation_1": "op_b",
-        "are_label_operation_2": "op_c",
+        "are_label_path_0": '$."operation"',
+        "are_label_0_0": "op_a",
+        "are_label_0_1": "op_b",
+        "are_label_0_2": "op_c",
     }
 
 
@@ -440,8 +465,7 @@ def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey", "operation": []})
     params = condition.compile().params
     # operator gets bind params; operation (empty) does not.
-    assert params == {"are_label_operator_0": "roakey"}
-    assert not any("label_operation_" in k for k in params)
+    assert params == {"are_label_path_0": '$."operator"', "are_label_0_0": "roakey"}
 
 
 def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: AzureSQLMemory):
@@ -562,9 +586,10 @@ def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
     sql = str(statement.compile(dialect=mssql.dialect())).upper()
 
     assert (
-        "HISTORY_UNITS.TIMESTAMP DESC, "
-        "LOWER(CAST(HISTORY_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
+        "HISTORY_CLASSIFIED_UNITS.TIMESTAMP DESC, "
+        "LOWER(CAST(HISTORY_CLASSIFIED_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
     ) in sql
+    assert "HISTORY_CLASSIFIED_UNITS.ATTEMPT_INDEX IS NULL" in sql
 
 
 def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
@@ -923,3 +948,38 @@ def test_init_prod_with_skip_schema_migration_still_checks():
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+def test_scenario_history_aggregate_uses_sql_server_json_value(memory_interface: AzureSQLMemory) -> None:
+    from sqlalchemy.dialects import mssql
+
+    statement = memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()], plan_entry_ids=[uuid.uuid4()]
+    )
+    compiled = statement.compile(dialect=memory_interface.engine.dialect)
+    compiled_str = str(compiled).lower()
+    assert "json_value" in compiled_str
+    assert "$.result_role" in compiled.params.values()
+    assert "latin1_general_100_bin2" in compiled_str
+    assert "datalength" in compiled_str
+
+    mssql_compiled = str(statement.compile(dialect=mssql.dialect())).lower()
+    assert "collate latin1_general_100_bin2" in mssql_compiled
+    assert "datalength" in mssql_compiled
+
+
+def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guard(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    from sqlalchemy import column
+    from sqlalchemy.dialects import mssql
+
+    from pyrit.models import AttackResultRole
+
+    col = column("result_role")
+    condition = memory_interface._get_scenario_role_match_condition(
+        role_expression=col, role=AttackResultRole.TARGET_FACING
+    )
+    compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
+    assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql

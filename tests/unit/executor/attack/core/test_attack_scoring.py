@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,7 +39,7 @@ class _SecondCondition(Condition):
 
 
 class _FirstScorer(TrueFalseScorer):
-    CONDITION_TYPE: type[Condition] | None = _FirstCondition
+    CONDITION_TYPE: ClassVar[type[Condition] | None] = _FirstCondition
 
     def __init__(self) -> None:
         super().__init__()

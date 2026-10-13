@@ -977,7 +977,7 @@ async def test_insert_prompt_memories_not_inserts_embedding(
     ):
         (await sqlite_instance.add_message_to_memory_async(request=request))
 
-        assert mock_embedding.assert_not_called
+        mock_embedding.assert_not_called()
 
 
 async def test_get_message_pieces_metadata(sqlite_instance: MemoryInterface):

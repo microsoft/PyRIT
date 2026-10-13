@@ -4,6 +4,7 @@
 import sys
 import threading
 import types
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -186,6 +187,159 @@ def test_mask_prompt_ignores_letters_inside_alphanumeric_tokens():
     result = mask_prompt("reset the h4ck3r password now", num_to_mask=1)
     assert [w.text for w in result.masked_words] == ["password"]
     assert result.masked_prompt == "reset the h4ck3r [WORD1] now"
+
+
+@_no_spacy
+def test_mask_prompt_selects_words_with_non_ascii_letters():
+    # "Schädlinge" carries the intent; it must be masked rather than left in cleartext while
+    # the mask falls on shorter ASCII words around it.
+    result = mask_prompt("Wie kann ich eine Schwachstelle für Schädlinge ausnutzen", num_to_mask=3)
+    assert [w.text for w in result.masked_words] == ["Schwachstelle", "Schädlinge", "ausnutzen"]
+    assert result.masked_prompt == "Wie kann ich eine [WORD1] für [WORD2] [WORD3]"
+    assert result.masked_words[1].clue == "10-letter word"
+
+
+@_no_spacy
+def test_mask_prompt_prefers_non_ascii_content_words_over_ascii_articles():
+    result = mask_prompt("Bir güvenlik açığını nasıl istismar ederim", num_to_mask=3)
+    assert [w.text for w in result.masked_words] == ["güvenlik", "açığını", "istismar"]
+    assert result.masked_prompt == "Bir [WORD1] [WORD2] nasıl [WORD3] ederim"
+
+
+@_no_spacy
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "как взломать систему",
+        "πώς να παραβιάσω ένα σύστημα",
+        "làm thế nào để hack hệ thống",
+        # Hebrew and Arabic as usually written, without vowel points: plain letters.
+        "שלום עולם",
+        "مرحبا بالعالم",
+    ],
+)
+def test_mask_prompt_masks_prompts_written_entirely_in_non_ascii_letters(prompt):
+    result = mask_prompt(prompt, num_to_mask=2)
+    assert len(result.masked_words) == 2
+    for word in result.masked_words:
+        assert word.text not in result.masked_prompt
+
+
+@_no_spacy
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        # Devanagari vowel signs are combining marks, which \w does not cover.
+        "सिस्टम हैक कैसे करें",
+        # Hebrew niqqud and Arabic harakat are combining marks too.
+        "שָׁלוֹם עוֹלָם",
+        "مَرْحَبًا بِالْعَالَم",
+        # NFD-decomposed accents: base letters followed by combining marks. Built at runtime so
+        # an editor that normalizes the file to NFC cannot silently change the test.
+        unicodedata.normalize("NFD", "café crème"),
+    ],
+)
+def test_mask_prompt_never_selects_fragments_split_by_combining_marks(prompt):
+    # \b falls inside these words, so the letter runs between the marks are fragments, not
+    # words. They are skipped like the letters inside "h4ck3r" instead of being masked.
+    with pytest.raises(ValueError, match="no maskable words"):
+        mask_prompt(prompt)
+
+
+@_no_spacy
+def test_mask_prompt_keeps_nfd_accents_attached_to_their_words():
+    # On the ASCII-only pattern, "cafe" (without its combining acute) was a candidate, so the
+    # placeholder left the accent orphaned after it: "[WORD1]\u0301 crème [WORD2]".
+    prompt = unicodedata.normalize("NFD", "café crème exploit")
+    result = mask_prompt(prompt, num_to_mask=2)
+    assert [w.text for w in result.masked_words] == ["exploit"]
+    assert result.masked_prompt == unicodedata.normalize("NFD", "café crème [WORD1]")
+
+
+@_no_spacy
+def test_mask_prompt_masks_whole_words_next_to_text_with_combining_marks():
+    result = mask_prompt("exploit सिस्टम now", num_to_mask=3)
+    assert [w.text for w in result.masked_words] == ["exploit", "now"]
+    assert result.masked_prompt == "[WORD1] सिस्टम [WORD2]"
+
+
+@_no_spacy
+@pytest.mark.parametrize("joiner", ["\u200c", "\u200d"])
+@pytest.mark.parametrize("template", ["अक्{joiner}षर", "école{joiner}ami"])
+def test_mask_prompt_rejects_fragments_adjoining_joiners(*, joiner: str, template: str) -> None:
+    with pytest.raises(ValueError, match="no maskable words"):
+        mask_prompt(template.format(joiner=joiner))
+
+
+@_no_spacy
+@pytest.mark.parametrize("joiner", ["\u200c", "\u200d"])
+def test_mask_prompt_preserves_joined_words_beside_maskable_words(joiner: str) -> None:
+    joined_word = f"अक्{joiner}षर"
+    result = mask_prompt(f"garden {joined_word} now", num_to_mask=3)
+    assert [word.text for word in result.masked_words] == ["garden", "now"]
+    assert result.masked_prompt == f"[WORD1] {joined_word} [WORD2]"
+
+
+@_no_spacy
+@pytest.mark.parametrize("prompt", ["abc²", "² ¼", "x¼ y³"])
+def test_mask_prompt_never_selects_tokens_with_non_decimal_numbers(prompt):
+    # "²" and "¼" are word characters but not decimal digits, so [^\W\d_] admits them; a token
+    # is only a candidate if every character is a letter, as on the ASCII-only pattern.
+    with pytest.raises(ValueError, match="no maskable words"):
+        mask_prompt(prompt)
+
+
+@_no_spacy
+def test_mask_prompt_masks_words_next_to_tokens_with_non_decimal_numbers():
+    result = mask_prompt("reset the abc² password", num_to_mask=1)
+    assert [w.text for w in result.masked_words] == ["password"]
+    assert result.masked_prompt == "reset the abc² [WORD1]"
+
+
+_ACUTE = "\N{COMBINING ACUTE ACCENT}"
+
+
+@_no_spacy
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        (f"école école{_ACUTE}", f"[WORD1] école{_ACUTE}"),
+        (f"école{_ACUTE} école", f"école{_ACUTE} [WORD1]"),
+    ],
+)
+def test_mask_prompt_does_not_mask_a_skipped_fragment_with_the_same_spelling(prompt, expected):
+    # The second "école" is followed by a combining mark, so it is a fragment the scan skips.
+    # Replacement uses the same scan, so it must not mask it because the whole word "école"
+    # was selected elsewhere (which would leave the accent orphaned on the placeholder).
+    result = mask_prompt(prompt, num_to_mask=1)
+    assert [w.text for w in result.masked_words] == ["école"]
+    assert result.masked_prompt == expected
+
+
+@_no_spacy
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("ÉCOLE école", "[WORD1] [WORD1]"),
+        # Case-folding maps "ß" to "ss", so these are the same word.
+        ("Straße STRASSE", "[WORD1] [WORD1]"),
+    ],
+)
+def test_mask_prompt_masks_every_unicode_case_variant_of_a_chosen_word(prompt, expected):
+    result = mask_prompt(prompt, num_to_mask=1)
+    assert len(result.masked_words) == 1
+    assert result.masked_prompt == expected
+
+
+@_no_spacy
+def test_mask_prompt_keeps_case_variants_that_fold_to_different_words_apart():
+    # Turkish dotless "ı" and dotted "i" are different letters, and locale-independent case
+    # folding keeps them apart: "KIŞ" folds to "kiş", "kış" to "kış". They are two candidate
+    # words, so masking one never looks up a placeholder for the other.
+    one = mask_prompt("KIŞ kış", num_to_mask=1)
+    assert one.masked_prompt == "[WORD1] kış"
+    both = mask_prompt("KIŞ kış", num_to_mask=2)
+    assert both.masked_prompt == "[WORD1] [WORD2]"
 
 
 # --- spaCy loader ----------------------------------------------------------

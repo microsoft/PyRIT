@@ -392,6 +392,7 @@ class LiteLLMChatTarget(PromptTarget):
                 "seed": self._seed,
                 "n": self._n,
                 "stop": self._stop,
+                "extra_body_parameters": self._extra_body_parameters,
             },
         )
 

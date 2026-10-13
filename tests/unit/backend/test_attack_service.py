@@ -58,6 +58,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     ChatMessageRole,
     ComponentIdentifier,
     Conversation,
@@ -163,21 +164,23 @@ def _attack_filter_fingerprint(
     labels: dict[str, str | list[str]] | None = None,
     min_turns: int | None = None,
     max_turns: int | None = None,
+    result_selection: AttackResultSelection | None = AttackResultSelection.ALL_RESULTS,
 ) -> str:
     """Build the fingerprint used by ``AttackService.list_attacks_async``."""
-    return fingerprint_filters(
-        filters={
-            "attack_types": attack_types,
-            "converter_types": converter_types,
-            "converter_types_match": converter_types_match,
-            "has_converters": has_converters,
-            "include_scenario_attacks": include_scenario_attacks,
-            "outcome": outcome,
-            "labels": normalize_label_filters(labels=labels),
-            "min_turns": min_turns,
-            "max_turns": max_turns,
-        }
-    )
+    filters: dict[str, Any] = {
+        "attack_types": attack_types,
+        "converter_types": converter_types,
+        "converter_types_match": converter_types_match,
+        "has_converters": has_converters,
+        "include_scenario_attacks": include_scenario_attacks,
+        "outcome": outcome,
+        "labels": normalize_label_filters(labels=labels),
+        "min_turns": min_turns,
+        "max_turns": max_turns,
+    }
+    if result_selection is not None:
+        filters["result_selection"] = result_selection.value
+    return fingerprint_filters(filters=filters)
 
 
 def make_mock_piece(
@@ -268,6 +271,67 @@ class TestAttackServiceInit:
 @pytest.mark.usefixtures("patch_central_database")
 class TestListAttacks:
     """Tests for list_attacks method."""
+
+    async def test_shared_conversation_results_keep_ids_and_page_only_hydration_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        newer = make_attack_result(
+            conversation_id="shared", attack_result_id=str(uuid.uuid4()), outcome=AttackOutcome.SUCCESS
+        )
+        older = make_attack_result(
+            conversation_id="shared", attack_result_id=str(uuid.uuid4()), outcome=AttackOutcome.FAILURE
+        )
+        mock_memory.get_attack_results_async.return_value = [
+            newer,
+            older,
+            make_attack_result(conversation_id="off-page", attack_result_id=str(uuid.uuid4())),
+        ]
+        mock_memory.get_conversation_stats_async.return_value = {"shared": ConversationStats(message_count=2)}
+
+        result = await attack_service.list_attacks_async(limit=2)
+
+        assert (
+            mock_memory.get_attack_results_async.call_args.kwargs["result_selection"]
+            is AttackResultSelection.ALL_RESULTS
+        )
+        assert [item.attack_result_id for item in result.items] == [newer.attack_result_id, older.attack_result_id]
+        assert [item.outcome for item in result.items] == ["success", "failure"]
+        assert [item.message_count for item in result.items] == [2, 2]
+        assert result.pagination.has_more
+        mock_memory.get_conversation_stats_async.assert_awaited_once()
+        assert mock_memory.get_conversation_stats_async.call_args.kwargs["conversation_ids"] == ["shared"]
+        mock_memory.get_message_pieces_async.assert_not_called()
+        mock_memory.get_conversation_messages_async.assert_not_called()
+
+    async def test_real_history_pages_keep_every_id_without_changing_memory_default_async(
+        self, *, sqlite_instance: SQLiteMemory
+    ) -> None:
+        from unit.memory.test_attack_analytics import make_result
+
+        results = [make_result(index=index, outcome=outcome) for index, outcome in enumerate(AttackOutcome, 1)]
+        # Equal recency exercises the existing UUID-string tie break as well as the seek.
+        for result in results:
+            result.timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+        service = get_attack_service()
+        pages = []
+        cursor = None
+        while True:
+            page = await service.list_attacks_async(limit=1, cursor=cursor, operation=["operation-a"], max_turns=0)
+            pages.extend(page.items)
+            cursor = page.pagination.next_cursor
+            if not page.pagination.has_more:
+                break
+            assert cursor is not None
+            assert len(pages) < len(results)
+        assert [page.attack_result_id for page in pages] == sorted(
+            [result.attack_result_id for result in results], reverse=True
+        )
+        assert len({page.conversation_id for page in pages}) == 1
+        assert len(await sqlite_instance.get_attack_results_async()) == 1
+        assert len(
+            await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        ) == len(results)
 
     async def test_list_attacks_returns_empty_when_no_attacks(self, attack_service, mock_memory) -> None:
         """Test that list_attacks returns empty list when no AttackResults exist."""
@@ -1734,6 +1798,7 @@ class TestPagination:
         call_kwargs = mock_memory.get_attack_results_async.call_args[1]
         assert call_kwargs["limit"] == 21
         assert call_kwargs["after"] is None
+        assert call_kwargs["result_selection"] is AttackResultSelection.ALL_RESULTS
 
     async def test_list_attacks_empty_attack_types_match_no_filter_cursor(self, attack_service, mock_memory) -> None:
         """An empty attack-type list has the same query and cursor fingerprint as no filter."""
@@ -1770,6 +1835,25 @@ class TestPagination:
         await attack_service.list_attacks_async(limit=20, cursor="ar-attack-1")
 
         assert mock_memory.get_attack_results_async.call_args[1]["after"] is None
+
+    @pytest.mark.parametrize("result_selection", [None, AttackResultSelection.LATEST_PER_CONVERSATION])
+    async def test_legacy_selection_cursor_restarts_history_async(
+        self,
+        *,
+        attack_service: AttackService,
+        mock_memory: MagicMock,
+        result_selection: AttackResultSelection | None,
+    ) -> None:
+        backing = _paginated_backing(3)
+        mock_memory.get_attack_results_async.side_effect = _keyset_side_effect(backing)
+        fingerprint = _attack_filter_fingerprint(result_selection=result_selection)
+        result = await attack_service.list_attacks_async(
+            limit=2, cursor=_cursor_for(backing[1], fingerprint=fingerprint)
+        )
+        assert mock_memory.get_attack_results_async.call_args.kwargs["after"] is None
+        assert [item.attack_result_id for item in result.items] == [row.attack_result_id for row in backing[:2]]
+        assert result.pagination.next_cursor == _cursor_for(backing[1])
+        assert decode_keyset_cursor(cursor=result.pagination.next_cursor, fingerprint=fingerprint) is None
 
     @pytest.mark.parametrize("field", ["t", "i"])
     async def test_list_attacks_non_string_cursor_fields_restart_async(
@@ -1938,6 +2022,8 @@ class TestPagination:
         assert fingerprint() != fingerprint(outcome="success")
         assert fingerprint(outcome="success") != fingerprint(outcome="failure")
         assert fingerprint() != fingerprint(include_scenario_attacks=False)
+        assert fingerprint() != fingerprint(result_selection=None)
+        assert fingerprint() != fingerprint(result_selection=AttackResultSelection.LATEST_PER_CONVERSATION)
         assert fingerprint(min_turns=1) != fingerprint(max_turns=1)
         # An empty-sequence label is a no-op filter in get_attack_results (effective_labels),
         # so it must fingerprint identically to no label filter — otherwise a cursor minted

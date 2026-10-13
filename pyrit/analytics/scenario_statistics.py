@@ -11,30 +11,40 @@ drift apart. It owns:
 - execution-unit identity: an atomic group (atomic attack name plus technique configuration) and a
   logical seed group, resolved against the saved run plan when one exists;
 - attempt selection: each unit counts once, by its latest attempt (timestamp, then attempt ID);
-- counts, denominators, and rounding: the success percentage is succeeded units over completed units,
-  truncated to an integer.
+- unit outcome counts, passed to the shared outcome calculator for both denominator policies.
 
 Historical attempt, error, and retry counts are reported separately from the effective-unit counts.
+The legacy success percentage remains succeeded units over all completed units.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from pydantic import ValidationError
 
+from pyrit.analytics.outcome_statistics import (
+    combine_outcome_statistics,
+    compute_outcome_statistics,
+    success_percentage,
+)
 from pyrit.common.utils import to_sha256
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultMetadata,
+    AttackResultRole,
     ComponentIdentifier,
     ScenarioExecutionStatistics,
     ScenarioExecutionUnit,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
     ScenarioProgressCounts,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
@@ -57,6 +67,21 @@ class _CountableAttempt(Protocol):
 
     @property
     def total_retries(self) -> int: ...
+
+    @property
+    def result_role(self) -> AttackResultRole | None: ...
+
+    @property
+    def attempt_index(self) -> int | None: ...
+
+    @property
+    def attack_result_id(self) -> str: ...
+
+    @property
+    def child_attack_result_ids(self) -> Sequence[str]: ...
+
+
+_AttemptT = TypeVar("_AttemptT", bound=_CountableAttempt)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +159,14 @@ class ScenarioAttempt:
     timestamp: datetime
     attempt_id: str
     total_retries: int
+    result_role: AttackResultRole | None
+    attempt_index: int | None
+    child_attack_result_ids: tuple[str, ...]
+
+    @property
+    def attack_result_id(self) -> str:
+        """The persisted result ID."""
+        return self.attempt_id
 
 
 def load_scenario_run_plan(scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
@@ -240,7 +273,33 @@ def resolve_attack_result_attempt(
         timestamp=_timestamp_order_key(attack_result.timestamp),
         attempt_id=str(attack_result.attack_result_id),
         total_retries=retries if isinstance(retries, int) else 0,
+        result_role=AttackResultMetadata.from_metadata(metadata=attribution_data).result_role,
+        attempt_index=AttackResultMetadata.from_metadata(metadata=attribution_data).attempt_index,
+        child_attack_result_ids=tuple(attack_result.metadata.get("child_attack_result_ids", ())),
     )
+
+
+def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_AttemptT]:
+    """
+    Select actual attempts without counting their orchestration envelope again.
+
+    Returns:
+        Sequence[_AttemptT]: Target-facing or legacy attempts, or orchestration-only evidence.
+    """
+    by_id = {attempt.attack_result_id: attempt for attempt in attempts}
+    execution_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.result_role != AttackResultRole.ORCHESTRATION
+        or (
+            attempt.outcome == AttackOutcome.ERROR
+            and not any(
+                child_id in by_id and by_id[child_id].outcome == AttackOutcome.ERROR
+                for child_id in attempt.child_attack_result_ids
+            )
+        )
+    ]
+    return execution_attempts if execution_attempts else attempts
 
 
 def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
@@ -255,15 +314,62 @@ def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Itera
     return within_attempts + repeated_units
 
 
-def success_percentage(*, succeeded: int, completed: int) -> int | None:
+def compute_producer_counts(attempts: Iterable[_CountableAttempt]) -> ScenarioProducerCounts:
     """
-    Return the success percentage for effective execution units.
+    Compute role-aware attempt, error, and retry accounting across attempts.
+
+    Args:
+        attempts (Iterable[_CountableAttempt]): Chronological or arbitrary attempt sequence.
 
     Returns:
-        int | None: ``succeeded / completed`` as a truncated integer percentage, or None with no
-            completed units.
+        ScenarioProducerCounts: Role-specific attempts, errors, and retries.
     """
-    return int((succeeded / completed) * 100) if completed else None
+    target_facing_attempts = 0
+    target_facing_errors = 0
+    target_facing_retries = 0
+    orchestration_attempts = 0
+    orchestration_errors = 0
+    orchestration_retries = 0
+    unknown_attempts = 0
+    unknown_errors = 0
+    unknown_retries = 0
+
+    for attempt in attempts:
+        role = getattr(attempt, "result_role", None)
+        outcome = getattr(attempt, "outcome", None)
+        retries = max(getattr(attempt, "total_retries", 0), 0)
+        is_error = int(outcome == AttackOutcome.ERROR)
+
+        if role == AttackResultRole.TARGET_FACING:
+            target_facing_attempts += 1
+            target_facing_errors += is_error
+            target_facing_retries += retries
+        elif role == AttackResultRole.ORCHESTRATION:
+            orchestration_attempts += 1
+            orchestration_errors += is_error
+            orchestration_retries += retries
+        else:
+            unknown_attempts += 1
+            unknown_errors += is_error
+            unknown_retries += retries
+
+    return ScenarioProducerCounts(
+        target_facing=ScenarioProducerCategoryCounts(
+            attempts=target_facing_attempts,
+            errors=target_facing_errors,
+            retries=target_facing_retries,
+        ),
+        orchestration=ScenarioProducerCategoryCounts(
+            attempts=orchestration_attempts,
+            errors=orchestration_errors,
+            retries=orchestration_retries,
+        ),
+        unknown=ScenarioProducerCategoryCounts(
+            attempts=unknown_attempts,
+            errors=unknown_errors,
+            retries=unknown_retries,
+        ),
+    )
 
 
 def count_execution_units(
@@ -271,38 +377,49 @@ def count_execution_units(
     units: Iterable[ScenarioExecutionUnit],
     attempts_by_unit: Mapping[ScenarioExecutionUnit, Sequence[_CountableAttempt]],
     planned: int | None,
+    producer_attempts: Iterable[_CountableAttempt] | None = None,
 ) -> ScenarioProgressCounts:
     """
     Count effective execution units from chronologically ordered attempts.
 
-    Each item in ``attempts_by_unit`` must expose ``outcome`` and ``total_retries`` and be ordered
-    oldest first; the last attempt decides the unit's outcome.
+    Attempts are ordered oldest first. The latest top-level result decides the unit's
+    outcome; children cannot complete their compound unit. Historical pressure excludes
+    orchestration envelopes when execution attempts exist for the unit.
 
     Returns:
-        ScenarioProgressCounts: Completed and succeeded units plus historical errors and retries.
+        ScenarioProgressCounts: Shared statistics for latest unit outcomes plus historical errors and retries.
     """
-    completed = 0
-    succeeded = 0
+    counts: Counter[AttackOutcome] = Counter()
     errors = 0
     retries = 0
+    unit_attempts: list[_CountableAttempt] = []
+
     for unit in units:
         attempts = attempts_by_unit.get(unit, ())
         if not attempts:
             continue
-        completed += 1
-        succeeded += int(attempts[-1].outcome == AttackOutcome.SUCCESS)
-        errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in attempts)
+        completions = [attempt for attempt in attempts if getattr(attempt, "attempt_index", None) is None]
+        if completions:
+            counts[completions[-1].outcome] += 1
+        execution_attempts = select_execution_attempts(attempts)
+        errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in execution_attempts)
         retries += retry_pressure(
-            attempts_per_unit=[len(attempts)],
-            persisted_retries=[attempt.total_retries for attempt in attempts],
+            attempts_per_unit=[len(execution_attempts)],
+            persisted_retries=[attempt.total_retries for attempt in execution_attempts],
         )
+        unit_attempts.extend(attempts)
+
+    producer_counts = compute_producer_counts(producer_attempts if producer_attempts is not None else unit_attempts)
+    outcomes = compute_outcome_statistics(counts)
     return ScenarioProgressCounts(
-        completed=completed,
+        completed=outcomes.total_results,
         planned=planned,
-        succeeded=succeeded,
-        success_percentage=success_percentage(succeeded=succeeded, completed=completed),
+        succeeded=outcomes.successes,
+        success_percentage=success_percentage(succeeded=outcomes.successes, completed=outcomes.total_results),
         errors=errors,
         retries=retries,
+        producer_counts=producer_counts,
+        outcomes=outcomes,
     )
 
 
@@ -312,12 +429,37 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
 
     Returns:
         ScenarioProgressCounts: The summed counts with the success percentage recomputed. ``planned`` is
-            None unless every input has one.
+            None unless every input has one. ``outcomes`` is None if a nonempty legacy input
+            lacks its breakdown; historical errors cannot reconstruct latest outcomes.
     """
-    counts = list(counts)
+    counts = [ScenarioProgressCounts.model_validate(item) for item in counts]
     completed = sum(item.completed for item in counts)
     succeeded = sum(item.succeeded for item in counts)
     planned = [item.planned for item in counts]
+    producer_counts = ScenarioProducerCounts(
+        target_facing=ScenarioProducerCategoryCounts(
+            attempts=sum(item.producer_counts.target_facing.attempts for item in counts),
+            errors=sum(item.producer_counts.target_facing.errors for item in counts),
+            retries=sum(item.producer_counts.target_facing.retries for item in counts),
+        ),
+        orchestration=ScenarioProducerCategoryCounts(
+            attempts=sum(item.producer_counts.orchestration.attempts for item in counts),
+            errors=sum(item.producer_counts.orchestration.errors for item in counts),
+            retries=sum(item.producer_counts.orchestration.retries for item in counts),
+        ),
+        unknown=ScenarioProducerCategoryCounts(
+            attempts=sum(item.producer_counts.unknown.attempts for item in counts),
+            errors=sum(item.producer_counts.unknown.errors for item in counts),
+            retries=sum(item.producer_counts.unknown.retries for item in counts),
+        ),
+    )
+
+    if any(item.completed and item.outcomes is None for item in counts):
+        logger.warning("Cannot combine outcome statistics from legacy scenario counts without an outcome breakdown.")
+        outcomes = None
+    else:
+        outcomes = combine_outcome_statistics(item.outcomes for item in counts if item.outcomes is not None)
+
     return ScenarioProgressCounts(
         completed=completed,
         planned=sum(value for value in planned if value is not None) if all(v is not None for v in planned) else None,
@@ -325,6 +467,8 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
         success_percentage=success_percentage(succeeded=succeeded, completed=completed),
         errors=sum(item.errors for item in counts),
         retries=sum(item.retries for item in counts),
+        producer_counts=producer_counts,
+        outcomes=outcomes,
     )
 
 
@@ -339,7 +483,9 @@ def compute_scenario_statistics(
 
     With a run plan, counts cover the planned units, and attempts that match no planned unit are
     reported as unattributed. Without one (legacy results), every resolved unit counts and display
-    groups come from ``display_group_map``.
+    groups come from ``display_group_map``. Producer counts include all saved attempts by recorded
+    atomic attack name, even when a configuration matches no planned unit. Display groups use a
+    resolved planned group when available, otherwise the saved display-group mapping.
 
     Args:
         scenario_result (ScenarioResult): The scenario result with its hydrated attack results.
@@ -394,18 +540,64 @@ def compute_scenario_statistics(
         len(unit_attempts) for unit, unit_attempts in attempts_by_unit.items() if unit not in counted
     )
 
-    def _count(units: Sequence[ScenarioExecutionUnit]) -> ScenarioProgressCounts:
+    producer_attempts_by_name: dict[str, list[ScenarioAttempt]] = {}
+    producer_attempts_by_display_group: dict[str, list[ScenarioAttempt]] = {}
+
+    planned_groups_by_id = {group.id: group for group in plan.atomic_groups} if plan is not None else {}
+    for attempt in attempts:
+        name = attempt.atomic_attack_name
+        planned_group = planned_groups_by_id.get(attempt.unit.atomic_group_id)
+        display_group = (
+            planned_group.display_group
+            if planned_group is not None
+            else scenario_result.display_group_map.get(name, name)
+        )
+        producer_attempts_by_name.setdefault(name, []).append(attempt)
+        producer_attempts_by_display_group.setdefault(display_group, []).append(attempt)
+
+    attack_names = list(units_by_name.keys())
+    attack_names.extend(name for name in producer_attempts_by_name if name not in units_by_name)
+
+    display_group_names = list(units_by_display_group.keys())
+    display_group_names.extend(dg for dg in producer_attempts_by_display_group if dg not in units_by_display_group)
+
+    def _count(
+        units: Sequence[ScenarioExecutionUnit],
+        *,
+        producer_attempts: Iterable[_CountableAttempt] | None = None,
+    ) -> ScenarioProgressCounts:
         return count_execution_units(
             units=units,
             attempts_by_unit=attempts_by_unit,
             planned=len(units) if planned is not None else None,
+            producer_attempts=producer_attempts,
         )
 
+    atomic_attack_attempts = {}
+    for name, group_attempts in producer_attempts_by_name.items():
+        grouped: dict[ScenarioExecutionUnit, list[ScenarioAttempt]] = {}
+        for attempt in group_attempts:
+            grouped.setdefault(attempt.unit, []).append(attempt)
+        atomic_attack_attempts[name] = sum(len(select_execution_attempts(group)) for group in grouped.values())
+
     return ScenarioExecutionStatistics(
-        overall=_count(counted_units),
-        atomic_attacks={name: _count(units) for name, units in units_by_name.items()},
-        display_groups={name: _count(units) for name, units in units_by_display_group.items()},
-        attempts=len(attempts),
+        overall=_count(counted_units, producer_attempts=attempts),
+        atomic_attacks={
+            name: _count(
+                units_by_name.get(name, ()),
+                producer_attempts=producer_attempts_by_name.get(name, ()),
+            )
+            for name in attack_names
+        },
+        display_groups={
+            name: _count(
+                units_by_display_group.get(name, ()),
+                producer_attempts=producer_attempts_by_display_group.get(name, ()),
+            )
+            for name in display_group_names
+        },
+        attempts=sum(len(select_execution_attempts(unit_attempts)) for unit_attempts in attempts_by_unit.values()),
+        atomic_attack_attempts=atomic_attack_attempts,
         unattributed_attempts=unattributed_attempts,
     )
 

@@ -8,8 +8,9 @@ import os
 import tempfile
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import closing
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from pyrit.models import (
     EmbeddingUsageInformation,
     Message,
     MessagePiece,
+    SeedPrompt,
     flatten_to_message_pieces,
 )
 from pyrit.prompt_target.text_target import TextTarget
@@ -1219,6 +1221,35 @@ async def test_file_backed_database_is_not_serialized_async(isolated_memory_fact
         await memory.dispose_engine_async()
 
 
+async def test_seed_list_substring_filters_after_reopening_database_async(
+    isolated_memory_factory: Callable[..., SQLiteMemory], tmp_path: Path
+) -> None:
+    database = tmp_path / "seeds.db"
+    memory = isolated_memory_factory(db_path=database, silent=True)
+    try:
+        await memory.add_seeds_to_memory_async(
+            seeds=[
+                SeedPrompt(value="match", authors=["\u00e9"], data_type="text"),
+                SeedPrompt(value="literal", authors=[r"\u00e9"], data_type="text"),
+            ],
+            added_by="test",
+        )
+        async with await memory.get_session_async() as session:
+            rows = (await session.execute(text("SELECT value, authors FROM SeedPromptEntries"))).all()
+        assert dict(rows) == {"match": '["\\u00e9"]', "literal": '["\\\\u00e9"]'}
+    finally:
+        await memory.dispose_engine_async()
+
+    reopened = isolated_memory_factory(db_path=database, skip_schema_migration=True)
+    try:
+        result = await reopened.get_seeds_async(authors=["\u00e9"])
+        assert [seed.value for seed in result] == ["match"]
+        assert await reopened.remove_seeds_from_memory_async(authors=["\u00e9"], exact=False) == 1
+        assert [seed.value for seed in await reopened.get_seeds_async()] == ["literal"]
+    finally:
+        await reopened.dispose_engine_async()
+
+
 async def test_get_message_pieces_filters_on_integer_prompt_metadata_async(sqlite_instance: SQLiteMemory) -> None:
     """An integer prompt_metadata value must be queryable.
 
@@ -1248,3 +1279,37 @@ async def test_get_message_pieces_filters_on_integer_prompt_metadata_async(sqlit
 
     assert len(retrieved) == 1
     assert retrieved[0].original_value == "sent"
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({"property_path": "$.label", "value": "éthique"}, 1),
+        ({"property_path": "$.label", "value": "ÉTHIQUE"}, 1),
+        ({"property_path": "$.label", "value": "éth", "partial_match": True}, 1),
+        ({"property_path": "$.label", "value": "éthique", "case_sensitive": True}, 0),
+        ({"property_path": "$.label", "value": "ethique"}, 0),
+        ({"property_path": "$.items", "array_element_path": "$.name", "array_to_match": ["ÜBERWACHUNG", "fraud"]}, 1),
+        ({"property_path": "$.items", "array_element_path": "$.name", "array_to_match": ["überwachung", "missing"]}, 0),
+    ],
+)
+async def test_json_match_conditions_fold_non_ascii_case_async(
+    sqlite_instance: SQLiteMemory, kwargs: dict[str, object], expected: int
+) -> None:
+    piece = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="stored",
+        prompt_metadata={"label": "ÉTHIQUE", "items": [{"name": "Überwachung"}, {"name": "Fraud"}]},
+    )
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece])
+
+    match = (
+        sqlite_instance._get_condition_json_array_match
+        if "array_to_match" in kwargs
+        else sqlite_instance._get_condition_json_property_match
+    )
+    condition = match(json_column=PromptMemoryEntry.prompt_metadata, **kwargs)
+    async with await sqlite_instance.get_session_async() as session:
+        rows = (await session.execute(select(PromptMemoryEntry.id).where(condition))).all()
+    assert len(rows) == expected

@@ -42,7 +42,7 @@ from pyrit.prompt_target.openai.openai_response_target import _ToolDispatchResul
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 
 
-def create_mock_response(response_dict: dict = None) -> MagicMock:
+def create_mock_response(response_dict: dict | None = None) -> MagicMock:
     """
     Helper function to create a mock OpenAI SDK response object.
 
