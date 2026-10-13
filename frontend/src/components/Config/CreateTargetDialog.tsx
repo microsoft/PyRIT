@@ -131,7 +131,7 @@ function getTargetDisplayName(targetType: string): string {
 
 function getAuthDescription(entry: TargetTypeEntry): string | null {
   if (entry.target_type === 'GitHubCopilotTarget') {
-    return 'Supported authentication: GitHub Personal Access Token'
+return 'Supported authentication: GitHub token'
   }
   const authModes = entry.supported_auth_modes
   if (authModes.length === 0) return null
