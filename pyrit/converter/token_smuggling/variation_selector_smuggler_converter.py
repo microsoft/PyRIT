@@ -10,6 +10,11 @@ from pyrit.models import ComponentIdentifier
 logger = logging.getLogger(__name__)
 
 
+def _is_variation_selector(char: str) -> bool:
+    code_point = ord(char)
+    return 0xFE00 <= code_point <= 0xFE0F or 0xE0100 <= code_point <= 0xE01EF
+
+
 class VariationSelectorSmugglerConverter(SmugglerConverter):
     """
     Encodes and decodes text using Unicode Variation Selectors.
@@ -19,7 +24,8 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         - Bytes 0x10-0xFF are mapped to U+E0100-U+E01EF.
 
     If ``embed_in_base`` is True, the payload is concatenated with a base character
-    (default: 😊); otherwise, a space separator is inserted.
+    (default: 😊); otherwise, a space separator is inserted. A one-byte payload of
+    0x0E or 0x0F always uses the separator to distinguish it from an emoji's presentation selector.
 
     Replicates functionality detailed in:
         - https://paulbutler.org/2025/smuggling-arbitrary-data-through-an-emoji/
@@ -28,6 +34,8 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
     appending invisible variation selectors directly to visible text—enabling mixed
     visible and hidden content within a single string.
     """
+
+    _PRESENTATION_SELECTORS = ("\ufe0e", "\ufe0f")
 
     def __init__(
         self,
@@ -54,8 +62,7 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         base_char = base_char_utf8 if base_char_utf8 is not None else "😊"
         if len(base_char) != 1:
             raise ValueError("base_char_utf8 must be exactly one character.")
-        code_point = ord(base_char)
-        if 0xFE00 <= code_point <= 0xFE0F or 0xE0100 <= code_point <= 0xE01EF:
+        if _is_variation_selector(base_char):
             raise ValueError("base_char_utf8 must not be a variation selector.")
         self.utf8_base_char = base_char
         self.embed_in_base = embed_in_base
@@ -85,6 +92,8 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
 
         If ``embed_in_base`` is True, the payload is embedded directly into the base character;
         otherwise, a visible separator (a space) is inserted between the base and payload.
+        One-byte 0x0E and 0x0F payloads always use the separator because their selectors also
+        control emoji presentation.
 
         Args:
             message (str): The message to encode.
@@ -97,7 +106,8 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         for byte in data:
             code_point = 65024 + byte if byte < 16 else 917760 + (byte - 16)
             payload += chr(code_point)
-        encoded = self.utf8_base_char + payload if self.embed_in_base else self.utf8_base_char + " " + payload
+        use_separator = not self.embed_in_base or payload in self._PRESENTATION_SELECTORS
+        encoded = self.utf8_base_char + (" " if use_separator else "") + payload
         summary_parts = [f"Base char: U+{ord(self.utf8_base_char):X}"]
         for byte in data:
             if byte < 16:
@@ -111,7 +121,12 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
     def decode_message(self, message: str) -> str:
         """
         Decode a message encoded using Unicode variation selectors.
-        The decoder scans the string for variation selectors, ignoring any visible separator.
+
+        The decoder reads the variation selectors that follow the base character, with or without the
+        space separator. Selectors elsewhere in the text, such as the U+FE0F in an emoji like ❤️, are not part
+        of the payload. A lone U+FE0E or U+FE0F directly adjacent to the base character is ambiguous
+        with emoji presentation; a space separator identifies it as a payload. If no unambiguous
+        anchored payload is found, the first run of variation selectors is decoded for compatibility.
 
         Args:
             message (str): The encoded message.
@@ -119,6 +134,21 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         Returns:
             str: The decoded message.
         """
+        start = message.find(self.utf8_base_char)
+        while start != -1:
+            payload_start = start + 1
+            has_separator = message[payload_start : payload_start + 1] == " "
+            if has_separator:
+                payload_start += 1
+            payload_end = payload_start
+            while payload_end < len(message) and _is_variation_selector(message[payload_end]):
+                payload_end += 1
+            payload = message[payload_start:payload_end]
+            if payload and (has_separator or payload not in self._PRESENTATION_SELECTORS):
+                message = message[payload_start:]
+                break
+            start = message.find(self.utf8_base_char, start + 1)
+
         bytes_out = bytearray()
         started = False
         for char in message:
@@ -169,8 +199,9 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         """
         Extract the visible text and decodes the hidden text from a combined string.
 
-        It searches for the first occurrence of the base character (``self.utf8_base_char``) and treats everything
-        from that point on as the hidden payload.
+        ``encode_visible_hidden`` appends the base character and the hidden payload after the visible text, so the
+        last occurrence of the base character starts the hidden payload. The visible text may contain the base
+        character itself.
 
         Args:
             combined (str): The combined text containing visible and hidden parts.
@@ -178,8 +209,11 @@ class VariationSelectorSmugglerConverter(SmugglerConverter):
         Returns:
             tuple[str, str]: A tuple with the visible text and the decoded hidden text.
         """
-        base_char = self.utf8_base_char
-        index = combined.find(base_char)
+        index = combined.rfind(self.utf8_base_char)
+        has_separator = not self.embed_in_base or combined[index + 1 :] in self._PRESENTATION_SELECTORS
+        if has_separator and index > 0 and combined[index - 1] == self.utf8_base_char == " ":
+            # With a space as the base character, the last space found is the separator after it.
+            index -= 1
         if index == -1:
             return combined, ""
         visible = combined[:index]

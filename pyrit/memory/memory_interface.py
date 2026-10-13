@@ -26,6 +26,7 @@ from sqlalchemy import (
     Unicode,
     and_,
     case,
+    column,
     exists,
     false,
     func,
@@ -47,7 +48,7 @@ from sqlalchemy.orm.session import Session
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonScalar
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonContainer, JsonScalar
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -3620,7 +3621,7 @@ class MemoryInterface(abc.ABC):
                 require full-string equality instead. If None, all values are returned.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
                 and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
-                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                elements (case-insensitive) rather than substrings within decoded list elements. Defaults to False
                 (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -4038,7 +4039,11 @@ class MemoryInterface(abc.ABC):
                 )
             )
         else:
-            conditions.extend(field.contains(value) for value in values)
+            items = JsonArrayItems(JsonContainer(field, "$")).table_valued(column("value", Unicode))
+            conditions.extend(
+                select(1).select_from(items).where(items.c.value.contains(value)).correlate_except(items).exists()
+                for value in values
+            )
 
     async def _serialize_seed_value_async(self, prompt: Seed) -> str:
         """
@@ -6184,6 +6189,22 @@ class MemoryInterface(abc.ABC):
             Any: A statement selecting one aggregate row per scenario run with attempts.
         """
         atomic_name, technique_hash, attributed_seed_group_id, _ = self._get_scenario_attempt_unit_expressions()
+        parents = AttackResultEntry.__table__.alias("history_parents")
+        children = AttackResultEntry.__table__.alias("history_children")
+        links = JsonArrayItems(parents.c.attack_metadata, literal("$.child_attack_result_ids")).table_valued(
+            "key", "value", "type"
+        )
+        duplicate_errors = (
+            select(parents.c.id.label("parent_id"))
+            .select_from(JsonArrayJoin(parents, links, literal(True)))
+            .join(
+                children,
+                func.replace(sql_cast(children.c.id, String(36)), "-", "") == func.replace(links.c.value, "-", ""),
+            )
+            .where(parents.c.attribution_parent_id.in_(entry_ids), children.c.outcome == AttackOutcome.ERROR.value)
+            .distinct()
+            .subquery("history_duplicate_errors")
+        )
         # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
         # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
         # because SQL can't derive the logical seed group from those seeds.
@@ -6206,6 +6227,13 @@ class MemoryInterface(abc.ABC):
                     else_=0,
                 ).label("total_retries"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.result_role")).label("result_role"),
+                JsonScalar(AttackResultEntry.attribution_data, literal("$.attempt_index")).label("attempt_index"),
+                case((duplicate_errors.c.parent_id.is_not(None), 1), else_=0).label("duplicates_child_error"),
+            )
+            .select_from(
+                AttackResultEntry.__table__.outerjoin(
+                    duplicate_errors, AttackResultEntry.id == duplicate_errors.c.parent_id
+                )
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -6215,10 +6243,36 @@ class MemoryInterface(abc.ABC):
         )
 
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
+        is_execution = or_(
+            units.c.result_role.is_(None),
+            not_(
+                self._get_scenario_role_match_condition(
+                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
+                )
+            ),
+        )
+        units = select(
+            units,
+            func.max(case((is_execution, 1), else_=0))
+            .over(partition_by=unit_partition)
+            .label("has_execution_attempts"),
+        ).subquery("history_classified_units")
+        unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
+        is_execution = or_(
+            units.c.result_role.is_(None),
+            not_(
+                self._get_scenario_role_match_condition(
+                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
+                )
+            ),
+        )
+        independent_error = and_(units.c.outcome == AttackOutcome.ERROR.value, units.c.duplicates_child_error == 0)
+        pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
+        is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
         is_error = units.c.outcome == AttackOutcome.ERROR.value
         unit_retries = (
-            func.sum(units.c.total_retries).over(partition_by=unit_partition)
-            + func.count().over(partition_by=unit_partition)
+            func.sum(pressure_attempt * units.c.total_retries).over(partition_by=unit_partition)
+            + func.sum(pressure_attempt).over(partition_by=unit_partition)
             - 1
         )
         ranked = select(
@@ -6227,13 +6281,17 @@ class MemoryInterface(abc.ABC):
             units.c.outcome.label("latest_outcome"),
             func.max(units.c.is_planned).over(partition_by=unit_partition).label("is_planned"),
             unit_retries.label("unit_retries"),
-            func.sum(case((is_error, 1), else_=0)).over(partition_by=unit_partition).label("unit_errors"),
+            func.sum(case((is_error, pressure_attempt), else_=0))
+            .over(partition_by=unit_partition)
+            .label("unit_errors"),
+            is_completion.label("is_completion"),
             units.c.result_role.label("result_role"),
             units.c.total_retries.label("attempt_retries"),
             func.row_number()
             .over(
                 partition_by=unit_partition,
                 order_by=(
+                    is_completion.desc(),
                     units.c.timestamp.desc(),
                     self._get_scenario_attempt_id_order_expression(attempt_id=units.c.attempt_id).desc(),
                 ),
@@ -6241,6 +6299,7 @@ class MemoryInterface(abc.ABC):
             .label("unit_rank"),
         ).subquery("history_ranked_units")
         counted = and_(ranked.c.unit_rank == 1, ranked.c.is_planned == 1)
+        completed = and_(counted, ranked.c.is_completion == 1)
         is_target_facing = self._get_scenario_role_match_condition(
             role_expression=ranked.c.result_role, role=AttackResultRole.TARGET_FACING
         )
@@ -6256,9 +6315,9 @@ class MemoryInterface(abc.ABC):
                 ranked.c.scenario_result_id,
                 func.max(ranked.c.timestamp).label("latest_attempt_timestamp"),
                 func.sum(case((counted, 1), else_=0)).label("unit_count"),
-                func.sum(case((counted, 1), else_=0)).label("completed_units"),
+                func.sum(case((completed, 1), else_=0)).label("completed_units"),
                 func.sum(
-                    case((and_(counted, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
                 ).label("successful_units"),
                 func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
                 func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
@@ -6315,6 +6374,8 @@ class MemoryInterface(abc.ABC):
                 attempts.c.timestamp,
                 attempts.c.total_retries,
                 attempts.c.result_role,
+                attempts.c.attempt_index,
+                attempts.c.duplicates_child_error,
                 unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
                 literal(1).label("is_planned"),
@@ -6395,6 +6456,8 @@ class MemoryInterface(abc.ABC):
                 attempts.c.timestamp,
                 attempts.c.total_retries,
                 attempts.c.result_role,
+                attempts.c.attempt_index,
+                attempts.c.duplicates_child_error,
                 attempts.c.atomic_attack_name,
                 unplanned_group_id.label("unplanned_group_id"),
                 attempts.c.seed_group_id,
@@ -6421,6 +6484,8 @@ class MemoryInterface(abc.ABC):
             matched.c.timestamp,
             matched.c.total_retries,
             matched.c.result_role,
+            matched.c.attempt_index,
+            matched.c.duplicates_child_error,
             func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
             # Runs outside the plan-resolution set keep their raw identity and stay counted.
@@ -8444,6 +8509,9 @@ class MemoryInterface(abc.ABC):
     ) -> Sequence[Seed]:
         """
         Retrieve a list of seed prompts based on the specified filters.
+
+        List filters match substrings within decoded elements, not their JSON representation.
+        Substring matching retains the backend's LIKE case and wildcard semantics.
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.

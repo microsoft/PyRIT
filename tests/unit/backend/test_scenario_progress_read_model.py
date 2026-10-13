@@ -54,6 +54,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import (
     TechniqueBundle,
 )
 from pyrit.score import Scorer, SubStringScorer
+from unit.async_utils import get_defined_tasks
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
 
@@ -237,7 +238,7 @@ async def test_cancelled_waiter_preserves_global_refresh_lock() -> None:
         assert not read_model._cache_lock.locked()
     finally:
         release.set()
-        tasks = [task for task in (owner, waiter, successor) if task is not None]
+        tasks = get_defined_tasks(owner, waiter, successor)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -680,7 +681,9 @@ class TestScenarioResultRoles:
         labels = {result.attack_result_id: result.labels[ADAPTIVE_ATTEMPT_LABEL] for result in stored}
         assert labels == {single_id: "1", **dict.fromkeys(nested.child_attack_result_ids, "2")}
 
-    async def test_roles_do_not_change_progress_counts_async(self, sqlite_instance: MemoryInterface) -> None:
+    async def test_roles_preserve_unit_counts_but_remove_duplicate_retry_pressure_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
         snapshot, plan, run_id = await _run_and_read_progress_async(
             memory=sqlite_instance,
             build_atomic_attacks=lambda target: [
@@ -719,6 +722,7 @@ class TestScenarioResultRoles:
         def _strip(obj):
             if isinstance(obj, dict):
                 obj.pop("producer_counts", None)
+                obj.pop("retries", None)
                 for v in obj.values():
                     _strip(v)
             elif isinstance(obj, list):
@@ -730,6 +734,8 @@ class TestScenarioResultRoles:
         snapshot_dump = _strip(snapshot.summary.model_dump())
         assert legacy_dump == snapshot_dump
         assert snapshot.summary.overall.planned == 2
+        assert snapshot.summary.overall.retries == 2
+        assert legacy.summary.overall.retries == 4
 
 
 @pytest.mark.parametrize(

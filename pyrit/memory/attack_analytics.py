@@ -165,20 +165,6 @@ class AttackAnalyticsReader:
         query = AttackAnalyticsQuery.model_validate(query.model_dump())
         async with self._session_async(control=control, consistent=True) as (session, dialect, warnings):
             compiler = AttackAnalyticsQueryCompiler(dialect=dialect, filters=query.filters)
-            counts: dict[str, int] = {}
-            for row in (
-                await self._execute_async(session=session, statement=compiler.totals(), control=control)
-            ).mappings():
-                outcome, count = row["outcome"], row["count"]
-                if not isinstance(outcome, str) or type(count) is not int or count < 0:
-                    raise AnalyticsDataException("Stored attack outcomes contain invalid counts.")
-                counts[outcome] = count
-            groups: list[RawAnalyticsGroup] = []
-            rows: list[RawAnalyticsOption] = []
-            columns: list[RawAnalyticsOption] = []
-            cells: list[RawAnalyticsGroup] = []
-            has_more = False
-            truncated = False
             profiles = (
                 await self._read_compact_profiles_async(
                     session=session, compiler=compiler, query=query, control=control
@@ -186,6 +172,27 @@ class AttackAnalyticsReader:
                 if use_compact_profiles
                 else None
             )
+            counts: dict[str, int] = {}
+            if profiles is not None:
+                # Accepted profiles partition the full cohort before memberships
+                # overlap. Their validated weights already count every saved ID.
+                for profile in profiles:
+                    outcome = profile["outcome"]
+                    counts[outcome] = counts.get(outcome, 0) + profile["weight"]
+            else:
+                for row in (
+                    await self._execute_async(session=session, statement=compiler.totals(), control=control)
+                ).mappings():
+                    outcome, count = row["outcome"], row["count"]
+                    if not isinstance(outcome, str) or type(count) is not int or count < 0:
+                        raise AnalyticsDataException("Stored attack outcomes contain invalid counts.")
+                    counts[outcome] = count
+            groups: list[RawAnalyticsGroup] = []
+            rows: list[RawAnalyticsOption] = []
+            columns: list[RawAnalyticsOption] = []
+            cells: list[RawAnalyticsGroup] = []
+            has_more = False
+            truncated = False
             if profiles is None:
                 if query.compare_by is None:
                     records = (
@@ -640,8 +647,8 @@ class AttackAnalyticsReader:
         Bind pagination to the validated filters and distinct-result selection mode.
 
         Returns:
-            str: A cursor fingerprint that cannot be reused for History's legacy
-                newest-result-per-conversation selection.
+            str: A cursor fingerprint for the analytics cohort and selection mode.
+                History retains its own filter representation and cursor fallback policy.
         """
         return fingerprint_filters(
             filters={"filters": filters.model_dump(mode="json"), "result_selection": "all_results"}

@@ -5,8 +5,9 @@ import inspect
 import io
 import json
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
@@ -220,10 +221,21 @@ class TestRemoteDatasetLoader:
                 "2025-09-20T04:09:11.080923+00:00",
                 datetime(2025, 9, 20, 4, 9, 11, 80923, tzinfo=UTC),
             ),
+            # Z without fractional seconds (common API format, native 3.11 parsing)
+            ("2026-01-15T00:00:00Z", datetime(2026, 1, 15, 0, 0, 0, tzinfo=UTC)),
+            # Non-UTC timezone offset
+            (
+                "2025-03-10T12:30:00+05:30",
+                datetime(2025, 3, 10, 12, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+            ),
         ],
     )
     def test_parse_datetime(self, value: str | None, expected: datetime | None) -> None:
         assert ConcreteRemoteLoader._parse_datetime(value) == expected
+
+    @pytest.mark.parametrize("value", [1720000000, True, {"timestamp": "invalid"}, ["2026-01-15"]])
+    def test_parse_datetime_non_string_returns_none(self, value: Any) -> None:
+        assert ConcreteRemoteLoader._parse_datetime(value) is None
 
     def test_fetch_from_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
@@ -254,6 +266,15 @@ class TestRemoteDatasetLoader:
         with patch("requests.get", return_value=mock_response):
             result = loader._fetch_from_public_url(source="https://example.com/data.csv", file_type="csv")
         assert result == [{"header1": "value1", "header2": "value2"}]
+
+    def test_fetch_from_public_url_passes_request_timeout(self):
+        loader = ConcreteRemoteLoader()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '[{"key": "value"}]'
+        with patch("requests.get", return_value=mock_response) as mock_get:
+            loader._fetch_from_public_url(source="https://example.com/data.json", file_type="json")
+        assert mock_get.call_args.kwargs["timeout"] == loader.REQUEST_TIMEOUT_SECONDS
 
     def test_fetch_from_public_url_invalid_file_type_raises(self):
         loader = ConcreteRemoteLoader()
@@ -317,6 +338,23 @@ class TestFetchZipFromUrl:
 
         assert result["folder/a.jsonl"] == [{"a": 1}, {"a": 2}]
         assert result["folder/b.jsonl"] == [{"b": 3}]
+
+    async def test_zip_download_passes_request_timeout(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.DB_DATA_PATH",
+            tmp_path,
+        )
+        zip_bytes = self._make_zip_bytes({"x.json": '[{"k": "v"}]'})
+
+        mock_get = MagicMock(return_value=self._mock_streaming_response(zip_bytes))
+        with patch(
+            "pyrit.datasets.seed_datasets.remote.remote_dataset_loader.requests.get",
+            mock_get,
+        ):
+            loader = ConcreteRemoteLoader()
+            await loader._fetch_zip_from_url_async(source=self.SOURCE, inner_files=["x.json"], cache=False)
+
+        assert mock_get.call_args.kwargs["timeout"] == loader.REQUEST_TIMEOUT_SECONDS
 
     async def test_caches_zip_on_disk(self, tmp_path, monkeypatch):
         monkeypatch.setattr(

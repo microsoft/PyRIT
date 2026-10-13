@@ -7,7 +7,7 @@ from pyrit.converter import Converter
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 
 
-def _make_mock_converter(name: str = "MockConverter") -> Converter:
+def _make_mock_converter(name: str = "MockConverter") -> MagicMock:
     return MagicMock(spec=Converter, name=name)
 
 

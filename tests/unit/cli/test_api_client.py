@@ -569,10 +569,16 @@ def test_get_client_raises_when_not_opened():
 # ---------------------------------------------------------------------------
 
 
-async def test_health_check_returns_true_on_200(client, mock_httpx_client):
+@pytest.mark.parametrize(
+    "readiness_fields",
+    [{}, {"ready": False, "state": "restart-required", "revision": "copyrit-test--new"}],
+)
+async def test_health_check_returns_true_on_200(
+    *, client: PyRITApiClient, mock_httpx_client: MagicMock, readiness_fields: dict[str, str | bool | None]
+) -> None:
     mock_httpx_client.get.return_value = _make_response(
         status_code=200,
-        json_data={"status": "healthy", "service": "pyrit-backend"},
+        json_data={"status": "healthy", "service": "pyrit-backend"} | readiness_fields,
     )
     assert await client.health_check_async() is True
     mock_httpx_client.get.assert_awaited_once_with("/api/health")

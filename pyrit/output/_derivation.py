@@ -89,7 +89,8 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     Summarize a scenario result for the reports, using ``pyrit.analytics.compute_scenario_statistics``.
 
     ``objective_executions`` (one objective run with one attack configuration) is the success-rate
-    denominator; ``attempts`` counts every persisted attempt, retries included.
+    denominator; ``attempts`` counts execution attempts, retries included, without
+    duplicate orchestration envelopes.
 
     Args:
         result (ScenarioResult): The scenario result to summarize.
@@ -99,7 +100,7 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
     """
     statistics = compute_scenario_statistics(result)
     groups: list[GroupStatistics] = []
-    for group_name, group_results in result.get_display_groups().items():
+    for group_name in result.get_display_groups():
         atomic_attack_names = [
             name for name in result.attack_results if result.display_group_map.get(name, name) == group_name
         ]
@@ -110,7 +111,7 @@ def scenario_overview(result: ScenarioResult) -> ScenarioOverview:
             GroupStatistics(
                 name=group_name,
                 objective_executions=counts.completed,
-                attempts=len(group_results),
+                attempts=sum(statistics.atomic_attack_attempts.get(name, 0) for name in atomic_attack_names),
                 success_rate=counts.success_percentage or 0,
                 outcomes=counts.outcomes,
                 producer_counts=counts.producer_counts,

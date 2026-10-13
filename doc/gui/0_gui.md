@@ -404,6 +404,12 @@ Human score changes do not require a registered objective target. The original o
 
 The History view lists all past attacks with filtering and pagination.
 
+Each saved result ID is a separate row, even when several results share one
+conversation. Failed attempts followed by successful retries are not collapsed.
+Existing filters and recency ordering are unchanged. A pagination cursor from
+before this selection change restarts at the first page. Scenario run statistics
+still count their latest execution units, not these raw result rows.
+
 <img width="1664" alt="Attack history view" src="images/history.png" />
 
 #### Filters
@@ -584,6 +590,10 @@ runtime operation is active. Wait for the work to finish, or cancel it with its 
 When the runtime is idle, PyRIT closes admission and checks again before it changes runtime state. This second check
 prevents newly admitted work from overlapping replacement.
 
+Analytics also remains busy while a query's native database/session cleanup is
+running after an HTTP timeout. Live apply waits for the user to retry once that
+work has drained; receiving a timeout response does not make memory safe to replace.
+
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
 
@@ -593,6 +603,10 @@ client disconnect and their offloaded writes. Cancelling the shutdown caller doe
 a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
 Shutdown can therefore wait for an outstanding operation. Runtime readiness reports `ready: false` and
 `state: stopping` as soon as shutdown closes admission, including while an accepted live apply finishes.
+
+Analytics shutdown closes its shared SDK lifetime on the owning event loop and
+clears the cached dependency before memory disposal. If that drain fails, the
+backend retains the owner and memory rather than disposing resources still in use.
 
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
@@ -612,7 +626,10 @@ API clients can use administrator-only `GET /api/config/runtime`, `POST /api/con
 returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
 invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
 at `GET /api/runtime`.
-`GET /api/health` reports server responsiveness, not runtime readiness.
+`GET /api/health` remains HTTP 200 for server responsiveness, even when runtime initialization fails.
+It preserves `status`, `timestamp`, and `service`, and includes `ready`, `state`, and the serving ACA
+`revision` (or `null` outside ACA) for deployment readiness checks. Responses are uncached and do not
+expose configuration or exception details.
 
 ---
 

@@ -4,8 +4,7 @@
 from unittest.mock import patch
 
 import pytest
-
-from tests.unit.mocks import MockPromptTarget
+from unit.mocks import MockPromptTarget
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
