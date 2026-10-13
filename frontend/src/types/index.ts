@@ -366,6 +366,53 @@ export interface CreateConverterRequest {
   params?: Record<string, unknown>
 }
 
+export interface TechniqueInstance {
+  name: string
+  description?: string | null
+  attack_type: string
+  tags: string[]
+  uses_adversarial: boolean
+  uses_default_adversarial_target: boolean
+  /** Supplied factory creation inputs, with live component credentials omitted. */
+  creation_statement: string
+}
+
+export interface TechniqueTypeEntry {
+  attack_type: string
+  description: string
+  parameters: Parameter[]
+  supports_adversarial: boolean
+  supports_converters: boolean
+}
+
+export interface TechniqueListResponse {
+  items: TechniqueInstance[]
+  pagination: PaginationInfo
+}
+
+export interface TechniqueTypeResponse {
+  items: TechniqueTypeEntry[]
+}
+
+export interface CreateTechniqueRequest {
+  name: string
+  description?: string
+  tags: string[]
+  type: string
+  params: Record<string, unknown>
+  request_converters?: string[]
+  response_converters?: string[]
+  adversarial_chat?: string
+  adversarial_system_prompt?: string
+  adversarial_seed_prompt?: string
+  adversarial_prompt_template?: string
+}
+
+export interface RegistryReferenceOption {
+  name: string
+  type: string
+}
+
 export interface Parameter {
   name: string
   type_name: string
@@ -768,9 +815,33 @@ export interface ChangeMainConversationResponse {
   conversation_id: string
 }
 
+/**
+ * Wire shape of `DatasetInfo` from `GET /api/datasets`.
+ * Null counts mean the total is unknown, not zero.
+ */
+export interface DatasetInfo {
+  name: string
+  selection_key: string
+  loaded: boolean
+  provider_available: boolean
+  logical_examples: number | null
+  seed_pieces: number | null
+  objectives: number | null
+  modalities: string[]
+  harm_categories: string[]
+  has_unlabeled_harm_categories: boolean
+}
+
+/** Wire shape of `DatasetListResponse` from `GET /api/datasets`. */
+export interface DatasetListResponse {
+  items: DatasetInfo[]
+}
+
 // --- Scenarios ---
 
 export interface RegisteredScenario {
+  /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
+  max_concrete_techniques?: number | null
   scenario_name: string
   scenario_type: string
   scenario_version: number
@@ -787,6 +858,8 @@ export interface RegisteredScenario {
   include_baseline_by_default: boolean
   uses_default_adversarial_target: boolean
   supported_parameters: Parameter[]
+  /** All declared names, including opaque inputs with dedicated controls. */
+  supported_parameter_names: string[]
   default_run_size: ScenarioRunSizeEstimateResponse
 }
 
@@ -803,12 +876,12 @@ export interface ListRegisteredScenariosResponse {
 
 export interface RunScenarioRequest {
   scenario_name: string
-  target_name: string
+  target_name?: string | null
   adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null
   dataset_names?: string[] | null
-  max_dataset_size?: number | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
   max_concurrency?: number
   max_retries?: number
@@ -869,7 +942,7 @@ export interface ScenarioRunSizeEstimateRequest {
   adversarial_target_name?: string | null
   techniques?: string[] | null
   dataset_names?: string[] | null
-  max_dataset_size?: number | null
+  max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null

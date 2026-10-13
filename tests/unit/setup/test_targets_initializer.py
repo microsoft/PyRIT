@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+from threading import get_ident
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,18 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
 from pyrit.setup.initializers.targets import TARGET_CONFIGS, _auto_group_enabled, generate_rr_name, get_behavioral_key
+
+
+async def test_target_registration_runs_off_loop_async() -> None:
+    initializer = TargetInitializer()
+    backend_thread = get_ident()
+
+    def register() -> None:
+        assert get_ident() != backend_thread
+
+    with patch.object(initializer, "_register_targets", side_effect=register) as registration:
+        await initializer.initialize_async()
+    registration.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -1020,7 +1033,7 @@ class TestGetBehavioralKey:
 
     def test_key_includes_class_name(self) -> None:
         """Test that the behavioral key includes the target's class name."""
-        from tests.unit.mocks import MockPromptTarget
+        from unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()
         key = get_behavioral_key(target)

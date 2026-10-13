@@ -282,7 +282,7 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'caesar-custom',
       type: 'CaesarConverter',
-      params: { caesar_offset: '5' },
+      params: { caesar_offset: 5 },
     })
     expect(onCreated).toHaveBeenCalledWith('caesar-custom')
   })
@@ -332,10 +332,84 @@ describe('CreateConverterDialog', () => {
       expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
         name: 'SearchReplaceConverter',
         type: 'SearchReplaceConverter',
-        params: { pattern: 'hello', replace: 'world', regex_flags: '0' },
+        params: { pattern: 'hello', replace: 'world', regex_flags: 0 },
       })
     },
   )
+
+  it('should submit the catalog font size as a number', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'img_to_add', type_name: 'Path', is_list: false, choices: null, default: null, required: true },
+      { name: 'font_name', type_name: 'Path', is_list: false, choices: null, default: null, required: false },
+      { name: 'font_size', type_name: 'int', is_list: false, choices: null, default: '15', required: false },
+      { name: 'rotation', type_name: 'float', is_list: false, choices: null, default: '0.0', required: false },
+      { name: 'center_text', type_name: 'bool', is_list: false, choices: null, default: 'False', required: false },
+    ], 'AddImageTextConverter')
+    renderDialog()
+    await selectConverterType('AddImageTextConverter')
+
+    await user.type(screen.getByRole('textbox', { name: 'img_to_add *' }), 'data:image/png;base64,iVBORw0K')
+    const fontSize = screen.getByRole('textbox', { name: 'font_size' })
+    expect(fontSize).toHaveValue('15')
+    await user.clear(fontSize)
+    await user.type(fontSize, 'large')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(screen.getByText('font_size must be a number.')).toBeInTheDocument()
+    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
+
+    await user.clear(fontSize)
+    await user.type(fontSize, '24')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'AddImageTextConverter',
+      type: 'AddImageTextConverter',
+      params: { img_to_add: 'data:image/png;base64,iVBORw0K', font_size: 24, rotation: 0 },
+    })
+  })
+
+  it('should submit the catalog SATA word lists as arrays', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'mask_token', type_name: 'str', is_list: false, choices: null, default: '[MASK]', required: false },
+      { ...wordSelectionParameter, name: 'selection_strategy' },
+      { name: 'num_masks', type_name: 'int', is_list: false, choices: null, default: null, required: false },
+      { name: 'stopwords', type_name: 'list[str]', is_list: true, choices: null, default: null, required: false },
+      {
+        name: 'candidate_words', type_name: 'list[str]', is_list: true, choices: null, default: null, required: false,
+      },
+    ], 'SATAMaskingConverter')
+    renderDialog()
+    await selectConverterType('SATAMaskingConverter')
+
+    await user.type(screen.getByRole('textbox', { name: 'stopwords' }), 'the, a')
+    await user.type(screen.getByRole('textbox', { name: 'candidate_words' }), 'bomb')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'SATAMaskingConverter',
+      type: 'SATAMaskingConverter',
+      params: { mask_token: '[MASK]', stopwords: ['the', 'a'], candidate_words: ['bomb'] },
+    })
+  })
+
+  it('should send text values exactly as entered', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'pattern', type_name: 'str', required: true },
+      { name: 'replace', type_name: 'str', required: true },
+    ], 'SearchReplaceConverter')
+    renderDialog()
+    await selectConverterType('SearchReplaceConverter')
+
+    await user.type(screen.getByRole('textbox', { name: 'pattern *' }), 'cat')
+    await user.type(screen.getByRole('textbox', { name: 'replace *' }), '  dog  ')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'SearchReplaceConverter',
+      type: 'SearchReplaceConverter',
+      params: { pattern: 'cat', replace: '  dog  ' },
+    })
+  })
 
   it('selects a registered target for a target reference parameter', async () => {
     mockedConvertersApi.listConverterTypes.mockResolvedValue({

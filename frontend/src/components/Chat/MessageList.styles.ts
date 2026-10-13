@@ -395,16 +395,9 @@ export const useMessageListStyles = makeStyles({
   errorContainer: {
     marginTop: tokens.spacingVerticalS,
   },
-  errorRecovery: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: tokens.spacingVerticalS,
-    marginTop: tokens.spacingVerticalS,
-    paddingBottom: tokens.spacingVerticalS,
-  },
-  errorRecoveryButton: {
-    ...mobileTouchTarget,
+  errorDetails: {
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
   },
   mediaActions: {
     display: 'flex',

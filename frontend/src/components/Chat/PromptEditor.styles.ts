@@ -26,6 +26,40 @@ export const usePromptEditorStyles = makeStyles({
     maxWidth: '900px',
     margin: '0 auto',
   },
+  composerTrigger: {
+    position: 'relative',
+  },
+  disabledComposerOverlay: {
+    position: 'absolute',
+    inset: 0,
+    cursor: 'help',
+  },
+  disabledReasonsPopover: {
+    maxWidth: '420px',
+  },
+  disabledReasonsHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalXS,
+    color: tokens.colorNeutralForeground3,
+    paddingBottom: tokens.spacingVerticalS,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  disabledReasonsList: {
+    listStyleType: 'none',
+    padding: 0,
+    margin: 0,
+  },
+  disabledReason: {
+    paddingTop: tokens.spacingVerticalS,
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase300,
+    lineHeight: tokens.lineHeightBase300,
+    ':not(:last-child)': {
+      paddingBottom: tokens.spacingVerticalS,
+      borderBottom: `1px solid ${tokens.colorNeutralStroke2}`,
+    },
+  },
   attachmentsContainer: {
     display: 'flex',
     flexDirection: 'column',

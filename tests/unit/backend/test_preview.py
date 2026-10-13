@@ -82,6 +82,36 @@ class TestFormatLastMessagePreview:
         assert "sig=" not in (result or "")
         assert "blob.core.windows.net" not in (result or "")
 
+    @pytest.mark.parametrize(
+        ("data_type", "label"),
+        [
+            ("image_path", "Image"),
+            ("audio_path", "Audio"),
+            ("video_path", "Video"),
+            ("binary_path", "File"),
+        ],
+    )
+    @pytest.mark.parametrize("prefix", ["HTTPS://", "hTtP://", " \thttps://", "\r\n HTTPS://"])
+    def test_media_url_normalization_hides_credentials(self, *, data_type: str, label: str, prefix: str) -> None:
+        url = f"{prefix}reader:password@example.test/private/file.png?sig=secret#token=secret"
+
+        result = format_last_message_preview(value=url, data_type=data_type)
+
+        assert result == f"[{label}: file.png]"
+
+    @pytest.mark.parametrize("path", ["", "/"])
+    def test_media_url_without_filename_does_not_expose_authority(self, *, path: str) -> None:
+        url = f" \tHTTPS://reader:password@example.test{path}?sig=secret#token=secret"
+
+        result = format_last_message_preview(value=url, data_type="image_path")
+
+        assert result == "[Image]"
+
+    def test_media_local_filename_keeps_leading_space_and_hash(self) -> None:
+        result = format_last_message_preview(value=" image#1.png", data_type="image_path")
+
+        assert result == "[Image:  image#1.png]"
+
     def test_media_empty_value_falls_back_to_label_only(self) -> None:
         result = format_last_message_preview(value="", data_type="image_path", max_len=100)
         assert result == "[Image]"
@@ -97,6 +127,11 @@ class TestFormatLastMessagePreview:
         result = format_last_message_preview(
             value="data:image/png;base64,iVBORw0KGgo=", data_type="image_path", max_len=100
         )
+        assert result == "[Image]"
+
+    def test_media_uppercase_data_uri_with_whitespace_falls_back_to_label_only(self) -> None:
+        result = format_last_message_preview(value=" \tDATA:image/png;base64,iVBORw0KGgo=", data_type="image_path")
+
         assert result == "[Image]"
 
     def test_media_long_path_basename_not_truncated(self) -> None:

@@ -11,6 +11,7 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackSeedGroup,
     IndeterminateDatasetSize,
+    SeedDataset,
     SeedGroup,
     SeedObjective,
     SeedPrompt,
@@ -22,10 +23,10 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetConstraintError,
+    DatasetFetchPolicy,
     DatasetSourceKind,
     ResolvedDataset,
     forbid_inline_seeds,
-    read_only_dataset_resolution,
     require_harm_categories,
     require_inline_seeds,
     require_min_size,
@@ -51,6 +52,7 @@ def resolved(
 def mock_memory() -> MagicMock:
     """A stand-in CentralMemory whose ``get_seeds`` returns nothing by default."""
     memory = MagicMock(spec=MemoryInterface)
+    memory.get_seed_dataset_names_async = AsyncMock(return_value=[])
     memory.get_seeds_async = AsyncMock(return_value=[])
     memory.get_seed_groups_async = AsyncMock(return_value=[])
     memory.add_seed_datasets_to_memory_async = AsyncMock()
@@ -86,9 +88,10 @@ def make_objectives(*values: str) -> list[SeedObjective]:
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "expected"), [({}, 5), ({"max_dataset_size": None}, 8), ({"max_dataset_size": 2}, 2)]
+    ("kwargs", "expected"),
+    [({}, 5), ({"max_dataset_size": None}, 5), ({"max_dataset_size": "all"}, 8), ({"max_dataset_size": 2}, 2)],
 )
-async def test_default_limit_and_explicit_overrides(*, kwargs: dict[str, int | None], expected: int) -> None:
+async def test_default_limit_and_explicit_overrides(*, kwargs: dict[str, int | str | None], expected: int) -> None:
     config = DatasetAttackConfiguration(seeds=make_objectives(*(str(index) for index in range(8))), **kwargs)
     groups = await config.get_attack_seed_groups_async()
     assert len(groups) == expected
@@ -107,11 +110,11 @@ def test_compound_budget_combines_children_before_outer_cap(*, outer_limit: int 
     assert config.get_size_budget() == scenario_dataset_size_from_limit(expected)
 
 
-@pytest.mark.parametrize(("outer_limit", "expected"), [(None, None), (7, 7)])
-def test_unlimited_child_budget_needs_outer_limit(*, outer_limit: int | None, expected: int | None) -> None:
+@pytest.mark.parametrize(("outer_limit", "expected"), [(None, "all"), (7, 7)])
+def test_unlimited_child_budget_needs_outer_limit(*, outer_limit: int | None, expected: int | str) -> None:
     config = CompoundDatasetAttackConfiguration(
         configurations=[
-            DatasetAttackConfiguration(dataset_names=["a"], max_dataset_size=None),
+            DatasetAttackConfiguration(dataset_names=["a"], max_per_dataset="all", max_total="all"),
             DatasetAttackConfiguration(dataset_names=["b"]),
         ],
         max_dataset_size=outer_limit,
@@ -122,13 +125,13 @@ def test_unlimited_child_budget_needs_outer_limit(*, outer_limit: int | None, ex
 def test_per_dataset_default_does_not_add_implicit_compound_cap() -> None:
     config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["a", "b"])
     assert config.get_size_budget() == scenario_dataset_size_from_limit(10)
-    assert config.max_dataset_size is None
+    assert config.max_dataset_size == "all"
 
 
 def test_general_dataset_default_remains_uncapped() -> None:
     config = DatasetConfiguration(seeds=make_objectives(*(str(index) for index in range(8))))
-    assert config.max_dataset_size is None
-    assert config.get_size_budget() == scenario_dataset_size_from_limit(None)
+    assert config.max_dataset_size == "all"
+    assert config.get_size_budget() == scenario_dataset_size_from_limit("all")
     assert config._apply_max_dataset_size(list(range(8))) == list(range(8))
 
 
@@ -148,31 +151,31 @@ class TestDatasetConfigurationInit:
         config = DatasetConfiguration(seeds=seeds)
         assert config._seeds == seeds
         assert config._seed_groups is None
-        assert config._dataset_names is None
+        assert config.dataset_names == []
 
     def test_init_with_seed_groups_only(self, sample_seed_groups: list[SeedGroup]) -> None:
         config = DatasetConfiguration(seed_groups=sample_seed_groups)
         assert config._seed_groups == sample_seed_groups
         assert config._seeds is None
-        assert config._dataset_names is None
-        assert config.max_dataset_size is None
+        assert config.dataset_names == []
+        assert config.max_dataset_size == "all"
 
     def test_init_with_dataset_names_only(self) -> None:
         config = DatasetConfiguration(dataset_names=["dataset1", "dataset2"])
-        assert config._dataset_names == ["dataset1", "dataset2"]
+        assert config.dataset_names == ["dataset1", "dataset2"]
         assert config._seeds is None
         assert config._seed_groups is None
 
     def test_init_defaults_to_auto_fetch(self) -> None:
         config = DatasetConfiguration(dataset_names=["d1"])
-        assert config._auto_fetch is True
+        assert config.fetch is DatasetFetchPolicy.IF_MISSING
 
     def test_init_auto_fetch_can_be_disabled(self) -> None:
         config = DatasetConfiguration(dataset_names=["d1"], auto_fetch=False)
-        assert config._auto_fetch is False
+        assert config.fetch is DatasetFetchPolicy.NEVER
 
     def test_init_with_two_sources_raises(self, sample_seed_groups: list[SeedGroup]) -> None:
-        with pytest.raises(ValueError, match="Only one of 'seeds', 'seed_groups', or 'dataset_names'"):
+        with pytest.raises(ValueError, match="Only one of"):
             DatasetConfiguration(seed_groups=sample_seed_groups, dataset_names=["d1"])
 
     def test_init_with_three_sources_raises(self, sample_seed_groups: list[SeedGroup]) -> None:
@@ -205,7 +208,7 @@ class TestDatasetConfigurationInit:
         names = ["d1", "d2"]
         config = DatasetConfiguration(dataset_names=names)
         names.append("d3")
-        assert config._dataset_names == ["d1", "d2"]
+        assert config.dataset_names == ["d1", "d2"]
 
     def test_init_copies_seeds_to_prevent_mutation(self) -> None:
         seeds = make_objectives("a", "b")
@@ -245,13 +248,12 @@ class TestResolutionErrors:
 
     async def test_raises_loudly_when_still_empty_after_fetch(self) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"])
-        with patch.object(config, "_fetch_dataset_async", new=AsyncMock()):
-            with pytest.raises(DatasetConstraintError, match="could not be loaded"):
-                await config.get_attack_seed_groups_async()
+        with pytest.raises(DatasetConstraintError, match="could not be loaded"):
+            await config.get_attack_seed_groups_async()
 
     async def test_raises_when_empty_and_auto_fetch_disabled(self) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"], auto_fetch=False)
-        with pytest.raises(DatasetConstraintError, match="auto_fetch is disabled"):
+        with pytest.raises(DatasetConstraintError, match="prepare_async"):
             await config.get_attack_seed_groups_async()
 
     async def test_dataset_constraint_error_is_value_error(self) -> None:
@@ -292,13 +294,18 @@ class TestGetAttackSeedGroupsAsync:
         with pytest.raises(DatasetConstraintError):
             await config.get_attack_seed_groups_async()
 
-    async def test_auto_fetch_when_memory_empty(self, mock_memory: MagicMock) -> None:
-        mock_memory.get_seeds_async = AsyncMock(side_effect=[[], make_objectives("a")])
+    async def test_explicit_prepare_then_read(self, mock_memory: MagicMock) -> None:
+        mock_memory.get_seeds_async = AsyncMock(return_value=make_objectives("a"))
         config = DatasetAttackConfiguration(dataset_names=["d1"])
-        with patch.object(config, "_fetch_dataset_async", new=AsyncMock()) as mock_fetch:
+        dataset = SeedDataset(dataset_name="d1", seeds=[SeedObjective(value="a", dataset_name="d1")])
+        fetcher = MagicMock()
+        fetcher.fetch_dataset_async = AsyncMock(return_value=dataset)
+        with patch(PROVIDER_PATCH_TARGET) as provider:
+            provider.get_providers_by_name_async = AsyncMock(return_value={"d1": fetcher})
+            await config.prepare_async()
             groups = await config.get_attack_seed_groups_async()
         assert len(groups) == 1
-        mock_fetch.assert_awaited_once_with(dataset_name="d1")
+        fetcher.fetch_dataset_async.assert_awaited_once()
 
 
 class TestGetAttackGroupsByDatasetAsync:
@@ -355,58 +362,57 @@ class TestBuildAttackGroups:
         assert await config.get_attack_seed_groups_async() == sentinel
 
 
-class TestFetchDatasetAsync:
-    """``_fetch_dataset_async`` provider interaction."""
+class TestPrepareAsync:
+    """Preparation is the only provider and persistence boundary."""
 
     async def test_unregistered_name_does_not_fetch(self, mock_memory: MagicMock) -> None:
         config = DatasetConfiguration(dataset_names=["d1"])
         with patch(PROVIDER_PATCH_TARGET) as provider:
-            provider.get_all_dataset_names_async = AsyncMock(return_value=["other"])
-            provider.fetch_datasets_async = AsyncMock()
-            await config._fetch_dataset_async(dataset_name="d1")
-        provider.fetch_datasets_async.assert_not_called()
+            provider.get_providers_by_name_async = AsyncMock(return_value={})
+            with pytest.raises(DatasetConstraintError, match="Import them first"):
+                await config.prepare_async()
         mock_memory.add_seed_datasets_to_memory_async.assert_not_called()
 
     async def test_registered_name_fetches_and_adds(self, mock_memory: MagicMock) -> None:
         config = DatasetConfiguration(dataset_names=["d1"])
-        datasets = [MagicMock()]
+        dataset = SeedDataset(dataset_name="d1", seeds=[SeedObjective(value="a", dataset_name="d1")])
+        fetcher = MagicMock()
+        fetcher.fetch_dataset_async = AsyncMock(return_value=dataset)
         with patch(PROVIDER_PATCH_TARGET) as provider:
-            provider.get_all_dataset_names_async = AsyncMock(return_value=["d1"])
-            provider.fetch_datasets_async = AsyncMock(return_value=datasets)
-            await config._fetch_dataset_async(dataset_name="d1")
-        provider.fetch_datasets_async.assert_awaited_once_with(dataset_names=["d1"])
+            provider.get_providers_by_name_async = AsyncMock(return_value={"d1": fetcher})
+            await config.prepare_async()
+        fetcher.fetch_dataset_async.assert_awaited_once()
         mock_memory.add_seed_datasets_to_memory_async.assert_awaited_once()
 
     async def test_enumeration_error_propagates(self, mock_memory: MagicMock) -> None:
         config = DatasetConfiguration(dataset_names=["d1"])
         with patch(PROVIDER_PATCH_TARGET) as provider:
-            provider.get_all_dataset_names_async = AsyncMock(side_effect=RuntimeError("boom"))
+            provider.get_providers_by_name_async = AsyncMock(side_effect=RuntimeError("boom"))
             with pytest.raises(RuntimeError, match="boom"):
-                await config._fetch_dataset_async(dataset_name="d1")
+                await config.prepare_async()
         mock_memory.add_seed_datasets_to_memory_async.assert_not_called()
 
-    async def test_fetch_failure_chains_root_cause(self, mock_memory: MagicMock) -> None:
+    async def test_fetch_failure_propagates(self, mock_memory: MagicMock) -> None:
         config = DatasetAttackConfiguration(dataset_names=["d1"])
+        fetcher = MagicMock()
+        fetcher.fetch_dataset_async = AsyncMock(side_effect=RuntimeError("boom"))
         with patch(PROVIDER_PATCH_TARGET) as provider:
-            provider.get_all_dataset_names_async = AsyncMock(side_effect=RuntimeError("boom"))
-            with pytest.raises(DatasetConstraintError, match="auto-fetch") as exc_info:
-                await config.get_attack_seed_groups_async()
-        assert isinstance(exc_info.value.__cause__, RuntimeError)
+            provider.get_providers_by_name_async = AsyncMock(return_value={"d1": fetcher})
+            with pytest.raises(RuntimeError, match="boom"):
+                await config.prepare_async()
+        mock_memory.add_seed_datasets_to_memory_async.assert_not_awaited()
 
     async def test_read_only_resolution_does_not_fetch_or_persist(self, mock_memory: MagicMock) -> None:
         """Estimate resolution reports missing data without mutating central memory."""
         config = DatasetAttackConfiguration(dataset_names=["d1"])
         with (
             patch(PROVIDER_PATCH_TARGET) as provider,
-            read_only_dataset_resolution(),
-            pytest.raises(DatasetConstraintError, match="read-only resolution"),
+            pytest.raises(DatasetConstraintError, match="prepare_async"),
         ):
-            provider.get_all_dataset_names_async = AsyncMock(return_value=["d1"])
-            provider.fetch_datasets_async = AsyncMock()
+            provider.get_providers_by_name_async = AsyncMock()
             await config.get_attack_seed_groups_async()
 
-        provider.get_all_dataset_names_async.assert_not_awaited()
-        provider.fetch_datasets_async.assert_not_awaited()
+        provider.get_providers_by_name_async.assert_not_awaited()
         mock_memory.add_seed_datasets_to_memory_async.assert_not_awaited()
 
 
@@ -570,7 +576,7 @@ class TestCompoundDatasetAttackConfiguration:
         config = CompoundDatasetAttackConfiguration.per_dataset(dataset_names=["d1", "d2"], max_dataset_size=4)
         assert len(config._configurations) == 2
         assert [child.dataset_names for child in config._configurations] == [["d1"], ["d2"]]
-        assert all(child.max_dataset_size == 4 for child in config._configurations)
+        assert all(child.max_per_dataset == 4 for child in config._configurations)
 
     def test_size_caps_report_child_and_combined_limits(self) -> None:
         """Planning metadata explains independent child caps and the final compound cap."""

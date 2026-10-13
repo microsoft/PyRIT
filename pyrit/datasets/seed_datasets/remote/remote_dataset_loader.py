@@ -54,6 +54,9 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     and cached downloads.
     """
 
+    # Seconds to wait for a remote server before giving up, so a stalled download cannot hang forever.
+    REQUEST_TIMEOUT_SECONDS: ClassVar[int] = 60
+
     FILE_TYPE_HANDLERS: ClassVar[dict[str, dict[str, Callable[..., Any]]]] = {
         "json": {"read": read_json, "write": write_json},
         "jsonl": {"read": read_jsonl, "write": write_jsonl},
@@ -285,7 +288,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             ValueError: If the file_type is invalid.
             Exception: If the request to fetch examples fails.
         """
-        response = requests.get(source)
+        response = requests.get(source, timeout=self.REQUEST_TIMEOUT_SECONDS)
         if response.status_code == 200:
             if file_type in self.FILE_TYPE_HANDLERS:
                 if file_type == "json":
@@ -528,7 +531,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
                     temp_to_clean = zip_path
 
                     logger.info(f"Downloading zip archive from {source}")
-                    with requests.get(source, stream=True) as response:
+                    with requests.get(source, stream=True, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
                         response.raise_for_status()
                         with zip_path.open("wb") as fh:
                             for chunk in response.iter_content(chunk_size=1 << 16):

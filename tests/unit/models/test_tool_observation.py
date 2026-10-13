@@ -190,6 +190,7 @@ def test_tool_snapshot_is_immutable_and_detached_from_input_list() -> None:
     assert len(payload.events) == 1
     with pytest.raises(ValidationError, match="frozen"):
         payload.events = ()
+    assert len(payload.events) == 1
     with pytest.raises(ValidationError, match="frozen"):
         payload.events[0].name = "changed"
     with pytest.raises(ValidationError, match="frozen"):

@@ -32,7 +32,10 @@ async def test_adversarial_benchmark_v1_resolves_by_name_async() -> None:
     assert len(dataset.seed_groups) == 120
     assert all(not group.prompts for group in dataset.seed_groups)
 
-    category_counts = Counter(category for seed in dataset.objectives for category in seed.harm_categories)
+    category_counts: Counter[str] = Counter()
+    for seed in dataset.objectives:
+        assert seed.harm_categories is not None
+        category_counts.update(seed.harm_categories)
     assert category_counts == EXPECTED_CATEGORY_COUNTS
 
     split_counts = Counter(seed.metadata["source_split"] for seed in dataset.objectives)

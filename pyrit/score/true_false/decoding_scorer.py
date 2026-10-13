@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 
-from pyrit.analytics.text_matching import ExactTextMatching, TextMatching
+from pyrit.common.text_matching import ExactTextMatching, TextMatching
 from pyrit.memory.central_memory import CentralMemory
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -58,9 +58,11 @@ class DecodingScorer(MessageTrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        get_matcher_params = getattr(self._text_matcher, "get_identifier_params", None)
         return self._create_identifier(
             params={
                 "text_matcher": self._text_matcher.__class__.__name__,
+                "text_matcher_params": get_matcher_params() if callable(get_matcher_params) else None,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
@@ -101,11 +103,17 @@ class DecodingScorer(MessageTrueFalseScorer):
                 match_found = True
                 break
 
+        matcher_type = type(self._text_matcher)
+        # Keep persisted built-in matcher names stable after moving the implementation.
+        matcher_module = matcher_type.__module__
+        if matcher_module == "pyrit.common.text_matching":
+            matcher_module = "pyrit.analytics.text_matching"
+
         return [
             Score(
                 score_value=str(match_found),
                 score_value_description="",
-                score_metadata={"text_matcher": str(type(self._text_matcher))},
+                score_metadata={"text_matcher": f"<class '{matcher_module}.{matcher_type.__qualname__}'>"},
                 score_type="true_false",
                 score_category=self._score_categories,
                 score_rationale="",

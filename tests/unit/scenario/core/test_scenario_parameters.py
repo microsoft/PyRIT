@@ -456,7 +456,7 @@ class TestResumeParameterValidation:
     @classmethod
     def _make_stored_result(cls, *, scenario_name: str, version: int, params):
         """Build a minimal ScenarioResult with a controlled scenario identifier for resume tests."""
-        from tests.unit.mocks import make_scenario_result
+        from unit.mocks import make_scenario_result
 
         return make_scenario_result(
             scenario_name=scenario_name,
@@ -472,7 +472,7 @@ class TestResumeParameterValidation:
     @classmethod
     def _current_identifier(cls, *, scenario, version: int = 1, params):
         """Build the identifier that mirrors the current run for the given scenario."""
-        from tests.unit.mocks import make_scenario_identifier
+        from unit.mocks import make_scenario_identifier
 
         return make_scenario_identifier(
             scenario_name=type(scenario).__name__,

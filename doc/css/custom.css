@@ -178,7 +178,6 @@ html.dark .myst-card > .myst-card-body > img.ecosystem-logo {
   margin-bottom: 0.5rem;
 }
 
-/* Landing-page walkthroughs retain lightweight poster images until played. */
 .landing-demo-video {
   display: block;
   width: 100%;

@@ -564,6 +564,7 @@ class TestExecuteAttackFromSeedGroupsAsync:
         assert [objective for objective, _ in result.incomplete_objectives] == ["C", "B"]
         assert result.incomplete_objectives[0][1] is schedule.c_error
         assert result.incomplete_objectives[1][1] is schedule.b_error
+        assert result.incomplete_result_ids == [None, None]
 
     async def test_parameter_build_failure_strict_mode_suppresses_execution(self) -> None:
         """Strict mode settles all builds and raises the first input-ordered failure."""
@@ -594,9 +595,11 @@ class TestExecuteAttackFromSeedGroupsAsync:
         build_mock = AsyncMock(side_effect=schedule.build_async)
         a_execution_failed = asyncio.Event()
         a_error = LookupError("execute A failed")
+        a_result_id = str(uuid.uuid4())
 
         async def execute_async(*, context: SingleTurnAttackContext) -> AttackResult:
             if context.params.objective == "A":
+                context._persisted_attack_result_id = a_result_id
                 a_execution_failed.set()
                 raise a_error
             await a_execution_failed.wait()
@@ -620,6 +623,7 @@ class TestExecuteAttackFromSeedGroupsAsync:
         assert result.incomplete_objectives[0][1] is schedule.c_error
         assert result.incomplete_objectives[1][1] is a_error
         assert result.incomplete_objectives[2][1] is schedule.b_error
+        assert result.incomplete_result_ids == [None, a_result_id, None]
 
     @pytest.mark.parametrize("fatal_type", [asyncio.CancelledError, _ParameterBuildAbort])
     async def test_parameter_build_base_exception_propagates(
@@ -814,6 +818,40 @@ class TestPartialFailureHandling:
         assert len(result.completed_results) == 2
         assert len(result.incomplete_objectives) == 1
         assert result.has_incomplete
+        assert result.incomplete_result_ids == [None]
+
+    async def test_failure_result_ids_follow_input_order_not_completion_order_async(self) -> None:
+        attack = create_mock_attack()
+        ids = {objective: str(uuid.uuid4()) for objective in ("first", "second")}
+        second_failed = asyncio.Event()
+        shared_error = RuntimeError("shared failure")
+
+        async def fail_async(*, context: SingleTurnAttackContext) -> AttackResult:
+            context._persisted_attack_result_id = ids[context.objective]
+            if context.objective == "first":
+                await second_failed.wait()
+            else:
+                second_failed.set()
+            raise shared_error
+
+        attack.execute_with_context_async.side_effect = fail_async
+        result = await AttackExecutor(max_concurrency=2).execute_attack_async(
+            attack=attack,
+            objectives=["first", "second"],
+            return_partial_on_failure=True,
+        )
+
+        assert result.incomplete_objectives == [("first", shared_error), ("second", shared_error)]
+        assert result.incomplete_result_ids == [ids["first"], ids["second"]]
+
+    def test_processing_rejects_misaligned_result_ids(self) -> None:
+        with pytest.raises(ValueError, match="persisted_result_ids length"):
+            AttackExecutor()._process_execution_results(
+                objectives=["obj"],
+                results_or_exceptions=[RuntimeError("failed")],
+                return_partial_on_failure=True,
+                persisted_result_ids=[],
+            )
 
     async def test_partial_failure_raises_by_default(self):
         """Test that failures raise exception by default."""
@@ -951,6 +989,18 @@ class TestAttackExecutorResult:
         )
 
         assert executor_result.input_indices == [2]
+
+    def test_failure_result_ids_can_be_omitted(self) -> None:
+        result = AttackExecutorResult(completed_results=[], incomplete_objectives=[("obj", RuntimeError("failed"))])
+        assert result.incomplete_result_ids == []
+
+    def test_failure_result_ids_reject_misaligned_list(self) -> None:
+        with pytest.raises(ValueError, match="incomplete_result_ids length"):
+            AttackExecutorResult(
+                completed_results=[],
+                incomplete_objectives=[("obj", RuntimeError("failed"))],
+                incomplete_result_ids=["first", "second"],
+            )
 
 
 @pytest.mark.usefixtures("patch_central_database")

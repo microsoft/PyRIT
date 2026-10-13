@@ -13,6 +13,22 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Conversation selection
+
+Opening a saved attack with related conversations automatically opens the
+desktop conversation drawer. This default applies once per attack; later send
+refreshes do not override your open/closed choice. Creating, copying, or repeating
+conversations still opens the desktop drawer. On narrow screens the drawer opens
+only when requested and closes after selecting a conversation.
+
+## Dataset catalog
+
+The **Datasets** page shows summaries of datasets already loaded into the backend's
+memory. When memory is empty, **Learn how to load datasets into memory** opens the
+[dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
+Use the same memory as the backend, then select **Refresh** in the catalog.
+Provider-loading controls and individual-example browsing are not available yet.
+
 ## Resuming a scenario run
 
 Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
@@ -160,6 +176,10 @@ E2E flow tests run in two modes controlled by Playwright projects and an environ
 - **Seeded** (`--project seeded`, default for CI): Messages are stored directly in the database with `send: false` using dummy credentials. No real API keys needed. Tests cover the full UI flow (display, branching, conversation switching, promoting) without calling any external service.
 
 - **Live** (`--project live`, requires `E2E_LIVE_MODE=true`): Messages are sent to real OpenAI endpoints with `send: true`. Each target variant requires endpoint and model environment variables plus either an API key or an Azure endpoint accessible through the current Entra identity. Variants without a usable configuration are automatically skipped. Tests verify that real target responses render correctly.
+
+Conversation-selection helpers check the toggle's `aria-expanded` state, not
+drawer visibility during an animation. Use accessible row clicks and wait for
+the destination URL and transcript before asserting its contents.
 
 ```bash
 # Seeded integration (no credentials needed)

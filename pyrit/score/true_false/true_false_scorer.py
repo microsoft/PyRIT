@@ -132,8 +132,8 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
         self,
         *,
         validator: ScorerPromptValidator,
-        score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         chat_target: PromptTarget | None = None,
+        score_aggregator: TrueFalseAggregatorFunc = TrueFalseScoreAggregator.OR,
         message_resolver: MessageScorableResolver | None = None,
     ) -> None:
         """
@@ -141,16 +141,15 @@ class MessageTrueFalseScorer(TrueFalseScorer, MessageScorer):
 
         Args:
             validator (ScorerPromptValidator): Custom validator.
+            chat_target (PromptTarget | None): Deprecated validation-only parameter, removed in 1.4.0.
             score_aggregator (TrueFalseAggregatorFunc): The aggregator function to use.
                 Defaults to TrueFalseScoreAggregator.OR.
-            chat_target (PromptTarget | None): Optional chat target used by the scorer,
-                forwarded to the base class for validation against ``TARGET_REQUIREMENTS``.
             message_resolver (MessageScorableResolver | None): Message evidence resolver.
         """
         super().__init__(
+            chat_target=chat_target,
             score_aggregator=score_aggregator,
             validator=validator,
-            chat_target=chat_target,
             message_resolver=message_resolver,
         )
 

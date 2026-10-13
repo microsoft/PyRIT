@@ -103,9 +103,11 @@ The query grain is a distinct stored `AttackResultEntry.id`. Different result ID
 sharing a conversation remain different results. For callers that need full result
 objects, `MemoryInterface.get_attack_results_async` accepts the opt-in
 `result_selection=AttackResultSelection.ALL_RESULTS` mode. The deprecated sync
-method also accepts this mode. Both default to
-`LATEST_PER_CONVERSATION`, including existing History callers. Turn bounds apply
-after selection, and neither mode deletes or rewrites stored duplicates.
+method also accepts this mode. Both still default to `LATEST_PER_CONVERSATION`.
+The backend's Attack History listing explicitly requests `ALL_RESULTS` and
+fingerprints that mode in its cursor; unrelated SDK and scenario callers keep
+their existing selection. Turn bounds apply after selection, and neither mode
+deletes or rewrites stored duplicates.
 
 Revision `901e6c7bf9d4` follows the published `main` head `34a18645c7e9`. It
 bounds `outcome` to 16 characters and adds the computed
@@ -179,9 +181,16 @@ and result-ID selection; updated bounds use a half-open UTC interval. Each reque
 is copied and revalidated before acquiring a session, so changes to the caller's
 query during execution cannot mix different filters or axes in one report.
 `QueryControl` supplies a monotonic deadline and request-local cancellation signal.
-Async session acquisition is bounded by that budget. SQLite's per-connection
-busy timeout is bounded by the remaining budget before each statement and
-restored afterward, so lock waits cannot use the full default busy timeout.
+Async session acquisition is bounded by that budget. SQLite's native busy
+sleeps are disabled on the request-owned connection because they accumulate
+requested sleep durations rather than enforcing an absolute deadline. Analytics
+retries only plain `SQLITE_BUSY` reads and report setup operations with paced
+asynchronous waits against the shared budget, without restarting the read
+transaction. Other database errors, including `SQLITE_BUSY_SNAPSHOT`, propagate.
+The original busy timeout is restored and the request's progress handler removed
+before releasing the connection, even under repeated task cancellation. A failed
+reset discards the connection and propagates the error. Deadline
+checks remain cooperative; OS scheduling can delay when a task observes expiry.
 SQL Server pool acquisition remains subject to its pool; aioodbc configures
 pyodbc query timeouts in its executor before statement cursors are created and
 restores them when the session closes. SQL Server reports require SNAPSHOT

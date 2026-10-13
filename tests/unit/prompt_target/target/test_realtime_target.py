@@ -26,6 +26,7 @@ from pyrit.prompt_target.openai._openai_realtime_event_router import (
     _OpenAIRealtimeEventKind,
     _OpenAIRealtimeEventRouter,
 )
+from pyrit.prompt_target.openai.openai_realtime_target import _RealtimeReceiveState
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 _CLEAN_UNDERLYING_MODEL_ENV = {
@@ -823,6 +824,192 @@ async def test_receive_events_skips_stale_response_done(target):
     # Should have processed through to the real response.done with actual audio
     assert result.audio_bytes == b"dummyaudio"
     assert result.transcripts == ["hello"]
+
+
+# ---- Atomic receive state ------------------------------------------------------------------
+
+
+def _audio_delta(audio: bytes, **fields: Any) -> Any:
+    return _scripted_event("response.output_audio.delta", delta=base64.b64encode(audio).decode("ascii"), **fields)
+
+
+def test_apply_receive_event_normal_turn_completes_on_response_done():
+    """created -> audio -> transcript -> audio.done keep the turn open; its response.done completes it."""
+    state = _RealtimeReceiveState()
+    clock = MagicMock(return_value=100.0)
+    events = [
+        _scripted_event("response.created", **{"response.id": "r1"}),
+        _audio_delta(b"audio", response_id="r1"),
+        _scripted_event("response.output_audio_transcript.delta", response_id="r1", delta="hello"),
+        _scripted_event("response.output_audio.done", response_id="r1"),
+    ]
+
+    completed = [RealtimeTarget._apply_receive_event(event=event, state=state, clock=clock) for event in events]
+    done = _scripted_event("response.done", **{"response.id": "r1", "response.status": "completed"})
+
+    assert completed == [False, False, False, False]
+    assert state.response_id == "r1"
+    assert state.completion_deadline == 100.0 + _RealtimeReceiveState.GRACE_PERIOD_SEC
+    assert RealtimeTarget._apply_receive_event(event=done, state=state, clock=clock) is True
+    assert state.to_result() == RealtimeTargetResult(audio_bytes=b"audio", transcripts=["hello"])
+    clock.assert_called_once_with()
+
+
+def test_apply_receive_event_audio_done_fixes_deadline_once():
+    """A repeated audio.done must not move the soft-finish deadline or read the clock again."""
+    state = _RealtimeReceiveState()
+    clock = MagicMock(side_effect=[100.0, 100.5])
+
+    RealtimeTarget._apply_receive_event(event=_scripted_event("response.audio.done"), state=state, clock=clock)
+    RealtimeTarget._apply_receive_event(event=_scripted_event("response.audio.done"), state=state, clock=clock)
+
+    assert state.completion_deadline == 100.0 + _RealtimeReceiveState.GRACE_PERIOD_SEC
+    clock.assert_called_once_with()
+
+
+def test_apply_receive_event_ignores_events_for_other_responses():
+    """Events tagged with another response id neither accumulate, start the grace period, nor complete."""
+    state = _RealtimeReceiveState()
+    clock = MagicMock(return_value=100.0)
+    RealtimeTarget._apply_receive_event(
+        event=_scripted_event("response.created", **{"response.id": "r2"}), state=state, clock=clock
+    )
+    stale_events = [
+        _audio_delta(b"stale", response_id="r1"),
+        _scripted_event("response.output_audio_transcript.delta", response_id="r1", delta="stale"),
+        _scripted_event("response.output_audio.done", response_id="r1"),
+        _scripted_event("response.done", **{"response.id": "r1", "response.status": "failed"}),
+    ]
+
+    completed = [RealtimeTarget._apply_receive_event(event=event, state=state, clock=clock) for event in stale_events]
+
+    assert completed == [False, False, False, False]
+    assert state.accepted_event_count == 1
+    assert state.completion_deadline is None
+    assert state.to_result() == RealtimeTargetResult()
+    clock.assert_not_called()
+
+
+async def test_receive_events_late_transcript_within_grace_does_not_extend_deadline(target):
+    """A transcript arriving after audio.done is kept, and the wait shrinks toward the fixed deadline."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_late_transcript"
+    target._existing_conversation[conversation_id] = mock_connection
+    mock_connection.__aiter__.return_value = [
+        _audio_delta(b"audio"),
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("response.output_audio_transcript.delta", delta="late"),
+        _scripted_event("response.done", **{"response.status": "completed"}),
+    ]
+    observed_timeouts: list[float | None] = []
+    wait_for = asyncio.wait_for
+
+    async def _record_wait_for(awaitable: Any, *, timeout: float | None) -> Any:
+        observed_timeouts.append(timeout)
+        return await wait_for(awaitable, timeout=timeout)
+
+    mock_loop = MagicMock()
+    mock_loop.time.side_effect = [100.0, 100.4, 100.7]
+    with (
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.get_running_loop",
+            return_value=mock_loop,
+        ),
+        patch(
+            "pyrit.prompt_target.openai.openai_realtime_target.asyncio.wait_for",
+            side_effect=_record_wait_for,
+        ),
+    ):
+        result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"audio"
+    assert result.transcripts == ["late"]
+    assert observed_timeouts[:2] == [None, None]
+    assert observed_timeouts[2:] == [pytest.approx(0.6), pytest.approx(0.3)]
+
+
+async def test_receive_events_soft_finishes_when_grace_expires(target):
+    """With no response.done, the turn soft-finishes once the grace period after audio.done elapses."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_grace_expiry"
+    target._existing_conversation[conversation_id] = mock_connection
+
+    async def _events() -> AsyncIterator[Any]:
+        yield _audio_delta(b"audio")
+        yield _scripted_event("response.output_audio.done")
+        yield _scripted_event("response.output_audio_transcript.delta", delta="late")
+        await asyncio.Event().wait()
+
+    mock_connection.__aiter__.side_effect = _events
+
+    with patch.object(_RealtimeReceiveState, "GRACE_PERIOD_SEC", 0.05):
+        result = await asyncio.wait_for(target.receive_events_async(conversation_id), timeout=5)
+
+    assert result.audio_bytes == b"audio"
+    assert result.transcripts == ["late"]
+
+
+async def test_receive_events_error_within_grace_raises(target):
+    """A server error after audio.done still fails the turn instead of soft-finishing."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_error_within_grace"
+    target._existing_conversation[conversation_id] = mock_connection
+    mock_connection.__aiter__.return_value = [
+        _audio_delta(b"audio"),
+        _scripted_event("response.output_audio.done"),
+        _scripted_event("error", **{"error.type": "server_error", "error.message": "boom"}),
+    ]
+
+    with pytest.raises(RuntimeError, match=r"Server error: \[server_error\] boom"):
+        await target.receive_events_async(conversation_id)
+
+
+async def test_receive_events_external_cancel_during_grace_propagates(target):
+    """Cancelling the receive task while it waits out the grace period raises CancelledError."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_external_cancel"
+    target._existing_conversation[conversation_id] = mock_connection
+    waiting_in_grace = asyncio.Event()
+
+    async def _events() -> AsyncIterator[Any]:
+        yield _audio_delta(b"audio")
+        yield _scripted_event("response.output_audio.done")
+        waiting_in_grace.set()
+        await asyncio.Event().wait()
+
+    mock_connection.__aiter__.side_effect = _events
+
+    receive_task = asyncio.create_task(target.receive_events_async(conversation_id))
+    await waiting_in_grace.wait()
+    receive_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await receive_task
+
+
+async def test_receive_events_stops_reading_at_terminal_response_done(target):
+    """The turn ends on its response.done; later events stay unread for the next turn."""
+    mock_connection = AsyncMock()
+    conversation_id = "test_terminal_response_done"
+    target._existing_conversation[conversation_id] = mock_connection
+    yielded: list[str] = []
+
+    async def _events() -> AsyncIterator[Any]:
+        for event in [
+            _scripted_event("response.created", **{"response.id": "r1"}),
+            _audio_delta(b"audio", response_id="r1"),
+            _scripted_event("response.done", **{"response.id": "r1", "response.status": "completed"}),
+            _scripted_event("response.created", **{"response.id": "r2"}),
+        ]:
+            yielded.append(event.type)
+            yield event
+
+    mock_connection.__aiter__.side_effect = _events
+
+    result = await target.receive_events_async(conversation_id)
+
+    assert result.audio_bytes == b"audio"
+    assert yielded == ["response.created", "response.output_audio.delta", "response.done"]
 
 
 # ---------------------------------------------------------------------------

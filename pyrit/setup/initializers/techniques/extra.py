@@ -39,6 +39,13 @@ def get_technique_factories() -> list[AttackTechniqueFactory]:
     """
     return [
         AttackTechniqueFactory(
+            name="crescendo",
+            attack_class=CrescendoAttack,
+            description="Escalates a multi-turn conversation toward the objective with the standard Crescendo prompts.",
+            technique_tags=["multi_turn"],
+            supports_additional_request_converters=True,
+        ),
+        AttackTechniqueFactory(
             name="pair",
             attack_class=PAIRAttack,
             description="Runs the PAIR algorithm, using an adversarial model to iteratively rewrite jailbreak prompts.",

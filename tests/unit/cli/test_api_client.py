@@ -343,6 +343,7 @@ def _scenario_payload(*, scenario_name: str = "s1") -> dict:
         "all_techniques": ["single_turn"],
         "default_datasets": [],
         "supported_parameters": [],
+        "supported_parameter_names": [],
     }
 
 
@@ -568,10 +569,16 @@ def test_get_client_raises_when_not_opened():
 # ---------------------------------------------------------------------------
 
 
-async def test_health_check_returns_true_on_200(client, mock_httpx_client):
+@pytest.mark.parametrize(
+    "readiness_fields",
+    [{}, {"ready": False, "state": "restart-required", "revision": "copyrit-test--new"}],
+)
+async def test_health_check_returns_true_on_200(
+    *, client: PyRITApiClient, mock_httpx_client: MagicMock, readiness_fields: dict[str, str | bool | None]
+) -> None:
     mock_httpx_client.get.return_value = _make_response(
         status_code=200,
-        json_data={"status": "healthy", "service": "pyrit-backend"},
+        json_data={"status": "healthy", "service": "pyrit-backend"} | readiness_fields,
     )
     assert await client.health_check_async() is True
     mock_httpx_client.get.assert_awaited_once_with("/api/health")
@@ -733,11 +740,33 @@ async def test_start_scenario_run_async(client, mock_httpx_client):
     mock_httpx_client.post.assert_awaited_once()
     args, kwargs = mock_httpx_client.post.call_args
     assert args == ("/api/scenarios/runs",)
-    # The CLI serializes the typed request via model_dump(mode="json", exclude_none=True);
-    # required fields must appear in the body, None-valued fields must not.
     assert kwargs["json"]["scenario_name"] == "x"
     assert kwargs["json"]["target_name"] == "t"
     assert "scenario_params" not in kwargs["json"]
+
+
+@pytest.mark.parametrize(
+    "limit_args",
+    [
+        {},
+        {"max_dataset_size": None},
+        {"max_dataset_size": ""},
+        {"max_dataset_size": "default"},
+        {"max_dataset_size": "all"},
+        {"max_dataset_size": 7},
+    ],
+)
+async def test_start_run_preserves_explicit_all_async(
+    *, client: PyRITApiClient, mock_httpx_client: MagicMock, limit_args: dict[str, int | str | None]
+) -> None:
+    mock_httpx_client.post.return_value = _make_response(json_data=_run_summary_payload())
+    await client.start_scenario_run_async(
+        request=RunScenarioRequest(scenario_name="test", target_name="target", **limit_args)
+    )
+    payload = mock_httpx_client.post.call_args.kwargs["json"]
+    expected = limit_args.get("max_dataset_size") or "default"
+    assert "max_dataset_size" in payload
+    assert payload.get("max_dataset_size") == expected
 
 
 async def test_get_scenario_run_async(client, mock_httpx_client):

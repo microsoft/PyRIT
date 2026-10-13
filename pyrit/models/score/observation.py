@@ -19,10 +19,13 @@ from pyrit.models.literals import MEDIA_PATH_DATA_TYPES
 from pyrit.models.score.scorable import (
     ContentEntryScorable,
     ContentScorable,
+    ConversationScorable,
     MessageScorable,
     ScorableUnion,  # noqa: TC001  (runtime-required by Pydantic field annotations)
+    SurfaceScorable,
     TraceScorable,
 )
+from pyrit.models.score.surface import SurfaceCoverage, SurfaceEntry, SurfaceMatch
 from pyrit.models.score.trace import ToolExecution, TraceCoverage
 
 if TYPE_CHECKING:
@@ -248,6 +251,55 @@ class ScorerTargetResponsePayload(BaseModel):
         return self
 
 
+def _conversation_piece_digest(piece: MessagePiece) -> str:
+    """
+    Hash the fields used to identify, order, filter, and render conversation evidence.
+
+    Returns:
+        str: SHA-256 evidence digest.
+    """
+    return _digest_evidence(
+        {
+            "content": _response_piece_digest(piece, include_id=True),
+            "conversation_id": piece.conversation_id,
+            "sequence": piece.sequence,
+        }
+    )
+
+
+class ConversationObservationPayload(BaseModel):
+    """An ordered, reference-backed snapshot of acquired conversation messages."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["conversation"] = "conversation"
+    schema_version: Literal[1] = 1
+    message_piece_ids: tuple[uuid.UUID, ...]
+    message_piece_digests: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _validate_references(self) -> ConversationObservationPayload:
+        """
+        Validate snapshot references.
+
+        Returns:
+            ConversationObservationPayload: The validated snapshot.
+
+        Raises:
+            ValueError: If references are empty, duplicated, or lack valid digests.
+        """
+        if not self.message_piece_ids or len(set(self.message_piece_ids)) != len(self.message_piece_ids):
+            raise ValueError("Conversation observations require nonempty, unique message references.")
+        if len(self.message_piece_ids) != len(self.message_piece_digests):
+            raise ValueError("Conversation observations require one digest for each message piece.")
+        if any(
+            len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
+            for digest in self.message_piece_digests
+        ):
+            raise ValueError("Conversation observation digests must be lowercase SHA-256 values.")
+        return self
+
+
 class ToolEventsObservationPayload(BaseModel):
     """An immutable allowlisted tool snapshot, with arguments and results not retained."""
 
@@ -313,8 +365,57 @@ class ToolEventsObservationPayload(BaseModel):
         return self
 
 
+class SurfaceObservationPayload(BaseModel):
+    """An immutable snapshot of the locations a surface scorable names, as they were when read."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["surface"] = "surface"
+    schema_version: Literal[1] = 1
+    scope: SurfaceScorable
+    entries: tuple[SurfaceEntry, ...] = ()
+    coverage: SurfaceCoverage = Field(default_factory=SurfaceCoverage)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _validate_schema_version(cls, value: Any) -> Any:
+        """
+        Require the exact supported schema version, without numeric coercion.
+
+        Returns:
+            Any: The supported schema version.
+
+        Raises:
+            ValueError: If the version is not exactly the supported integer.
+        """
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported surface payload schema_version; expected 1.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_entries(self) -> SurfaceObservationPayload:
+        """
+        Keep entries unique and, for an exact locator, limited to that one location.
+
+        Returns:
+            SurfaceObservationPayload: The validated snapshot.
+
+        Raises:
+            ValueError: If an entry repeats or falls outside an exact locator.
+        """
+        uris = [entry.uri for entry in self.entries]
+        if len(set(uris)) != len(uris):
+            raise ValueError("Surface entries must name each location once.")
+        if self.scope.match is SurfaceMatch.EXACT and any(uri != self.scope.uri for uri in uris):
+            raise ValueError("An exact surface scope can only hold an entry for its own location.")
+        return self
+
+
 ObservationPayload = Annotated[
-    ScorerTargetResponsePayload | ToolEventsObservationPayload,
+    ScorerTargetResponsePayload
+    | ToolEventsObservationPayload
+    | ConversationObservationPayload
+    | SurfaceObservationPayload,
     Field(discriminator="kind"),
 ]
 
@@ -331,6 +432,23 @@ class Observation(BaseModel):
     scorable: ScorableUnion
     payload: ObservationPayload
     metadata: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_conversation_snapshot(self) -> Observation:
+        """
+        Validate conversation acquisition and scope.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If the anchor or acquisition is incompatible.
+        """
+        if isinstance(self.payload, ConversationObservationPayload) and (
+            not isinstance(self.scorable, ConversationScorable) or self.acquisition is not Acquisition.COMPLETE
+        ):
+            raise ValueError("Conversation observations require a conversation anchor and complete acquisition.")
+        return self
 
     @model_validator(mode="after")
     def _validate_target_response(self) -> Observation:
@@ -381,6 +499,27 @@ class Observation(BaseModel):
             raise ValueError("Unavailable tool acquisition cannot contain events.")
         return self
 
+    @model_validator(mode="after")
+    def _validate_surface_acquisition(self) -> Observation:
+        """
+        Require acquisition status to agree with the retained surface snapshot.
+
+        Returns:
+            Observation: The validated observation.
+
+        Raises:
+            ValueError: If acquisition, scope, or coverage are inconsistent.
+        """
+        if not isinstance(self.payload, SurfaceObservationPayload):
+            return self
+        if not isinstance(self.scorable, SurfaceScorable) or self.scorable != self.payload.scope:
+            raise ValueError("Surface observations require a SurfaceScorable matching their payload scope.")
+        if (self.acquisition is Acquisition.COMPLETE) != self.payload.coverage.complete:
+            raise ValueError("Surface acquisition and coverage completeness must agree.")
+        if self.acquisition in (Acquisition.UNAVAILABLE, Acquisition.ERROR) and self.payload.entries:
+            raise ValueError("Unavailable or failed surface acquisition cannot contain entries.")
+        return self
+
     @property
     def response_message_piece_ids(self) -> tuple[uuid.UUID, ...]:
         """The ordered message references retained by this payload."""
@@ -396,6 +535,8 @@ class Observation(BaseModel):
     @property
     def evidence_message_piece_ids(self) -> tuple[uuid.UUID, ...]:
         """All message references needed to validate this observation."""
+        if isinstance(self.payload, ConversationObservationPayload):
+            return self.payload.message_piece_ids
         scored = self.scored_message_piece_id
         response_ids = self.response_message_piece_ids
         return response_ids if scored is None or scored in response_ids else (*response_ids, scored)
@@ -417,7 +558,24 @@ class Observation(BaseModel):
         Raises:
             ValueError: If scored or response evidence is missing, modified, or unsupported.
         """
-        if isinstance(self.payload, ToolEventsObservationPayload):
+        if isinstance(self.payload, (ToolEventsObservationPayload, SurfaceObservationPayload)):
+            return
+        if isinstance(self.payload, ConversationObservationPayload):
+            if not isinstance(self.scorable, ConversationScorable):
+                raise ValueError("Conversation evidence requires a conversation anchor.")
+            previous_sequence = -1
+            for piece_id, digest in zip(
+                self.payload.message_piece_ids, self.payload.message_piece_digests, strict=True
+            ):
+                piece = message_pieces.get(piece_id)
+                if (
+                    piece is None
+                    or piece.conversation_id != self.scorable.conversation_id
+                    or _conversation_piece_digest(piece) != digest
+                    or piece.sequence < previous_sequence
+                ):
+                    raise ValueError(f"Conversation observation references missing or modified evidence: {piece_id}.")
+                previous_sequence = piece.sequence
             return
         payload = self.payload
         payload.validate_scored_evidence(

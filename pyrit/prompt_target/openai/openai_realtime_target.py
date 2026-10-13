@@ -6,6 +6,8 @@ import base64
 import logging
 import re
 import wave
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from openai import AsyncOpenAI
@@ -45,6 +47,70 @@ logger = logging.getLogger(__name__)
 # See: https://platform.openai.com/docs/guides/realtime-conversations#voice-options
 # For best quality, OpenAI recommends using "marin" or "cedar".
 RealTimeVoice = Literal["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"]
+
+
+@dataclass
+class _RealtimeReceiveState:
+    """
+    Per-turn state for ``RealtimeTarget.receive_events_async``.
+
+    The turn binds to the first ``response.created`` id it sees, and events tagged with
+    any other response id are stale. The soft-finish deadline is fixed by the first
+    ``audio.done`` and is never extended by later events.
+    """
+
+    #: Seconds to wait for ``response.done`` after ``audio.done`` before soft-finishing.
+    GRACE_PERIOD_SEC: ClassVar[float] = 1.0
+
+    audio_buffer: bytearray = field(default_factory=bytearray)
+    transcripts: list[str] = field(default_factory=list)
+    response_id: str | None = None
+    accepted_event_count: int = 0
+    completion_deadline: float | None = None
+
+    def accepts(self, *, event_kind: _OpenAIRealtimeEventKind, event_response_id: str | None) -> bool:
+        """
+        Bind the turn to its response and report whether an event belongs to this turn.
+
+        Args:
+            event_kind (_OpenAIRealtimeEventKind): The classified event kind.
+            event_response_id (str | None): The response id carried by the event, if any.
+
+        Returns:
+            bool: False when the event carries a response id other than the bound one.
+        """
+        if event_kind is _OpenAIRealtimeEventKind.RESPONSE_CREATED and self.response_id is None:
+            self.response_id = event_response_id
+            return True
+        return event_response_id is None or event_response_id == self.response_id
+
+    def start_completion_grace(self, *, clock: Callable[[], float]) -> None:
+        """
+        Fix the soft-finish deadline on the first ``audio.done``; later calls leave it unchanged.
+
+        Args:
+            clock (Callable[[], float]): Monotonic clock, read only when the deadline is set.
+        """
+        if self.completion_deadline is None:
+            self.completion_deadline = clock() + self.GRACE_PERIOD_SEC
+
+    def owns_response_done(self) -> bool:
+        """
+        Whether a ``response.done`` belongs to this turn rather than a prior turn's soft-finish.
+
+        Returns:
+            bool: True when audio has arrived or other accepted events preceded it.
+        """
+        return bool(self.audio_buffer) or self.accepted_event_count > 1
+
+    def to_result(self) -> RealtimeTargetResult:
+        """
+        Build the turn result from the accumulated audio and transcripts.
+
+        Returns:
+            RealtimeTargetResult: The received audio bytes and transcript fragments.
+        """
+        return RealtimeTargetResult(audio_bytes=bytes(self.audio_buffer), transcripts=self.transcripts)
 
 
 class RealtimeTarget(OpenAITarget):
@@ -600,8 +666,9 @@ class RealtimeTarget(OpenAITarget):
         Continuously receive events from the OpenAI Realtime API connection.
 
         Uses a robust "soft-finish" strategy to handle cases where response.done
-        may not arrive. After receiving audio.done, waits for a grace period
-        before soft-finishing if no response.done arrives.
+        may not arrive. The first audio.done fixes a deadline one grace period
+        later; if no response.done arrives by then, the turn soft-finishes. Later
+        events never extend that deadline.
 
         Args:
             conversation_id: conversation ID
@@ -615,126 +682,180 @@ class RealtimeTarget(OpenAITarget):
             RuntimeError: If server returns an error
         """
         connection = self._get_connection(conversation_id=conversation_id)
-
-        result = RealtimeTargetResult()
-        audio_buffer = bytearray()
-        audio_done_deadline: float | None = None
-        current_response_id: str | None = None
-        current_turn_event_count = 0
-        grace_period_sec = 1.0  # Wait 1 second after audio.done before soft-finishing
-        loop = asyncio.get_running_loop()
+        state = _RealtimeReceiveState()
+        clock = asyncio.get_running_loop().time
 
         try:
-            # Create event iterator
             event_iter = connection.__aiter__()
-
             while True:
-                # If we've seen audio.done, wait with a short timeout for response.done
-                # Otherwise, wait indefinitely for events
-                timeout = max(0.0, audio_done_deadline - loop.time()) if audio_done_deadline is not None else None
-
-                try:
-                    event = await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
-                except TimeoutError:
-                    # Soft-finish: audio.done was received but no response.done after grace period
-                    if audio_done_deadline is not None:
-                        logger.warning(
-                            f"Soft-finishing: No response.done {grace_period_sec}s after audio.done. "
-                            f"Audio bytes: {len(audio_buffer)}"
-                        )
-                        break
-                    # Should not happen if timeout is None, but re-raise if it does
-                    raise
-                except StopAsyncIteration:
-                    # Connection closed normally
-                    logger.debug("Event stream ended")
+                event = await self._next_receive_event_async(event_iter=event_iter, state=state, clock=clock)
+                if event is None or self._apply_receive_event(event=event, state=state, clock=clock):
                     break
-                except Exception as conn_err:
-                    # Handle websockets connection errors as soft-finish if we have audio
-                    if "ConnectionClosed" in str(type(conn_err).__name__) and audio_buffer:
-                        logger.warning(
-                            f"Connection closed without response.done (likely API issue). "
-                            f"Audio bytes received: {len(audio_buffer)}. Soft-finishing."
-                        )
-                        break
-                    # Re-raise if not a connection close or no audio received
-                    raise
-
-                event_type = event.type
-                event_kind = _OpenAIRealtimeEventRouter.classify_event(event_type)
-                event_response_id = _OpenAIRealtimeEventRouter.get_response_id(event=event)
-                if event_kind is _OpenAIRealtimeEventKind.RESPONSE_CREATED and current_response_id is None:
-                    current_response_id = event_response_id
-                elif event_response_id is not None and event_response_id != current_response_id:
-                    logger.debug(
-                        f"Skipping event '{event_type}' for response {event_response_id}; "
-                        f"current response is {current_response_id}"
-                    )
-                    continue
-
-                current_turn_event_count += 1
-                logger.debug(f"Processing event type: {event_type}")
-                audio_size_before = len(audio_buffer)
-                _OpenAIRealtimeEventRouter.collect_response_delta(
-                    event=event,
-                    event_kind=event_kind,
-                    audio_buffer=audio_buffer,
-                    transcripts=result.transcripts,
-                )
-
-                if event_kind is _OpenAIRealtimeEventKind.RESPONSE_DONE:
-                    self._handle_response_done_event(event=event, result=result)
-                    if audio_buffer or current_turn_event_count > 1:
-                        # Legitimate response.done: either we have audio, or other events
-                        # (e.g. response.created) preceded it, confirming it belongs to this turn.
-                        logger.debug("Received response.done - finishing normally")
-                        break
-                    # Stale response.done from a previous turn's soft-finish that was
-                    # left unconsumed in the WebSocket buffer. This is the very first
-                    # event received, so it can't belong to the current turn. Skip it
-                    # and continue waiting for the current turn's events.
-                    logger.debug(
-                        "Received response.done as first event with no audio data — "
-                        "likely a stale event from a prior turn's soft-finish. Skipping."
-                    )
-
-                elif event_kind is _OpenAIRealtimeEventKind.ERROR:
-                    error_message = event.error.message if hasattr(event.error, "message") else str(event.error)
-                    error_type = event.error.type if hasattr(event.error, "type") else "unknown"
-                    logger.error(f"Received 'error' event: [{error_type}] {error_message}")
-                    raise RuntimeError(f"Server error: [{error_type}] {error_message}")
-
-                elif event_kind is _OpenAIRealtimeEventKind.AUDIO_DELTA:
-                    logger.debug(f"Decoded {len(audio_buffer) - audio_size_before} bytes of audio data")
-
-                elif event_kind is _OpenAIRealtimeEventKind.AUDIO_DONE:
-                    logger.debug(f"Received audio.done - will soft-finish in {grace_period_sec}s if no response.done")
-                    if audio_done_deadline is None:
-                        audio_done_deadline = loop.time() + grace_period_sec
-
-                elif event_kind is _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA:
-                    if getattr(event, "delta", ""):
-                        logger.debug(f"Captured transcript delta: {event.delta[:50]}...")
-
-                elif event_kind is _OpenAIRealtimeEventKind.OUTPUT_TEXT_DONE:
-                    logger.debug("Received text.done")
-
-                elif _OpenAIRealtimeEventRouter.is_lifecycle_event(event_kind):
-                    logger.debug(f"Lifecycle event '{event_type}'")
-
-                else:
-                    logger.debug(f"Unhandled event type '{event_type}'")
-
         except Exception as e:
             logger.error(f"An unexpected error occurred for conversation {conversation_id}: {e}")
             raise
 
-        result.audio_bytes = bytes(audio_buffer)
+        result = state.to_result()
         logger.debug(
             f"Completed receive_events with {len(result.transcripts)} transcripts "
             f"and {len(result.audio_bytes)} bytes of audio"
         )
         return result
+
+    @staticmethod
+    async def _next_receive_event_async(
+        *, event_iter: Any, state: _RealtimeReceiveState, clock: Callable[[], float]
+    ) -> Any | None:
+        """
+        Wait for the next server event, bounded by the turn's fixed soft-finish deadline.
+
+        Args:
+            event_iter (Any): The connection's async event iterator.
+            state (_RealtimeReceiveState): The current turn state.
+            clock (Callable[[], float]): Monotonic clock the deadline is measured against.
+
+        Returns:
+            Any | None: The next event, or None when the turn should finish without one
+                (stream ended, grace period expired, or connection closed after audio arrived).
+
+        Raises:
+            TimeoutError: If a timeout occurs before any audio.done was received.
+        """
+        timeout = None if state.completion_deadline is None else max(0.0, state.completion_deadline - clock())
+        try:
+            return await asyncio.wait_for(event_iter.__anext__(), timeout=timeout)
+        except TimeoutError:
+            if state.completion_deadline is None:
+                raise
+            logger.warning(
+                f"Soft-finishing: No response.done {state.GRACE_PERIOD_SEC}s after audio.done. "
+                f"Audio bytes: {len(state.audio_buffer)}"
+            )
+        except StopAsyncIteration:
+            logger.debug("Event stream ended")
+        except Exception as conn_err:
+            # Treat a websockets close as a soft-finish only once some audio has arrived.
+            if "ConnectionClosed" not in type(conn_err).__name__ or not state.audio_buffer:
+                raise
+            logger.warning(
+                f"Connection closed without response.done (likely API issue). "
+                f"Audio bytes received: {len(state.audio_buffer)}. Soft-finishing."
+            )
+        return None
+
+    @staticmethod
+    def _apply_receive_event(*, event: Any, state: _RealtimeReceiveState, clock: Callable[[], float]) -> bool:
+        """
+        Apply one server event to the per-turn receive state.
+
+        Args:
+            event (Any): The server event.
+            state (_RealtimeReceiveState): The turn state to update.
+            clock (Callable[[], float]): Monotonic clock used to fix the soft-finish deadline.
+
+        Returns:
+            bool: True when the event completes the turn.
+
+        Raises:
+            RuntimeError: If the server sends an error event.
+            ServerErrorException: If response.done reports a failed response.
+        """
+        event_type = event.type
+        event_kind = _OpenAIRealtimeEventRouter.classify_event(event_type)
+        event_response_id = _OpenAIRealtimeEventRouter.get_response_id(event=event)
+        if not state.accepts(event_kind=event_kind, event_response_id=event_response_id):
+            logger.debug(
+                f"Skipping event '{event_type}' for response {event_response_id}; "
+                f"current response is {state.response_id}"
+            )
+            return False
+
+        state.accepted_event_count += 1
+        logger.debug(f"Processing event type: {event_type}")
+        audio_size_before = len(state.audio_buffer)
+        _OpenAIRealtimeEventRouter.collect_response_delta(
+            event=event,
+            event_kind=event_kind,
+            audio_buffer=state.audio_buffer,
+            transcripts=state.transcripts,
+        )
+
+        if event_kind is _OpenAIRealtimeEventKind.RESPONSE_DONE:
+            return RealtimeTarget._apply_response_done(event=event, state=state)
+        if event_kind is _OpenAIRealtimeEventKind.ERROR:
+            raise RuntimeError(f"Server error: {RealtimeTarget._describe_server_error(event=event)}")
+        if event_kind is _OpenAIRealtimeEventKind.AUDIO_DONE:
+            logger.debug(f"Received audio.done - will soft-finish in {state.GRACE_PERIOD_SEC}s if no response.done")
+            state.start_completion_grace(clock=clock)
+            return False
+
+        RealtimeTarget._log_receive_event(
+            event=event, event_kind=event_kind, decoded_audio_bytes=len(state.audio_buffer) - audio_size_before
+        )
+        return False
+
+    @staticmethod
+    def _apply_response_done(*, event: Any, state: _RealtimeReceiveState) -> bool:
+        """
+        Handle a response.done event for the current turn.
+
+        Args:
+            event (Any): The response.done event.
+            state (_RealtimeReceiveState): The turn state.
+
+        Returns:
+            bool: True when the event completes the turn, False when it is a stale
+                leftover from a prior turn's soft-finish.
+        """
+        RealtimeTarget._handle_response_done_event(event=event, transcript_count=len(state.transcripts))
+        if state.owns_response_done():
+            logger.debug("Received response.done - finishing normally")
+            return True
+        # A response.done arriving as the very first event, with no audio, is left over in the
+        # WebSocket buffer from a prior turn's soft-finish. Skip it and keep waiting.
+        logger.debug(
+            "Received response.done as first event with no audio data — "
+            "likely a stale event from a prior turn's soft-finish. Skipping."
+        )
+        return False
+
+    @staticmethod
+    def _describe_server_error(*, event: Any) -> str:
+        """
+        Log a server error event and describe it.
+
+        Args:
+            event (Any): The error event.
+
+        Returns:
+            str: The error formatted as ``[type] message``.
+        """
+        error_message = event.error.message if hasattr(event.error, "message") else str(event.error)
+        error_type = event.error.type if hasattr(event.error, "type") else "unknown"
+        logger.error(f"Received 'error' event: [{error_type}] {error_message}")
+        return f"[{error_type}] {error_message}"
+
+    @staticmethod
+    def _log_receive_event(*, event: Any, event_kind: _OpenAIRealtimeEventKind, decoded_audio_bytes: int) -> None:
+        """
+        Log a non-terminal event that only feeds the accumulated response.
+
+        Args:
+            event (Any): The server event.
+            event_kind (_OpenAIRealtimeEventKind): The classified event kind.
+            decoded_audio_bytes (int): Audio bytes the event added to the buffer.
+        """
+        if event_kind is _OpenAIRealtimeEventKind.AUDIO_DELTA:
+            logger.debug(f"Decoded {decoded_audio_bytes} bytes of audio data")
+        elif event_kind is _OpenAIRealtimeEventKind.TRANSCRIPT_DELTA:
+            if getattr(event, "delta", ""):
+                logger.debug(f"Captured transcript delta: {event.delta[:50]}...")
+        elif event_kind is _OpenAIRealtimeEventKind.OUTPUT_TEXT_DONE:
+            logger.debug("Received text.done")
+        elif _OpenAIRealtimeEventRouter.is_lifecycle_event(event_kind):
+            logger.debug(f"Lifecycle event '{event.type}'")
+        else:
+            logger.debug(f"Unhandled event type '{event.type}'")
 
     def _get_connection(self, *, conversation_id: str) -> Any:
         """
@@ -755,13 +876,13 @@ class RealtimeTarget(OpenAITarget):
         return connection
 
     @staticmethod
-    def _handle_response_done_event(*, event: Any, result: RealtimeTargetResult) -> None:
+    def _handle_response_done_event(*, event: Any, transcript_count: int) -> None:
         """
         Process a response.done event from OpenAI client.
 
         Args:
             event: The event object from OpenAI client
-            result: RealtimeTargetResult to update
+            transcript_count: Number of transcript fragments received so far, for logging
 
         Raises:
             ValueError: If event structure doesn't match expectations
@@ -784,7 +905,7 @@ class RealtimeTarget(OpenAITarget):
 
         # We used to extract transcript here, but now we collect it from delta events
         # to support soft-finish when response.done doesn't arrive
-        logger.debug(f"Response completed successfully with {len(result.transcripts)} transcript fragments")
+        logger.debug(f"Response completed successfully with {transcript_count} transcript fragments")
 
     @staticmethod
     def _extract_error_details(*, response: Any) -> str:

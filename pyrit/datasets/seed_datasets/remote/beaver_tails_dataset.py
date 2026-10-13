@@ -63,7 +63,7 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
 
     # Metadata
     modalities: tuple[Modality, ...] = (Modality.TEXT,)
-    size: str = "huge"  # 166382 annotated prompt-response entries (default config)
+    size: str = "huge"  # 14402 unique unsafe prompts from 166382 prompt-response entries (default config)
     tags: frozenset[str] = frozenset({"default", "safety"})
 
     def __init__(
@@ -130,35 +130,42 @@ class _BeaverTailsDataset(_RemoteDatasetLoader):
             "Center on Frontiers of Computing Studies, School of Computer Science, Peking University",
         ]
 
-        seed_prompts = []
+        # BeaverTails has one row per prompt-response pair, so a prompt repeats once per response. Keep one
+        # seed per prompt and merge the harm labels its responses got.
+        merged: dict[str, tuple[list[str], dict[str, bool]]] = {}
         for item in data:
             if self.unsafe_only and item["is_safe"]:
                 continue
 
-            raw_harm_categories = [
-                part.strip() for k, v in item["category"].items() if v for part in k.split(",") if part.strip()
-            ]
-            harm_categories = self._standardize_harm_categories(
-                raw_harm_categories,
-                alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
-            )
+            raw_harm_categories, category_flags = merged.setdefault(item["prompt"], ([], {}))
+            for key, flagged in item["category"].items():
+                category_flags[key] = category_flags.get(key, False) or bool(flagged)
+                if flagged:
+                    for part in key.split(","):
+                        part = part.strip()
+                        if part and part not in raw_harm_categories:
+                            raw_harm_categories.append(part)
 
-            seed_prompts.append(
-                SeedPrompt(
-                    value=item["prompt"],
-                    data_type="text",
-                    dataset_name=self.dataset_name,
-                    harm_categories=harm_categories,
-                    description=description,
-                    source=source_url,
-                    authors=authors,
-                    groups=groups,
-                    metadata={
-                        "beaver_tails_categories": ",".join(raw_harm_categories),
-                        "beaver_tails_category_flags": json.dumps(item["category"], sort_keys=True),
-                    },
-                )
+        seed_prompts = [
+            SeedPrompt(
+                value=prompt,
+                data_type="text",
+                dataset_name=self.dataset_name,
+                harm_categories=self._standardize_harm_categories(
+                    raw_harm_categories,
+                    alias_overrides=self.HARM_CATEGORY_ALIAS_OVERRIDES,
+                ),
+                description=description,
+                source=source_url,
+                authors=authors,
+                groups=groups,
+                metadata={
+                    "beaver_tails_categories": ",".join(raw_harm_categories),
+                    "beaver_tails_category_flags": json.dumps(category_flags, sort_keys=True),
+                },
             )
+            for prompt, (raw_harm_categories, category_flags) in merged.items()
+        ]
 
         logger.info(f"Successfully loaded {len(seed_prompts)} prompts from BeaverTails dataset")
 

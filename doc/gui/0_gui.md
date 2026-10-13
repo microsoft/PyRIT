@@ -1,6 +1,6 @@
 # PyRIT GUI (CoPyRIT)
 
-CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent UI. It provides an interactive way to run attacks, configure targets and converters, and view results — all from a browser.
+CoPyRIT is a web-based graphical interface for PyRIT built with React and Fluent UI. It provides an interactive way to run attacks, configure targets, converters, and techniques, and view results — all from a browser.
 
 ## Getting Started
 
@@ -112,6 +112,16 @@ a new attack resets both. Default changes in another tab apply to the next new
 chat, not the current draft.
 
 Type a message and press Enter (or click Send) to send it to the chat target. The response appears below. Shift+Enter inserts a newline without sending.
+
+If the prompt box is disabled, hover over it or click it to see a list of reasons.
+Keyboard users can focus the box and press Enter to open the same list.
+Target processing errors show the complete stored error details. To continue after
+an error, use **Copy conversation** on the failed prompt and select **New conversation**
+or **New attack**. Both destinations copy the safe history before the failed prompt
+and restore that prompt as an unsent draft with its original attachments.
+Targets that cannot replay history start with an empty new attack.
+After a reload or runtime change, converter choices cannot be restored.
+A warning beside the recovered draft tells you to select and apply converters again before sending.
 
 When you open a saved chat, CoPyRIT automatically selects the target originally used, if its registered identity still matches. This also applies to direct links, reloads, and browser Back/Forward navigation. You can continue the same conversation without selecting the target again. Opening a saved chat does not change your defaults.
 
@@ -397,6 +407,12 @@ Human score changes do not require a registered objective target. The original o
 
 The History view lists all past attacks with filtering and pagination.
 
+Each saved result ID is a separate row, even when several results share one
+conversation. Failed attempts followed by successful retries are not collapsed.
+Existing filters and recency ordering are unchanged. A pagination cursor from
+before this selection change restarts at the first page. Scenario run statistics
+still count their latest execution units, not these raw result rows.
+
 <img width="1664" alt="Attack history view" src="images/history.png" />
 
 #### Filters
@@ -461,6 +477,21 @@ technique, or dataset before trying again.
 In active runs and saved scenario results, **Atomic attack groups** defaults to expanded for up to 20 group summaries and collapsed for more than 20, with group and execution counts always visible. Select **Expand** to show all group summaries or **Collapse** to hide the list. Individual groups start collapsed; expand one to inspect its executions and open attack details or conversation links.
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
+
+### Technique Registry
+
+Open **Registry > Techniques**, or go to `/registry/techniques`. Targets and
+Converters keep their existing registry URLs.
+
+Search or filter registered techniques, then select **Details** to inspect one.
+Select **New technique** to configure an existing attack with basic settings,
+ordered converters, and optional adversarial prompts. The objective target is
+selected when you run a scenario. Seeds and conversation settings need a Python
+initializer. Creation does not run an attack.
+
+New techniques are available in compatible scenarios and are lost on restart or
+reinitialization. The pane does not edit or delete techniques.
+See the [backend README](../../pyrit/backend/README.md#techniques) for the API.
 
 ### Target Configuration
 
@@ -556,6 +587,10 @@ runtime operation is active. Wait for the work to finish, or cancel it with its 
 When the runtime is idle, PyRIT closes admission and checks again before it changes runtime state. This second check
 prevents newly admitted work from overlapping replacement.
 
+Analytics also remains busy while a query's native database/session cleanup is
+running after an HTTP timeout. Live apply waits for the user to retry once that
+work has drained; receiving a timeout response does not make memory safe to replace.
+
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
 
@@ -565,6 +600,10 @@ client disconnect and their offloaded writes. Cancelling the shutdown caller doe
 a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
 Shutdown can therefore wait for an outstanding operation. Runtime readiness reports `ready: false` and
 `state: stopping` as soon as shutdown closes admission, including while an accepted live apply finishes.
+
+Analytics shutdown closes its shared SDK lifetime on the owning event loop and
+clears the cached dependency before memory disposal. If that drain fails, the
+backend retains the owner and memory rather than disposing resources still in use.
 
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
@@ -584,16 +623,21 @@ API clients can use administrator-only `GET /api/config/runtime`, `POST /api/con
 returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
 invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
 at `GET /api/runtime`.
-`GET /api/health` reports server responsiveness, not runtime readiness.
+`GET /api/health` remains HTTP 200 for server responsiveness, even when runtime initialization fails.
+It preserves `status`, `timestamp`, and `service`, and includes `ready`, `state`, and the serving ACA
+`revision` (or `null` outside ACA) for deployment readiness checks. Responses are uncached and do not
+expose configuration or exception details.
 
 ---
 
 ## Registry API Migration Notes
 
 Use `/api/converters/types` and `/api/targets/types` for registry build metadata.
-These endpoints return all constructor parameters from the registry, including
-lists, unions, and component references. The temporary `/catalog` routes retain
-their scalar-only filtering for the current UI.
+These endpoints return the constructor parameters external callers can set, each
+described in the form callers send it: a flat collection as a list, a union as its
+first alternative callers can send (`font_size: int | tuple[int, int]` as `int`),
+and a component reference as a name. They leave out types external callers can't
+create. Registry metadata keeps every parameter with its full annotation.
 Create requests should supply an explicit registry `name`. Converter creation
 returns the complete `ConverterInstance`; read its type from
 `identifier.class_name`, not the old top-level `converter_type` field. Treat
@@ -610,10 +654,8 @@ allowlisted image, audio, and video extensions inline. Other files, including PD
 SVG, HTML, text, and executables, download as `application/octet-stream` attachments.
 
 **Temporary compatibility, scheduled for removal with the chat migration:**
-the `/api/converters/catalog` and `/api/targets/catalog` routes project the same
-registry metadata for the current UI. Create requests without a name receive a
-generated `compat_...` name. New clients should not depend on these routes or
-unnamed creation.
+target create requests without a name receive a generated `compat_...` name.
+New clients should supply an explicit name.
 
 ## Connection Health
 
