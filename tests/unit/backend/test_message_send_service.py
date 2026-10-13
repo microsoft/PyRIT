@@ -5,7 +5,7 @@
 
 import asyncio
 import uuid
-from collections.abc import AsyncGenerator, Generator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -106,7 +106,7 @@ def send_dependencies(mock_memory: MagicMock) -> Iterator[tuple[MagicMock, Async
 @pytest.fixture
 async def real_send_context(
     *, sqlite_instance: SQLiteMemory, patch_central_database: MagicMock
-) -> Iterator[tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter]]:
+) -> AsyncIterator[tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter]]:
     target = MockPromptTarget()
     converter = Base64Converter()
     ar = AttackResult(

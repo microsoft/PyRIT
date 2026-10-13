@@ -6,8 +6,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from azure.core.credentials import AccessToken
 
-from pyrit.auth.auth_config import REFRESH_TOKEN_BEFORE_MSEC
 from pyrit.auth.azure_auth import (
     AzureAuth,
     ensure_async_token_provider,
@@ -20,6 +20,7 @@ from pyrit.auth.azure_auth import (
 
 curr_epoch_time = int(time.time())
 mock_token = "fake token"
+_TOKEN_TIME = 1_700_000_000
 
 
 @pytest.mark.parametrize("returns_awaitable", [False, True])
@@ -44,32 +45,38 @@ def is_speechsdk_installed():
         return False
 
 
-def test_get_token_on_init():
-    with patch("azure.identity.AzureCliCredential.get_token") as mock_get_token:
-        mock_get_token.return_value = MagicMock(token=mock_token)
+def test_get_token_on_init() -> None:
+    with patch("azure.identity.DefaultAzureCredential.get_token", return_value=AccessToken(mock_token, _TOKEN_TIME)):
         test_instance = AzureAuth(token_scope="https://mocked_endpoint.azure.com")
         assert test_instance.token == mock_token
 
 
-def test_refresh_no_expiration():
-    # Token not expired so not reset
-    with patch("azure.identity.AzureCliCredential.get_token") as mock_get_token:
-        mock_get_token.return_value = MagicMock(
-            token=mock_token, expires_on=curr_epoch_time + REFRESH_TOKEN_BEFORE_MSEC
-        )
+@pytest.mark.parametrize("elapsed_seconds", [0, 301])
+def test_refresh_no_expiration(elapsed_seconds: int) -> None:
+    with (
+        patch(
+            "azure.identity.DefaultAzureCredential.get_token",
+            return_value=AccessToken(mock_token, _TOKEN_TIME + 3600),
+        ) as mock_get_token,
+        patch("pyrit.auth.azure_auth.time.time", return_value=_TOKEN_TIME + elapsed_seconds),
+    ):
         test_instance = AzureAuth(token_scope="https://mocked_endpoint.azure.com")
         token = test_instance.refresh_token()
         assert token == mock_token
-        mock_get_token.assert_called()
+        mock_get_token.assert_called_once()
 
 
-def test_refresh_expiration():
-    # Token expired and reset
-    with patch("azure.identity.AzureCliCredential.get_token") as mock_get_token:
-        mock_get_token.return_value = MagicMock(token=mock_token, expires_on=curr_epoch_time)
+def test_refresh_expiration() -> None:
+    with (
+        patch(
+            "azure.identity.DefaultAzureCredential.get_token",
+            side_effect=[AccessToken("expired", _TOKEN_TIME), AccessToken(mock_token, _TOKEN_TIME + 3600)],
+        ) as mock_get_token,
+        patch("pyrit.auth.azure_auth.time.time", return_value=_TOKEN_TIME),
+    ):
         test_instance = AzureAuth(token_scope="https://mocked_endpoint.azure.com")
         token = test_instance.refresh_token()
-        assert token
+        assert token == mock_token
         assert mock_get_token.call_count == 2
 
 

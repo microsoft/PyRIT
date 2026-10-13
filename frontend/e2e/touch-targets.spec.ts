@@ -374,6 +374,27 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       await route.fulfill(jsonResponse({ converter_types: [] }));
       return;
     }
+    if (apiPath === "/datasets") {
+      await route.fulfill(
+        jsonResponse({
+          items: [
+            {
+              name: "harmbench",
+              selection_key: "dataset:named:harmbench",
+              loaded: true,
+              provider_available: true,
+              logical_examples: 12,
+              seed_pieces: 12,
+              objectives: 1,
+              modalities: ["text"],
+              harm_categories: ["hate"],
+              has_unlabeled_harm_categories: false,
+            },
+          ],
+        })
+      );
+      return;
+    }
     if (apiPath === "/scenarios/catalog" || apiPath === "/scenarios/runs") {
       await route.fulfill(
         jsonResponse({
@@ -751,6 +772,16 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
+  test("keeps closed dataset filters at least 44px", async ({ page }) => {
+    await page.goto("/datasets");
+    await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
+
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Modalities" }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Harm categories" }));
+    await expectMinimumTouchTarget(page.getByRole("combobox", { name: "Sort datasets" }));
+    await expectNoDocumentOverflow(page);
+  });
+
   test("keeps every tour action at least 44px without changing containment", async ({
     page,
   }) => {
@@ -886,4 +917,10 @@ test("preserves compact desktop controls and existing sidebar dimensions", async
   await openAttack.scrollIntoViewIfNeeded();
   await expectCompactDesktopTarget(openAttack);
   await expectCompactDesktopTarget(page.getByTestId("next-page-btn"));
+
+  await page.goto("/datasets");
+  await expect(page.getByRole("heading", { name: "Datasets" })).toBeVisible();
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Modalities" }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Harm categories" }));
+  await expectCompactDesktopTarget(page.getByRole("combobox", { name: "Sort datasets" }));
 });

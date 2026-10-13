@@ -28,7 +28,9 @@ import ParameterField from '@/components/Parameters/ParameterField'
 import {
   buildParametersFromForm,
   getInitialFormValues,
+  getParameterControlKind,
   isStructuredParameterFormValue,
+  type ParameterControlKind,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
 
@@ -115,6 +117,15 @@ function canConfigureConverterType(converterType: ConverterTypeEntry): boolean {
   return converterType.parameters.every(
     (parameter) => !parameter.required || canConfigureParameter(parameter),
   )
+}
+
+// Text, JSON, and multiselect values go to the API exactly as entered: whitespace can be the
+// value (a replacement, for one), and this dialog shows those parameters as text or a single
+// select. The other controls are converted to the JSON type their parameter describes.
+const TYPED_CONTROL_KINDS = new Set<ParameterControlKind>(['structured', 'boolean', 'select', 'list', 'number'])
+
+function sendsTypedValue(parameter: Parameter): boolean {
+  return TYPED_CONTROL_KINDS.has(getParameterControlKind(parameter))
 }
 
 function parameterDefaultValue(parameter: Parameter): string {
@@ -408,21 +419,23 @@ export default function CreateConverterDialog({
     }
 
     const parameters = selectedConverterType?.parameters ?? []
-    const params = Object.fromEntries(
-      Object.entries(parameterValues).filter(([, value]) => !isStructuredParameterFormValue(value)),
+    const params: Record<string, unknown> = Object.fromEntries(
+      parameters
+        .filter((parameter) => !sendsTypedValue(parameter))
+        .flatMap((parameter) => {
+          const value = parameterValues[parameter.name]
+          return typeof value === 'string' ? [[parameter.name, value]] : []
+        }),
     )
-    const structured = buildParametersFromForm(
-      parameters.filter((parameter) => parameter.variants),
-      parameterValues,
-    )
-    if (!structured.ok) {
+    const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), parameterValues)
+    if (!typed.ok) {
       // Not tagged as a submission failure: nothing was disabled, so the keyboard
       // is still on the primary action and has nothing to be restored from.
-      setError({ message: structured.error, fromSubmit: false })
+      setError({ message: typed.error, fromSubmit: false })
       return
     }
-    if (structured.parameters) {
-      Object.assign(params, structured.parameters)
+    if (typed.parameters) {
+      Object.assign(params, typed.parameters)
     }
 
     const epoch = openEpochRef.current

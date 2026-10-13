@@ -4,6 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes } from 'react-router'
 
 import { scenariosApi, targetsApi } from '@/services/api'
+import { useRuntime } from '@/hooks/useRuntime'
 import type {
   RegisteredScenario,
   ScenarioRunSizeEstimateResponse,
@@ -11,6 +12,8 @@ import type {
 } from '@/types'
 
 import ScenarioDetail from './ScenarioDetail'
+
+jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
@@ -27,6 +30,7 @@ const mockGetScenario = scenariosApi.getScenario as jest.Mock
 const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
+const mockUseRuntime = jest.mocked(useRuntime)
 
 const mockNavigate = jest.fn()
 const RAW_IMAGE_HTML = ['<', 'img src=x onerror="alert(1)">'].join('')
@@ -63,6 +67,11 @@ function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredSc
     include_baseline_by_default: true,
     uses_default_adversarial_target: true,
     supported_parameters: [],
+    supported_parameter_names: overrides.supported_parameter_names ?? [
+      'objective_target', 'scenario_techniques', 'technique_converters', 'dataset_config',
+      'memory_labels', 'max_concurrency', 'max_retries', 'include_baseline',
+      ...(overrides.supported_parameters ?? []).map((parameter) => parameter.name),
+    ],
     default_run_size: {
       dataset_size: { kind: 'indeterminate', detail: 'Population configuration is not available.' },
       dataset_limit: { state: 'scenario_default' },
@@ -190,6 +199,7 @@ function renderDetail(
 describe('ScenarioDetail', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
     mockGetScenario.mockReset()
     mockEstimateRun.mockReset()
     mockListTargets.mockReset()
@@ -201,6 +211,137 @@ describe('ScenarioDetail', () => {
 
   afterEach(() => {
     jest.useRealTimers()
+  })
+
+  it('blocks a legacy catalog response without support names instead of guessing common support', async () => {
+    const legacyScenario = makeScenario()
+    Reflect.deleteProperty(legacyScenario, 'supported_parameter_names')
+    mockGetScenario.mockResolvedValue(legacyScenario)
+
+    renderDetail('/scanner/foundry.red_team_agent')
+
+    expect(await screen.findByText(/catalog has no input support metadata/i)).toBeInTheDocument()
+    expect(screen.queryByRole('form')).not.toBeInTheDocument()
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['dataset_config', 'Dataset override', ['dataset_names', 'max_dataset_size', 'dataset_filters']],
+    ['scenario_techniques', 'default_technique', ['techniques']],
+    ['include_baseline', 'baseline', ['include_baseline']],
+    ['max_concurrency', 'Max concurrency', ['max_concurrency']],
+    ['max_retries', 'Max retries', ['max_retries']],
+    ['memory_labels', null, ['labels']],
+    ['objective_target', 'Objective Target', ['target_name']],
+  ])('omits controls and request aliases for undeclared %s', async (
+    name: string, label: string | null, requestFields: string[],
+  ) => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    const scenario = makeScenario()
+    scenario.supported_parameter_names = scenario.supported_parameter_names.filter(
+      (parameterName) => parameterName !== name,
+    )
+    // Defaults and estimate data do not establish support for an input.
+    mockGetScenario.mockResolvedValue(scenario)
+    mockEstimateRun.mockResolvedValue(makeEstimate(8))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await advanceTimers(300)
+
+    if (label) {
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument()
+    }
+    if (name === 'dataset_config') {
+      expect(screen.queryByLabelText('Max dataset size')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Harm categories')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Data types')).not.toBeInTheDocument()
+      expect(screen.queryByRole('checkbox', { name: 'No total dataset limit' })).not.toBeInTheDocument()
+    }
+    expect(mockEstimateRun).toHaveBeenCalledTimes(1)
+    const preview = await openRunPreview(user)
+    if (name === 'dataset_config') {
+      expect(within(preview).queryByText('Datasets')).not.toBeInTheDocument()
+      expect(within(preview).queryByText('Dataset filters')).not.toBeInTheDocument()
+    }
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
+    expect(mockStartRun).toHaveBeenCalledTimes(1)
+    for (const field of requestFields) {
+      expect(mockEstimateRun.mock.calls[0][1]).not.toHaveProperty(field)
+      expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty(field)
+    }
+  })
+
+  it('keeps baseline selection independent when attack technique selection is unsupported', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      supported_parameter_names: ['objective_target', 'include_baseline'],
+      all_techniques: [],
+      default_techniques: [],
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const baseline = await screen.findByRole('checkbox', { name: 'baseline' })
+    await user.click(baseline)
+    await confirmRunPreview(user)
+
+    expect(mockStartRun).toHaveBeenCalledWith({
+      scenario_name: 'foundry.red_team_agent',
+      target_name: 'target-a',
+      include_baseline: false,
+    })
+    expect(screen.queryByText('Select at least one attack technique.')).not.toBeInTheDocument()
+  })
+
+  it('drops unsupported invalid drafts after catalog refresh and preserves supported values', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    const parameters = [
+      { name: 'iterations', type_name: 'int', required: true, default: null, choices: null, is_list: false },
+      { name: 'note', type_name: 'str', required: true, default: null, choices: null, is_list: false },
+    ]
+    mockGetScenario.mockResolvedValue(makeScenario({ supported_parameters: parameters }))
+    mockEstimateRun.mockResolvedValue(makeEstimate(8))
+    const detail = renderDetail('/scanner/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await user.type(screen.getByLabelText(/^iterations/), '1.5')
+    await user.type(screen.getByLabelText(/^note/), 'Keep this value')
+    await user.type(screen.getByLabelText('Dataset override'), 'stale-dataset')
+    await user.type(screen.getByLabelText('Max dataset size'), '0')
+    await user.type(screen.getByLabelText('Harm categories'), 'stale-harm')
+    await user.type(screen.getByLabelText('Data types'), 'stale-type')
+    for (const label of ['Max concurrency', 'Max retries']) {
+      const input = screen.getByRole('spinbutton', { name: label })
+      await user.clear(input)
+      await user.type(input, '500')
+      await user.tab()
+    }
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('iterations must be an integer.')
+
+    mockGetScenario.mockResolvedValue(makeScenario({
+      supported_parameter_names: ['note'],
+      // A removed external descriptor must not validate or submit a stale value.
+      supported_parameters: parameters,
+      uses_default_adversarial_target: false,
+    }))
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+    detail.updateDefaults({ targets: [] })
+    await flushRenderedPromises()
+    await user.click(screen.getByRole('button', { name: 'I have reviewed the refreshed selections' }))
+    await advanceTimers(300)
+
+    expect(screen.getByLabelText(/^note/)).toHaveValue('Keep this value')
+    expect(screen.queryByLabelText(/^iterations/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toEqual({
+      scenario_params: { note: 'Keep this value' },
+    })
+    await confirmRunPreview(user)
+    expect(mockStartRun).toHaveBeenCalledWith({
+      scenario_name: 'foundry.red_team_agent',
+      scenario_params: { note: 'Keep this value' },
+    })
   })
 
   it('shows a loading state while fetching', () => {
@@ -654,6 +795,88 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Backend-resolved preset members')).not.toBeInTheDocument()
   })
 
+  it('uses one radio selection when the backend limits the scenario to one technique', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const selected = await screen.findByRole('radio', { name: 'default_technique' })
+    const other = screen.getByRole('radio', { name: 'crescendo' })
+    expect(selected).toBeChecked()
+    expect(other).not.toBeChecked()
+    expect(screen.queryByRole('button', { name: /Multi-turn techniques/ })).not.toBeInTheDocument()
+    await user.click(other)
+    expect(selected).not.toBeChecked()
+    expect(other).toBeChecked()
+    await user.click(other)
+    expect(other).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo'])
+    expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(true)
+  })
+
+  it('allows keyboard changes to a single technique without changing baseline', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await user.click(await screen.findByRole('radio', { name: 'default_technique' }))
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'default_technique' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeChecked()
+  })
+
+  it('blocks estimates and launch for an over-limit selection until the user selects one technique', async () => {
+    jest.useFakeTimers()
+    const timedUser = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 1,
+      default_techniques: ['default_technique', 'crescendo'],
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByRole('radio', { name: 'crescendo' })
+    await advanceTimers(300)
+    expect(mockEstimateRun).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(screen.getAllByRole('alert').some(
+      (alert) => alert.textContent === 'Select at most 1 concrete technique(s).',
+    )).toBe(true)
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await timedUser.click(screen.getByRole('radio', { name: 'default_technique' }))
+    await advanceTimers(300)
+    expect(mockEstimateRun).toHaveBeenCalledWith(
+      'foundry.red_team_agent',
+      expect.objectContaining({ techniques: ['default_technique'] }),
+      expect.any(AbortSignal),
+    )
+  })
+
+  it('enforces larger limits on both individual and tag selections without counting baseline', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      max_concrete_techniques: 2,
+      all_techniques: ['default_technique', 'crescendo', 'many_shot'],
+      technique_summaries: [
+        { name: 'default_technique', tags: ['single_turn'] },
+        { name: 'crescendo', tags: ['multi_turn'] },
+        { name: 'many_shot', tags: ['multi_turn'] },
+      ],
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByRole('checkbox', { name: 'crescendo' })
+    expect(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0]).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: 'crescendo' }))
+    expect(screen.getByRole('checkbox', { name: 'many_shot' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeEnabled()
+    await user.click(screen.getByRole('checkbox', { name: 'default_technique' }))
+    await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
+    expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'many_shot' })).toBeChecked()
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0].techniques).toEqual(['crescendo', 'many_shot'])
+    expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(true)
+  })
+
   it('shows technique descriptions and tags', async () => {
     mockGetScenario.mockResolvedValue(
       makeScenario({
@@ -1025,6 +1248,38 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
+  })
+
+  it('sends an explicit all total for both estimation and launch', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/foundry.red_team_agent')
+    const unlimited = await screen.findByRole('checkbox', { name: 'No total dataset limit' })
+    await user.click(unlimited)
+    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toBeDisabled()
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('max_dataset_size', 'all'))
+    await confirmRunPreview(user)
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
+    expect(mockStartRun.mock.calls[0][0]).toHaveProperty('max_dataset_size', 'all')
+  })
+
+  it('restores the scenario default when no-total-limit is unchecked', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      default_run_size: {
+        ...makeEstimate(10),
+        dataset_limit: { state: 'value', value: 5 },
+      },
+    }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    const unlimited = await screen.findByRole('checkbox', { name: 'No total dataset limit' })
+    await user.click(unlimited)
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('max_dataset_size', 'all'))
+    await user.click(unlimited)
+    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(5)
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size'))
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')

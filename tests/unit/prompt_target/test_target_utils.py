@@ -5,6 +5,7 @@ import ast
 import asyncio
 import logging
 from pathlib import Path
+from typing import assert_type
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -84,6 +85,26 @@ def test_validate_top_p_below_zero_raises():
 def test_validate_top_p_above_one_raises():
     with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
         validate_top_p(1.1)
+
+
+@pytest.mark.parametrize("rpm", [None, 30])
+async def test_limit_requests_per_minute_preserves_signature_and_result_async(rpm: int | None) -> None:
+    class IntegerTarget:
+        _max_requests_per_minute = rpm
+
+        @limit_requests_per_minute
+        async def send_async(self, *, value: int) -> int:
+            return value
+
+    target = IntegerTarget()
+    with patch("pyrit.prompt_target.common.utils.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        result = await target.send_async(value=42)
+    assert_type(result, int)
+    assert result == 42
+    if rpm is None:
+        sleep.assert_not_awaited()
+    else:
+        sleep.assert_awaited_once_with(60 / rpm)
 
 
 async def test_limit_requests_per_minute_no_rpm():

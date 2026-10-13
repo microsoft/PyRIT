@@ -12,11 +12,13 @@ from typing import Any
 from fastapi import FastAPI
 
 from pyrit.backend.models.initializers import ConfiguredInitializerSetting
+from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.service_lifecycle import (
     close_services_async,
+    has_active_analytics_work,
     has_active_manual_sends,
     outstanding_estimates,
 )
@@ -215,7 +217,7 @@ class RuntimeLifecycle:
                 await self._management_async(config)
                 self.version = current_version
                 self._publish(config)
-            except Exception:
+            except (Exception, asyncio.CancelledError) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",
                     "mutation" if mutated else "preflight",
@@ -231,6 +233,8 @@ class RuntimeLifecycle:
                     if mutated
                     else "Configuration or memory settings are invalid. Memory changes require a restart."
                 )
+                if isinstance(error, asyncio.CancelledError):
+                    raise
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
 
@@ -242,6 +246,7 @@ class RuntimeLifecycle:
             or self.operations
             or outstanding_estimates()
             or has_active_manual_sends()
+            or has_active_analytics_work()
         )
 
     async def shutdown_async(self) -> None:
@@ -260,6 +265,9 @@ class RuntimeLifecycle:
 
     async def _shutdown_runtime_async(self) -> None:
         """Finish retained requests without cancelling their offloaded writes."""
+        service = peek_scenario_run_service()
+        if service:
+            service.stop_admission()
         pending = self.operations | self.management_operations
         if self.apply_task is not None:
             pending.add(self.apply_task)
@@ -277,6 +285,8 @@ class RuntimeLifecycle:
         except (Exception, asyncio.CancelledError) as error:
             errors.append(error)
         try:
+            if get_analytics_service.cache_info().currsize:
+                raise RuntimeError("Analytics closure did not finish; memory was not disposed.")
             if CentralMemory._memory_instance is not None:
                 await CentralMemory.get_memory_instance().dispose_engine_async()
         except (Exception, asyncio.CancelledError) as error:

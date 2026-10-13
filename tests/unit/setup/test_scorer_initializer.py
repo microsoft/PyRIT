@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+from threading import get_ident
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +22,18 @@ from pyrit.setup.initializers.scorers import (
     GPT5_4_TARGET,
     ScorerInitializerTags,
 )
+
+
+async def test_scorer_registration_runs_off_loop_async() -> None:
+    initializer = ScorerInitializer()
+    backend_thread = get_ident()
+
+    def register() -> None:
+        assert get_ident() != backend_thread
+
+    with patch.object(initializer, "_register_scorers", side_effect=register) as registration:
+        await initializer.initialize_async()
+    registration.assert_called_once()
 
 
 class TestScorerInitializerBasic:
@@ -70,7 +83,7 @@ class TestScorerInitializerInitialize:
             if var in os.environ:
                 del os.environ[var]
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 
@@ -246,7 +259,7 @@ class TestScorerInitializerBestObjective:
         ScorerRegistry.reset_registry_singleton()
         TargetRegistry.reset_registry_singleton()
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 
@@ -378,7 +391,7 @@ class TestScorerInitializerCategoryTags:
         for var in self.CONTENT_SAFETY_ENV_VARS:
             os.environ.pop(var, None)
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 
@@ -530,7 +543,7 @@ class TestScorerInitializerRoundRobin:
         ScorerRegistry.reset_registry_singleton()
         TargetRegistry.reset_registry_singleton()
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 

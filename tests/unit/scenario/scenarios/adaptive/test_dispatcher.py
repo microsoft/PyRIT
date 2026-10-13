@@ -256,11 +256,12 @@ class TestEvalHashRoundTrip:
     """
 
     async def test_predicted_hash_matches_persisted_row(self, sqlite_instance):
+        from unit.mocks import MockPromptTarget
+
         from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory.memory_models import AttackResultEntry
         from pyrit.models import AttackSeedGroup, SeedObjective
         from pyrit.models.identifiers import compute_inner_attack_eval_hash
-        from tests.unit.mocks import MockPromptTarget
 
         live_target = MockPromptTarget()
         attack = PromptSendingAttack(objective_target=live_target)

@@ -8,6 +8,7 @@ import re
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory
@@ -19,7 +20,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError, DatasetSource
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PackageHallucinationTechnique,
@@ -32,7 +33,6 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
-from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_id(name: str) -> ComponentIdentifier:
@@ -389,7 +389,9 @@ def _select(
         args={
             "objective_target": objective_target,
             "scenario_techniques": techniques,
-            "dataset_config": DatasetAttackConfiguration(dataset_names=dataset_names),
+            "dataset_config": DatasetAttackConfiguration(
+                sources=[DatasetSource(name=name) for name in dataset_names], max_per_dataset="all"
+            ),
             "include_baseline": False,
         }
     )

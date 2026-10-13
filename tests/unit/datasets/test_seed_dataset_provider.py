@@ -64,6 +64,20 @@ def mock_darkbench_data():
 class TestSeedDatasetProvider:
     """Test the SeedDatasetProvider base class and registration."""
 
+    async def test_name_lookup_does_not_parse_metadata_or_fetch(self) -> None:
+        factory = MagicMock()
+        factory.return_value.dataset_name = "known"
+        factory.return_value._parse_metadata_async = AsyncMock(side_effect=AssertionError("metadata read"))
+        factory.return_value.fetch_dataset_async = AsyncMock(side_effect=AssertionError("fetch"))
+        with (
+            patch.dict(SeedDatasetProvider._registry, {"test": factory}, clear=True),
+            patch.object(SeedDatasetProvider, "_materialize_builtin_providers"),
+        ):
+            result = await SeedDatasetProvider.get_providers_by_name_async(dataset_names=["known", "missing"])
+        assert result == {"known": factory.return_value}
+        factory.return_value._parse_metadata_async.assert_not_awaited()
+        factory.return_value.fetch_dataset_async.assert_not_awaited()
+
     def test_registration(self):
         """Test that subclasses are automatically registered."""
 

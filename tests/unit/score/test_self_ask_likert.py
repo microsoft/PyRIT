@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from pydantic import ValidationError
-from unit.mocks import get_mock_target_identifier
+from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
 from pyrit.exceptions.exception_classes import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece, SeedPrompt
+from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoringExpectation, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import LikertScale, LikertScaleEntry, LikertScalePaths, SelfAskLikertScorer
 
@@ -166,6 +166,41 @@ async def test_likert_scorer_keeps_response_handler_metadata(patch_central_datab
         "raw_judge_output": "level 3",
         "likert_value": 3,
     }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("raw_value, expected_value", [(0, 0.0), (3, 1.0)])
+async def test_likert_metadata_mutation_round_trips_async(
+    *, sqlite_instance: MemoryInterface, likert_scale: LikertScale, raw_value: int, expected_value: float
+) -> None:
+    target = MockPromptTarget()
+    scorer = SelfAskLikertScorer.from_likert_scale(chat_target=target, likert_scale=likert_scale)
+    message = await store_message_async(MessagePiece(role="assistant", original_value="scored content").to_message())
+    expectation = ScoringExpectation(objective="Assess harmful content")
+    response = MessagePiece(
+        role="assistant",
+        original_value=(
+            f'{{"score_value": {raw_value}, "description": "Harm level", "rationale": "Judge explanation",'
+            ' "metadata": {"confidence": 0.9, "source": "judge", "likert_value": "untrusted"}}'
+        ),
+    ).to_message()
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]):
+        scores = await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation)
+
+    assert len(scores) == 1
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(scores[0].id)])
+    assert len(stored) == 1
+    score = stored[0]
+    assert score.get_value() == expected_value
+    assert score.score_type == "float_scale"
+    assert score.score_category == ["test_harm"]
+    assert score.score_value_description == "Harm level"
+    assert score.score_rationale == "Judge explanation"
+    assert score.score_metadata == {"confidence": 0.9, "source": "judge", "likert_value": raw_value}
+    assert score.scored_expectation == expectation
+    assert score.message_piece_id == message.get_piece().id
+    assert len(score.observation_ids) == 1
+    assert score == Score.model_validate_json(scores[0].model_dump_json())
 
 
 @pytest.mark.parametrize("raw_score", ["4", "4.5"])

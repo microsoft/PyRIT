@@ -12,6 +12,7 @@ import httpx
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
+from unit.mocks import MockPromptTarget
 
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
 from pyrit.prompt_target import (
@@ -39,7 +40,6 @@ from pyrit.prompt_target.common.target_capabilities import (
     UnsupportedCapabilityBehavior,
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from tests.unit.mocks import MockPromptTarget
 
 
 class _RealValidationTarget(PromptTarget):
@@ -866,6 +866,7 @@ def test_probe_removes_nested_and_legacy_tool_settings(target_type: type[PromptT
         model_name="unknown",
         endpoint="https://example.invalid",
         api_key="not-a-key",
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities()),
         extra_body_parameters=body,
     )
     with _permissive_configuration(target=target):

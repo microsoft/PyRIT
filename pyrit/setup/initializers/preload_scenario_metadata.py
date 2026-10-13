@@ -13,6 +13,7 @@ instantiation failures surface loudly here at startup rather than later.
 
 import logging
 
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.registry import ScenarioRegistry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -24,6 +25,6 @@ class PreloadScenarioMetadata(PyRITInitializer):
 
     async def initialize_async(self) -> None:
         """Warm the scenario metadata cache."""
-        registry = ScenarioRegistry.get_registry_singleton()
-        metadata = registry.get_all_registered_class_metadata()
+        registry = await run_legacy_sync_async(ScenarioRegistry.get_registry_singleton)
+        metadata = await run_legacy_sync_async(registry.get_all_registered_class_metadata)
         logger.info("Preloaded metadata for %d scenarios", len(metadata))

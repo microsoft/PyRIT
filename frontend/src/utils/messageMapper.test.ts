@@ -593,7 +593,7 @@ describe("messageMapper", () => {
       expect(result.content).toBe("I cannot help with that request.");
     });
 
-    it("should hide stored processing diagnostics and provide a safe description", () => {
+    it("should display complete stored processing diagnostics in the error description", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -615,11 +615,11 @@ describe("messageMapper", () => {
       expect(result.content).toBe("");
       expect(result.error).toEqual({
         type: "processing",
-        description: "The target could not process this message.",
+        description: msg.message_pieces[0].converted_value,
       });
     });
 
-    it("should preserve scores and provenance while redacting a processing-error piece", () => {
+    it("should preserve scores and provenance without copying diagnostics into message content", () => {
       const msg: BackendMessage = {
         turn_number: 1,
         role: "assistant",
@@ -681,7 +681,29 @@ describe("messageMapper", () => {
         })),
       });
       expect(result.error?.type).toBe("processing");
-      expect(JSON.stringify(result)).not.toMatch(/Internal original diagnostic|Traceback/);
+      expect(result.error?.description).toBe("Traceback: internal converted diagnostic");
+      expect(result.content).not.toMatch(/Internal original diagnostic|Traceback/);
+    });
+
+    it.each([
+      { converted: "Full stored exception\n" + "Traceback line\n".repeat(300), original: "Original", description: "Short summary" },
+      { converted: "", original: "Original exception details", description: "Short summary" },
+      { converted: "", original: "", description: "Backend exception details" },
+      { converted: "", original: "", description: undefined },
+    ])("should retain complete processing details and use fallbacks only when needed", ({
+      converted, original, description,
+    }: { converted: string; original: string; description: string | undefined }) => {
+      const message: BackendMessage = {
+        turn_number: 1, role: "assistant", created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "error-piece", original_value_data_type: "text", converted_value_data_type: "error",
+          original_value: original, converted_value: converted, scores: [], response_error: "processing",
+          response_error_description: description,
+        }],
+      };
+      expect(backendMessageToFrontend(message).error?.description).toBe(
+        converted || original || description || "The target could not process this message."
+      );
     });
 
     it("should handle multi-piece message with text + image", () => {

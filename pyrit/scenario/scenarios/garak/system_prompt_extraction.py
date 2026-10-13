@@ -21,9 +21,10 @@ from pyrit.models import (
     SeedPrompt,
     scenario_dataset_size_from_limit,
 )
+from pyrit.models.dataset_limit import DatasetLimit, normalize_dataset_limit
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import FloatScaleThresholdScorer, SystemPromptExtractionScorer
@@ -97,6 +98,7 @@ class SystemPromptExtraction(Scenario):
     """
 
     VERSION: int = 1
+    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Template-dominated like the Doctor/Jailbreak scenarios: the bare system prompt with no
     # extraction request is a weak comparison point, so baseline is off by default.
@@ -113,7 +115,7 @@ class SystemPromptExtraction(Scenario):
         *,
         objective_scorer: TrueFalseScorer | None = None,
         system_prompt_subsample: int = 50,
-        prompt_cap: int | None = _DEFAULT_PROMPT_CAP,
+        prompt_cap: DatasetLimit = "default",
         random_seed: int | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
@@ -126,13 +128,16 @@ class SystemPromptExtraction(Scenario):
                 ``SystemPromptExtractionScorer`` (n=4) at threshold 0.5 (garak's ``eval_threshold``).
             system_prompt_subsample (int): Maximum number of system prompts to draw per dataset.
                 Defaults to 50 (garak's ``system_prompt_subsample``).
-            prompt_cap (int | None): Upper bound on the total number of (system prompt x template)
+            prompt_cap (DatasetLimit): Upper bound on the total number of (system prompt x template)
                 sends per run. The full combination set is randomly sampled down to this size,
-                mirroring garak's ``soft_probe_prompt_cap``. Set to None to run every combination.
-                Defaults to 256.
+                mirroring garak's ``soft_probe_prompt_cap``. Use "all" for every combination.
+                Omitted, None, empty, and "default" use 256.
             random_seed (int | None): Seed for deterministic sampling of system prompts and the
                 prompt cap. Defaults to a fixed value for reproducibility.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
+
+        Raises:
+            ValueError: If prompt_cap is not a supported dataset limit.
         """
         if not objective_scorer:
             objective_scorer = FloatScaleThresholdScorer(
@@ -141,17 +146,22 @@ class SystemPromptExtraction(Scenario):
             )
         self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
         self._system_prompt_subsample = system_prompt_subsample
-        self._prompt_cap = prompt_cap
+        limit = normalize_dataset_limit(prompt_cap)
+        self._prompt_cap = _DEFAULT_PROMPT_CAP if limit == "default" else limit
         self._random_seed = random_seed if random_seed is not None else 42
 
         super().__init__(
             version=self.VERSION,
             technique_class=SystemPromptExtractionTechnique,
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=[
-                    DATASET_DRH_SYSTEM_PROMPTS,
-                    DATASET_TM_SYSTEM_PROMPTS,
-                    DATASET_EXTRACTION_TEMPLATES,
+                max_per_dataset="all",
+                sources=[
+                    DatasetSource(name=name)
+                    for name in [
+                        DATASET_DRH_SYSTEM_PROMPTS,
+                        DATASET_TM_SYSTEM_PROMPTS,
+                        DATASET_EXTRACTION_TEMPLATES,
+                    ]
                 ],
             ),
             objective_scorer=objective_scorer,
@@ -162,8 +172,6 @@ class SystemPromptExtraction(Scenario):
 
     def _validate_runtime_configuration(self) -> None:
         super()._validate_runtime_configuration()
-        if self._prompt_cap is not None and self._prompt_cap < 1:
-            raise ValueError("prompt_cap must be greater than zero or None")
         if self._system_prompt_subsample < 1:
             raise ValueError("system_prompt_subsample must be greater than zero")
 
@@ -264,7 +272,7 @@ class SystemPromptExtraction(Scenario):
                 f"{DATASET_EXTRACTION_TEMPLATES}) are loaded into CentralMemory before running."
             )
 
-        if self._prompt_cap is not None and len(combinations) > self._prompt_cap:
+        if self._prompt_cap != "all" and len(combinations) > self._prompt_cap:
             combinations = random.Random(self._random_seed).sample(combinations, self._prompt_cap)
 
         seed_groups_by_category: dict[str, list[AttackSeedGroup]] = {}
