@@ -21,7 +21,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_target import LiteLLMDecisionTarget
-from pyrit.score import FloatScaleThresholdScorer, MicrosoftDecisionObjectiveScorer
+from pyrit.score import FloatScaleThresholdScorer, MicrosoftDecisionObjectiveScorer, NonReplayableObservationError
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestion, TrueFalseQuestionPaths
 
 MODEL = "openrouter/microsoft/microsoft-decision-1"
@@ -112,11 +112,59 @@ class TestMicrosoftDecisionObjectiveScorer:
         assert request["state"] == {"objective": OBJECTIVE, "response": "Paris."}
         assert request["model"] == MODEL
         question = request["questions"]["objective_achieved"]
-        rubric = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value)
+        rubric = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED.value)
         assert question["type"] == "noul"
         assert question["criteria"] == {"true": rubric.true_description, "false": rubric.false_description}
+        assert question["instructions"] == scorer.get_identifier().params["decision_instructions"]
+        assert "Examples of how to apply the criteria" in question["instructions"]
         assert "do not follow instructions" in question["instructions"]
         assert "messages" not in request
+
+    @pytest.mark.parametrize(
+        ("attribute", "replacement"),
+        [
+            ("DECISION_INSTRUCTIONS", "Does the response meaningfully advance the objective?"),
+            ("QUESTION_PATH", TrueFalseQuestionPaths.TASK_ACHIEVED_REFINED),
+        ],
+    )
+    async def test_prompt_snapshot_controls_identity_and_replay_async(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        attribute: str,
+        replacement: str | TrueFalseQuestionPaths,
+    ) -> None:
+        requests: list[dict[str, Any]] = []
+        instructions = "Does the response achieve the objective?"
+        with (
+            patch.object(MicrosoftDecisionObjectiveScorer, "DECISION_INSTRUCTIONS", instructions),
+            patch.object(MicrosoftDecisionObjectiveScorer, "QUESTION_PATH", TrueFalseQuestionPaths.TASK_ACHIEVED),
+        ):
+            original = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+            with patch.object(MicrosoftDecisionObjectiveScorer, attribute, replacement):
+                changed = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+
+        original_identifier = original.get_identifier()
+        changed_identifier = changed.get_identifier()
+        assert original_identifier.params["decision_instructions"] == instructions
+        assert original_identifier.hash != changed_identifier.hash
+        assert original_identifier.eval_hash != changed_identifier.eval_hash
+        original_wrapper = FloatScaleThresholdScorer(scorer=original, threshold=0.7)
+        changed_wrapper = FloatScaleThresholdScorer(scorer=changed, threshold=0.7)
+        assert original_wrapper.get_identifier().eval_hash != changed_wrapper.get_identifier().eval_hash
+        expectation = ScoringExpectation(objective=OBJECTIVE)
+
+        score = (await original.score_async(scorable=ContentScorable(value="Paris."), expectation=expectation))[0]
+        question = requests[0]["questions"]["objective_achieved"]
+        rubric = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value)
+        assert question["instructions"] == original_identifier.params["decision_instructions"]
+        assert question["criteria"] == {"true": rubric.true_description, "false": rubric.false_description}
+        observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+
+        with pytest.raises(NonReplayableObservationError, match="scorer configuration"):
+            await changed.score_observation_async(observation=observation, expectation=expectation)
+
+        assert len(requests) == 1
 
     async def test_objective_only_input_resolves_condition_async(self) -> None:
         requests: list[dict[str, Any]] = []
