@@ -1514,10 +1514,8 @@ describe("CreateTargetDialog", () => {
     await selectTargetType("GitHubCopilotTarget");
 
     expect(screen.getByRole("region", { name: /selected target details/i }))
-      .toHaveTextContent("Supported authentication: GitHub Personal Access Token");
+      .toHaveTextContent("Supported authentication: GitHub token");
     expect(screen.getByText(/CoPyRIT does not use browser or saved Copilot logins/)).toBeVisible();
-    expect(screen.getByText(/Local runs use your local environment files/))
-      .toHaveTextContent("Local runs use your local environment files; shared deployments use the central .env file.");
     expect(screen.getByText(/Tokens and created targets can be used by anyone with access to this CoPyRIT instance/))
       .toBeVisible();
     expect(screen.getByText(/Required unless GITHUB_TOKEN is configured for this CoPyRIT instance/)).toBeVisible();

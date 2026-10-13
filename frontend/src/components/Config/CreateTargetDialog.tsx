@@ -739,8 +739,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     <MessageBarBody>
                       Enter a GitHub token, or leave blank to use <code>GITHUB_TOKEN</code> from
                       this instance&apos;s environment or loaded <code>.env</code>/<code>.env.local</code> files.
-                      Local runs use your local environment files; shared deployments use the
-                      central <code>.env</code> file. CoPyRIT does not use browser or saved Copilot logins.
+                      CoPyRIT does not use browser or saved Copilot logins.
                     </MessageBarBody>
                   </MessageBar>
                   <MessageBar intent="warning">
