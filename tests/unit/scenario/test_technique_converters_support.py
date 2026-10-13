@@ -22,6 +22,7 @@ from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
 from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
 from pyrit.scenario.scenarios.garak.web_injection import WebInjection
+from pyrit.scenario.scenarios.technique.execute import Execute
 from pyrit.score import TrueFalseScorer
 
 _IGNORING_SCENARIOS = [
@@ -47,7 +48,7 @@ def test_scenarios_that_dont_apply_technique_converters_dont_declare_them(scenar
     assert not _declares_technique_converters(scenario_class)
 
 
-@pytest.mark.parametrize("scenario_class", [AdversarialBenchmark, Cyber, Doctor], ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("scenario_class", [AdversarialBenchmark, Cyber, Doctor, Execute], ids=lambda cls: cls.__name__)
 def test_scenarios_that_apply_technique_converters_declare_them(scenario_class: type) -> None:
     assert _declares_technique_converters(scenario_class)
 

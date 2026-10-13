@@ -489,6 +489,40 @@ class TestLabels:
 
         assert calls[0]["memory_labels"]["foo"] == "bar"
 
+    async def test_completed_result_carries_context_labels_async(
+        self, *, target: MagicMock, seed_group: AttackSeedGroup
+    ) -> None:
+        a = _make_strategy(outcomes=[AttackOutcome.FAILURE], name="a")
+        compound = SequentialAttack(
+            objective_target=target, child_attacks=[SequentialChildAttack(strategy=a, seed_group=seed_group)]
+        )
+        patcher, _ = _patch_run_child_attack(strategies_by_id={id(a): a})
+
+        with patcher:
+            result = await compound._perform_async(context=_make_context(labels={"op": "seq"}))
+
+        assert result.labels == {"op": "seq"}
+
+    async def test_label_query_finds_the_completed_result_async(
+        self, *, seed_group: AttackSeedGroup, sqlite_instance: MemoryInterface
+    ) -> None:
+        target = MockPromptTarget()
+        compound = SequentialAttack(
+            objective_target=target,
+            child_attacks=[
+                SequentialChildAttack(strategy=_OkChildStrategy(objective_target=target), seed_group=seed_group)
+            ],
+        )
+
+        result = await compound.execute_async(objective="obj", memory_labels={"op": "seq"})
+
+        labelled = await sqlite_instance.get_attack_results_async(labels={"op": "seq"})
+        assert result.attack_result_id in {row.attack_result_id for row in labelled}
+        assert {row.attack_result_id for row in labelled} == {
+            result.attack_result_id,
+            *result.metadata[SequentialAttack.CHILD_ATTACK_RESULT_IDS_KEY],
+        }
+
     async def test_child_attack_labels_override_context_labels(self, target, seed_group):
         a = _make_strategy(outcomes=[AttackOutcome.SUCCESS], name="a")
         child_attacks = [

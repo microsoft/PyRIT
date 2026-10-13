@@ -378,7 +378,11 @@ class ScenarioProgressReadModel:
                 "logical-unit progress rollups, but retained in overall producer counts.",
                 unattributed_attempts,
             )
-        latest_results = [attempts_by_unit[unit][-1] for unit in overall_units if attempts_by_unit.get(unit)]
+        latest_results = [
+            completions[-1]
+            for unit in overall_units
+            if (completions := [result for result in attempts_by_unit.get(unit, ()) if result.attempt_index is None])
+        ]
         objective_scorer = ScenarioProgressReadModel._build_objective_scorer(
             scorer_identifier=objective_scorer_identifier,
             results=latest_results,
