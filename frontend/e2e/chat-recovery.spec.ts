@@ -13,6 +13,7 @@ import { compatibilityHeaders } from "./_compatibility";
 import type {
   AddMessageRequest,
   AddMessageResponse,
+  AttackSummary,
   ConversationMessagesResponse,
   CreateAttackResponse,
   CreateConversationResponse,
@@ -162,20 +163,42 @@ async function sendFromComposer(page: Page, text?: string): Promise<AddMessageRe
   return readMessageSendResult(page.request, accepted);
 }
 
-async function createConversation(request: APIRequestContext, attackId: string): Promise<string> {
+async function createConversation(
+  request: APIRequestContext, attackId: string, message?: string,
+): Promise<string> {
   const response = await request.post(`/api/attacks/${attackId}/conversations`, {
     data: {}, headers: compatibilityHeaders(),
   });
   expect(response.status()).toBe(201);
   const created: CreateConversationResponse = await response.json();
+  if (message !== undefined) {
+    const stored = await request.post(`/api/attacks/${attackId}/messages`, {
+      headers: compatibilityHeaders(),
+      data: {
+        role: "user",
+        pieces: [{ data_type: "text", original_value: message }],
+        send: false,
+        target_conversation_id: created.conversation_id,
+      },
+    });
+    expect(stored.ok()).toBeTruthy();
+  }
   return created.conversation_id;
 }
 
 async function selectConversation(page: Page, conversationId: string): Promise<void> {
-  if (!await page.getByTestId("conversation-panel").isVisible()) {
+  const toggle = page.getByTestId("toggle-panel-btn");
+  await expect(toggle).toBeEnabled();
+  if (await toggle.getAttribute("aria-expanded") === "false") {
     await page.getByRole("button", { name: "Toggle conversations panel", exact: true }).click();
   }
-  await page.getByRole("button", { name: `Select conversation ${conversationId}`, exact: true }).click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const conversation = page.getByRole("button", { name: `Select conversation ${conversationId}`, exact: true });
+  await conversation.click();
+  await expect(page).toHaveURL((url: URL) => url.pathname.endsWith(`/conversations/${conversationId}`));
+  if (await toggle.getAttribute("aria-expanded") === "true") {
+    await expect(conversation).toHaveAttribute("aria-current", "true");
+  }
 }
 
 async function installDeferredFileReads(page: Page): Promise<void> {
@@ -219,6 +242,135 @@ test.describe("Chat processing recovery @seeded", () => {
       .selectOption(localTarget.registryName);
     await page.getByTitle("Chat", { exact: true }).click();
   });
+
+  test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({
+    page, request, localTarget,
+  }) => {
+    let releaseRefresh: () => void = () => {};
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    let refreshStarted = false;
+    await page.route(/\/api\/attacks\/[^/?]+$/, async (route: Route) => {
+      if (route.request().method() === "GET") {
+        refreshStarted = true;
+        await refreshGate;
+      }
+      await route.continue();
+    });
+    try {
+      const first = await sendFromComposer(page, "Original conversation history");
+      const attackId = first.attack.attack_result_id;
+      await expect.poll(() => refreshStarted).toBe(true);
+      const otherId = await createConversation(request, attackId, "Selected conversation history");
+      const toggle = page.getByTestId("toggle-panel-btn");
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeDisabled();
+      const refreshed = page.waitForResponse((response) => response.request().method() === "GET"
+        && new URL(response.url()).pathname === `/api/attacks/${attackId}`);
+      releaseRefresh();
+      const response = await refreshed;
+      expect(response.ok()).toBeTruthy();
+      const attack: AttackSummary = await response.json();
+      expect(attack.related_conversations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ conversation_id: otherId, conversation_type: "pruned" }),
+      ]));
+      await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeEnabled();
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+      await selectConversation(page, otherId);
+      const transcript = page.getByTestId("message-list");
+      await expect(transcript.getByText("Selected conversation history", { exact: true })).toBeVisible();
+      await expect(transcript.getByText("Original conversation history", { exact: true })).toHaveCount(0);
+      expect(localTarget.requestBodies).toHaveLength(1);
+    } finally {
+      releaseRefresh();
+    }
+  });
+
+  for (const viewport of [
+    { name: "desktop", width: 1280, height: 720 },
+    { name: "narrow", width: 390, height: 844 },
+  ]) {
+    test.describe(`${viewport.name} conversation selection`, () => {
+      test.use({ viewport: { width: viewport.width, height: viewport.height } });
+
+      test("preserves historical drawer defaults after delayed metadata", async ({
+        page, request, localTarget,
+      }) => {
+        const first = await sendFromComposer(page, "Original conversation history");
+        await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeEnabled();
+        const attackId = first.attack.attack_result_id;
+        const otherId = await createConversation(request, attackId, "Selected conversation history");
+        let releaseMetadata: () => void = () => {};
+        const metadataGate = new Promise<void>((resolve) => { releaseMetadata = resolve; });
+        let metadataStarted = false;
+        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}`, async (route: Route) => {
+          if (route.request().method() === "GET") {
+            metadataStarted = true;
+            await metadataGate;
+          }
+          await route.continue();
+        });
+        try {
+          await page.goto(`/attacks/${attackId}`);
+          await expect.poll(() => metadataStarted).toBe(true);
+          await expect(page.getByText("Loading conversation...", { exact: true })).toBeVisible();
+          const toggle = page.getByTestId("toggle-panel-btn");
+          await expect(toggle).toHaveAttribute("aria-expanded", "false");
+          await expect(toggle).toBeDisabled();
+          releaseMetadata();
+
+          const transcript = page.getByTestId("message-list");
+          await expect(transcript.getByText("Original conversation history", { exact: true })).toBeVisible();
+          await expect(toggle).toHaveAttribute("aria-expanded", viewport.name === "narrow" ? "false" : "true");
+          if (viewport.name === "narrow") {
+            await expect(page.getByRole("dialog", { name: "Attack Conversations", exact: true })).toHaveCount(0);
+          } else {
+            await expect(page.getByRole("complementary", { name: "Attack Conversations", exact: true })).toBeVisible();
+            await expect(page.getByRole("button", {
+              name: `Select conversation ${first.attack.conversation_id}`, exact: true,
+            })).toHaveAttribute("aria-current", "true");
+          }
+
+          await selectConversation(page, otherId);
+          await expect(transcript.getByText("Selected conversation history", { exact: true })).toBeVisible();
+          await expect(transcript.getByText("Original conversation history", { exact: true })).toHaveCount(0);
+          expect(localTarget.requestBodies).toHaveLength(1);
+        } finally {
+          releaseMetadata();
+        }
+      });
+
+      test("selects a conversation while the drawer is closing", async ({
+        page, request, localTarget,
+      }) => {
+        const first = await sendFromComposer(page, "Original conversation history");
+        await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeEnabled();
+        const otherId = await createConversation(
+          request, first.attack.attack_result_id, "Selected conversation history",
+        );
+        const toggle = page.getByTestId("toggle-panel-btn");
+        await page.getByRole("button", { name: "Toggle conversations panel", exact: true }).click();
+        await expect(page.getByRole(viewport.name === "narrow" ? "dialog" : "complementary", {
+          name: "Attack Conversations", exact: true,
+        })).toBeVisible();
+        await expect(page.getByRole("button", { name: `Select conversation ${otherId}`, exact: true })).toBeVisible();
+        await page.getByRole("button", { name: "Close panel", exact: true }).click();
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+        await selectConversation(page, otherId);
+
+        const transcript = page.getByTestId("message-list");
+        await expect(transcript.getByText("Selected conversation history", { exact: true })).toBeVisible();
+        await expect(transcript.getByText("Original conversation history", { exact: true })).toHaveCount(0);
+        await expect(toggle).toHaveAttribute("aria-expanded", viewport.name === "narrow" ? "false" : "true");
+        if (viewport.name === "narrow") {
+          await expect(page.getByRole("dialog", { name: "Attack Conversations", exact: true })).toHaveCount(0);
+          await expect(page.getByRole("button", { name: "Toggle conversations panel", exact: true })).toBeFocused();
+        }
+        expect(localTarget.requestBodies).toHaveLength(1);
+      });
+    });
+  }
 
   test("repeats and nests only the selected conversation through the real backend", async ({ page, request, localTarget }, testInfo) => {
     let submissions = 0;

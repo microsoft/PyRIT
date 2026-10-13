@@ -152,7 +152,7 @@ class _NeedsTargets:
 
 def _resolve(cls: type, raw_args: dict[str, object], *, identifier_type: type | None = None) -> dict[str, object]:
     """Resolve ``raw_args`` against the derived parameter contract for ``cls``."""
-    return resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type)
+    return dict[str, object](resolve_constructor_args(cls=cls, raw_args=raw_args, identifier_type=identifier_type))
 
 
 @pytest.fixture

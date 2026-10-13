@@ -74,7 +74,7 @@ async def test_notebook_mcp_session_is_closed_after_execution_async(fail_after_c
     lifecycle: list[str] = []
 
     @asynccontextmanager
-    async def create_session_async() -> AsyncGenerator[ClientSession, None]:
+    async def create_session_async() -> AsyncGenerator[MagicMock, None]:
         lifecycle.append("enter")
         try:
             yield session

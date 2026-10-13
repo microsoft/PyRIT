@@ -178,3 +178,41 @@ def test_word_search_raises_when_words_never_fit():
     # with a clear error instead of looping forever.
     with pytest.raises(ValueError, match="Could not hide"):
         build_word_search(["abduct", "vault"], _NeverFits())
+
+
+# --- letters whose uppercase form is longer ------------------------------------
+#
+# str.upper() turns "ß" into "SS" and "ﬁ" into "FI". The masker's clue gives each word's
+# length, so every builder must encode exactly as many characters as the word has.
+
+
+def test_anagram_keeps_letters_whose_uppercase_expands():
+    sequence = build_anagram(["straße", "ﬁle"], random.Random(0))
+    assert sorted(sequence) == sorted("STRAßEﬁLE")
+    assert len(sequence) == len("straße") + len("ﬁle")
+
+
+def test_crossword_lines_keep_the_length_of_their_words():
+    lines = build_crossword(["straße", "tasse"]).splitlines()
+    assert [len(line.split(". ", 1)[1]) for line in lines] == [6, 5]
+
+
+def test_word_search_hides_the_word_without_expanding_it():
+    grid = _parse_grid(build_word_search(["straße", "tasse"], random.Random(42)))
+    assert _find_word(grid, "STRAßE")
+    assert _find_word(grid, "TASSE")
+
+
+def test_anagram_preserves_distinct_case_folded_words() -> None:
+    sequence = build_anagram(["ılık", "ilik"], random.Random(42))
+    assert sorted(sequence) == sorted("ıLıKILIK")
+
+
+def test_crossword_preserves_distinct_case_folded_words() -> None:
+    assert build_crossword(["ılık", "ilik"]) == "1. ı*ı#\n2. I*I#"
+
+
+def test_word_search_preserves_distinct_case_folded_words() -> None:
+    grid = _parse_grid(build_word_search(["ılık", "ilik"], random.Random(42)))
+    assert _find_word(grid, "ıLıK")
+    assert _find_word(grid, "ILIK")

@@ -78,7 +78,7 @@ def test_string_join_identifier_includes_selection_parameters() -> None:
     assert first.get_identifier().unique_name != second.get_identifier().unique_name
 
 
-def test_string_join_identifier_normalizes_equivalent_index_sets() -> None:
+def test_string_join_identifier_preserves_index_order() -> None:
     first = StringJoinConverter(
         word_selection_strategy=WordIndexSelectionStrategy(indices=[1, 0]),
     )
@@ -86,7 +86,7 @@ def test_string_join_identifier_normalizes_equivalent_index_sets() -> None:
         word_selection_strategy=WordIndexSelectionStrategy(indices=[0, 1]),
     )
 
-    assert first.get_identifier().hash == second.get_identifier().hash
+    assert first.get_identifier().hash != second.get_identifier().hash
 
 
 def test_string_join_registry_accepts_distinct_selection_configurations() -> None:
@@ -113,7 +113,7 @@ def test_string_join_identifier_parameter_contents(*, indices: list[int], join_v
         "supported_input_types": ["text"],
         "supported_output_types": ["text"],
         "word_selection_strategy": "WordIndexSelectionStrategy",
-        "word_selection_strategy_params": {"indices": sorted(indices)},
+        "word_selection_strategy_params": {"indices": indices},
         "word_split_separator": " ",
         "join_value": join_value,
     }
