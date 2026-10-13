@@ -80,6 +80,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     ComponentIdentifier,
     Conversation,
     ConversationStats,
@@ -156,7 +157,7 @@ class AttackService:
         """
         List attacks with optional filtering and pagination.
 
-        Queries AttackResult entries from the database.
+        Queries every saved result ID, including results sharing a main conversation.
 
         Args:
             attack_types: Filter by attack type names (case-insensitive). May be specified
@@ -202,11 +203,13 @@ class AttackService:
         # row on the previous page — and a fingerprint of the filters it was generated for.
         # Decoding against the current request's filters makes a cursor minted for a different
         # filter set fall back to the first page instead of seeking within the wrong result
-        # set. The memory layer deduplicates, applies the turn bounds, orders by recency, seeks
+        # set. The memory layer applies the turn bounds, orders by recency, seeks
         # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
         # instead of the full table.
+        result_selection = AttackResultSelection.ALL_RESULTS
         normalized_labels = normalize_label_filters(labels=labels)
         fingerprint_values: dict[str, Any] = {
+            "result_selection": result_selection.value,
             "attack_types": effective_attack_types,
             "converter_types": effective_converter_types,
             "converter_types_match": converter_types_match,
@@ -232,6 +235,7 @@ class AttackService:
             else None
         )
         results = await self._memory.get_attack_results_async(
+            result_selection=result_selection,
             outcome=outcome,
             operator=operator,
             operation=operation,
