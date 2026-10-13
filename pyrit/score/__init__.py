@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from pyrit.score.float_scale.insecure_code_scorer import InsecureCodeScorer, render_insecure_code_system_prompt
     from pyrit.score.float_scale.likert_scale import LikertScale, LikertScaleEntry
     from pyrit.score.float_scale.local_violence_classifier_scorer import LocalViolenceClassifierScorer
+    from pyrit.score.float_scale.microsoft_decision_objective_scorer import MicrosoftDecisionObjectiveScorer
     from pyrit.score.float_scale.numeric_scale import NumericRange, NumericRubric
     from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric, PlagiarismScorer
     from pyrit.score.float_scale.roblox_pii_scorer import RobloxPiiCategory, RobloxPiiScorer
@@ -226,6 +227,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MessageScorableResolver": "pyrit.score.message_scorable_resolver",
     "MessageScorable": "pyrit.score.scorable",
     "MessageScorer": "pyrit.score.message_scorer",
+    "MicrosoftDecisionObjectiveScorer": "pyrit.score.float_scale.microsoft_decision_objective_scorer",
     "NonReplayableObservationError": "pyrit.score.observation.execution",
     "MethKeywordScorer": "pyrit.score.true_false.regex.meth_keyword_scorer",
     "MetricsType": "pyrit.score.scorer_evaluation.metrics_type",

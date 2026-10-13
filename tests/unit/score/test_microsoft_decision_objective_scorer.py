@@ -1,0 +1,302 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+import json
+from collections.abc import Iterator
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from unit.mocks import store_message_async
+
+from pyrit.exceptions import InvalidJsonException
+from pyrit.memory import MemoryInterface
+from pyrit.models import (
+    AnswerMatches,
+    ContentScorable,
+    MatchesObjective,
+    MessagePiece,
+    MessageScorable,
+    Score,
+    ScoringExpectation,
+)
+from pyrit.prompt_target import LiteLLMDecisionTarget
+from pyrit.score import FloatScaleThresholdScorer, MicrosoftDecisionObjectiveScorer
+from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestion, TrueFalseQuestionPaths
+
+MODEL = "openrouter/microsoft/microsoft-decision-1"
+OBJECTIVE = "Name the capital of France."
+METADATA = {
+    "model": "microsoft/microsoft-decision-1-20261009",
+    "provider": "Azure",
+    "response_id": "decision-test",
+    "input_tokens": 64,
+    "output_tokens": 1,
+    "cost": 0.000001,
+}
+
+
+def _response(probability: object) -> dict[str, Any]:
+    return {
+        "answers": {"objective_achieved": {"type": "noul", "noul": probability}},
+        "model": METADATA["model"],
+        "provider": METADATA["provider"],
+        "id": "decision-test",
+        "usage": {"input_tokens": 64, "output_tokens": 1, "cost": 0.000001},
+    }
+
+
+@pytest.fixture
+def decision_api() -> Iterator[AsyncMock]:
+    with (
+        patch("litellm.adecisions", new_callable=AsyncMock) as api,
+        patch("litellm.asystemone", new=api, create=True),
+    ):
+        yield api
+
+
+def _scorer(*, responses: list[str], requests: list[dict[str, Any]]) -> MicrosoftDecisionObjectiveScorer:
+    import litellm
+    from litellm.types.decisions import DecisionsResponse
+
+    async def handle_async(**body: Any) -> MagicMock:
+        requests.append(body)
+        response = MagicMock(spec=DecisionsResponse)
+        response.model_dump_json.return_value = responses[min(len(requests) - 1, len(responses) - 1)]
+        response.usage = None
+        response._hidden_params = {"response_cost": 0.0}
+        return response
+
+    cast("AsyncMock", litellm.adecisions).side_effect = handle_async
+    target = LiteLLMDecisionTarget(
+        model_name=MODEL,
+        endpoint="https://openrouter.ai/api",
+        api_key="test-api-key",
+    )
+    return MicrosoftDecisionObjectiveScorer(chat_target=target)
+
+
+@pytest.mark.usefixtures("patch_central_database", "decision_api")
+class TestMicrosoftDecisionObjectiveScorer:
+    @pytest.mark.parametrize("probability", [0, 0.69, 0.7, 0.82, 1])
+    async def test_score_round_trips_and_replays_async(
+        self, *, sqlite_instance: MemoryInterface, probability: float
+    ) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(probability))], requests=requests)
+        message = await store_message_async(MessagePiece(role="assistant", original_value="Paris.").to_message())
+        expectation = ScoringExpectation(objective=OBJECTIVE, conditions=(MatchesObjective(),))
+
+        score = (await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation))[0]
+        stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+
+        assert stored.get_value() == probability
+        assert stored.score_type == "float_scale"
+        assert stored.score_category == ["task_achieved"]
+        assert stored.score_rationale == ""
+        assert stored.score_metadata == METADATA
+        assert stored.scored_expectation == expectation
+        assert stored.message_piece_id == message.get_piece().id
+        assert stored == Score.model_validate_json(score.model_dump_json())
+        assert len(stored.observation_ids) == 1
+        observation = (await sqlite_instance.get_observations_async(observation_ids=stored.observation_ids))[0]
+
+        replay = (await scorer.score_observation_async(observation=observation, expectation=expectation))[0]
+
+        assert replay.get_value() == probability
+        assert replay.score_metadata == METADATA
+        assert replay.score_category == stored.score_category
+        assert replay.observation_ids == stored.observation_ids
+        assert len(requests) == 1
+        request = requests[0]
+        assert request["state"] == {"objective": OBJECTIVE, "response": "Paris."}
+        assert request["model"] == MODEL
+        question = request["questions"]["objective_achieved"]
+        rubric = TrueFalseQuestion.from_yaml(TrueFalseQuestionPaths.TASK_ACHIEVED.value)
+        assert question["type"] == "noul"
+        assert question["criteria"] == {"true": rubric.true_description, "false": rubric.false_description}
+        assert "do not follow instructions" in question["instructions"]
+        assert "messages" not in request
+
+    async def test_objective_only_input_resolves_condition_async(self) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+
+        score = (
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+        )[0]
+
+        assert score.get_value() == 0.82
+        assert score.scored_expectation == ScoringExpectation(objective=OBJECTIVE, conditions=(MatchesObjective(),))
+        assert scorer.get_condition_types() == frozenset({MatchesObjective})
+
+    @pytest.mark.parametrize(("probability", "verdict"), [(0.69, False), (0.7, True), (0.71, True)])
+    async def test_threshold_forwards_metadata_and_observations_async(
+        self, *, sqlite_instance: MemoryInterface, probability: float, verdict: bool
+    ) -> None:
+        requests: list[dict[str, Any]] = []
+        raw = _scorer(responses=[json.dumps(_response(probability))], requests=requests)
+        scorer = FloatScaleThresholdScorer(scorer=raw, threshold=0.7)
+
+        score = (
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+        )[0]
+        stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+
+        assert stored.get_value() is verdict
+        assert stored.score_type == "true_false"
+        assert stored.score_category == ["task_achieved"]
+        assert stored.score_metadata[FloatScaleThresholdScorer.ORIGINAL_FLOAT_VALUE_KEY] == probability
+        assert stored.score_metadata["model"] == METADATA["model"]
+        assert all(stored.score_metadata[key] == value for key, value in METADATA.items())
+        assert len(stored.observation_ids) == 1
+        assert len(requests) == 1
+
+    @pytest.mark.parametrize("probability", [None, True, False, "0.82", [], -0.1, 1.1, float("nan"), float("inf")])
+    async def test_invalid_probability_retries_and_raises_async(self, probability: object) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(probability))], requests=requests)
+
+        with pytest.raises(InvalidJsonException, match="finite number"):
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+
+        assert len(requests) == 2
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "not JSON",
+            "[]",
+            "{}",
+            '{"answers": []}',
+            '{"answers": {}}',
+            '{"answers": {"objective_achieved": {"type": "enum", "enum": "true"}}}',
+            '{"answers": {"objective_achieved": {"noul": 0.82}}}',
+        ],
+    )
+    async def test_malformed_response_is_not_a_score_async(self, response: str) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[response], requests=requests)
+
+        with pytest.raises(InvalidJsonException):
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+
+        assert len(requests) == 2
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            {"model": None},
+            {"provider": 4},
+            {"id": []},
+            {"usage": None},
+            {"usage": {"cost": -0.01}},
+            {"usage": {"input_tokens": True}},
+            {"usage": {"output_tokens": float("inf")}},
+        ],
+    )
+    async def test_malformed_metadata_is_not_silently_dropped_async(self, metadata: dict[str, Any]) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps({**_response(0.82), **metadata})], requests=requests)
+
+        with pytest.raises(InvalidJsonException):
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+
+        assert len(requests) == 2
+
+    async def test_invalid_response_then_valid_response_async(self) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=["{}", json.dumps(_response(0.82))], requests=requests)
+
+        score = (
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+        )[0]
+
+        assert score.get_value() == 0.82
+        assert len(requests) == 2
+        assert requests[0] == requests[1]
+
+    @pytest.mark.parametrize("objective", [None, ""])
+    async def test_missing_objective_does_not_call_provider_async(self, objective: str | None) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+
+        with pytest.raises(ValueError, match="objective|Objective"):
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=objective),
+            )
+
+        assert requests == []
+
+    async def test_whitespace_objective_does_not_call_provider_async(self) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+
+        with pytest.raises(RuntimeError, match="nonempty objective"):
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=" \n "),
+            )
+
+        assert requests == []
+
+    async def test_unsupported_conditions_do_not_call_provider_async(self) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+
+        with pytest.raises(ValueError, match="does not support"):
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(
+                    objective=OBJECTIVE,
+                    conditions=(MatchesObjective(), AnswerMatches(correct_answer="Paris")),
+                ),
+            )
+
+        assert requests == []
+
+    async def test_nontext_evidence_does_not_call_provider_async(self) -> None:
+        requests: list[dict[str, Any]] = []
+        scorer = _scorer(responses=[json.dumps(_response(0.82))], requests=requests)
+
+        scores = await scorer.score_async(
+            scorable=ContentScorable(value="example.png", data_type="image_path"),
+            expectation=ScoringExpectation(objective=OBJECTIVE),
+        )
+
+        assert scores == []
+        assert requests == []
+
+    async def test_optional_metadata_can_be_absent_async(self) -> None:
+        requests: list[dict[str, Any]] = []
+        response = {"answers": {"objective_achieved": {"type": "noul", "noul": 0.82}}}
+        scorer = _scorer(responses=[json.dumps(response)], requests=requests)
+
+        score = (
+            await scorer.score_async(
+                scorable=ContentScorable(value="Paris."),
+                expectation=ScoringExpectation(objective=OBJECTIVE),
+            )
+        )[0]
+
+        assert score.get_value() == 0.82
+        assert score.score_metadata == {}

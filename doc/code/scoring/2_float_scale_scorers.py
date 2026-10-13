@@ -119,6 +119,69 @@ leak_score = (await system_prompt_scorer.score_message_async(message=response))[
 print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 
 # %% [markdown]
+# ## Decision model scorer
+#
+# `MicrosoftDecisionObjectiveScorer` uses Microsoft-Decision-1 to estimate whether a text
+# response achieves its objective. It returns the model's probability in `[0, 1]` without
+# applying a threshold. A probability is not a calibrated guarantee of correctness.
+#
+# Install `pyrit[litellm]` with LiteLLM 1.104.2 or later. Set `OPENROUTER_KEY` in your
+# PyRIT `.env.local` file. After `initialize_pyrit_async` loads the environment, use:
+#
+# ```python
+# import os
+#
+# from pyrit.models import ContentScorable, ScoringExpectation
+# from pyrit.prompt_target import LiteLLMDecisionTarget
+# from pyrit.score import FloatScaleThresholdScorer, MicrosoftDecisionObjectiveScorer
+#
+# decision_target = LiteLLMDecisionTarget(
+#     model_name="openrouter/microsoft/microsoft-decision-1",
+#     api_key=os.environ["OPENROUTER_KEY"],
+# )
+# decision_scorer = MicrosoftDecisionObjectiveScorer(chat_target=decision_target)
+# evidence = ContentScorable(value="Paris.")
+# expectation = ScoringExpectation(objective="Name the capital of France.")
+# score = (await decision_scorer.score_async(scorable=evidence, expectation=expectation))[0]
+# print(score.get_value())
+# print(score.score_metadata)
+#
+# threshold_scorer = FloatScaleThresholdScorer(scorer=decision_scorer, threshold=0.7)
+# verdict = (await threshold_scorer.score_async(scorable=evidence, expectation=expectation))[0]
+# print(verdict.get_value())
+# ```
+#
+# The wrapper returns `True` when the probability is greater than or equal to `0.7`.
+# It retains the probability under
+# `score_metadata[FloatScaleThresholdScorer.ORIGINAL_FLOAT_VALUE_KEY]`. Each scoring call
+# above sends a separate provider request. The threshold is a policy choice, not calibration.
+#
+# `LiteLLMDecisionTarget` reuses `LiteLLMChatTarget` authentication, retry settings, and
+# error handling, but calls the decision API with `state` and `questions`, not chat messages.
+# LiteLLM selects the provider route. The scorer reuses PyRIT's `TASK_ACHIEVED` criteria.
+# Returned model/provider, response ID, token counts, and cost are retained when present.
+# The model does not generate a rationale; `score_rationale` is empty.
+#
+# With `TargetInitializer` followed by `ScorerInitializer`, the registry names are
+# `task_achieved_microsoft_decision` and `task_achieved_microsoft_decision_threshold_07`.
+# `OPEN_ROUTER_DECISION_ENDPOINT` optionally overrides the decision API base, which defaults
+# to `https://openrouter.ai/api`. Existing OpenRouter chat settings are unchanged.
+# These prototype scorers have the `microsoft_decision` tag and are not selected as defaults.
+#
+# For objective-achievement classification metrics, evaluate the threshold wrapper, not the
+# float scorer:
+#
+# ```python
+# metrics = await threshold_scorer.evaluate_async(num_scorer_trials=3, max_concurrency=5)
+# ```
+#
+# This uses all packaged `objective/*.csv` gold-set files. The evaluator compares the majority
+# verdict across three trials with the human labels and saves the result in
+# `objective/objective_achieved_metrics.jsonl`. Retrieve the saved result with
+# `threshold_scorer.get_scorer_metrics()`. The metrics apply to this scorer configuration and
+# threshold; they do not establish probability calibration.
+#
+# %% [markdown]
 # ## Local model scorers
 #
 # These scorers run model inference locally, on CPU or GPU. They may download model assets
