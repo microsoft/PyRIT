@@ -41,7 +41,7 @@ def _request(text: str) -> Message:
 
 @pytest.fixture
 def decision_sdk() -> Iterator[MagicMock]:
-    import litellm
+    litellm = pytest.importorskip("litellm")
     from litellm.types.decisions import DecisionsResponse
 
     sdk = MagicMock(spec=litellm)
@@ -215,6 +215,7 @@ class TestLiteLLMDecisionTarget:
         decision_sdk.adecisions.assert_awaited_once()
 
     async def test_real_sdk_routes_openrouter_request_async(self) -> None:
+        pytest.importorskip("litellm")
         from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
         target = LiteLLMDecisionTarget(model_name=MODEL, endpoint=ENDPOINT, api_key="test-api-key")

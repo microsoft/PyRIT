@@ -51,6 +51,7 @@ def _response(probability: object) -> dict[str, Any]:
 
 @pytest.fixture
 def decision_api() -> Iterator[AsyncMock]:
+    pytest.importorskip("litellm")
     with (
         patch("litellm.adecisions", new_callable=AsyncMock) as api,
         patch("litellm.asystemone", new=api, create=True),
