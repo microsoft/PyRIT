@@ -117,6 +117,17 @@ def test_unix_pid_lookup_rejects_ambiguous_lsof_listener():
     ("status", "payload", "healthy"),
     [
         (200, {"status": "healthy", "service": "pyrit-backend"}, True),
+        (
+            200,
+            {
+                "status": "healthy",
+                "service": "pyrit-backend",
+                "ready": False,
+                "state": "restart-required",
+                "revision": "copyrit-test--new",
+            },
+            True,
+        ),
         (503, {"status": "healthy", "service": "pyrit-backend"}, False),
         (200, {"status": "healthy", "service": "other"}, False),
         (200, [], False),

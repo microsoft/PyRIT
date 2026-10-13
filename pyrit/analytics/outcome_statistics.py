@@ -101,10 +101,10 @@ def success_percentage(*, succeeded: int, completed: int) -> int | None:
         completed (int): Observations in the chosen denominator.
 
     Returns:
-        int | None: The shared rate truncated to an integer percentage, or None if empty.
+        int | None: The exact rate truncated to an integer percentage, or None if empty.
     """
-    rate = _rate(successes=succeeded, total=completed)
-    return int(rate * 100) if rate is not None else None
+    # Integer division: int(29 / 100 * 100) is 28 in floating point.
+    return succeeded * 100 // completed if completed else None
 
 
 def _validated_counts(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -> dict[AttackOutcome, int]:
