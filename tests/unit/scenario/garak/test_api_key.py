@@ -12,7 +12,7 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
+from pyrit.models import ComponentIdentifier, ScenarioDatasetRequest, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
@@ -247,7 +247,7 @@ class TestApiKey:
             scenario_name="garak.api_key",
             scenario_class=ApiKey,
             objective_target=mock_objective_target,
-            max_dataset_size=size,
+            datasets=ScenarioDatasetRequest(max_total=size),
         )
         scenario.set_params_from_args(args=args)
         with patch.object(

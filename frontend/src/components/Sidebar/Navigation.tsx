@@ -86,8 +86,8 @@ export default function Navigation({
           data-active={currentView === 'chat'}
           appearance="subtle"
           icon={<ChatRegular />}
-          title="Chat"
-          aria-label="Chat"
+          title="Technique.execute"
+          aria-label="Technique.execute"
           aria-current={currentView === 'chat' ? 'page' : undefined}
           onClick={() => onNavigate('chat')}
         />
