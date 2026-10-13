@@ -38,7 +38,6 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
     "AzureBlobStorageTarget": frozenset({"container_url"}),
     "AzureMLChatTarget": frozenset({"endpoint"}),
     "HackAPromptTarget": frozenset({"cookie", "session_id"}),
-    "HuggingFaceChatTarget": frozenset({"hf_access_token"}),
     "PromptShieldTarget": frozenset({"endpoint"}),
 }
 
@@ -192,7 +191,8 @@ class TargetService:
         constructor parameters they may supply, each described in the form callers
         send it, and the auth modes it supports, all projected from the registry's
         ``TargetMetadata``; targets that need a Python object for a required
-        parameter are left out. Deciding which entries to surface to a
+        parameter, and targets that load model code on the server, are left out.
+        Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -216,6 +216,7 @@ class TargetService:
             )
             for metadata in metadata_items
             if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+            and not self._registry.get_class(metadata.class_name).loads_local_code
         ]
         return TargetTypeResponse(items=items)
 
@@ -240,10 +241,11 @@ class TargetService:
             TargetInstance with the new target's details.
 
         Raises:
-            ValueError: If the target type is not registered or identity auth is
-                requested but unsupported by the target type. Construction errors
-                (unknown params, incompatible inner targets, unrecognized identity
-                endpoints) are raised by the registry / target classes.
+            ValueError: If the target type is not registered, loads model code on
+                the server, or identity auth is requested but unsupported by the
+                target type. Construction errors (unknown params, incompatible inner
+                targets, unrecognized identity endpoints) are raised by the
+                registry / target classes.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -251,6 +253,11 @@ class TargetService:
             )
 
         target_cls = self._registry.get_class(request.type)
+        if target_cls.loads_local_code:
+            raise ValueError(
+                f"Target type '{request.type}' loads model code on the server and cannot be created through the "
+                "API. Register it in Python or with an initializer instead."
+            )
         params: dict[str, Any] = dict(request.params)
 
         if request.auth_mode == "identity":

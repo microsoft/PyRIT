@@ -13,7 +13,7 @@ import pytest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
-from pyrit.prompt_target import PromptTarget, TargetCapabilities
+from pyrit.prompt_target import HuggingFaceChatTarget, PromptTarget, TargetCapabilities
 from pyrit.registry import TargetRegistry
 from unit.mocks import MockPromptTarget
 
@@ -263,7 +263,6 @@ class TestListTargetTypes:
             ("OpenAIChatTarget", {"endpoint", "model_name"}),
             ("AzureBlobStorageTarget", {"container_url"}),
             ("HackAPromptTarget", {"cookie", "session_id"}),
-            ("HuggingFaceChatTarget", {"hf_access_token"}),
             ("PromptShieldTarget", {"endpoint"}),
             ("AzureMLChatTarget", {"endpoint"}),
         ],
@@ -416,6 +415,15 @@ class TestListTargetTypes:
         assert parameter.required is required
         assert parameter.type_name == type_name
         assert parameter.choices == choices
+
+    async def test_types_leave_out_targets_that_load_model_code(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        target_types = {item.target_type for item in result.items}
+        assert "HuggingFaceChatTarget" not in target_types
+        assert "OpenAIChatTarget" in target_types
 
 
 class TestCreateTarget:
@@ -623,6 +631,23 @@ class TestCreateTarget:
 
         assert result.identifier.model_name == "my-gpt4o-deployment"
         assert result.identifier.underlying_model_name == "gpt-4o"
+
+    async def test_create_target_rejects_target_that_loads_model_code(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            name="local-model",
+            type="HuggingFaceChatTarget",
+            params={"model_path": "/models/local", "trust_remote_code": True},
+        )
+
+        with (
+            patch.object(HuggingFaceChatTarget, "__init__", side_effect=AssertionError("constructed")) as init,
+            pytest.raises(ValueError, match="'HuggingFaceChatTarget' loads model code on the server"),
+        ):
+            await service.create_target_async(request=request)
+
+        init.assert_not_called()
+        assert service.get_target_object(target_registry_name="local-model") is None
 
 
 class TestCreateTargetEntraAuth:
