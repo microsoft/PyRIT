@@ -95,6 +95,8 @@ import { useChatWindowStyles } from './ChatWindow.styles'
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
 
+type ConversationCopyDestination = 'same_attack' | 'new_attack' | 'technique'
+
 interface RecoverableSendDraft {
   conversationId: string
   failedRequestTurnNumber: number
@@ -1490,11 +1492,11 @@ export default function ChatWindow({
   }
 
   const copyConversation = async (
-    messageIndex: number, destination: 'same_attack' | 'new_attack', useInTechnique = false,
+    messageIndex: number, destination: ConversationCopyDestination,
   ): Promise<void> => {
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
-    if (destination === 'new_attack' && (!runtime.ready || !defaultsReady)) return
+    if (destination !== 'same_attack' && (!runtime.ready || !defaultsReady)) return
     if (destination === 'same_attack' && recoverableSend
       && messageIndex === recoverableSend.failedRequestMessageIndex) {
       await handleRecoverProcessingError()
@@ -1508,13 +1510,13 @@ export default function ChatWindow({
     setEditorNotice(null)
     try {
       const source = await attacksApi.getMessages(attackResultId, sourceId)
-      if (destination === 'new_attack' && (
+      if (destination !== 'same_attack' && (
         launchStateRef.current.generation !== runtime.generation
         || !launchStateRef.current.ready || !launchStateRef.current.defaultsReady
       )) {
         throw new Error('Runtime or default labels changed while loading this conversation. Retry after default labels finish loading.')
       }
-      const isFailedPrompt = !useInTechnique && recoverableSend && messageIndex === recoverableSend.failedRequestMessageIndex
+      const isFailedPrompt = destination === 'new_attack' && recoverableSend && messageIndex === recoverableSend.failedRequestMessageIndex
       const sourceMessages = isFailedPrompt
         ? source.messages.filter((message: BackendMessage) => message.turn_number <= recoverableSend.historyCutoffIndex)
         : source.messages.slice(0, messageIndex + 1)
@@ -1522,10 +1524,13 @@ export default function ChatWindow({
       if (isFailedPrompt && activeTarget && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))) {
         copiedMessages = []
       }
-      const target = useInTechnique || (destination === 'same_attack' && targetResolutionStatus === 'unbound')
-        ? null : destination === 'new_attack' && activeTarget
-        && !isFailedPrompt && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))
-        ? null : activeTarget
+      let target = activeTarget
+      if (destination === 'technique' || (destination === 'same_attack' && targetResolutionStatus === 'unbound')) {
+        target = null
+      } else if (destination === 'new_attack' && activeTarget && !isFailedPrompt
+        && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))) {
+        target = null
+      }
       if (isFailedPrompt && copiedMessages.length === 0) {
         const response = await attacksApi.createAttack({
           target_registry_name: target?.target_registry_name,
@@ -1547,9 +1552,9 @@ export default function ChatWindow({
         target,
         labels,
         messages: copiedMessages,
-      }, destination)
+      }, destination === 'same_attack' ? 'same_attack' : 'new_attack')
       if (viewedConvRef.current !== sourceId) return
-      if (useInTechnique) {
+      if (destination === 'technique') {
         const params = new URLSearchParams({ prepended_conversation_id: response.messages.conversation_id })
         navigate(`/scanner/technique.execute?${params.toString()}`)
         return
@@ -1816,7 +1821,7 @@ export default function ChatWindow({
           onCopyToInput={handleCopyToInput}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}
           onCopyToNewAttack={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack') }}
-          onUseInTechnique={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack', true) }}
+          onUseInTechnique={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'technique') }}
           copyConversationDisabled={isSending || isLoadingEdit || isRecoveringProcessingError || Boolean(sendIssue?.blocking)}
           newConversationDisabledReason={isMutationLocked ? "This attack is read-only. Copy to a new attack instead." : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}

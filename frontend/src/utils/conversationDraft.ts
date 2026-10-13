@@ -131,6 +131,8 @@ export function draftAttachment(piece: ConversationDraftPiece): MessageAttachmen
     file: piece.file,
     sourceValue: piece.file ? undefined : piece.original_value,
     sourceDataType: piece.data_type,
+    pieceId: piece.source_piece_id,
+    metadata: piece.prompt_metadata,
   }
 }
 
@@ -139,6 +141,8 @@ export function draftMessageToInput(message: ConversationDraftMessage): { text: 
     ...piece,
     original_value: piece.converted_value,
     data_type: piece.converted_value_data_type ?? piece.data_type,
+    source_piece_id: piece.converted_value === piece.original_value
+      && (piece.converted_value_data_type ?? piece.data_type) === piece.data_type ? piece.source_piece_id : undefined,
     file: undefined,
     previewUrl: undefined,
   })

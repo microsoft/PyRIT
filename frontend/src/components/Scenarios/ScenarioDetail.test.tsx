@@ -412,6 +412,70 @@ describe('ScenarioDetail', () => {
       expect(mockStartRun).not.toHaveBeenCalled()
     })
 
+    it('should block scan preview while history loads or its editor is open', async () => {
+      let resolveConversation: (response: AddMessageResponse) => void = () => {}
+      mockAttacks.getConversation.mockReturnValue(new Promise<AddMessageResponse>((resolve) => {
+        resolveConversation = resolve
+      }))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      const form = launch.closest('form')
+      if (!form) throw new Error('Launch scan must submit the configuration form.')
+      expect(launch).toBeEnabled()
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      expect(launch).toBeDisabled()
+      await user.click(launch)
+      fireEvent.submit(form)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await act(async () => { resolveConversation(saved) })
+      await screen.findByRole('region', { name: 'Message 1' })
+      fireEvent.submit(form)
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      await screen.findByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(launch).toBeEnabled()
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        scenario_params: expect.objectContaining({ prepended_conversation_id: 'history-conversation' }),
+      }))
+    })
+
+    it('should block scan preview until the edited conversation is saved and launch with its new ID', async () => {
+      let resolveSave: (response: AddMessageResponse) => void = () => {}
+      mockAttacks.saveConversation.mockReturnValue(new Promise<AddMessageResponse>((resolve) => {
+        resolveSave = resolve
+      }))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      const form = launch.closest('form')
+      if (!form) throw new Error('Launch scan must submit the configuration form.')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(mockAttacks.saveConversation).toHaveBeenCalledTimes(1)
+      expect(launch).toBeDisabled()
+      fireEvent.submit(form)
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolveSave({ ...saved, messages: { ...saved.messages, conversation_id: 'edited-conversation' } })
+      })
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(launch).toBeEnabled()
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        scenario_params: expect.objectContaining({ prepended_conversation_id: 'edited-conversation' }),
+      }))
+    })
+
     it('should keep the configured ID when an edited draft is discarded', async () => {
       const user = userEvent.setup()
       renderDetail('/scanner/technique.execute', {}, true)
@@ -434,6 +498,7 @@ describe('ScenarioDetail', () => {
       expect(screen.getByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('missing')
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
     })
 
     it('should keep the draft and scanner ID when saving fails', async () => {

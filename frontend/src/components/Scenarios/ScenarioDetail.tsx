@@ -680,10 +680,12 @@ function ScenarioLaunchForm({
   const [conversationParameter, setConversationParameter] = useState('')
   const [loadingConversation, setLoadingConversation] = useState(false)
   const [conversationError, setConversationError] = useState<string | null>(null)
+  const conversationBusy = loadingConversation || conversation.draft !== null
   const configuredConversationId = scenarioParamValues.prepended_conversation_id
   const canEditConversation = typeof configuredConversationId === 'string' && Boolean(configuredConversationId.trim())
 
   const beginConversation = async (parameterName: string, edit: boolean): Promise<void> => {
+    if (conversationBusy || previewOpen || isSubmittingRef.current) return
     const sequence = ++conversationLoadSequence.current
     const initialContext = conversationContextRef.current
     setConversationParameter(parameterName)
@@ -983,7 +985,7 @@ function ScenarioLaunchForm({
   }
 
   const handleLaunchConfirmed = async (): Promise<void> => {
-    if (isSubmittingRef.current || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
+    if (isSubmittingRef.current || conversationBusy || !runtime.ready || !defaultsReady || staleSelection || unavailableSelection) {
       return
     }
 
@@ -1014,6 +1016,7 @@ function ScenarioLaunchForm({
 
   const handleFormSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+    if (conversationBusy || isSubmittingRef.current) return
     setApiError(null)
     if (!requestResult.ok) {
       setValidationError(requestResult.error)
@@ -1247,12 +1250,12 @@ function ScenarioLaunchForm({
                     {parameter.name === 'prepended_conversation_id' && <>
                       <div className={styles.conversationActions}>
                         <Button type="button" className={styles.touchTarget}
-                          disabled={submitting || loadingConversation || !newAttackContext.ready}
+                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready}
                           onClick={() => { void beginConversation(parameter.name, false) }}>
                           Add new conversation
                         </Button>
                         <Button type="button" className={styles.touchTarget}
-                          disabled={submitting || loadingConversation || !newAttackContext.ready || !canEditConversation}
+                          disabled={submitting || conversationBusy || previewOpen || !newAttackContext.ready || !canEditConversation}
                           onClick={() => { void beginConversation(parameter.name, true) }}>
                           Edit conversation
                         </Button>
@@ -1452,7 +1455,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || techniqueSelectionError !== null}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || techniqueSelectionError !== null}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan
@@ -1596,7 +1599,7 @@ function ScenarioLaunchForm({
                   </Button>
                   <Button
                     appearance="primary"
-                    disabled={submitting || !runtime.ready || !defaultsReady}
+                    disabled={submitting || conversationBusy || !runtime.ready || !defaultsReady}
                     onClick={() => void handleLaunchConfirmed()}
                     data-testid="confirm-launch-scenario-btn"
                   >

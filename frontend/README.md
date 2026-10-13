@@ -27,7 +27,8 @@ conversation panel, and select the copy at its full
 `/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
 within a target-free attack keeps it target-free until you send a prompt.
 When you save an edited conversation, its final user turn moves to the prompt
-box instead of saved history. You can enter and edit prompts without a target.
+box instead of saved history. Attachments retain their metadata, including video
+remix IDs. You can enter and edit prompts without a target.
 Send stays disabled until you select a target; no target-warning box is shown.
 
 **Technique.execute** saves a target-free copy through the selected turn
@@ -38,6 +39,7 @@ Select **Add new conversation** beside that field to build simulated history,
 or **Edit conversation** to load its current history. **Add to attack** saves all
 turns to a new conversation and updates the field. It does not change the source
 history, send prompts, or launch a scan. These controls are not in Registry.
+Scan launch is disabled while a conversation loads or its editor is open.
 The **Apply converters to conversation** toggle beside **Edit conversation** is
 off by default and disabled when the conversation ID is empty. When enabled,
 request converters run on the stored history during the scan, without changing

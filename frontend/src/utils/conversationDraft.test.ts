@@ -1,6 +1,7 @@
 import type { ConversationDraftMessage, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
+import { buildMessagePieces } from './messageMapper'
 import { draftConverterInputs, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
 
 describe('conversation drafts', () => {
@@ -18,6 +19,44 @@ describe('conversation drafts', () => {
     expect(prompt.attachments).toHaveLength(2)
     expect(prompt.attachments[0]).toMatchObject({ file, url: 'blob:local' })
     expect(prompt.attachments[1]).toMatchObject({ sourceValue: 'output.png', sourceDataType: 'image_path' })
+  })
+
+  it.each([false, true])('preserves video remix metadata and source identity when moving a prompt with conversion: %s', async (converted: boolean) => {
+    const prompt = draftMessageToInput({
+      id: 'user', role: 'user', pieces: [
+        { draftId: 'text', data_type: 'text', original_value: 'Remix this video' },
+        {
+          draftId: 'video', data_type: 'video_path', original_value: 'video.mp4',
+          source_piece_id: 'video-source', prompt_metadata: { video_id: 'video-123' },
+          ...(converted ? { converted_value: 'video.mp4', converted_value_data_type: 'video_path' } : {}),
+        },
+      ],
+    })
+    const pieces = await buildMessagePieces(prompt.text, prompt.attachments)
+    expect(pieces).toEqual([
+      {
+        data_type: 'text', original_value: 'Remix this video',
+        prompt_metadata: { video_id: 'video-123' },
+      },
+      expect.objectContaining({
+        data_type: 'video_path', original_value: 'video.mp4', original_prompt_id: 'video-source',
+        prompt_metadata: { video_id: 'video-123' },
+      }),
+    ])
+  })
+
+  it.each(['image_path', 'video_path'])('does not assign an original source identity to converted %s content', async (dataType: string) => {
+    const prompt = draftMessageToInput({
+      id: 'user', role: 'user', pieces: [{
+        draftId: 'media', source_piece_id: 'original-source', data_type: 'image_path',
+        original_value: 'original.png', converted_value: 'converted-media',
+        converted_value_data_type: dataType,
+      }],
+    })
+    const [piece] = await buildMessagePieces(prompt.text, prompt.attachments)
+    expect(piece.data_type).toBe(dataType)
+    expect(piece.original_value).toBe('converted-media')
+    expect(piece.original_prompt_id).toBeUndefined()
   })
 
   it.each([
