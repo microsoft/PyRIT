@@ -13,11 +13,11 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import text, update
 
-from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._profile_aggregation import ProfileAggregation
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsProfile, RawAnalyticsReport
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
+from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsQuery,
@@ -27,6 +27,7 @@ from pyrit.models import (
 from unit.memory.test_attack_analytics import control, make_result
 
 if TYPE_CHECKING:
+    from pyrit.analytics import AttackResultAnalytics
     from pyrit.memory import SQLiteMemory
 
 
@@ -167,6 +168,105 @@ async def test_weighted_unicode_and_legacy_profiles_equal_actual_sql(
     assert compact.profiles == sources
 
 
+async def test_duplicate_and_reordered_arrays_share_profiles_without_losing_result_weights(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    variants = [
+        (["Privacy", "Safety"], ["Alpha", "Beta"]),
+        (["Safety", "Privacy", "Privacy"], ["Beta", "Alpha", "Alpha"]),
+        (["Privacy", "Safety", "Safety"], ["Beta", "Beta", "Alpha"]),
+    ]
+    results = [
+        make_result(
+            index=outcome_index * len(variants) + variant_index + 1,
+            outcome=outcome,
+            categories=categories,
+            converters=converters,
+        )
+        for outcome_index, outcome in enumerate(AttackOutcome)
+        for variant_index, (categories, converters) in enumerate(variants)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
+        compare_by=AttackAnalyticsDimension(name="converter_type"),
+    )
+    sql = await reader.report_async(query=query, control=control())
+    with (
+        patch.object(reader, "MAX_COMPACT_PROFILES", len(AttackOutcome)),
+        patch.object(AttackAnalyticsQueryCompiler, "matrix", side_effect=AssertionError("Profiles must fit")),
+    ):
+        compact = await reader.report_async(query=query, control=control(), use_compact_profiles=True)
+    assert compact.profiles is not None
+    assert len(compact.profiles) == 4
+    assert sum(profile["weight"] for profile in compact.profiles) == len(results) == 12
+    assert all(profile["source0"] == '["Privacy","Safety"]' for profile in compact.profiles)
+    assert all(profile["source1"] == '["Alpha","Beta"]' for profile in compact.profiles)
+    await ProfileAggregation.populate_async(report=compact, query=query, control=control())
+    _assert_same_chart(actual=compact, expected=sql)
+
+
+async def test_accepted_profiles_supply_exact_totals_without_a_second_cohort_scan(
+    mixed_reader: AttackAnalyticsReader,
+) -> None:
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
+        compare_by=AttackAnalyticsDimension(name="converter_type"),
+    )
+    expected = await mixed_reader.report_async(query=query, control=control())
+    with patch.object(AttackAnalyticsQueryCompiler, "totals", side_effect=AssertionError("No redundant totals scan")):
+        actual = await mixed_reader.report_async(query=query, control=control(), use_compact_profiles=True)
+    assert actual.profiles is not None
+    assert actual.counts == expected.counts
+    assert sum(actual.counts.values()) == 9
+    await ProfileAggregation.populate_async(report=actual, query=query, control=control())
+    _assert_same_chart(actual=actual, expected=expected)
+
+
+@pytest.mark.parametrize("comparison", ["attack_type", "converter_type"])
+@pytest.mark.parametrize("identifier_hash", [None, "unresolved", "normalized"])
+async def test_profile_identifier_lookup_keeps_different_documents_under_one_reference(
+    *, sqlite_instance: SQLiteMemory, comparison: str, identifier_hash: str | None
+) -> None:
+    results = [
+        make_result(index=index, outcome=outcome, categories=["privacy"], converters=["Original"])
+        for index, outcome in enumerate((AttackOutcome.SUCCESS, AttackOutcome.FAILURE), 1)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    async with sqlite_instance._get_async_engine().begin() as connection:
+        await connection.execute(update(AttackIdentifierEntry).values(class_name=None, identifier_json={}))
+        for result, name in zip(results, ("First", "Second"), strict=True):
+            reference = result.atomic_attack_identifier.hash if identifier_hash == "normalized" else identifier_hash
+            document = {
+                "children": {
+                    "attack": {
+                        "class_name": name,
+                        "children": {"request_converters": [{"class_name": name}]},
+                    }
+                }
+            }
+            if reference is not None:
+                document["hash"] = reference
+            await connection.execute(
+                update(AttackResultEntry)
+                .where(AttackResultEntry.id == result.attack_result_id)
+                .values(atomic_attack_identifier_hash=None, atomic_attack_identifier=document)
+            )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    query = AttackAnalyticsQuery(
+        group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
+        compare_by=AttackAnalyticsDimension(name=comparison),
+    )
+    expected = await reader.report_async(query=query, control=control())
+    actual = await reader.report_async(query=query, control=control(), use_compact_profiles=True)
+    assert actual.profiles is not None
+    await ProfileAggregation.populate_async(report=actual, query=query, control=control())
+    _assert_same_chart(actual=actual, expected=expected)
+    assert {column.key.value for column in actual.columns} == {"first", "second"}
+    assert actual.counts == {"success": 1, "failure": 1}
+
+
 @pytest.mark.parametrize("compare", [None, "converter_type", "attack_type"])
 @pytest.mark.parametrize("cap", ["MAX_COMPACT_PROFILES", "MAX_COMPACT_VALUE_LENGTH", "MAX_COMPACT_TOTAL_LENGTH"])
 @pytest.mark.parametrize("overflow", [False, True], ids=["at_cap", "overflow"])
@@ -200,16 +300,15 @@ async def test_exact_reader_cap_and_overflow_keep_complete_sql_parity(
 
 @pytest.mark.parametrize("compare", [None, "converter_type", "attack_type"])
 async def test_sdk_report_matches_sql_fallback(
-    mixed_reader: AttackAnalyticsReader, sqlite_instance: SQLiteMemory, compare: str | None
+    mixed_reader: AttackAnalyticsReader, analytics: AttackResultAnalytics, compare: str | None
 ) -> None:
     query = AttackAnalyticsQuery(
         group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
         compare_by=AttackAnalyticsDimension(name=compare) if compare else None,
     )
-    async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
-        fast = await analytics.query_async(query=query)
-        with patch.object(AttackAnalyticsReader, "MAX_COMPACT_PROFILES", 0):
-            sql = await analytics.query_async(query=query)
+    fast = await analytics.query_async(query=query)
+    with patch.object(AttackAnalyticsReader, "MAX_COMPACT_PROFILES", 0):
+        sql = await analytics.query_async(query=query)
     fields = {
         "summary",
         "groups",

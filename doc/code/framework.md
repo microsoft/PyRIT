@@ -286,6 +286,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
+- Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
+  root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
+  evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
 - Raw `ObservationSource` implementations acquire evidence without criteria.
   `ConversationSource` captures whole-conversation references; the conversation scorer owns
   role filtering and rendering. `TargetJudge` is a separate, expectation-bound collaborator:
@@ -431,6 +434,7 @@ The below describes the user-facing surfaces built on top of the framework.
 - Surfaces targets, scenarios, and health/version endpoints; served via `uvicorn` with Swagger/ReDoc docs.
 - Wherever possible it should reuse other components rather than reimplementing them (e.g. the registry to build components, `pyrit.models` for its model layer), while adding presentation-specific information on top as needed.
 - Organized into `routes/`, `services/`, `models/`, `mappers/`, and `middleware/`, and launched through the `pyrit_backend` command (configurable via `PYRIT_API_HOST` / `PYRIT_API_PORT` / `PYRIT_API_RELOAD`).
+- Saved-result analytics routes consume the cached SDK directly and serialize shared models. The shared runtime owns admission, busy checks, SDK draining and cache invalidation before memory replacement/disposal, including work still cleaning up after an HTTP timeout. It does not calculate statistics or add an SDK authorization scope.
 
 ## [CLI](../scanner/0_scanner)
 

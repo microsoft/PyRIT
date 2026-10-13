@@ -103,9 +103,11 @@ The query grain is a distinct stored `AttackResultEntry.id`. Different result ID
 sharing a conversation remain different results. For callers that need full result
 objects, `MemoryInterface.get_attack_results_async` accepts the opt-in
 `result_selection=AttackResultSelection.ALL_RESULTS` mode. The deprecated sync
-method also accepts this mode. Both default to
-`LATEST_PER_CONVERSATION`, including existing History callers. Turn bounds apply
-after selection, and neither mode deletes or rewrites stored duplicates.
+method also accepts this mode. Both still default to `LATEST_PER_CONVERSATION`.
+The backend's Attack History listing explicitly requests `ALL_RESULTS` and
+fingerprints that mode in its cursor; unrelated SDK and scenario callers keep
+their existing selection. Turn bounds apply after selection, and neither mode
+deletes or rewrites stored duplicates.
 
 Revision `901e6c7bf9d4` follows the published `main` head `34a18645c7e9`. It
 bounds `outcome` to 16 characters and adds the computed

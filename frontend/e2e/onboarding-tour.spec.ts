@@ -22,6 +22,10 @@ const TOUR_SCENARIO: RegisteredScenario = {
   baseline_policy: "disabled",
   include_baseline_by_default: false,
   supported_parameters: [],
+  supported_parameter_names: [
+    "objective_target", "scenario_techniques", "dataset_config", "memory_labels",
+    "max_concurrency", "max_retries", "include_baseline",
+  ],
   default_run_size: {
     status: "unavailable",
     dataset_size: { kind: "indeterminate", detail: "Mock estimate only." },
