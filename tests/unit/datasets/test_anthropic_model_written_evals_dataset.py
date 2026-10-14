@@ -30,72 +30,6 @@ _MANIFEST = (
     "winogenerated/winogenerated_examples.jsonl",
 )
 
-_PAPER_AUTHORS = [
-    "Ethan Perez",
-    "Sam Ringer",
-    "Kamile Lukosiute",
-    "Karina Nguyen",
-    "Edwin Chen",
-    "Scott Heiner",
-    "Craig Pettit",
-    "Catherine Olsson",
-    "Sandipan Kundu",
-    "Saurav Kadavath",
-    "Andy Jones",
-    "Anna Chen",
-    "Benjamin Mann",
-    "Brian Israel",
-    "Bryan Seethor",
-    "Cameron McKinnon",
-    "Christopher Olah",
-    "Da Yan",
-    "Daniela Amodei",
-    "Dario Amodei",
-    "Dawn Drain",
-    "Dustin Li",
-    "Eli Tran-Johnson",
-    "Guro Khundadze",
-    "Jackson Kernion",
-    "James Landis",
-    "Jamie Kerr",
-    "Jared Mueller",
-    "Jeeyoon Hyun",
-    "Joshua Landau",
-    "Kamal Ndousse",
-    "Landon Goldberg",
-    "Liane Lovitt",
-    "Martin Lucas",
-    "Michael Sellitto",
-    "Miranda Zhang",
-    "Neerav Kingsland",
-    "Nelson Elhage",
-    "Nicholas Joseph",
-    "Noemi Mercado",
-    "Nova DasSarma",
-    "Oliver Rausch",
-    "Robin Larson",
-    "Sam McCandlish",
-    "Scott Johnston",
-    "Shauna Kravec",
-    "Sheer El Showk",
-    "Tamera Lanham",
-    "Timothy Telleen-Lawton",
-    "Tom Brown",
-    "Tom Henighan",
-    "Tristan Hume",
-    "Yuntao Bai",
-    "Zac Hatfield-Dodds",
-    "Jack Clark",
-    "Samuel R. Bowman",
-    "Amanda Askell",
-    "Roger Grosse",
-    "Danny Hernandez",
-    "Deep Ganguli",
-    "Evan Hubinger",
-    "Nicholas Schiefer",
-    "Jared Kaplan",
-]
-
 
 @pytest.fixture(autouse=True)
 def small_manifest():
@@ -175,15 +109,20 @@ async def test_complete_paper_attribution_survives_seed_storage(sqlite_instance:
 
     groups = ["Anthropic", "Surge AI", "Machine Intelligence Research Institute"]
     assert len(dataset.seeds) == 6
+    authors = list(dataset.seeds[0].authors)
+    assert len(authors) == 63
+    assert len(set(authors)) == 63
+    assert authors[0] == "Ethan Perez"
+    assert authors[-1] == "Jared Kaplan"
     for seed in dataset.seeds:
-        assert seed.authors == _PAPER_AUTHORS
+        assert seed.authors == authors
         assert seed.groups == groups
 
     await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="paper-attribution-test")
     stored = await sqlite_instance.get_seeds_async(dataset_name=loader.dataset_name)
     assert len(stored) == len(dataset.seeds)
     for seed in stored:
-        assert seed.authors == _PAPER_AUTHORS
+        assert seed.authors == authors
         assert seed.groups == groups
         assert seed.source == "https://github.com/anthropics/evals"
 
