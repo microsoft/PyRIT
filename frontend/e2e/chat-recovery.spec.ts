@@ -524,9 +524,9 @@ test.describe("Chat processing recovery @seeded", () => {
     const bubbles = page.getByTestId(/^message-bubble-/);
     await expect(bubbles).toHaveCount(2);
     await expect(bubbles.first()).toContainText("Explain the target error");
-    await expect(bubbles.first().getByRole("button", { name: "Copy conversation", exact: true })).toBeVisible();
+    await expect(bubbles.first().getByRole("button", { name: "Copy or Branch", exact: true })).toBeVisible();
     await expect(bubbles.last()).toContainText("JSONDecodeError");
-    await expect(bubbles.last().getByRole("button", { name: "Copy conversation", exact: true })).toHaveCount(0);
+    await expect(bubbles.last().getByRole("button", { name: "Copy or Branch", exact: true })).toHaveCount(0);
     await page.reload();
     await expect(bubbles).toHaveCount(2);
     await expect(bubbles.first()).toContainText("Explain the target error");
@@ -547,7 +547,7 @@ test.describe("Chat processing recovery @seeded", () => {
       contentType: "image/png",
     });
     await page.keyboard.press("Escape");
-    await bubbles.first().getByRole("button", { name: "Copy conversation", exact: true }).click();
+    await bubbles.first().getByRole("button", { name: "Copy or Branch", exact: true }).click();
     await test.info().attach("original-prompt-copy", {
       body: await page.screenshot({ animations: "disabled" }),
       contentType: "image/png",
@@ -556,7 +556,7 @@ test.describe("Chat processing recovery @seeded", () => {
     const [cloneResponse] = await Promise.all([
       page.waitForResponse((response) => response.request().method() === "POST"
         && new URL(response.url()).pathname === `/api/attacks/${attackId}/conversations`),
-      page.getByRole("menuitem", { name: "New conversation", exact: true }).click(),
+      page.getByRole("menuitem", { name: "Branch conversation", exact: true }).click(),
     ]);
     expect(cloneResponse.status()).toBe(201);
     expect(cloneResponse.request().postDataJSON()).toEqual({});
@@ -612,8 +612,8 @@ test.describe("Chat processing recovery @seeded", () => {
       await disabledPrompt.click({ position: { x: 10, y: 10 } });
       await expect(page.getByText(/This conversation contains a target error/)).toBeVisible();
       await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
-      const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
+      await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
+      const recover = page.getByRole("menuitem", { name: "Branch conversation", exact: true });
       await expect(recover).toBeEnabled();
       await test.info().attach("processing-recovery", {
         body: await page.screenshot(),
@@ -665,11 +665,11 @@ test.describe("Chat processing recovery @seeded", () => {
       const failed = await sendFromComposer(page, "Edit this failed prompt");
       const sourceAttackId = failed.attack.attack_result_id;
       if (reload) await page.reload();
-      await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+      await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
       const [savedResponse] = await Promise.all([
         page.waitForResponse((response) => response.request().method() === "POST"
           && new URL(response.url()).pathname === "/api/attacks/save-conversation"),
-        page.getByRole("menuitem", { name: "New attack", exact: true }).click(),
+        page.getByRole("menuitem", { name: "Branch attack", exact: true }).click(),
       ]);
       expect(savedResponse.status(), await savedResponse.text()).toBe(200);
       const saved: AddMessageResponse = await savedResponse.json();
@@ -728,11 +728,11 @@ test.describe("Chat processing recovery @seeded", () => {
     const originalImage = failed.messages.messages[0].message_pieces[1];
     expect(originalImage.original_filename).toBeTruthy();
     await page.reload();
-    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
+    await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
     const [createdResponse] = await Promise.all([
       page.waitForResponse((response) => response.request().method() === "POST"
         && new URL(response.url()).pathname === "/api/attacks"),
-      page.getByRole("menuitem", { name: "New attack", exact: true }).click(),
+      page.getByRole("menuitem", { name: "Branch attack", exact: true }).click(),
     ]);
     expect(createdResponse.status()).toBe(201);
     const created: CreateAttackResponse = await createdResponse.json();
@@ -871,8 +871,8 @@ test.describe("Chat processing recovery @seeded", () => {
     await page.getByTestId("remove-attachment-0").click();
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
     await selectConversation(page, first.attack.conversation_id);
-    await page.getByRole("button", { name: "Copy conversation", exact: true }).last().click();
-    const recover = page.getByRole("menuitem", { name: "New conversation", exact: true });
+    await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
+    const recover = page.getByRole("menuitem", { name: "Branch conversation", exact: true });
     await expect(recover).toBeEnabled();
     await page.evaluate(() => { document.documentElement.dataset.deferRecoveryReads = "true"; });
     try {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Text,
   Avatar,
@@ -23,7 +23,7 @@ import {
 } from '@fluentui/react-components'
 import {
   ArrowDownloadRegular,
-  ArrowReplyRegular,
+  BranchForkRegular,
   MoreHorizontalRegular,
   OpenRegular,
 } from '@fluentui/react-icons'
@@ -548,6 +548,7 @@ export default function MessageList({
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const copyMenuId = useId()
 
   const handleDownload = async (att: MessageAttachment) => {
     try {
@@ -774,25 +775,31 @@ export default function MessageList({
                         <Button
                           appearance="subtle"
                           size="small"
-                          icon={<ArrowReplyRegular />}
+                          icon={<BranchForkRegular />}
                           data-testid={`copy-to-input-btn-${index}`}
                           className={styles.messageActionButton}
-                          aria-label="Copy conversation"
-                        >Copy conversation</Button>
+                          aria-label="Copy or Branch"
+                        >Copy or Branch</Button>
                       </MenuTrigger>
                       <MenuPopover><MenuList>
-                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)} title="Copy this message to the prompt box">
-                          This conversation
+                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)}
+                          aria-label="Copy to prompt" aria-describedby={`${copyMenuId}-${index}-prompt`}
+                          subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
+                          Copy to prompt
                         </MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
-                          title={newConversationDisabledReason ?? 'Copy the conversation through this message into the same attack'}
-                          onClick={() => onCopyToNewConversation?.(index)}>New conversation</MenuItem>
+                          aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
+                          subText={{ id: `${copyMenuId}-${index}-conversation`,
+                            children: `Copy history through this turn into the same attack.${newConversationDisabledReason ? ` ${newConversationDisabledReason}` : ''}` }}
+                          onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
-                          title="Copy the conversation through this message into a new attack"
-                          onClick={() => onCopyToNewAttack?.(index)}>New attack</MenuItem>
+                          aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}
+                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history through this turn into a new attack.' }}
+                          onClick={() => onCopyToNewAttack?.(index)}>Branch attack</MenuItem>
                         {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
-                          title="Save a copy through this message and copy its ID for a technique"
-                          onClick={() => onUseInTechnique(index)}>Technique.execute</MenuItem>}
+                          aria-label="Use in scan" aria-describedby={`${copyMenuId}-${index}-scan`}
+                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Open Technique.execute with history through this turn.' }}
+                          onClick={() => onUseInTechnique(index)}>Use in scan</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>
                   )}

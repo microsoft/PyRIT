@@ -104,11 +104,11 @@ function RouterLocation() {
 }
 
 async function findRecoveryAction(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
-  const buttons = await screen.findAllByRole("button", { name: "Copy conversation" });
+  const buttons = await screen.findAllByRole("button", { name: "Copy or Branch" });
   const lastButton = buttons.at(-1);
   if (!lastButton) throw new Error("The failed prompt has no copy menu.");
   await user.click(lastButton);
-  return screen.findByRole("menuitem", { name: "New conversation" });
+  return screen.findByRole("menuitem", { name: "Branch conversation" });
 }
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
@@ -1035,8 +1035,8 @@ describe("ChatWindow Integration", () => {
     });
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
       activeConversationId="source" targetResolutionStatus="unbound" /></TestWrapper>);
-    await user.click(await screen.findByRole("button", { name: "Copy conversation" }));
-    await user.click(screen.getByRole("menuitem", { name: "New conversation", exact: true }));
+    await user.click(await screen.findByRole("button", { name: "Copy or Branch" }));
+    await user.click(screen.getByRole("menuitem", { name: "Branch conversation", exact: true }));
     await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
     expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
       destination: "same_attack", target_registry_name: undefined,
@@ -1242,15 +1242,15 @@ describe("ChatWindow Integration", () => {
   });
 
   it.each([
-    ["New conversation", "same_attack"],
-    ["New attack", "new_attack"],
-    ["Technique.execute", "new_attack"],
+    ["Branch conversation", "same_attack"],
+    ["Branch attack", "new_attack"],
+    ["Use in scan", "new_attack"],
   ])("copies through the selected message to %s without sending", async (
     label: string, destination: string,
   ) => {
     const user = userEvent.setup();
     const clipboard = jest.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Clipboard denied"));
-    const useInTechnique = label === "Technique.execute";
+    const useInTechnique = label === "Use in scan";
     const source: BackendMessage[] = ["system", "user", "assistant"].map((role: string, index: number) => ({
       turn_number: index, role, created_at: "2026-01-01T00:00:00Z",
       message_pieces: [{
@@ -1335,7 +1335,7 @@ describe("ChatWindow Integration", () => {
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="existing"
       conversationId="failed-source" activeConversationId="failed-source" /></TestWrapper>);
     await findRecoveryAction(user);
-    await user.click(screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
     const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
     expect(request.destination).toBe("new_attack");
@@ -1388,7 +1388,7 @@ describe("ChatWindow Integration", () => {
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
       attackResultId="source-attack" conversationId="failed-source" activeConversationId="failed-source" /></TestWrapper>);
     await findRecoveryAction(user);
-    await user.click(screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(
       "retry-attack", "retry-conversation", "", target,
     ));
@@ -1449,8 +1449,8 @@ describe("ChatWindow Integration", () => {
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
     </UserPreferencesProvider></FluentProvider>);
-    await user.click(await screen.findByRole("button", { name: "Copy conversation" }));
-    await user.click(screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await user.click(await screen.findByRole("button", { name: "Copy or Branch" }));
+    await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledTimes(1));
     const request = mockedAttacksApi.saveConversation.mock.calls[0][0];
     expect(request.destination).toBe("new_attack");
@@ -3985,10 +3985,10 @@ describe("ChatWindow Integration", () => {
   );
 
   it.each([
-    { reinitialized: false, destination: "New conversation" },
-    { reinitialized: true, destination: "New conversation" },
-    { reinitialized: false, destination: "New attack" },
-    { reinitialized: true, destination: "New attack" },
+    { reinitialized: false, destination: "Branch conversation" },
+    { reinitialized: true, destination: "Branch conversation" },
+    { reinitialized: false, destination: "Branch attack" },
+    { reinitialized: true, destination: "Branch attack" },
   ])("should restore the matching live draft to $destination with reinitialization $reinitialized", async ({
     reinitialized, destination,
   }: { reinitialized: boolean; destination: string }) => {
@@ -4101,10 +4101,10 @@ describe("ChatWindow Integration", () => {
       await screen.findByRole("button", { name: "Select conversation conv-matching-failure" })
     );
     const recoveryButton = await findRecoveryAction(user);
-    await user.click(destination === "New conversation" ? recoveryButton
-      : screen.getByRole("menuitem", { name: "New attack", exact: true }));
+    await user.click(destination === "Branch conversation" ? recoveryButton
+      : screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => {
-      if (destination === "New conversation") {
+      if (destination === "Branch conversation") {
         expect(onSelectConversation).toHaveBeenCalledWith("conv-matching-recovery");
         expect(mockedAttacksApi.createConversation).toHaveBeenCalledWith(props.attackResultId, {});
       } else {
@@ -4118,8 +4118,8 @@ describe("ChatWindow Integration", () => {
     });
     rendered.rerender(
       <TestWrapper><ChatWindow {...props} activeConversationId="conv-matching-recovery"
-        attackResultId={destination === "New attack" ? "recovered-attack" : props.attackResultId}
-        conversationId={destination === "New attack" ? "conv-matching-recovery" : props.conversationId} /></TestWrapper>
+        attackResultId={destination === "Branch attack" ? "recovered-attack" : props.attackResultId}
+        conversationId={destination === "Branch attack" ? "conv-matching-recovery" : props.conversationId} /></TestWrapper>
     );
 
     expect(await screen.findByText(/live\.png/)).toBeInTheDocument();
@@ -4134,7 +4134,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: /send message/i }));
     await waitFor(() => {
       expect(mockSendResult).toHaveBeenLastCalledWith(
-        destination === "New attack" ? "recovered-attack" : props.attackResultId,
+        destination === "Branch attack" ? "recovered-attack" : props.attackResultId,
         expect.objectContaining({
           target_conversation_id: "conv-matching-recovery",
           pieces: expect.arrayContaining([reinitialized
@@ -5439,7 +5439,7 @@ describe("ChatWindow Integration", () => {
     // Click copy-to-input on assistant message (index 1)
     const copyBtn = screen.getByTestId("copy-to-input-btn-1");
     await userEvent.click(copyBtn);
-    await userEvent.click(screen.getByRole("menuitem", { name: "This conversation" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
 
     // The text should appear in the input area
     await waitFor(() => {
@@ -6035,7 +6035,7 @@ describe("ChatWindow Integration", () => {
 
     const copyBtn = screen.getByTestId("copy-to-input-btn-1");
     await user.click(copyBtn);
-    await user.click(screen.getByRole("menuitem", { name: "This conversation" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
 
     await waitFor(() => {
       const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -6107,7 +6107,7 @@ describe("ChatWindow Integration", () => {
     });
 
     await userEvent.click(screen.getByTestId("copy-to-input-btn-1"));
-    await userEvent.click(screen.getByRole("menuitem", { name: "This conversation" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
 
     await waitFor(() => {
       const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -7098,8 +7098,8 @@ describe("ChatWindow Integration", () => {
         activeConversationId: "conv-1",
       }
       const rendered = render(<TestWrapper><ChatWindow {...props} defaultsReady={false} /></TestWrapper>)
-      await user.click(await screen.findByRole('button', { name: 'Copy conversation' }))
-      const create = screen.getByRole('menuitem', { name: 'New attack', exact: true })
+      await user.click(await screen.findByRole('button', { name: 'Copy or Branch' }))
+      const create = screen.getByRole('menuitem', { name: 'Branch attack', exact: true })
       expect(create).toHaveAttribute('aria-disabled', 'true')
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled()
 
@@ -7132,10 +7132,10 @@ describe("ChatWindow Integration", () => {
         attackResultId: "existing-attack", conversationId: "conv-1", activeConversationId: "conv-1",
       }
       const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>)
-      await user.click(await screen.findByRole('button', { name: 'Copy conversation' }))
+      await user.click(await screen.findByRole('button', { name: 'Copy or Branch' }))
       let finish: (value: typeof copiedSource) => void = () => {}
       mockedAttacksApi.getMessages.mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
-      await user.click(screen.getByRole('menuitem', { name: 'New attack', exact: true }))
+      await user.click(screen.getByRole('menuitem', { name: 'Branch attack', exact: true }))
 
       runtime.mockReturnValue({ ready: true, state: "ready", generation: "gen-2" })
       rendered.rerender(
@@ -7147,8 +7147,8 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByText(/Runtime or default labels changed while loading this conversation/)).toBeInTheDocument()
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled()
 
-      await user.click(screen.getByRole('button', { name: 'Copy conversation' }))
-      await user.click(screen.getByRole('menuitem', { name: 'New attack', exact: true }))
+      await user.click(screen.getByRole('button', { name: 'Copy or Branch' }))
+      await user.click(screen.getByRole('menuitem', { name: 'Branch attack', exact: true }))
       await waitFor(() => expect(mockedAttacksApi.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
         destination: 'new_attack', labels: { ...defaultProps.labels, operation: "config_op_v2" },
       })))

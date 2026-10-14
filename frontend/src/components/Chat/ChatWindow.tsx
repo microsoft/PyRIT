@@ -1594,7 +1594,7 @@ export default function ChatWindow({
     ...(isSending ? ['A message is being sent. Wait for the response.'] : []),
     ...(isLoadingAttack ? ['The attack is loading. Wait for it to finish.'] : []),
     ...(hasProcessingError
-      ? ['This conversation contains a target error. Use Copy conversation on the failed prompt to copy it to a new conversation or attack.']
+      ? ['This conversation contains a target error. Use Copy or Branch on the failed prompt to branch into a new conversation or attack.']
       : []),
   ]
 

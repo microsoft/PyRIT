@@ -21,8 +21,10 @@ refreshes do not override your open/closed choice. Creating, copying, or repeati
 conversations still opens the desktop drawer. On narrow screens the drawer opens
 only when requested and closes after selecting a conversation.
 
-Each saved turn, including a system turn, has a **Copy conversation** menu.
-**New conversation** and **New attack** copy history through that turn, open the
+Each saved turn, including a system turn, has a **Copy or Branch** menu with
+visible descriptions for each action. **Copy to prompt** copies only that message
+to the prompt box. **Branch conversation** and **Branch attack** copy history
+through that turn into the same attack or a new attack, open the
 conversation panel, and select the copy at its full
 `/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
 within a target-free attack keeps it target-free until you send a prompt.
@@ -31,7 +33,7 @@ box instead of saved history. Attachments retain their metadata, including video
 remix IDs. You can enter and edit prompts without a target.
 Send stays disabled until you select a target; no target-warning box is shown.
 
-**Technique.execute** saves a target-free copy through the selected turn
+**Use in scan** saves a target-free copy through the selected turn
 and opens `/scanner/technique.execute?prepended_conversation_id={conversation_id}`.
 The scanner configuration fills **prepended_conversation_id** from this URL.
 There is no clipboard step, and opening the configuration does not launch a scan.
