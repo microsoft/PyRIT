@@ -20,6 +20,7 @@ from sqlalchemy import (
     event,
     exists,
     func,
+    literal,
     literal_column,
     text,
 )
@@ -44,7 +45,7 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
-from pyrit.models import ConversationStats
+from pyrit.models import AttackResultRole, ConversationStats
 
 if TYPE_CHECKING:
     from azure.core.credentials import AccessToken
@@ -348,9 +349,11 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         are_label_parts: list[str] = []
         are_bindparams: dict[str, str] = {}
 
-        for key, value in memory_labels.items():
-            are_param = f"are_ml_{key}"
-            are_label_parts.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') = :{are_param}")
+        for key_index, (key, value) in enumerate(memory_labels.items()):
+            path_param = f"are_ml_path_{key_index}"
+            are_param = f"are_ml_{key_index}"
+            are_label_parts.append(f'JSON_VALUE("AttackResultEntries".labels, :{path_param}) = :{are_param}')
+            are_bindparams[path_param] = f'$."{key}"'
             are_bindparams[are_param] = str(value)
 
         combined_are = " AND ".join(are_label_parts)
@@ -371,7 +374,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Generate SQL conditions for filtering by prompt metadata.
 
-        Uses JSON_VALUE() function specific to SQL Azure to query metadata fields in JSON format.
+        Uses OPENJSON() to compare free-form metadata keys literally rather than
+        interpreting them as JSON path expressions. Only strings, numbers, and
+        booleans match, preserving JSON_VALUE() scalar filtering semantics.
 
         Args:
             prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
@@ -380,15 +385,26 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             list: List containing a single SQLAlchemy text condition with bound parameters.
         """
         json_validation = "ISJSON(prompt_metadata) = 1"
-        json_conditions = " AND ".join([f"JSON_VALUE(prompt_metadata, '$.{key}') = :{key}" for key in prompt_metadata])
+        json_conditions, bindparams = [], {}
+        for index, (key, value) in enumerate(prompt_metadata.items()):
+            key_param, value_param = f"md_key_{index}", f"md_value_{index}"
+            alias = f"metadata_{index}"
+            json_conditions.append(
+                f"EXISTS (SELECT 1 FROM OPENJSON(prompt_metadata) AS [{alias}] "
+                f"WHERE [{alias}].[key] = :{key_param} "
+                f"AND DATALENGTH([{alias}].[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND [{alias}].[type] IN (1, 2, 3) "
+                f"AND [{alias}].[value] = :{value_param})"
+            )
+            bindparams[key_param] = key
+            bindparams[value_param] = str(value)
+
         # Combine both conditions
-        conditions = f"{json_validation} AND {json_conditions}"
+        conditions = f"{json_validation} AND " + " AND ".join(json_conditions)
 
         # Create SQL condition using SQLAlchemy's text() with bindparams
         # for safe parameter passing, preventing SQL injection
-        # Note: JSON_VALUE always returns nvarchar in SQL Server, so we must convert all values to strings
-        # to avoid type conversion errors when comparing mixed types (e.g., int and string)
-        condition = text(conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
+        condition = text(conditions).bindparams(**bindparams)
         return [condition]
 
     def _get_message_pieces_prompt_metadata_conditions(
@@ -545,17 +561,19 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         are_label_conditions: list[str] = []
         are_bindparams: dict[str, str] = {}
 
-        for key, raw_value in labels.items():
+        for key_index, (key, raw_value) in enumerate(labels.items()):
             values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
             if not values:
                 continue
+            path_param = f"are_label_path_{key_index}"
+            are_bindparams[path_param] = f'$."{key}"'
             are_placeholders = []
             for idx, v in enumerate(values):
-                are_param = f"are_label_{key}_{idx}"
+                are_param = f"are_label_{key_index}_{idx}"
                 are_placeholders.append(f":{are_param}")
                 are_bindparams[are_param] = str(v)
             are_in = ", ".join(are_placeholders)
-            are_label_conditions.append(f"JSON_VALUE(\"AttackResultEntries\".labels, '$.{key}') IN ({are_in})")
+            are_label_conditions.append(f'JSON_VALUE("AttackResultEntries".labels, :{path_param}) IN ({are_in})')
 
         are_parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
         if are_label_conditions:
@@ -806,6 +824,22 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     ) -> "SQLColumnExpression[str]":
         # Native SQL Server UUID ordering differs from the SDK's canonical string comparison.
         return func.lower(sql_cast(attempt_id, String(36))).collate("Latin1_General_100_BIN2")
+
+    def _get_scenario_role_match_condition(self, *, role_expression: Any, role: AttackResultRole) -> Any:
+        """
+        Return an exact case-sensitive and trailing-space-sensitive condition for AttackResultRole.
+
+        SQL Server pads strings for '=' comparisons and uses case-insensitive collation by default.
+        Binary collation ensures exact case matching, and DATALENGTH ensures trailing spaces or
+        malformed padding are not ignored.
+
+        Returns:
+            A SQL Server condition strictly matching the specified AttackResultRole.
+        """
+        return and_(
+            role_expression.collate("Latin1_General_100_BIN2") == role.value,
+            func.datalength(role_expression) == func.datalength(literal(role.value, type_=Unicode)),
+        )
 
     def _get_scenario_attempt_unit_expressions(self) -> tuple[Any, Any, Any, Any]:
         """Return SQL Server JSON expressions for persisted scenario attempt attribution."""

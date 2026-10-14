@@ -276,3 +276,40 @@ def test_generator_of_wrong_type_still_raises():
     )
     with pytest.raises(ValueError, match="must be of type 'true_false'"):
         TrueFalseScoreAggregator.OR(s for s in [bad])
+
+
+# Tests for raise_on_empty behavior
+def test_and_raise_on_empty_with_scores():
+    """Test that AND_RAISE_ON_EMPTY works normally when scores are present."""
+    scores = [_mk_score(True, prr_id="1"), _mk_score(False, prr_id="1")]
+    res = TrueFalseScoreAggregator.AND_RAISE_ON_EMPTY(scores)
+    assert res.value is False
+
+
+def test_or_raise_on_empty_with_scores():
+    """Test that OR_RAISE_ON_EMPTY works normally when scores are present."""
+    scores = [_mk_score(True, prr_id="1"), _mk_score(False, prr_id="1")]
+    res = TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY(scores)
+    assert res.value is True
+
+
+def test_majority_raise_on_empty_with_scores():
+    """Test that MAJORITY_RAISE_ON_EMPTY works normally when scores are present."""
+    scores = [_mk_score(True, prr_id="1"), _mk_score(True, prr_id="1"), _mk_score(False, prr_id="1")]
+    res = TrueFalseScoreAggregator.MAJORITY_RAISE_ON_EMPTY(scores)
+    assert res.value is True
+
+
+@pytest.mark.parametrize("aggregator_name", ["AND_RAISE_ON_EMPTY", "OR_RAISE_ON_EMPTY", "MAJORITY_RAISE_ON_EMPTY"])
+def test_raise_on_empty_aggregators_raise_with_no_scores(aggregator_name):
+    """The strict-empty variants must not answer an empty input with a verdict."""
+    aggregator = getattr(TrueFalseScoreAggregator, aggregator_name)
+    with pytest.raises(ValueError, match="No scores available for aggregation"):
+        aggregator([])
+
+
+def test_raise_on_empty_aggregator_accepts_generators():
+    """A generator with scores must not trip the empty-input guard."""
+    values = [True, False, True]
+    res = TrueFalseScoreAggregator.OR_RAISE_ON_EMPTY(_mk_score(v, prr_id="1") for v in values)
+    assert res.value is True

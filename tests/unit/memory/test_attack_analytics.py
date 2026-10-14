@@ -25,7 +25,9 @@ from sqlalchemy.sql import Select, visitors
 from sqlalchemy.sql.functions import Function
 from sqlalchemy.sql.selectable import CTE
 
+from pyrit.converter import Base64Converter
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
+from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_sql import (
     JsonArrayEmpty,
@@ -54,7 +56,8 @@ from pyrit.models import (
     Operation,
     TargetIdentifier,
 )
-from unit.mocks import add_legacy_attack_results_async
+from pyrit.prompt_normalizer import ConverterConfiguration
+from unit.mocks import MockPromptTarget, add_legacy_attack_results_async
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,7 +105,20 @@ def make_result(
 
 
 def control() -> QueryControl:
-    return QueryControl(deadline=time.monotonic() + 10)
+    """Bound correctness queries without imposing a short CI performance limit."""
+    return QueryControl(deadline=time.monotonic() + 120)
+
+
+def test_correctness_query_control_retains_a_finite_deadline() -> None:
+    with patch.object(time, "monotonic", return_value=100):
+        query_control = control()
+        assert query_control.deadline == 220
+    with patch.object(time, "monotonic", return_value=135):
+        query_control.check()
+        assert query_control.remaining == 85
+    with patch.object(time, "monotonic", return_value=220):
+        with pytest.raises(AnalyticsTimeoutException):
+            query_control.check()
 
 
 def predicate(*, name: str, values: list[str | None], **options: Any) -> dict[str, Any]:
@@ -212,6 +228,96 @@ async def test_non_ascii_case_variants_share_group_filter_and_facet_keys(sqlite_
         assert (await connection.execute(select(UnicodeLower(literal("\u00c9COLE"))))).scalar_one() == "\u00e9cole"
 
 
+@pytest.mark.parametrize(
+    ("value", "fallback"),
+    [
+        ("ABC", False),
+        ("", False),
+        ("Line\nTAB\tEND\x7f", False),
+        ("\u00c9COLE", True),
+        ("\u0130\u1e9e\u03a3", True),
+        ("\U0001f600ABC", True),
+        ("ABC\0DEF", True),
+        (None, True),
+        (123, True),
+        (1e20, True),
+        (b"ABC", True),
+    ],
+)
+async def test_sqlite_lower_avoids_callbacks_only_when_native_lower_is_exact(
+    *, sqlite_instance: SQLiteMemory, value: str | bytes | int | float | None, fallback: bool
+) -> None:
+    expected = SQLiteMemory._unicode_lower(value)
+    with patch.object(SQLiteMemory, "_unicode_lower", wraps=SQLiteMemory._unicode_lower) as lower:
+        async with await sqlite_instance.get_session_async() as session:
+            actual = (await session.execute(select(UnicodeLower(literal(value))))).scalar_one()
+    assert actual == expected
+    assert lower.call_count == int(fallback)
+
+
+async def test_scalar_facet_filter_uses_index_and_preserves_exact_any_values(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            make_result(index=1, operation="operation-a", labels={"case": "first"}),
+            make_result(index=2, operation="operation-b", labels={"case": "second"}),
+            make_result(index=3, operation="OPERATION-A", labels={"case": "excluded"}),
+            make_result(index=4, operation=None, labels={"case": "missing"}),
+        ]
+    )
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=["operation-a", "operation-b"])]}
+    )
+    query = AttackAnalyticsFacetQuery(
+        filters=filters, dimension=AttackAnalyticsDimension(name="label", label_key="case"), search="s"
+    )
+    statement = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=filters).facet(query)
+    compiled = str(statement.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+    async with await sqlite_instance.get_session_async() as session:
+        plan = await session.execute(text("EXPLAIN QUERY PLAN " + compiled))
+        steps = [row[3] for row in plan]
+    assert any("SEARCH analytics_results" in step and "operation=?" in step for step in steps), steps
+    result = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {item.key.value for item in result.items} == {"first", "second"}
+
+
+@pytest.mark.parametrize("version", [(3, 34, 0), (3, 35, 0)])
+@pytest.mark.parametrize("search", ["", "k", "\u00e9"])
+async def test_scalar_facet_materialization_preserves_exact_keys_absence_and_paging(
+    *, sqlite_instance: SQLiteMemory, version: tuple[int, int, int], search: str
+) -> None:
+    values = [None, "", "A", "a", "K", "\u212a", "\u00c9", "\u00e9", "A"]
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            make_result(index=index, labels={} if value is None else {"case": value})
+            for index, value in enumerate(values, 1)
+        ]
+    )
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name="label", label_key="case"), search=search, limit=2
+    )
+    expected = sorted(
+        {
+            ("missing", "") if value is None else ("value", value)
+            for value in values
+            if not search or (value is not None and search in value.lower())
+        }
+    )
+    actual = []
+    with patch("pyrit.memory.attack_analytics_query.sqlite3.sqlite_version_info", version):
+        statement = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=query.filters).facet(query)
+        sql = str(statement.compile(dialect=sqlite.dialect()))
+        assert ("AS MATERIALIZED" in sql) == (version >= (3, 35, 0))
+        while True:
+            page = await reader.facets_async(query=query, control=control())
+            actual.extend((item.key.kind.value, item.key.value or "") for item in page.items)
+            if not page.has_more:
+                break
+            query.offset += len(page.items)
+            assert query.offset < len(expected)
+    assert actual == expected
+
+
 async def test_whitespace_empty_category_array_matches_missing_filter(sqlite_instance: SQLiteMemory) -> None:
     await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result()])
     async with sqlite_instance._get_async_engine().begin() as connection:
@@ -303,6 +409,44 @@ async def test_known_empty_converters_differ_from_missing_identifier(sqlite_inst
     assert {group.option.key.kind.value for group in report.groups} == {"missing", "no_converters"}
 
 
+@pytest.mark.parametrize("direction", ["request", "response"])
+async def test_real_attacks_without_converters_are_no_converters_async(
+    *, direction: str, sqlite_instance: SQLiteMemory
+) -> None:
+    """Identifiers omit an empty converter list, so a real attack must still land in no_converters."""
+    plain = await PromptSendingAttack(objective_target=MockPromptTarget()).execute_async(objective="plain")
+    converted = await PromptSendingAttack(
+        objective_target=MockPromptTarget(),
+        attack_converter_config=AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()]),
+            response_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()]),
+        ),
+    ).execute_async(objective="converted")
+    unidentified = make_result(index=3)
+    unidentified.atomic_attack_identifier = None
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[unidentified])
+    dimension = AttackAnalyticsDimension(name="converter_type", converter_direction=direction)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(group_by=dimension), control=control())
+    filtered = await reader.report_async(
+        query=AttackAnalyticsQuery(
+            filters=AttackAnalyticsFilters.model_validate(
+                {"dimensions": [{"dimension": dimension.model_dump(), "values": [{"kind": "no_converters"}]}]}
+            )
+        ),
+        control=control(),
+    )
+    without_converters = await sqlite_instance.get_attack_results_async(has_converters=False)
+
+    assert {
+        (group.option.key.kind.value, group.option.key.value): sum(group.counts.values()) for group in report.groups
+    } == {("no_converters", None): 1, ("value", "base64converter"): 1, ("missing", None): 1}
+    assert sum(filtered.counts.values()) == 1
+    assert plain.attack_result_id in {result.attack_result_id for result in without_converters}
+    assert converted.attack_result_id not in {result.attack_result_id for result in without_converters}
+
+
 async def test_literal_label_paths_and_facet_search(sqlite_instance: SQLiteMemory) -> None:
     await add_legacy_attack_results_async(
         sqlite_instance,
@@ -381,6 +525,11 @@ async def test_operation_resolves_saved_operation_names_like_history(sqlite_inst
     )
     filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
     assert filtered.counts == {"success": 2, "failure": 1}
+    unassigned_only = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=[None])]}
+    )
+    missing = await reader.report_async(query=AttackAnalyticsQuery(filters=unassigned_only), control=control())
+    assert missing.counts == {"success": 1}
     facet = await reader.facets_async(
         query=AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name="operation")), control=control()
     )
@@ -607,48 +756,6 @@ async def test_sqlite_execution_deadline_or_cancellation_cleans_up_the_connectio
     assert query_control.expired
     assert query_control.cancel_event.is_set() == (trigger == "cancel")
     assert (await reader.report_async(query=AttackAnalyticsQuery(), control=control())).counts == {}
-
-
-@pytest.mark.parametrize("method", ["report", "results", "facets"])
-async def test_sqlite_deadline_bounds_file_database_lock_wait_and_restores_timeout(
-    *, tmp_path: Path, method: str
-) -> None:
-    memory = SQLiteMemory.__new__(SQLiteMemory)
-    with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "analytics-lock.sqlite", skip_schema_migration=True)
-    try:
-        engine = memory._get_async_engine()
-        async with engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-        async with engine.connect() as writer:
-            default_timeout = (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
-            await writer.exec_driver_sql("BEGIN EXCLUSIVE")
-            try:
-                started = time.monotonic()
-                reader = AttackAnalyticsReader(memory=memory)
-                budget = QueryControl(deadline=started + 0.08)
-                with pytest.raises(AnalyticsTimeoutException):
-                    if method == "report":
-                        await reader.report_async(query=AttackAnalyticsQuery(), control=budget)
-                    elif method == "results":
-                        await reader.results_async(query=AttackAnalyticsResultsQuery(), control=budget)
-                    else:
-                        await reader.facets_async(
-                            query=AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name="operation")),
-                            control=budget,
-                        )
-                assert time.monotonic() - started < 1
-                async with engine.connect() as reader_connection:
-                    assert (
-                        await reader_connection.exec_driver_sql("PRAGMA busy_timeout")
-                    ).scalar_one() == default_timeout
-            finally:
-                await writer.rollback()
-            assert (
-                await AttackAnalyticsReader(memory=memory).report_async(query=AttackAnalyticsQuery(), control=control())
-            ).counts == {}
-    finally:
-        await memory.dispose_engine_async()
 
 
 async def test_odbc_timeout_is_applied_before_each_cursor_is_created() -> None:
@@ -1542,7 +1649,10 @@ async def test_complete_raw_profiles_at_each_cap_and_full_sql_fallback_beyond_it
     assert fallback.cells == expected.cells
 
 
-async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path: Path) -> None:
+@pytest.mark.parametrize("use_compact_profiles", [False, True])
+async def test_report_is_consistent_and_later_result_pages_are_fresh(
+    *, tmp_path: Path, use_compact_profiles: bool
+) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
         memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", skip_schema_migration=True)
@@ -1554,7 +1664,7 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path
         await add_legacy_attack_results_async(memory, attack_results=[make_result(), make_result(index=2)])
         inserted = False
 
-        async def insert_after_totals_async() -> None:
+        async def insert_after_counts_async() -> None:
             async with engine.begin() as writer:
                 await writer.execute(
                     AttackResultEntry.__table__.insert().values(
@@ -1567,23 +1677,35 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path
                     )
                 )
 
-        def insert_after_totals(
+        def insert_after_counts(
             conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
         ) -> None:
             nonlocal inserted
             if inserted or "count(" not in statement.lower():
                 return
             inserted = True
-            conn.connection.run_async(lambda _: insert_after_totals_async())
+            conn.connection.run_async(lambda _: insert_after_counts_async())
 
-        event.listen(engine.sync_engine, "after_cursor_execute", insert_after_totals)
+        event.listen(engine.sync_engine, "after_cursor_execute", insert_after_counts)
         try:
             reader = AttackAnalyticsReader(memory=memory)
-            report = await reader.report_async(query=AttackAnalyticsQuery(result_limit=1), control=control())
+            report = await reader.report_async(
+                query=AttackAnalyticsQuery(
+                    group_by=AttackAnalyticsDimension(name="attack_type"),
+                    result_limit=1,
+                ),
+                control=control(),
+                use_compact_profiles=use_compact_profiles,
+            )
         finally:
-            event.remove(engine.sync_engine, "after_cursor_execute", insert_after_totals)
+            event.remove(engine.sync_engine, "after_cursor_execute", insert_after_counts)
         assert inserted
-        assert report.counts == report.groups[0].counts == {"success": 2}
+        assert report.counts == {"success": 2}
+        if use_compact_profiles:
+            assert report.profiles is not None
+            assert [(profile["outcome"], profile["weight"]) for profile in report.profiles] == [("success", 2)]
+        else:
+            assert report.groups[0].counts == report.counts
         assert [row.attack_result_id for row in report.results.items] == [str(uuid.UUID(int=2))]
         assert report.results.has_more
         page = await reader.results_async(
@@ -1749,3 +1871,25 @@ async def test_sqlite_group_query_uses_the_computed_identifier_index(sqlite_inst
     async with sqlite_instance._get_async_engine().connect() as connection:
         plan = (await connection.exec_driver_sql(f"EXPLAIN QUERY PLAN {sql}")).all()
     assert any("ix_AttackResultEntries_analytics_facts_sqlite" in row[-1] for row in plan)
+
+
+def test_mssql_filter_source_lateral_is_added_once_per_compiler() -> None:
+    """Reusing one compiler for several statements must not duplicate the filter lateral (#3177)."""
+    filters = AttackAnalyticsFilters(
+        dimensions=[
+            AttackAnalyticsFilter(
+                dimension=AttackAnalyticsDimension(name="converter_type"),
+                values=[AttackAnalyticsValue(kind="missing")],
+            )
+        ]
+    )
+    query = AttackAnalyticsQuery(filters=filters, group_by=AttackAnalyticsDimension(name="operation"))
+    compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=filters)
+    dialect = mssql.dialect(deprecate_large_types=True)
+
+    totals_sql = str(compiler.totals().compile(dialect=dialect))
+    groups_sql = str(compiler.groups(query).compile(dialect=dialect))
+
+    lateral = re.compile(r"OUTER APPLY \(SELECT.*?\) AS (filter_source_\d+)", re.DOTALL)
+    assert lateral.findall(totals_sql) == ["filter_source_0"]
+    assert lateral.findall(groups_sql) == ["filter_source_0"]

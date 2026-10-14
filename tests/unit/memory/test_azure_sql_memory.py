@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.dialects import mssql
+from sqlalchemy.orm import Query, Session
 
 from pyrit.common.singleton import Singleton
 from pyrit.converter.base64_converter import Base64Converter
@@ -119,6 +120,90 @@ async def test_insert_embedding_entry_async(memory_interface: AzureSQLMemory):
         assert persisted_embedding_entry is not None
         assert persisted_embedding_entry.embedding == [1, 2, 3]
         assert persisted_embedding_entry.embedding_type_name == "test_type"
+
+
+@pytest.mark.parametrize(
+    "prompt_metadata",
+    [
+        {"plain": "value", "plain ": "padded value"},
+        {"": "empty key", " ": "space key"},
+        {"café": "unicode key", "café ": "padded unicode key"},
+    ],
+)
+def test_metadata_conditions_guard_literal_key_lengths(
+    uninitialized_memory_interface: AzureSQLMemory, prompt_metadata: dict[str, str]
+):
+    condition = uninitialized_memory_interface._get_metadata_conditions(prompt_metadata=prompt_metadata)[0]
+    compiled = condition.compile(dialect=mssql.dialect())
+    sql = str(compiled)
+
+    assert sql.count("DATALENGTH(") == 2 * len(prompt_metadata)
+    for index, (key, value) in enumerate(prompt_metadata.items()):
+        alias = f"metadata_{index}"
+        assert f"[{alias}].[key] = :md_key_{index}" in sql
+        assert f"DATALENGTH([{alias}].[key]) = DATALENGTH(CAST(:md_key_{index} AS NVARCHAR(MAX)))" in sql
+        assert f"[{alias}].[value] = :md_value_{index}" in sql
+        assert compiled.params[f"md_key_{index}"] == key
+        assert compiled.params[f"md_value_{index}"] == value
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"payload": "{}"},
+        {"payload": "[]"},
+        {"payload": "", "count": 7, "enabled": "true"},
+        {'branch"."leaf': "{}", r"\u0061": "[]"},
+    ],
+)
+def test_metadata_conditions_only_match_scalar_json_types(
+    *, uninitialized_memory_interface: AzureSQLMemory, metadata: dict[str, str | int]
+) -> None:
+    conditions = [
+        *uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata),
+        uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata),
+    ]
+
+    for condition in conditions:
+        compiled = condition.compile(dialect=mssql.dialect(paramstyle="qmark"))
+        sql = str(compiled)
+        for index, (key, value) in enumerate(metadata.items()):
+            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            assert compiled.params[f"md_key_{index}"] == key
+            assert compiled.params[f"md_value_{index}"] == str(value)
+        assert compiled.positiontup == [
+            param
+            for index in range(len(metadata))
+            for param in (f"md_key_{index}", f"md_key_{index}", f"md_value_{index}")
+        ]
+
+
+@pytest.mark.parametrize("value", ["{}", "[]"])
+@pytest.mark.parametrize("remove_groups", [False, True])
+def test_remove_seeds_metadata_only_matches_scalar_json_types(
+    *, uninitialized_memory_interface: AzureSQLMemory, value: str, remove_groups: bool
+) -> None:
+    session = MagicMock(spec=Session)
+    query = MagicMock(spec=Query)
+    session.query.return_value = query
+    query.filter.return_value = query
+    query.delete.return_value = 1
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        if remove_groups:
+            removed = uninitialized_memory_interface._execute_remove_seed_groups_from_memory(
+                metadata={"payload": value}
+            )
+        else:
+            removed = uninitialized_memory_interface._execute_remove_seeds_from_memory(metadata={"payload": value})
+
+    assert removed == 1
+    condition = query.filter.call_args.args[0]
+    compiled = condition.compile(dialect=mssql.dialect())
+    assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
+    assert compiled.params["md_key_0"] == "payload"
+    assert compiled.params["md_value_0"] == value
+    session.commit.assert_called_once()
 
 
 def test_disable_embedding(memory_interface: AzureSQLMemory):
@@ -308,7 +393,31 @@ def test_get_message_pieces_memory_label_conditions_bind_params(uninitialized_me
         memory_labels={"operation": "test_op"}
     )
     params = conditions[0].compile().params
-    assert params == {"are_ml_operation": "test_op"}
+    assert params == {"are_ml_path_0": '$."operation"', "are_ml_0": "test_op"}
+
+
+def test_label_conditions_bind_whole_keys_with_dot_or_hyphen(uninitialized_memory_interface: AzureSQLMemory):
+    """Allowlisted keys with ``.`` or ``-`` build a query that looks up each whole key."""
+    attack_condition = uninitialized_memory_interface._get_attack_result_label_condition(
+        labels={"team.name": ["red", "blue"], "run-id": "r1"}
+    )
+    assert attack_condition.compile().params == {
+        "are_label_path_0": '$."team.name"',
+        "are_label_0_0": "red",
+        "are_label_0_1": "blue",
+        "are_label_path_1": '$."run-id"',
+        "are_label_1_0": "r1",
+    }
+
+    piece_condition = uninitialized_memory_interface._get_message_pieces_memory_label_conditions(
+        memory_labels={"team.name": "red", "run-id": "r1"}
+    )[0]
+    assert piece_condition.compile().params == {
+        "are_ml_path_0": '$."team.name"',
+        "are_ml_0": "red",
+        "are_ml_path_1": '$."run-id"',
+        "are_ml_1": "r1",
+    }
 
 
 async def test_update_entries_async(memory_interface: AzureSQLMemory):
@@ -421,7 +530,7 @@ def test_get_attack_result_label_condition_with_string_value(memory_interface: A
     """String values produce a single-placeholder IN clause with the stringified value."""
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey"})
     params = condition.compile().params
-    assert params == {"are_label_operator_0": "roakey"}
+    assert params == {"are_label_path_0": '$."operator"', "are_label_0_0": "roakey"}
 
 
 def test_get_attack_result_label_condition_with_sequence_value(memory_interface: AzureSQLMemory):
@@ -429,9 +538,10 @@ def test_get_attack_result_label_condition_with_sequence_value(memory_interface:
     condition = memory_interface._get_attack_result_label_condition(labels={"operation": ["op_a", "op_b", "op_c"]})
     params = condition.compile().params
     assert params == {
-        "are_label_operation_0": "op_a",
-        "are_label_operation_1": "op_b",
-        "are_label_operation_2": "op_c",
+        "are_label_path_0": '$."operation"',
+        "are_label_0_0": "op_a",
+        "are_label_0_1": "op_b",
+        "are_label_0_2": "op_c",
     }
 
 
@@ -440,8 +550,7 @@ def test_get_attack_result_label_condition_skips_empty_sequence(memory_interface
     condition = memory_interface._get_attack_result_label_condition(labels={"operator": "roakey", "operation": []})
     params = condition.compile().params
     # operator gets bind params; operation (empty) does not.
-    assert params == {"are_label_operator_0": "roakey"}
-    assert not any("label_operation_" in k for k in params)
+    assert params == {"are_label_path_0": '$."operator"', "are_label_0_0": "roakey"}
 
 
 def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: AzureSQLMemory):
@@ -562,9 +671,10 @@ def test_scenario_history_attempt_ranking_uses_canonical_uuid_order(
     sql = str(statement.compile(dialect=mssql.dialect())).upper()
 
     assert (
-        "HISTORY_UNITS.TIMESTAMP DESC, "
-        "LOWER(CAST(HISTORY_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
+        "HISTORY_CLASSIFIED_UNITS.TIMESTAMP DESC, "
+        "LOWER(CAST(HISTORY_CLASSIFIED_UNITS.ATTEMPT_ID AS VARCHAR(36))) COLLATE LATIN1_GENERAL_100_BIN2 DESC"
     ) in sql
+    assert "HISTORY_CLASSIFIED_UNITS.ATTEMPT_INDEX IS NULL" in sql
 
 
 def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
@@ -923,3 +1033,88 @@ def test_init_prod_with_skip_schema_migration_still_checks():
     finally:
         Singleton._instances.clear()
         Singleton._instances.update(saved)
+
+
+def test_scenario_history_aggregate_uses_sql_server_json_value(memory_interface: AzureSQLMemory) -> None:
+    from sqlalchemy.dialects import mssql
+
+    statement = memory_interface._build_scenario_history_aggregate_statement(
+        entry_ids=[uuid.uuid4()], plan_entry_ids=[uuid.uuid4()]
+    )
+    compiled = statement.compile(dialect=memory_interface.engine.dialect)
+    compiled_str = str(compiled).lower()
+    assert "json_value" in compiled_str
+    assert "$.result_role" in compiled.params.values()
+    assert "latin1_general_100_bin2" in compiled_str
+    assert "datalength" in compiled_str
+
+    mssql_compiled = str(statement.compile(dialect=mssql.dialect())).lower()
+    assert "collate latin1_general_100_bin2" in mssql_compiled
+    assert "datalength" in mssql_compiled
+
+
+def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guard(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    from sqlalchemy import column
+    from sqlalchemy.dialects import mssql
+
+    from pyrit.models import AttackResultRole
+
+    col = column("result_role")
+    condition = memory_interface._get_scenario_role_match_condition(
+        role_expression=col, role=AttackResultRole.TARGET_FACING
+    )
+    compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
+    assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql
+
+
+def test_get_metadata_conditions_binds_special_character_keys(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """Metadata keys are bound literally instead of becoming JSON paths or bind names."""
+    conditions = uninitialized_memory_interface._get_metadata_conditions(
+        prompt_metadata={"a.b": "v1", "prompt-type": "v2"}
+    )
+
+    compiled = conditions[0].compile(dialect=mssql.dialect())
+    sql = str(compiled)
+    assert sql.count("FROM OPENJSON(prompt_metadata)") == 2
+    assert "ISJSON(prompt_metadata) = 1" in sql
+    assert "JSON_VALUE" not in sql
+    assert compiled.params == {
+        "md_key_0": "a.b",
+        "md_value_0": "v1",
+        "md_key_1": "prompt-type",
+        "md_value_1": "v2",
+    }
+
+
+@pytest.mark.parametrize("key", ['a"."b', 'a"b', r"a\b", "", " ", "\u00e9 "])
+@pytest.mark.parametrize("value", ["1", 1])
+def test_metadata_conditions_match_literal_keys_in_all_wrappers(
+    *, uninitialized_memory_interface: AzureSQLMemory, key: str, value: str | int
+) -> None:
+    metadata = {key: value, "selected": 1}
+    direct = uninitialized_memory_interface._get_metadata_conditions(prompt_metadata=metadata)[0]
+    seed = uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata)
+    message = uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata)[0]
+
+    for condition in (direct, seed, message):
+        compiled = condition.compile(dialect=mssql.pyodbc.dialect(paramstyle="qmark"))
+        sql = str(compiled)
+        assert sql.count("FROM OPENJSON(prompt_metadata)") == 2
+        assert "JSON_VALUE" not in sql
+        for index in range(2):
+            assert f"[metadata_{index}].[key] = ?" in sql
+            assert f"DATALENGTH([metadata_{index}].[key]) = DATALENGTH(CAST(? AS NVARCHAR(MAX)))" in sql
+            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            assert f"[metadata_{index}].[value] = ?" in sql
+        assert compiled.params == {
+            "md_key_0": key,
+            "md_value_0": str(value),
+            "md_key_1": "selected",
+            "md_value_1": "1",
+        }
+        assert compiled.positiontup == ["md_key_0", "md_key_0", "md_value_0", "md_key_1", "md_key_1", "md_value_1"]

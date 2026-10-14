@@ -34,6 +34,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
     MAX_ITEMS,
     CursorStr,
     IdentifierStr,
@@ -43,6 +44,7 @@ from pyrit.backend.models.common import (
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
+from pyrit.backend.services.media_persistence import MediaAccessDeniedError
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
@@ -259,6 +261,8 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
         return await service.create_attack_async(request=request)
     except LookupError as e:
         raise FileNotFoundError(str(e)) from e
+    except MediaAccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -361,7 +365,9 @@ async def remove_human_score(attack_result_id: IdentifierStr) -> AttackSummary: 
 )
 async def get_conversation_messages(  # pyrit-async-suffix-exempt
     attack_result_id: IdentifierStr,
-    conversation_id: IdentifierStr = Query(..., description="The conversation_id whose messages to return"),
+    conversation_id: str = Query(
+        ..., max_length=MAX_IDENTIFIER_LENGTH, description="The conversation_id whose messages to return"
+    ),
 ) -> ConversationMessagesResponse:
     """
     Get all messages for a conversation belonging to an attack.

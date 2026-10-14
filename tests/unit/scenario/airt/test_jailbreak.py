@@ -88,7 +88,7 @@ def mock_memory_seed_groups() -> list[AttackSeedGroup]:
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     """Create a mock objective target that cannot carry native system-prompt delivery.
 
     ``configuration.includes(...)`` returns ``False`` so the default technique set degrades to the
@@ -101,7 +101,7 @@ def mock_objective_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_capable_target() -> PromptTarget:
+def mock_capable_target() -> MagicMock:
     """Create a mock objective target that natively supports editable history + system prompts."""
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = ComponentIdentifier(class_name="MockCapableTarget", class_module="test")
@@ -110,7 +110,7 @@ def mock_capable_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_objective_scorer() -> TrueFalseInverterScorer:
+def mock_objective_scorer() -> MagicMock:
     """Create a mock scorer for testing."""
     mock = MagicMock(spec=TrueFalseInverterScorer)
     mock.get_identifier.return_value = ComponentIdentifier(class_name="MockObjectiveScorer", class_module="test")
@@ -232,7 +232,9 @@ class TestJailbreakInitialization:
         assert [component.label for component in estimate.components] == ["Inline jailbreak delivery"]
         assert estimate.datasets[0].logical_seed_group_count is None
         assert estimate.datasets[0].selected_seed_group_count is None
-        assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [("per-dataset cap", 4)]
+        assert [(cap.label, cap.count) for cap in estimate.datasets[0].configured_caps] == [
+            ("combined configuration cap", 4)
+        ]
 
     async def test_run_size_is_conditional_when_system_delivery_target_is_not_selected(
         self, mock_objective_scorer
@@ -356,7 +358,7 @@ class TestJailbreakInitialization:
 
         scenario = Jailbreak(objective_scorer=mock_objective_scorer)
         with patch(
-            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async",
             new_callable=AsyncMock,
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})
@@ -681,9 +683,10 @@ class TestJailbreakSystemPromptDelivery:
         system-role framing seed leaves the seed group with no ``next_message``, so ``PromptSendingAttack``
         must fall back to sending the objective itself as the user turn.
         """
+        from unit.mocks import MockPromptTarget
+
         from pyrit.memory import CentralMemory
         from pyrit.score import SubStringScorer
-        from tests.unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()  # capable: native editable history + system prompt
         technique_class = _build_jailbreak_technique()
@@ -718,9 +721,10 @@ class TestJailbreakSystemPromptDelivery:
         The framing technique declares prepend placement so this merge does not depend on the
         caller's sequence values.
         """
+        from unit.mocks import MockPromptTarget
+
         from pyrit.memory import CentralMemory
         from pyrit.score import SubStringScorer
-        from tests.unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()  # capable: native editable history + system prompt
         technique_class = _build_jailbreak_technique()

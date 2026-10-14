@@ -5,7 +5,7 @@
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN, PaginationInfo
+from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter
 from pyrit.models.catalog.scorer import ScorerInstance
 
@@ -36,5 +36,7 @@ class CreateScorerRequest(BaseModel):
     """Request to construct and register a named scorer."""
 
     name: str = Field(..., min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name")
-    type: str = Field(..., description="Scorer class name")
-    params: dict[str, JSONValue] = Field(default_factory=dict, description="Scorer constructor parameters")
+    type: IdentifierStr = Field(..., description="Scorer class name")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
+    )

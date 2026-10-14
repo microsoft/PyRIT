@@ -15,6 +15,7 @@ import pytest
 
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
+from pyrit.cli._cli_args import parse_run_arguments
 from pyrit.models import Operation, Parameter
 from unit.mocks import make_scenario_result
 
@@ -443,6 +444,7 @@ def _mock_api_client():
         all_techniques=[],
         default_datasets=[],
         supported_parameters=[],
+        supported_parameter_names=[],
     )
     client.start_scenario_run_async.return_value = ScenarioRunSummary(
         scenario_result_id="test-id-123",
@@ -824,6 +826,19 @@ class TestAddScenarioParamsFromApi:
 
 class TestBuildRunRequest:
     """Tests for _build_run_request."""
+
+    @pytest.mark.parametrize("value", [None, "default", "all", "7", ""])
+    def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
+        flags = [] if value is None else ["--max-dataset-size", value]
+        parsed = pyrit_scan.parse_args(["run", "test", "--target", "target", *flags])
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        shell_args = parse_run_arguments(
+            args_string="test --target target " + ("--max-dataset-size ''" if value == "" else " ".join(flags))
+        )
+        assert ("max_dataset_size" in request.model_fields_set) == (value is not None)
+        assert ("max_dataset_size" in shell_args) == (value is not None)
+        expected = 7 if value == "7" else value or "default"
+        assert request.max_dataset_size == shell_args.get("max_dataset_size", "default") == expected
 
     def test_includes_initializer_args(self):
         parsed = Namespace(
@@ -1277,6 +1292,7 @@ class TestMainExtraPaths:
         mock_client.list_scenarios_async.return_value = [
             RegisteredScenario(
                 scenario_name="alt_a",
+                supported_parameter_names=[],
                 scenario_type="X",
                 description="",
                 default_technique="",
@@ -1286,6 +1302,7 @@ class TestMainExtraPaths:
             ),
             RegisteredScenario(
                 scenario_name="alt_b",
+                supported_parameter_names=[],
                 scenario_type="X",
                 description="",
                 default_technique="",
@@ -1758,6 +1775,7 @@ class TestScenarioParamFlow:
         client.list_scenarios_async.return_value = [
             RegisteredScenario(
                 scenario_name="foo",
+                supported_parameter_names=[],
                 scenario_type="X",
                 description="",
                 default_technique="",
@@ -1775,6 +1793,7 @@ class TestScenarioParamFlow:
             all_techniques=[],
             default_datasets=[],
             supported_parameters=typed_params,
+            supported_parameter_names=[parameter.name for parameter in typed_params],
         )
         client.start_scenario_run_async.return_value = ScenarioRunSummary(
             scenario_result_id="rid",

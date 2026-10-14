@@ -241,7 +241,7 @@ async function activateMockTarget(page: Page) {
   const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
   await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
   await objectiveDefault.selectOption({ index: 1 });
-  await page.getByTitle("Chat").click();
+  await page.getByTitle("Technique.execute").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
@@ -277,7 +277,7 @@ async function triggerVisibilityChange(page: Page) {
 // ---------------------------------------------------------------------------
 
 test.describe("Error: accepted send with target processing failure", () => {
-  test("should preserve the draft and offer edit recovery", async ({ page }) => {
+  test("should preserve the draft and offer copy recovery on the submitted prompt", async ({ page }) => {
     let callCount = 0;
     let recoveryRequest: Record<string, unknown> | undefined;
     let recoveryCreated = false;
@@ -343,18 +343,17 @@ test.describe("Error: accepted send with target processing failure", () => {
     await input.fill("Preserve this draft");
     await page.getByRole("button", { name: /send/i }).click();
 
-    await expect(
-      page.getByText(/target could not process this message/i),
-    ).toBeVisible();
-    const recoveryButton = page.getByRole("button", {
-      name: /edit in clean conversation/i,
-    });
-    await expect(recoveryButton).toHaveCount(1);
+    await expect(page.getByTestId("message-list")).toContainText(
+      "RuntimeError: target failed\nTraceback (most recent call last): ...",
+    );
+    await expect(page.getByRole("button", { name: /edit in clean conversation/i })).toHaveCount(0);
     await expect(input).toHaveValue("Preserve this draft");
     await expect(input).toBeDisabled();
-    await expect(page.getByText(/Traceback \(most recent call last\)/i)).toHaveCount(0);
 
-    await recoveryButton.click();
+    await page.getByTestId(/^message-bubble-/)
+      .filter({ hasText: "Preserve this draft" })
+      .getByRole("button", { name: "Copy conversation", exact: true }).click();
+    await page.getByRole("menuitem", { name: "New conversation", exact: true }).click();
     await expect.poll(() => recoveryRequest).toEqual({
       source_conversation_id: MOCK_CONV_ID,
       cutoff_index: 1,
@@ -505,7 +504,7 @@ test.describe("Error: connection banner on health failure", () => {
   }) => {
     // Let the page load normally first
     await page.goto("/");
-    await expect(page.getByTitle("Chat")).toBeVisible({
+    await expect(page.getByTitle("Technique.execute")).toBeVisible({
       timeout: 10000,
     });
 
@@ -553,7 +552,7 @@ test.describe("Error: connection banner recovery", () => {
     });
 
     await page.goto("/");
-    await expect(page.getByTitle("Chat")).toBeVisible({
+    await expect(page.getByTitle("Technique.execute")).toBeVisible({
       timeout: 10000,
     });
 

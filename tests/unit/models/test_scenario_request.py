@@ -6,7 +6,147 @@
 import pytest
 from pydantic import ValidationError
 
+from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest
 from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest, ScenarioRunSizeEstimateRequest
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_new_dataset_request_transport_round_trip(model: type) -> None:
+    data = {
+        "scenario_name": "s",
+        "target_name": "t",
+        "datasets": {
+            "sources": [{"name": "harmbench"}, {"name": "custom", "max_size": "all", "fetch": "never"}],
+            "max_per_dataset": 4,
+            "max_total": 12,
+            "fetch": "if_missing",
+            "filters": {"data_types": ["text"]},
+        },
+    }
+    request = model.model_validate(data)
+    assert request.dataset_request == request.datasets
+    assert model.model_validate(request.model_dump(mode="json", exclude_none=True)) == request
+    assert model.model_validate_json(request.model_dump_json()) == request
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+@pytest.mark.parametrize(
+    "legacy",
+    [{"dataset_names": ["a"]}, {"max_dataset_size": 3}, {"dataset_filters": {"data_types": ["text"]}}],
+)
+def test_new_dataset_request_rejects_deprecated_values(*, model: type, legacy: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="not both"):
+        model.model_validate({"scenario_name": "s", "target_name": "t", "datasets": {"max_total": 2}, **legacy})
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_new_dataset_request_accepts_deprecated_defaults(model: type) -> None:
+    request = model.model_validate(
+        {
+            "scenario_name": "s",
+            "target_name": "t",
+            "datasets": {"max_total": 2},
+            "dataset_names": None,
+            "max_dataset_size": "default",
+            "dataset_filters": None,
+        }
+    )
+    assert request.dataset_request == ScenarioDatasetRequest(max_total=2)
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_deprecated_dataset_fields_convert_to_one_request(model: type) -> None:
+    request = model.model_validate(
+        {
+            "scenario_name": "s",
+            "target_name": "t",
+            "dataset_names": ["a", "b"],
+            "max_dataset_size": 3,
+            "dataset_filters": {"data_types": ["text"]},
+        }
+    )
+    assert request.datasets is None
+    assert request.dataset_request == ScenarioDatasetRequest(
+        sources=[DatasetSourceInput(name="a"), DatasetSourceInput(name="b")],
+        max_total=3,
+        filters={"data_types": ["text"]},
+    )
+    assert model.model_validate({"scenario_name": "s", "target_name": "t"}).dataset_request is None
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_invalid_deprecated_dataset_names_fail_validation(model: type) -> None:
+    with pytest.raises(ValidationError, match="Duplicate"):
+        model.model_validate({"scenario_name": "s", "target_name": "t", "dataset_names": ["a", "a"]})
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"sources": []},
+        {"sources": [{"name": "a"}, {"name": "a"}]},
+        {"sources": [{"name": " "}]},
+        {"sources": [{"name": "a", "provider": {}}]},
+        {"max_total": True},
+        {"max_per_dataset": 0},
+        {"max_total": 1.5},
+        {"fetch": "always"},
+        {"filters": {"authors": ["me"]}},
+        {"filters": {"data_types": "text"}},
+        {"unexpected": True},
+    ],
+)
+def test_shared_dataset_request_rejects_invalid_inputs(data: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        ScenarioDatasetRequest.model_validate(data)
+
+
+@pytest.mark.parametrize("value", [None, "", "default"])
+def test_shared_dataset_request_default_semantics(value: object) -> None:
+    request = ScenarioDatasetRequest.model_validate({"max_total": value, "max_per_dataset": value, "fetch": value})
+    assert request.max_total == request.max_per_dataset == "default"
+    assert request.fetch is None
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        (None, "default"),
+        ("", "default"),
+        ("  ", "default"),
+        ("default", "default"),
+        (" DEFAULT ", "default"),
+        ("all", "all"),
+        (" ALL ", "all"),
+        (7, 7),
+        ("7", 7),
+    ],
+)
+def test_dataset_limit_values(
+    *, model: type[RunScenarioRequest] | type[ScenarioRunSizeEstimateRequest], limit: object, expected: object
+) -> None:
+    request = model.model_validate({"scenario_name": "s", "target_name": "t", "max_dataset_size": limit})
+    assert request.max_dataset_size == expected
+    assert request.model_dump(mode="json")["max_dataset_size"] == expected
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+@pytest.mark.parametrize("limit", [0, -1, True, False, 1.0, 1.5, "unlimited", [], {}])
+def test_dataset_limit_rejects_invalid_values(
+    *, model: type[RunScenarioRequest] | type[ScenarioRunSizeEstimateRequest], limit: object
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate({"scenario_name": "s", "target_name": "t", "max_dataset_size": limit})
+
+
+@pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
+def test_omitted_limit_uses_explicit_default(
+    model: type[RunScenarioRequest] | type[ScenarioRunSizeEstimateRequest],
+) -> None:
+    request = model.model_validate({"scenario_name": "s", "target_name": "t"})
+    assert request.max_dataset_size == "default"
+    assert request.model_dump(mode="json")["max_dataset_size"] == "default"
 
 
 def _make_request(*, dataset_filters: dict[str, list[str]] | None) -> RunScenarioRequest:

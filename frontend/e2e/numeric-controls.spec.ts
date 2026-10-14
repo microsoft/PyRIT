@@ -1,10 +1,26 @@
 import { expect, test, type Locator, type Page } from './_fixtures'
 import { mockVersion } from './_compatibility'
 
-import type { RegisteredScenario } from '../src/types'
+import type { RegisteredScenario, ScenarioDatasetRequest, ScenarioDatasetSettings } from '../src/types'
 
 import { READY_RUNTIME } from './_runtime'
 import { makeTarget } from './_targets'
+
+const DATASET_DEFAULTS: ScenarioDatasetSettings = {
+  sources: [{ name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+  max_per_dataset: 5, max_total: 5, fetch: 'if_missing', filters: {},
+}
+const DATASET_OPTIONS = {
+  mode: 'any' as const, allowed_names: [], per_dataset_limit: true,
+  total_limit: true, supports_overrides: true, source_settings: true, filters: true,
+}
+const DATASETS = {
+  items: [
+    { name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: false, provider_available: true, origins: [], logical_examples: null },
+    { name: 'custom_objectives', selection_key: 'dataset:named:custom_objectives', loaded: true, provider_available: false,
+      origins: ['user'], logical_examples: 10, modalities: ['text', 'image_path'], harm_categories: [], has_unlabeled_harm_categories: false },
+  ],
+}
 
 const SCENARIO: RegisteredScenario = {
   scenario_name: 'numeric-controls',
@@ -18,16 +34,23 @@ const SCENARIO: RegisteredScenario = {
   default_technique: 'prompt_sending',
   default_techniques: ['prompt_sending'],
   technique_summaries: [{ name: 'prompt_sending', description: null, tags: [] }],
-  default_datasets: [],
+  default_datasets: ['harmbench'],
+  dataset_defaults: DATASET_DEFAULTS,
+  dataset_options: DATASET_OPTIONS,
   baseline_policy: 'disabled',
   include_baseline_by_default: false,
   supported_parameters: [
     { name: 'iterations', type_name: 'int', required: false, default: '2', choices: null, is_list: false },
     { name: 'temperature', type_name: 'float', required: false, default: '0.5', choices: null, is_list: false },
   ],
+  supported_parameter_names: [
+    'objective_target', 'scenario_techniques', 'dataset_config', 'dataset_overrides', 'memory_labels',
+    'max_concurrency', 'max_retries', 'include_baseline', 'iterations', 'temperature',
+  ],
   default_run_size: {
     dataset_size: { kind: 'indeterminate', reason: 'configuration_unavailable', detail: 'Population configuration is not available.' },
-    dataset_limit: { state: 'scenario_default' },
+    dataset_limit: { state: 'value', value: 5 },
+    dataset_defaults: DATASET_DEFAULTS, effective_datasets: DATASET_DEFAULTS, dataset_options: DATASET_OPTIONS,
     estimated_attack_count: null,
     components: [],
     datasets: [],
@@ -36,6 +59,7 @@ const SCENARIO: RegisteredScenario = {
 }
 
 async function mockNumericControlApis(page: Page): Promise<void> {
+  let datasetItems = DATASETS.items.map((item) => ({ ...item }))
   // No backend, model calls, or connections to another worktree's HMR server.
   await page.routeWebSocket('**/*', (socket) => socket.close())
   await page.route('**/api/**', async (route) => {
@@ -70,8 +94,37 @@ async function mockNumericControlApis(page: Page): Promise<void> {
         ],
       },
       '/api/labels': { source: 'attacks', labels: {} },
+      '/api/datasets': { items: datasetItems },
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}`]: SCENARIO,
       [`/api/scenarios/catalog/${SCENARIO.scenario_name}/estimate`]: SCENARIO.default_run_size,
+    }
+    if (path.endsWith('/datasets/load')) {
+      const edits: ScenarioDatasetRequest = route.request().postDataJSON()?.datasets ?? {}
+      const names = (edits.sources ?? DATASET_DEFAULTS.sources).map((source) => source.name)
+      datasetItems = datasetItems.map((item) => names.includes(item.name)
+        ? { ...item, loaded: true, logical_examples: 200, modalities: ['text'], harm_categories: ['malware'] }
+        : item)
+      await route.fulfill({ json: { settings: DATASET_DEFAULTS, items: datasetItems.filter((item) => names.includes(item.name)) } })
+      return
+    }
+    if (path.endsWith('/estimate')) {
+      const edits: ScenarioDatasetRequest = route.request().postDataJSON()?.datasets ?? {}
+      const limit = (value: ScenarioDatasetRequest['max_total'], fallback: number | 'all'): number | 'all' =>
+        typeof value === 'number' || value === 'all' ? value : fallback
+      const effective: ScenarioDatasetSettings = {
+        ...DATASET_DEFAULTS,
+        max_per_dataset: limit(edits.max_per_dataset, DATASET_DEFAULTS.max_per_dataset),
+        max_total: limit(edits.max_total, DATASET_DEFAULTS.max_total),
+        fetch: edits.fetch === 'never' || edits.fetch === 'if_missing' ? edits.fetch : DATASET_DEFAULTS.fetch,
+        sources: (edits.sources ?? DATASET_DEFAULTS.sources).map((source) => ({
+          name: source.name,
+          max_size: limit(source.max_size, DATASET_DEFAULTS.max_per_dataset),
+          fetch: source.fetch === 'never' || source.fetch === 'if_missing' ? source.fetch : DATASET_DEFAULTS.fetch,
+          configured_provider: false,
+        })),
+      }
+      await route.fulfill({ json: { ...SCENARIO.default_run_size, effective_datasets: effective } })
+      return
     }
     if (!(path in responses)) {
       await route.abort()
@@ -164,21 +217,48 @@ test('scenario steppers commit typed values before stepping and clamp at existin
   await expect(page.getByRole('spinbutton', { name: 'Max concurrency', exact: true })).toHaveValue('10')
 })
 
-test('native scenario dataset and shared dynamic parameter controls step once', async ({ page }) => {
+test('native shared dynamic parameter controls step once', async ({ page }) => {
   await page.goto(`/scanner/${SCENARIO.scenario_name}`)
-  const datasetSize = page.getByRole('spinbutton', { name: 'Max dataset size', exact: true })
-  await expectNativeSteps(datasetSize, 2)
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'iterations', exact: true }), 2)
   // The existing dynamic float input has native step=1 with a fractional base.
   await expectNativeSteps(page.getByRole('spinbutton', { name: 'temperature', exact: true }), 0.5)
-  await datasetSize.fill('1')
-  await clickNativeSpinner(datasetSize, 'down')
-  await expect(datasetSize).toHaveValue('1')
-  await datasetSize.press('ArrowDown')
-  await expect(datasetSize).toHaveValue('1')
-  await datasetSize.fill('')
-  await datasetSize.press('Tab')
-  await expect(datasetSize).toHaveValue('')
+})
+
+test('dataset sources and explicit loading are separate from Parameters', async ({ page }, testInfo) => {
+  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  await expect(section.getByRole('table', { name: 'Selected datasets' })).toBeVisible()
+  await expect(section.getByRole('columnheader', { name: 'Size' })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5')
+  await expect(section.getByText('Load dataset to see details', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Parameters' }).getByRole('table')).toHaveCount(0)
+  await expect(section.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveText('Up to 5')
+  await expect(section.getByText('Details and advanced settings')).toHaveCount(0)
+  await section.screenshot({ path: testInfo.outputPath('datasets-default.png') })
+  await section.getByRole('button', { name: 'Load datasets' }).click()
+  await expect(section.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveText('Up to 5 of 200')
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
+  await expect(section.getByRole('switch')).toHaveCount(0)
+  await expect(section.getByRole('button', { name: 'Filter harm category malware' })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Filter data type Text' })).toBeVisible()
+  await section.screenshot({ path: testInfo.outputPath('datasets-loaded.png') })
+  await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
+  const total = page.getByRole('textbox', { name: 'Maximum objectives', exact: true })
+  await total.fill('12')
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await section.screenshot({ path: testInfo.outputPath('datasets-custom.png') })
+  await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
+  await total.fill('0')
+  await total.press('Escape')
+  await section.getByRole('button', { name: 'Reset datasets' }).click()
+  await expect(section.getByRole('alert')).toContainText('Maximum objectives must be a positive integer')
+  await expect(page.getByRole('button', { name: 'Launch scan', exact: true })).toBeDisabled()
+  await section.screenshot({ path: testInfo.outputPath('datasets-invalid.png') })
+  await section.getByRole('button', { name: 'Edit Maximum objectives' }).click()
+  await expect(total).toHaveValue('0')
+  await page.getByRole('button', { name: 'Reset to 5', exact: true }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(section.getByRole('alert')).not.toBeVisible()
 })
 
 test('native Azure ML advanced controls retain steps and reset to default guidance', async ({ page }) => {
@@ -204,6 +284,43 @@ test('native Azure ML advanced controls retain steps and reset to default guidan
   const resetTemperature = dialog.getByRole('spinbutton', { name: 'Temperature', exact: true })
   await expect(resetTemperature).toHaveValue('')
   await expect(resetTemperature).toHaveAttribute('placeholder', 'Defaults to 1.0')
+})
+
+test('dataset rows add immediately, edit in place, share filters, and reset without loading', async ({ page }) => {
+  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  await section.getByRole('combobox', { name: 'Add dataset' }).click()
+  await page.getByRole('option', { name: 'custom_objectives', exact: true }).click()
+  await expect(section.getByText('custom_objectives', { exact: true })).toBeVisible()
+  await section.getByRole('button', { name: 'Remove harmbench' }).click()
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
+  await section.getByRole('button', { name: 'Edit custom_objectives objective limit' }).click()
+  await page.getByRole('textbox', { name: 'custom_objectives objective limit' }).fill('3')
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(section.getByRole('button', { name: 'Edit custom_objectives objective limit' })).toHaveText('Up to 3 of 10')
+  await section.getByRole('button', { name: 'Filter data type Image' }).click()
+  await expect(section.getByRole('button', { name: 'Filter data type Text' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(section.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+  await expect(section.getByText('Filters:', { exact: true })).toHaveCount(0)
+  await section.getByRole('button', { name: 'Reset datasets' }).click()
+  await expect(section.getByText('harmbench', { exact: true })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toBeVisible()
+  await expect(section.getByRole('button', { name: 'Remove type filter text' })).toHaveCount(0)
+})
+
+test('dataset manual loading keeps an explicit load-on-start switch override', async ({ page }) => {
+  await page.goto(`/scanner/${SCENARIO.scenario_name}`)
+  const section = page.getByRole('region', { name: 'Datasets', exact: true })
+  const policy = section.getByRole('switch', { name: 'Load missing data when the scan starts' })
+  await expect(policy).toBeChecked()
+  await policy.click()
+  const load = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/datasets/load'))
+  await section.getByRole('button', { name: 'Load datasets' }).click()
+  const request = await load
+  expect(request.postDataJSON().datasets.fetch).toBe('never')
+  expect(request.postDataJSON().datasets.sources[0].fetch).toBe('never')
+  await expect(section.getByRole('button', { name: 'Load datasets' })).toHaveCount(0)
+  await expect(policy).toHaveCount(0)
 })
 
 test('native round-robin weights step once and preserve bounds and integer validation', async ({ page }) => {

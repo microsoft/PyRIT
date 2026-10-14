@@ -161,6 +161,22 @@ async def test_punctuation_handling(input_text, expected_output):
     assert result.output_text == expected_output
 
 
+@pytest.mark.parametrize(
+    "input_text,expected_output",
+    [
+        ("Ask (father) first.", "Ask (papa) first."),
+        ('"mother" said hi', '"mama" said hi'),
+        ("My father-in-law called.", "My papa-in-law called."),
+        ("e-mail your brother", "e-mail your bro"),
+        ("a 'quoted' word", "a 'quoted' word"),
+    ],
+)
+async def test_punctuation_attached_to_words(input_text, expected_output):
+    converter = ColloquialWordswapConverter(deterministic=True)
+    result = await converter.convert_async(prompt=input_text)
+    assert result.output_text == expected_output
+
+
 def test_colloquial_converter_input_supported() -> None:
     converter = ColloquialWordswapConverter()
     assert converter.input_supported("text") is True

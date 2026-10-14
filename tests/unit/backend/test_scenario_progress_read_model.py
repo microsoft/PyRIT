@@ -12,11 +12,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.analytics.scenario_statistics import compute_scenario_statistics
+from pyrit.backend.models.attacks import UpdateAttackRequest
+from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioPlanLookup,
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
+from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.exceptions import ScenarioPartialFailureException
 from pyrit.executor.attack import (
     AttackScoringConfig,
@@ -41,6 +45,7 @@ from pyrit.models import (
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
+    ScenarioRunState,
     SeedObjective,
 )
 from pyrit.prompt_target import PromptTarget
@@ -54,6 +59,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import (
     TechniqueBundle,
 )
 from pyrit.score import Scorer, SubStringScorer
+from unit.async_utils import get_defined_tasks
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
 
@@ -237,7 +243,7 @@ async def test_cancelled_waiter_preserves_global_refresh_lock() -> None:
         assert not read_model._cache_lock.locked()
     finally:
         release.set()
-        tasks = [task for task in (owner, waiter, successor) if task is not None]
+        tasks = get_defined_tasks(owner, waiter, successor)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -680,7 +686,9 @@ class TestScenarioResultRoles:
         labels = {result.attack_result_id: result.labels[ADAPTIVE_ATTEMPT_LABEL] for result in stored}
         assert labels == {single_id: "1", **dict.fromkeys(nested.child_attack_result_ids, "2")}
 
-    async def test_roles_do_not_change_progress_counts_async(self, sqlite_instance: MemoryInterface) -> None:
+    async def test_roles_preserve_unit_counts_but_remove_duplicate_retry_pressure_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
         snapshot, plan, run_id = await _run_and_read_progress_async(
             memory=sqlite_instance,
             build_atomic_attacks=lambda target: [
@@ -715,8 +723,24 @@ class TestScenarioResultRoles:
         )
 
         assert {result.result_role for result in legacy.results} == {AttackResultRole.UNKNOWN}
-        assert legacy.summary == snapshot.summary
+
+        def _strip(obj):
+            if isinstance(obj, dict):
+                obj.pop("producer_counts", None)
+                obj.pop("retries", None)
+                for v in obj.values():
+                    _strip(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _strip(item)
+            return obj
+
+        legacy_dump = _strip(legacy.summary.model_dump())
+        snapshot_dump = _strip(snapshot.summary.model_dump())
+        assert legacy_dump == snapshot_dump
         assert snapshot.summary.overall.planned == 2
+        assert snapshot.summary.overall.retries == 2
+        assert legacy.summary.overall.retries == 4
 
 
 @pytest.mark.parametrize(
@@ -831,3 +855,225 @@ async def test_preparation_failure_stays_separate_from_result_role_async(sqlite_
     assert mapped.outcome is AttackOutcome.UNDETERMINED
     assert mapped.child_attack_result_ids == []
     assert AttackPreparationFailure.from_result(result=stored) == failure
+
+
+async def test_get_snapshot_replaces_and_reorders_reemitted_delta_async() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    before = _make_delta(run_id="run-state", index=-1)
+    delta = _make_delta(run_id="run-state", index=0)
+    after = _make_delta(run_id="run-state", index=1)
+    bumped = delta.model_copy(
+        update={"outcome": AttackOutcome.FAILURE, "timestamp": delta.timestamp + timedelta(seconds=99)}
+    )
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(
+        side_effect=[([before, delta, after], False), ([bumped], False), ([], False)]
+    )
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    first = await _get_snapshot_async(read_model=read_model, run_id="run-state")
+    second = await _get_snapshot_async(read_model=read_model, run_id="run-state")
+    unchanged = await _get_snapshot_async(read_model=read_model, run_id="run-state")
+
+    assert first.deltas == (before, delta, after)
+    assert first.results[1].outcome == AttackOutcome.SUCCESS
+    assert first.summary.overall.succeeded == 3
+    assert second.deltas == (before, after, bumped)
+    assert [result.attack_result_id for result in second.results] == [
+        before.attack_result_id,
+        after.attack_result_id,
+        delta.attack_result_id,
+    ]
+    assert second.results[0] is first.results[0]
+    assert second.results[-1].outcome == AttackOutcome.FAILURE
+    assert second.summary.overall.succeeded == 2
+    assert second.summary.overall.retries == 0
+    assert unchanged.results == second.results
+    assert unchanged.summary is second.summary
+
+
+async def test_get_snapshot_orders_replacements_and_new_rows_across_pages_async() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    deltas = [
+        _make_delta(run_id="run-pages", index=index).model_copy(
+            update={"attack_result_id": str(uuid.UUID(int=result_id))}
+        )
+        for index, result_id in enumerate((1, 3, 4))
+    ]
+    timestamp = deltas[-1].timestamp + timedelta(seconds=1)
+    first_bumped, second_bumped = [delta.model_copy(update={"timestamp": timestamp}) for delta in deltas[:2]]
+    appended = first_bumped.model_copy(update={"attack_result_id": str(uuid.UUID(int=2))})
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(
+        side_effect=[
+            (deltas, False),
+            ([first_bumped, appended], True),
+            ([second_bumped], False),
+        ]
+    )
+    read_model = ScenarioProgressReadModel(memory=memory)
+    await _get_snapshot_async(read_model=read_model, run_id="run-pages")
+    snapshot = await _get_snapshot_async(read_model=read_model, run_id="run-pages")
+
+    assert snapshot.deltas == (deltas[2], first_bumped, appended, second_bumped)
+    assert [result.attack_result_id for result in snapshot.results] == [
+        delta.attack_result_id for delta in snapshot.deltas
+    ]
+    assert memory.get_scenario_attack_result_deltas_async.call_args.kwargs["cursor"] == AttackResultKeysetCursor(
+        timestamp=timestamp, attack_result_id=appended.attack_result_id
+    )
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+async def test_get_snapshot_recovers_reordered_replacement_after_interrupted_refresh_async(
+    error_type: type[BaseException],
+) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    first = _make_delta(run_id="run-interrupted", index=0)
+    second = _make_delta(run_id="run-interrupted", index=1)
+    bumped = first.model_copy(
+        update={"timestamp": second.timestamp + timedelta(seconds=1), "outcome": AttackOutcome.FAILURE}
+    )
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(
+        side_effect=[([first, second], False), ([bumped], True), error_type(), ([], False)]
+    )
+    read_model = ScenarioProgressReadModel(memory=memory)
+    initial = await _get_snapshot_async(read_model=read_model, run_id="run-interrupted")
+
+    with pytest.raises(error_type):
+        await _get_snapshot_async(read_model=read_model, run_id="run-interrupted")
+    assert not read_model._cache_lock.locked()
+    refreshed = await _get_snapshot_async(read_model=read_model, run_id="run-interrupted")
+
+    assert initial.deltas == (first, second)
+    assert initial.summary.overall.succeeded == 2
+    assert refreshed.deltas == (second, bumped)
+    assert [result.outcome for result in refreshed.results] == [AttackOutcome.SUCCESS, AttackOutcome.FAILURE]
+    assert refreshed.summary.overall.succeeded == 1
+    assert memory.get_scenario_attack_result_deltas_async.call_args.kwargs["cursor"] == AttackResultKeysetCursor(
+        timestamp=bumped.timestamp, attack_result_id=bumped.attack_result_id
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("limit", [1, 500])
+async def test_progress_pages_keep_all_results_after_real_attack_edit_async(
+    *, sqlite_instance: MemoryInterface, limit: int
+) -> None:
+    scenario = make_scenario_result(
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    rows = [
+        AttackResult(
+            attack_result_id=str(uuid.UUID(int=index + 1)),
+            conversation_id=str(uuid.uuid4()),
+            objective=f"describe everyday object {index}",
+            outcome=AttackOutcome.FAILURE,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
+            attribution_parent_id=str(scenario.id),
+            attribution_data={"parent_collection": "attack", "seed_group_id": f"seed-{index}"},
+        )
+        for index in range(limit + 1)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=rows)
+    service = ScenarioRunService()
+    try:
+        initial = await service.get_run_progress_async(scenario_result_id=str(scenario.id), since=None, limit=500)
+        assert initial is not None
+        initial_payload = initial.model_dump(mode="json")
+        edited = rows[limit - 1]
+        updated = await AttackService().update_attack_async(
+            attack_result_id=edited.attack_result_id, request=UpdateAttackRequest(outcome="success")
+        )
+        assert updated is not None
+
+        first_page = await service.get_run_progress_async(scenario_result_id=str(scenario.id), since=None, limit=limit)
+        assert first_page is not None
+        expected_ids = [row.attack_result_id for row in rows if row is not edited] + [edited.attack_result_id]
+        assert [result.attack_result_id for result in first_page.results] == expected_ids[:limit]
+        assert first_page.has_more
+        last_page = await service.get_run_progress_async(
+            scenario_result_id=str(scenario.id), since=first_page.next_cursor, limit=limit
+        )
+        assert last_page is not None
+        assert [result.attack_result_id for result in last_page.results] == expected_ids[limit:]
+        assert last_page.results[0].outcome == AttackOutcome.SUCCESS
+        assert not last_page.has_more
+        assert last_page.summary.overall.completed == limit + 1
+        assert last_page.summary.overall.succeeded == 1
+        assert last_page.summary.overall.retries == 0
+        assert last_page.summary.overall.producer_counts.unknown.attempts == limit + 1
+
+        replay = await service.get_run_progress_async(
+            scenario_result_id=str(scenario.id), since=first_page.next_cursor, limit=limit
+        )
+        assert replay is not None
+        assert replay.results == last_page.results
+        assert replay.next_cursor == last_page.next_cursor
+        empty = await service.get_run_progress_async(
+            scenario_result_id=str(scenario.id), since=last_page.next_cursor, limit=limit
+        )
+        assert empty is not None
+        assert empty.results == []
+        assert not empty.has_more
+        assert empty.next_cursor == last_page.next_cursor
+        assert initial.model_dump(mode="json") == initial_payload
+    finally:
+        await service.close_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_progress_latest_edited_attempt_matches_sdk_and_cold_cache_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    scenario = make_scenario_result(
+        attack_results={},
+        objective_target_identifier=get_mock_target_identifier(),
+        scenario_run_state=ScenarioRunState.COMPLETED,
+    )
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+    rows = [
+        AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="describe an everyday object",
+            outcome=AttackOutcome.FAILURE,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
+            attribution_parent_id=str(scenario.id),
+            attribution_data={"parent_collection": "attack", "seed_group_id": "seed"},
+        )
+        for index in range(2)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=rows)
+    warm_service = ScenarioRunService()
+    cold_service = ScenarioRunService()
+    try:
+        initial = await warm_service.get_run_progress_async(scenario_result_id=str(scenario.id), since=None, limit=500)
+        assert initial is not None
+        assert initial.summary.overall.succeeded == 0
+        updated = await AttackService().update_attack_async(
+            attack_result_id=rows[0].attack_result_id, request=UpdateAttackRequest(outcome="success")
+        )
+        assert updated is not None
+        warm = await warm_service.get_run_progress_async(
+            scenario_result_id=str(scenario.id), since=initial.next_cursor, limit=500
+        )
+        cold = await cold_service.get_run_progress_async(scenario_result_id=str(scenario.id), since=None, limit=500)
+        [stored] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[str(scenario.id)])
+        sdk = compute_scenario_statistics(stored)
+
+        assert warm is not None and cold is not None
+        assert [result.attack_result_id for result in warm.results] == [rows[0].attack_result_id]
+        assert [result.attack_result_id for result in cold.results] == [
+            rows[1].attack_result_id,
+            rows[0].attack_result_id,
+        ]
+        assert warm.summary == cold.summary
+        assert warm.summary.overall == sdk.overall
+        assert warm.summary.overall.completed == 1
+        assert warm.summary.overall.succeeded == 1
+        assert warm.summary.overall.retries == 1
+        assert warm.summary.overall.producer_counts.unknown.attempts == 2
+    finally:
+        await warm_service.close_async()
+        await cold_service.close_async()

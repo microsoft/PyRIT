@@ -135,7 +135,7 @@ class ScenarioProgressReadModel:
         async with self._cache_lock:
             entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
-            await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
+            deltas_updated = await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
             return self._build_snapshot(
                 entry=entry,
                 first_new_index=first_new_index,
@@ -144,6 +144,7 @@ class ScenarioProgressReadModel:
                 active_group_ids=active_group_ids,
                 terminal=terminal,
                 objective_scorer_identifier=objective_scorer_identifier,
+                deltas_updated=deltas_updated,
             )
 
     def _get_cache_entry(
@@ -178,6 +179,7 @@ class ScenarioProgressReadModel:
         active_group_ids: Sequence[str],
         terminal: bool,
         objective_scorer_identifier: ComponentIdentifier | None,
+        deltas_updated: bool = False,
     ) -> ScenarioProgressSnapshot:
         summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
         if len(entry.results) < len(entry.deltas):
@@ -192,7 +194,12 @@ class ScenarioProgressReadModel:
             terminal=terminal,
             plan_complete=plan_complete,
         )
-        if entry.summary is None or first_new_index < len(entry.deltas) or entry.summary_state != summary_state:
+        if (
+            entry.summary is None
+            or deltas_updated
+            or first_new_index < len(entry.deltas)
+            or entry.summary_state != summary_state
+        ):
             technique_details_by_group = self._build_technique_details_by_group(
                 deltas=entry.deltas,
                 results=entry.results,
@@ -215,13 +222,40 @@ class ScenarioProgressReadModel:
             plan=summary_plan,
         )
 
-    async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> None:
-        """Hydrate every persisted delta after the cached keyset cursor."""
+    async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> bool:
+        """
+        Hydrate persisted deltas while preserving their timestamp/ID keyset order.
+
+        Returns:
+            bool: Whether any delta was appended or replaced, so the summary rebuilds.
+        """
+        changed = False
         while True:
             page, has_more = await self._memory.get_scenario_attack_result_deltas_async(
                 scenario_result_id=scenario_result_id, cursor=entry.cursor, limit=self._STORAGE_PAGE_SIZE
             )
-            entry.deltas.extend(page)
+            # The keyset is ordered by (timestamp, id), so an edited row whose timestamp
+            # moved forward is emitted again after the cursor. Such a re-emission is an
+            # update of an attempt already cached, never a second attempt (#3183).
+            positions = {delta.attack_result_id: index for index, delta in enumerate(entry.deltas)}
+            replaced_from: int | None = None
+            for delta in page:
+                position = positions.get(delta.attack_result_id)
+                if position is None:
+                    positions[delta.attack_result_id] = len(entry.deltas)
+                    entry.deltas.append(delta)
+                    changed = True
+                else:
+                    entry.deltas[position] = delta
+                    changed = True
+                    replaced_from = position if replaced_from is None else min(replaced_from, position)
+            if replaced_from is not None:
+                # Timestamp bumps move attempts forward; paging and latest-attempt
+                # selection need the affected suffix in keyset order.
+                entry.deltas[replaced_from:] = sorted(
+                    entry.deltas[replaced_from:], key=lambda delta: (delta.timestamp, delta.attack_result_id)
+                )
+                del entry.results[replaced_from:]
             if page:
                 last = page[-1]
                 entry.cursor = AttackResultKeysetCursor(
@@ -229,7 +263,7 @@ class ScenarioProgressReadModel:
                     attack_result_id=last.attack_result_id,
                 )
             if not has_more:
-                return
+                return changed
             if not page:
                 raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
 
@@ -267,19 +301,16 @@ class ScenarioProgressReadModel:
         *,
         scenario_result: ScenarioResult,
         plan: ScenarioRunPlan | None,
-    ) -> tuple[int, int, int, int]:
+    ) -> ScenarioProgressCounts:
         """
         Calculate planned-unit totals without inflating retries or error attempts.
 
         Delegates to ``pyrit.analytics.scenario_statistics`` so run details match the SDK and reports.
 
         Returns:
-            tuple[int, int, int, int]: Total, completed, success-rate percentage,
-                and successful-unit count.
+            ScenarioProgressCounts: The calculated progress counts.
         """
-        overall = compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
-        total = overall.planned if overall.planned is not None else overall.completed
-        return total, overall.completed, overall.success_percentage or 0, overall.succeeded
+        return compute_scenario_statistics(scenario_result, plan=plan, use_saved_plan=False).overall
 
     @staticmethod
     def total_retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
@@ -343,8 +374,18 @@ class ScenarioProgressReadModel:
             )
             attempts_by_unit.setdefault(identity, []).append(result)
 
-        def aggregate(*, units: Sequence[ResultUnitIdentity], planned: int | None) -> ScenarioProgressCounts:
-            return count_execution_units(units=units, attempts_by_unit=attempts_by_unit, planned=planned)
+        def aggregate(
+            *,
+            units: Sequence[ResultUnitIdentity],
+            planned: int | None,
+            producer_attempts: Sequence[ScenarioProgressResult] | None = None,
+        ) -> ScenarioProgressCounts:
+            return count_execution_units(
+                units=units,
+                attempts_by_unit=attempts_by_unit,
+                planned=planned,
+                producer_attempts=producer_attempts,
+            )
 
         group_units: dict[str, list[ResultUnitIdentity]] = {
             group.id: [
@@ -359,6 +400,7 @@ class ScenarioProgressReadModel:
         overall = aggregate(
             units=overall_units,
             planned=len(overall_units) if plan_complete else None,
+            producer_attempts=results,
         )
         planned_units = set(overall_units)
         unattributed_attempts = sum(
@@ -367,14 +409,22 @@ class ScenarioProgressReadModel:
         if unattributed_attempts:
             logger.warning(
                 "%d persisted attempt(s) matched no planned execution unit and are excluded from "
-                "scenario progress rollups.",
+                "logical-unit progress rollups, but retained in overall producer counts.",
                 unattributed_attempts,
             )
-        latest_results = [attempts_by_unit[unit][-1] for unit in overall_units if attempts_by_unit.get(unit)]
+        latest_results = [
+            completions[-1]
+            for unit in overall_units
+            if (completions := [result for result in attempts_by_unit.get(unit, ()) if result.attempt_index is None])
+        ]
         objective_scorer = ScenarioProgressReadModel._build_objective_scorer(
             scorer_identifier=objective_scorer_identifier,
             results=latest_results,
         )
+
+        results_by_atomic_group_id: dict[str, list[ScenarioProgressResult]] = {}
+        for result in results:
+            results_by_atomic_group_id.setdefault(result.atomic_group_id, []).append(result)
 
         active_ids = set(active_group_ids)
         atomic_groups: list[ScenarioAtomicGroupProgress] = []
@@ -383,6 +433,7 @@ class ScenarioProgressReadModel:
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=results_by_atomic_group_id.get(group.id, ()),
             )
             if not terminal and group.id in active_ids:
                 group_status: Literal["RUNNING", "PENDING", "INCOMPLETE", "COMPLETED"] = "RUNNING"
@@ -424,6 +475,7 @@ class ScenarioProgressReadModel:
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=[r for group in groups for r in results_by_atomic_group_id.get(group.id, ())],
             )
             display_groups.append(
                 ScenarioDisplayGroupProgress(
@@ -442,6 +494,7 @@ class ScenarioProgressReadModel:
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=[r for group in groups for r in results_by_atomic_group_id.get(group.id, ())],
             )
             descriptions = list(dict.fromkeys(group.description for group in groups if group.description))
             tags = sorted({tag for group in groups for tag in group.tags})
@@ -466,9 +519,11 @@ class ScenarioProgressReadModel:
                 for group in plan.atomic_groups
                 if seed_id in group.seed_group_ids
             ]
+            group_ids = {group.id for group in plan.atomic_groups if seed_id in group.seed_group_ids}
             counts = aggregate(
                 units=units,
                 planned=len(units) if plan_complete else None,
+                producer_attempts=[r for r in results if r.seed_group_id == seed_id and r.atomic_group_id in group_ids],
             )
             seed_groups.append(
                 ScenarioSeedGroupProgress(

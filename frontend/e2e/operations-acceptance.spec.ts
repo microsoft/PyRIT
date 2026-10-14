@@ -26,6 +26,18 @@ async function createOperation(request: APIRequestContext, name: string): Promis
   return response.json()
 }
 
+// The stock scenario catalog builds its scorers from these targets; they are never called offline.
+async function ensureCatalogTargets(request: APIRequestContext): Promise<void> {
+  for (const name of ['objective_scorer_chat', 'adversarial_chat']) {
+    if ((await request.get(`/api/targets/${name}`)).status() !== 404) continue
+    const created = await request.post('/api/targets', { data: {
+      name, type: 'OpenAIChatTarget', auth_mode: 'api_key',
+      params: { endpoint: 'http://127.0.0.1:9/v1', model_name: 'local-test', api_key: 'local-test-only' },
+    } })
+    expect(created.ok(), await created.text()).toBe(true)
+  }
+}
+
 async function sendChat(page: Page, request: APIRequestContext, text: string): Promise<AttackSummary> {
   await page.goto('/chat')
   await page.getByRole('combobox', { name: 'Chat target', exact: true }).selectOption('browser_offline')
@@ -115,6 +127,7 @@ test('persists selected IDs for chat and scanner history, and clear survives rel
   const chat = await sendChat(page, request, 'Selected Operation chat.')
   expect(chat.operation_id).toBe(operation.id)
 
+  await ensureCatalogTargets(request)
   await page.goto('/scanner/browser_offline')
   await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption('browser_offline')
   await page.getByTestId('launch-scenario-btn').click()

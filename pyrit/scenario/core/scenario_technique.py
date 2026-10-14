@@ -12,15 +12,12 @@ and automatically expanded during scenario initialization.
 from __future__ import annotations
 
 from enum import Enum, EnumMeta
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-# TypeVar for the enum subclass itself
-T = TypeVar("T", bound="ScenarioTechnique")
 
 
 class _DeprecatedEnumMeta(EnumMeta):
@@ -85,6 +82,8 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
 
     _tags: set[str]
     _description: str | None
+    _selection_catalog: ClassVar[tuple[object, object]]
+    _factory_sources: ClassVar[dict[str, object]]
 
     def __new__(
         cls,
@@ -128,7 +127,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return self._description
 
     @classmethod
-    def default(cls: type[T]) -> T:
+    def default(cls) -> Self:
         """
         Return the technique member used when the caller selects nothing.
 
@@ -140,7 +139,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         which every catalog always contains.
 
         Returns:
-            T: The default technique member.
+            Self: The default technique member.
         """
         value = getattr(cls, "_default_technique_value", None)
         if value is not None:
@@ -148,7 +147,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return cls["ALL"]
 
     @classmethod
-    def get_aggregate_tags(cls: type[T]) -> set[str]:
+    def get_aggregate_tags(cls) -> set[str]:
         """
         Get the set of tags that represent aggregate categories.
 
@@ -165,7 +164,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return {"all"}
 
     @classmethod
-    def get_techniques_by_tag(cls: type[T], tag: str) -> set[T]:
+    def get_techniques_by_tag(cls, tag: str) -> set[Self]:
         """
         Get all attack techniques that have a specific tag.
 
@@ -176,14 +175,14 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
             tag (str): The tag to filter by (e.g., "easy", "converter", "multi_turn").
 
         Returns:
-            set[T]: Set of techniques that include the specified tag, excluding
+            set[Self]: Set of techniques that include the specified tag, excluding
                     any aggregate markers.
         """
         aggregate_tags = cls.get_aggregate_tags()
         return {technique for technique in cls if tag in technique.tags and technique.value not in aggregate_tags}
 
     @classmethod
-    def get_all_techniques(cls: type[T]) -> list[T]:
+    def get_all_techniques(cls) -> list[Self]:
         """
         Get all non-aggregate techniques for this technique enum.
 
@@ -191,7 +190,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         (like ALL, EASY, MODERATE, DIFFICULT) that are used for grouping.
 
         Returns:
-            list[T]: List of all non-aggregate techniques.
+            list[Self]: List of all non-aggregate techniques.
 
         Example:
             >>> # Get all concrete techniques for a technique enum
@@ -203,7 +202,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return [s for s in cls if s.value not in aggregate_tags]
 
     @classmethod
-    def get_aggregate_techniques(cls: type[T]) -> list[T]:
+    def get_aggregate_techniques(cls) -> list[Self]:
         """
         Get all aggregate techniques for this technique enum.
 
@@ -211,7 +210,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         that are used to group concrete techniques by tags.
 
         Returns:
-            list[T]: List of all aggregate techniques.
+            list[Self]: List of all aggregate techniques.
 
         Example:
             >>> # Get all aggregate techniques for a technique enum
@@ -222,7 +221,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return [s for s in cls if s.value in aggregate_tags]
 
     @classmethod
-    def expand(cls: type[T], techniques: set[T]) -> list[T]:
+    def expand(cls, techniques: set[Self]) -> list[Self]:
         """
         Expand a set of techniques (including aggregates) into an ordered, deduplicated list.
 
@@ -230,12 +229,12 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         The result is sorted by enum definition order for determinism.
 
         Args:
-            techniques (set[T]): Set of techniques, which may include aggregate markers.
+            techniques (set[Self]): Set of techniques, which may include aggregate markers.
 
         Returns:
-            list[T]: Ordered list of concrete techniques with aggregates expanded.
+            list[Self]: Ordered list of concrete techniques with aggregates expanded.
         """
-        concrete: set[T] = set(techniques)
+        concrete: set[Self] = set(techniques)
         aggregate_tags = cls.get_aggregate_tags()
         aggregates_to_expand = {
             tag for technique in techniques if technique.value in aggregate_tags for tag in technique.tags
@@ -251,7 +250,7 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         return [s for s in cls if s in concrete]
 
     @classmethod
-    def resolve(cls: type[T], techniques: Sequence[Any] | None, *, default: T) -> list[T]:
+    def resolve(cls, techniques: Sequence[Any] | None, *, default: Self) -> list[Self]:
         """
         Resolve technique inputs into a concrete, ordered, deduplicated list.
 
@@ -262,10 +261,10 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         Args:
             techniques (Sequence[Any] | None): Techniques to resolve. If None or empty,
                 expands the default.
-            default (T): Default aggregate technique to use when techniques is None or empty.
+            default (Self): Default aggregate technique to use when techniques is None or empty.
 
         Returns:
-            list[T]: Ordered, deduplicated list of concrete techniques.
+            list[Self]: Ordered, deduplicated list of concrete techniques.
 
         Raises:
             ValueError: If an item is not a member of this technique catalog. Dropping it
@@ -274,7 +273,15 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
         if not techniques:
             return cls.expand({default})
 
-        unknown = [item for item in techniques if not isinstance(item, cls)]
+        normalized: list[Self] = []
+        unknown: list[Any] = []
+        for item in techniques:
+            if isinstance(item, cls):
+                normalized.append(item)
+            elif isinstance(item, ScenarioTechnique) and (rebound := cls._rebind_selection(item)) is not None:
+                normalized.extend(rebound)
+            else:
+                unknown.append(item)
         if unknown:
             names = [getattr(item, "value", repr(item)) for item in unknown]
             supported = [technique.value for technique in cls]
@@ -282,10 +289,10 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
                 f"{cls.__name__} received unsupported techniques {names}. Supported values are {supported}."
             )
 
-        result: list[T] = []
-        seen: set[T] = set()
+        result: list[Self] = []
+        seen: set[Self] = set()
         aggregate_tags = cls.get_aggregate_tags()
-        for item in techniques:
+        for item in normalized:
             if item.value in aggregate_tags:
                 for s in cls.expand({item}):  # type: ignore[ty:invalid-argument-type]
                     if s not in seen:
@@ -296,3 +303,25 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
                     seen.add(item)
                     result.append(item)
         return result
+
+    @classmethod
+    def _rebind_selection(cls, item: ScenarioTechnique) -> list[Self] | None:
+        """
+        Accept an older selection only from the same builder, registry generation, and factory objects.
+
+        Returns:
+            list[Self] | None: Current concrete members, or None if the selection is not compatible.
+        """
+        catalog = getattr(cls, "_selection_catalog", None)
+        if catalog is None or catalog != getattr(type(item), "_selection_catalog", None):
+            return None
+        old_sources = type(item)._factory_sources
+        current_sources = cls._factory_sources
+        concrete = type(item).expand({item})
+        if any(
+            member.value not in current_sources or current_sources[member.value] is not old_sources[member.value]
+            for member in concrete
+        ):
+            return None
+        # Expand old aggregates first so an existing selection never gains newly registered techniques.
+        return [cls(member.value) for member in concrete]

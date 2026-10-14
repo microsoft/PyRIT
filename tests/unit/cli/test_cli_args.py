@@ -5,7 +5,12 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.cli._cli_args import _argparse_validator, parse_memory_labels, parse_run_arguments
+from pyrit.cli._cli_args import (
+    _argparse_validator,
+    parse_list_targets_arguments,
+    parse_memory_labels,
+    parse_run_arguments,
+)
 from pyrit.models import Parameter
 
 
@@ -15,6 +20,19 @@ def test_parse_memory_labels_warns_visibly_about_an_operation_name(capsys: pytes
     assert "'operation' in --memory-labels is deprecated" in capsys.readouterr().err
     assert parse_memory_labels('{"team": "red"}') == {"team": "red"}
     assert capsys.readouterr().err == ""
+
+
+def test_shell_parsers_omit_unsupplied_arguments() -> None:
+    assert parse_run_arguments(args_string="test") == {"scenario_name": "test"}
+    assert parse_list_targets_arguments(args_string="") == {}
+
+
+@pytest.mark.parametrize(("value", "expected"), [("all", "all"), ("default", "default"), ("7", 7), ('""', "default")])
+def test_shell_explicit_dataset_limit(*, value: str, expected: int | str | None) -> None:
+    assert parse_run_arguments(args_string=f"test --max-dataset-size {value}") == {
+        "scenario_name": "test",
+        "max_dataset_size": expected,
+    }
 
 
 def _sp(*, name: str, description: str = "", param_type: str = "str") -> Parameter:
@@ -104,7 +122,7 @@ def test_parse_run_arguments_operation_id() -> None:
 def test_parse_run_arguments_without_operation_id() -> None:
     result = parse_run_arguments(args_string="foo --target t")
 
-    assert result["operation_id"] is None
+    assert "operation_id" not in result
 
 
 @pytest.mark.parametrize("value", ["not-a-uuid", ""])

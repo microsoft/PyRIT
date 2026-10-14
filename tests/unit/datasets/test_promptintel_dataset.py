@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -139,6 +140,20 @@ class TestPromptIntelDatasetInit:
 
 class TestPromptIntelDatasetFetch:
     """Test fetch_dataset_async and data transformation."""
+
+    async def test_fetch_non_string_timestamp_async(
+        self, *, api_key: str, mock_promptintel_response: dict[str, Any]
+    ) -> None:
+        record = mock_promptintel_response["data"][0]
+        record["created_at"] = 1720000000
+        loader = _PromptIntelDataset(api_key=api_key)
+        with patch.object(loader, "_fetch_all_prompts", return_value=mock_promptintel_response["data"]):
+            dataset = await loader.fetch_dataset_async()
+
+        assert len(dataset.seeds) == 2
+        assert dataset.seeds[0].value == record["prompt"]
+        assert dataset.seeds[0].date_added is None
+        assert dataset.seeds[1].date_added is not None
 
     async def test_fetch_no_api_key_raises(self):
         with patch.dict("os.environ", {}, clear=True):

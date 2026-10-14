@@ -12,6 +12,7 @@ from pyrit.common.path import DATASETS_PATH
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
@@ -54,6 +55,12 @@ def mock_dataset_config(mock_memory_seed_groups):
     """Create a mock dataset config that returns the seed groups."""
     attack_seed_groups = list(mock_memory_seed_groups)
     mock_config = MagicMock(spec=DatasetAttackConfiguration)
+    mock_config.with_overrides.return_value = mock_config
+    mock_config.sources = ()
+    mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=attack_seed_groups)
     mock_config.get_attack_groups_by_dataset_async = AsyncMock(return_value={"airt_scam": attack_seed_groups})
     mock_config.dataset_names = ["airt_scam"]
@@ -92,21 +99,21 @@ def mock_runtime_env():
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockObjectiveTarget")
     return mock
 
 
 @pytest.fixture
-def mock_objective_scorer() -> TrueFalseCompositeScorer:
+def mock_objective_scorer() -> MagicMock:
     mock = MagicMock(spec=TrueFalseCompositeScorer)
     mock.get_identifier.return_value = _mock_scorer_id("MockObjectiveScorer")
     return mock
 
 
 @pytest.fixture
-def mock_adversarial_target() -> PromptTarget:
+def mock_adversarial_target() -> MagicMock:
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     return mock
@@ -231,7 +238,7 @@ class TestScamInitialization:
         # Error should occur during initialize_async when _get_atomic_attacks_async resolves seed groups.
         # Neutralize the provider fetch so the empty-memory path raises loudly instead of fetching.
         with patch(
-            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration._fetch_dataset_async",
+            "pyrit.scenario.core.dataset_configuration.DatasetConfiguration.prepare_async",
             new_callable=AsyncMock,
         ):
             scenario.set_params_from_args(args={"objective_target": mock_objective_target})

@@ -93,20 +93,13 @@ class BrowserScenario(Scenario):
         ]
 
 
-class BrowserScenarioRegistry(ScenarioRegistry):
-    """Limit browser catalog discovery to the deterministic scenario."""
-
-    def _discover(self) -> None:
-        self.register_class(BrowserScenario, name="browser_offline")
-
-
 class BrowserInitializer(PyRITInitializer):
     """Register offline components and one pre-Operation-ID historical attack."""
 
     async def initialize_async(self) -> None:
         memory = CentralMemory.get_memory_instance()
         TargetRegistry.get_registry_singleton().instances.register(BrowserTarget(), name="browser_offline")
-        ScenarioRegistry.set_registry_singleton(BrowserScenarioRegistry())
+        ScenarioRegistry.get_registry_singleton().register_class(BrowserScenario, name="browser_offline")
         await asyncio.to_thread(self._store_legacy_attack)
         await memory.add_message_to_memory_async(
             request=MessagePiece(

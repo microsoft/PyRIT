@@ -11,6 +11,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, PromptDataType
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -19,6 +20,7 @@ from pyrit.scenario.core.dataset_configuration import (
     INLINE_DATASET_NAME,
     DatasetAttackConfiguration,
     DatasetConfiguration,
+    DatasetSource,
     DatasetSourceKind,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
@@ -67,6 +69,9 @@ class FigStep(Scenario):
     """
 
     VERSION: int = 1
+    DATASET_OPTIONS = ScenarioDatasetOptions(
+        mode=DatasetSelectionMode.SUBSET, allowed_names=["figstep", "figstep_pro"], max_selected=1
+    )
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
         native_required=frozenset({CapabilityName.MULTI_MESSAGE_PIECES}),
         required_input_modalities=_FIGSTEP_INPUT_MODALITIES,
@@ -103,8 +108,9 @@ class FigStep(Scenario):
             version=self.VERSION,
             technique_class=FigStepTechnique,
             default_dataset_config=DatasetAttackConfiguration(
-                dataset_names=["figstep"],
-                max_dataset_size=DEFAULT_MAX_DATASET_SIZE,
+                sources=[DatasetSource(name=name) for name in ["figstep"]],
+                max_per_dataset="all",
+                max_total=DEFAULT_MAX_DATASET_SIZE,
             ),
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
@@ -169,7 +175,7 @@ class FigStep(Scenario):
         Returns:
             dict[str, list[AttackSeedGroup]]: Valid FigStep groups keyed by dataset.
         """
-        validate_before_sampling = apply_sampling and self._dataset_config.max_dataset_size is not None
+        validate_before_sampling = apply_sampling and self._dataset_config.has_sampling_limits
         validation_sampling = apply_sampling and not validate_before_sampling
         groups_by_dataset = await super()._resolve_seed_groups_by_dataset_async(apply_sampling=validation_sampling)
         self._validate_seed_groups(seed_groups=[group for groups in groups_by_dataset.values() for group in groups])

@@ -181,3 +181,39 @@ class TestDecodingScorer:
 
             assert len(score) == 1
             assert score[0].get_value() is False
+
+    @pytest.mark.parametrize(
+        "first,second,user_value,response_value",
+        [
+            (ExactTextMatching(), ExactTextMatching(case_sensitive=True), "Secret", "secret"),
+            (ApproximateTextMatching(threshold=0.3), ApproximateTextMatching(threshold=0.9), "secret", "sacret"),
+            (ApproximateTextMatching(n=2), ApproximateTextMatching(n=5), "secret", "secrot"),
+        ],
+    )
+    async def test_decoding_identifier_distinguishes_matcher_behavior(
+        self, patch_central_database, first, second, user_value, response_value
+    ):
+        user_piece = MessagePiece(role="user", original_value=user_value, converted_value=user_value)
+        assistant_piece = MessagePiece(role="assistant", original_value=response_value, converted_value=response_value)
+        memory = MagicMock(MemoryInterface)
+        user_message = Message(message_pieces=[user_piece])
+        memory.get_request_from_response_async = AsyncMock(return_value=user_message)
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            first_scorer = DecodingScorer(text_matcher=first)
+            second_scorer = DecodingScorer(text_matcher=second)
+
+            first_score = await first_scorer._score_piece_async(assistant_piece)
+            second_score = await second_scorer._score_piece_async(assistant_piece)
+
+            assert first_score[0].get_value() is not second_score[0].get_value()
+            assert first_scorer.get_identifier().hash != second_scorer.get_identifier().hash
+            assert first_scorer.get_identifier().eval_hash != second_scorer.get_identifier().eval_hash
+
+    @pytest.mark.parametrize("matcher_class", [ExactTextMatching, ApproximateTextMatching])
+    def test_decoding_identifier_stable_for_equivalent_matchers(self, patch_central_database, matcher_class):
+        first = DecodingScorer(text_matcher=matcher_class())
+        second = DecodingScorer(text_matcher=matcher_class())
+
+        assert first.get_identifier().hash == second.get_identifier().hash
+        assert first.get_identifier().eval_hash == second.get_identifier().eval_hash

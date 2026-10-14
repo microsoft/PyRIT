@@ -21,11 +21,13 @@ import {
   versionApi,
   configurationApi,
   targetsApi,
+  techniquesApi,
   convertersApi,
   attacksApi,
   labelsApi,
   scenariosApi,
   operationsApi,
+  datasetsApi,
 } from "./api";
 
 describe("api service", () => {
@@ -419,6 +421,28 @@ describe("api service", () => {
     });
   });
 
+  describe("techniquesApi", () => {
+    it("should list techniques with the default page limit", async () => {
+      const response = { data: { items: [], pagination: { limit: 50, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques()).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", { params: { limit: 50 } });
+    });
+
+    it("should forward the page limit and cursor", async () => {
+      const response = { data: { items: [], pagination: { limit: 10, has_more: false } } };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(response);
+
+      await expect(techniquesApi.listTechniques(10, "last_technique")).resolves.toEqual(response.data);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/techniques", {
+        params: { limit: 10, cursor: "last_technique" },
+      });
+    });
+  });
+
   describe("convertersApi", () => {
     it("should list converter types from registry metadata", async () => {
       const response = { data: { items: [] } };
@@ -796,6 +820,7 @@ describe("api service", () => {
           baseline_policy: "enabled",
           include_baseline_by_default: true,
           supported_parameters: [],
+          supported_parameter_names: [],
         },
       };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
@@ -1004,6 +1029,95 @@ describe("api service", () => {
       expect(apiClient.post).toHaveBeenCalledTimes(1);
       expect(apiClient.post).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/resume");
       expect(apiClient.get).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("datasetsApi", () => {
+    it("lists dataset summaries with loaded_only and does not send a selection key", async () => {
+      const mockResponse = {
+        data: {
+          items: [],
+        },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce(mockResponse);
+
+      await expect(datasetsApi.listDatasets({ loaded_only: true })).resolves.toEqual({ items: [] });
+
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: undefined,
+      });
+    });
+
+    it("lists one seed page with repeated singular filters and a capped search", async () => {
+      const payload = {
+        items: [],
+        pagination: { limit: 20, has_more: false, next_cursor: null, prev_cursor: null },
+        total: 0,
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: payload });
+
+      await expect(datasetsApi.listSeedExamples({
+        selection_key: "dataset:named:a&b",
+        limit: 20,
+        cursor: "cursor-2",
+        search: `${"p".repeat(1000)}EXTRA`,
+        modality: ["text", "image_path"],
+        seed_type: ["simulated_conversation"],
+        harm_category: ["hate"],
+      })).resolves.toEqual(payload);
+
+      const config = (apiClient.get as jest.Mock).mock.calls[0][1];
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets/seeds", expect.objectContaining({
+        paramsSerializer: { indexes: null },
+      }));
+      expect(config.params.search).toHaveLength(1000);
+      expect(config.params.search.endsWith("EXTRA")).toBe(false);
+      expect(config.params).not.toHaveProperty("q");
+      expect(config.params).not.toHaveProperty("sort");
+      expect(config.params).not.toHaveProperty("unlabeled");
+      const axios = jest.requireActual<typeof import("axios")>("axios").default;
+      const wire = axios.getUri({
+        url: "/datasets/seeds",
+        params: config.params,
+        paramsSerializer: config.paramsSerializer,
+      });
+      expect(wire).toContain("modality=text&modality=image_path");
+      expect(wire).toContain("seed_type=simulated_conversation");
+      expect(wire).toContain("harm_category=hate");
+      expect(wire).not.toContain("modality[]");
+      expect(wire).not.toContain("modality[0]");
+      expect(wire).not.toContain("q=");
+    });
+
+    it("refuses to list or read seeds without a selection key", async () => {
+      await expect(datasetsApi.listSeedExamples({ selection_key: "" })).rejects.toThrow(/selection key/);
+      await expect(datasetsApi.getSeedExample("example-1", "")).rejects.toThrow(/selection key/);
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+
+    it("reads one example with the dataset key and an encoded id", async () => {
+      const detail = { example_id: "example/1", members: [] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: detail });
+
+      await expect(datasetsApi.getSeedExample("example/1", "dataset:unnamed")).resolves.toEqual(detail);
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets/seeds/example%2F1", {
+        params: { selection_key: "dataset:unnamed" },
+        signal: undefined,
+      });
+    });
+
+    it("forwards an abort signal and still does not send a selection key", async () => {
+      const controller = new AbortController();
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [] } });
+
+      await datasetsApi.listDatasets({ loaded_only: true }, controller.signal);
+
+      expect(apiClient.get).toHaveBeenCalledWith("/datasets", {
+        params: { loaded_only: true },
+        signal: controller.signal,
+      });
     });
   });
 });

@@ -127,10 +127,21 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         )
 
         # Set the maximum attempts on failure
-        if max_attempts_on_failure < 0:
-            raise ValueError("max_attempts_on_failure must be a non-negative integer")
+        PromptSendingAttack.validate_constructor_parameters({"max_attempts_on_failure": max_attempts_on_failure})
 
         self._max_attempts_on_failure = max_attempts_on_failure
+
+    @classmethod
+    def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
+        """
+        Validate the retry bound without constructing an attack.
+
+        Raises:
+            ValueError: If the retry bound is negative.
+        """
+        super().validate_constructor_parameters(params)
+        if "max_attempts_on_failure" in params and params["max_attempts_on_failure"] < 0:
+            raise ValueError("max_attempts_on_failure must be a non-negative integer")
 
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
@@ -327,6 +338,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
             if outcome is AttackOutcome.UNDETERMINED:
                 return AttackOutcome.UNDETERMINED, score.score_rationale or "Scorer could not reach a verdict"
+
+        if response and score is None:
+            # The scorer ran but produced nothing (e.g. a text-only scorer on an image), so nothing was measured
+            return AttackOutcome.UNDETERMINED, "Objective scorer returned no score"
 
         if response:
             # We got response(s) but none achieved the objective

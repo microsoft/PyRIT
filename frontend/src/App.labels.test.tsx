@@ -78,6 +78,10 @@ const SCENARIO: RegisteredScenario = {
   baseline_policy: 'forbidden',
   include_baseline_by_default: false,
   supported_parameters: [],
+  supported_parameter_names: [
+    'objective_target', 'scenario_techniques', 'dataset_config', 'memory_labels',
+    'max_concurrency', 'max_retries', 'include_baseline',
+  ],
   uses_default_adversarial_target: false,
   default_run_size: {
     dataset_size: { kind: 'bounded', value: 1 },
@@ -227,7 +231,7 @@ describe('Shared new run labels', () => {
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
-    for (const destination of ['Home', 'Chat', 'Scanner']) {
+    for (const destination of ['Home', 'Technique.execute', 'Scanner']) {
       await user.click(screen.getByRole('button', { name: destination, exact: true }))
       expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
       expect(currentLabels()).toBe(bar)
@@ -295,7 +299,7 @@ describe('Shared new run labels', () => {
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Scanner', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Technique.execute', exact: true }))
     expect(screen.getAllByRole('group', { name: 'Chat controls' })).toHaveLength(1)
     expect(within(currentLabels()).getByRole('switch')).toBeChecked()
   })
