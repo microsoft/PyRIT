@@ -4338,6 +4338,7 @@ class MemoryInterface(abc.ABC):
                     SeedEntry.dataset_name.label("dataset_name"),
                     SeedEntry.data_type,
                     SeedEntry.harm_categories,
+                    SeedEntry.origin,
                 )
                 .where(named_condition)
                 .distinct()
@@ -4350,6 +4351,7 @@ class MemoryInterface(abc.ABC):
                 named_aggregate.c.objectives,
                 named_metadata.c.data_type,
                 named_metadata.c.harm_categories,
+                named_metadata.c.origin,
             ).join(
                 named_metadata,
                 named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
@@ -4366,7 +4368,10 @@ class MemoryInterface(abc.ABC):
                 .subquery()
             )
             unnamed_metadata = (
-                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+                select(SeedEntry.data_type, SeedEntry.harm_categories, SeedEntry.origin)
+                .where(unnamed_condition)
+                .distinct()
+                .subquery()
             )
             unnamed_statement = select(
                 unnamed_aggregate.c.dataset_name,
@@ -4375,6 +4380,7 @@ class MemoryInterface(abc.ABC):
                 unnamed_aggregate.c.objectives,
                 unnamed_metadata.c.data_type,
                 unnamed_metadata.c.harm_categories,
+                unnamed_metadata.c.origin,
             ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
 
             combined_statement = named_statement.union_all(unnamed_statement)
@@ -4394,9 +4400,12 @@ class MemoryInterface(abc.ABC):
                         "modalities": set(),
                         "harm_categories": set(),
                         "has_unlabeled_harm_categories": False,
+                        "origins": set(),
                     }
                     dataset_order.append(dataset_name)
                 summary = summaries_by_dataset[dataset_name]
+                if row["origin"]:
+                    summary["origins"].add(row["origin"])
                 if row["data_type"]:
                     summary["modalities"].add(row["data_type"])
                 categories = row["harm_categories"] or []
@@ -4414,6 +4423,7 @@ class MemoryInterface(abc.ABC):
                     modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
                     harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
                     has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                    origins=tuple(sorted(summaries_by_dataset[dataset_name]["origins"])),
                 )
                 for dataset_name in dataset_order
             ]

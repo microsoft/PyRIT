@@ -14,7 +14,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Annotated, Any, Self, TypeVar, cast
 
 from jinja2 import StrictUndefined, Undefined, meta
 from jinja2.sandbox import SandboxedEnvironment
@@ -29,9 +29,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-# TypeVar for generic return type in class methods
-T = TypeVar("T", bound="Seed")
 
 
 def _ensure_aware_utc(value: Any) -> Any:
@@ -405,7 +402,7 @@ class Seed(BaseModel):
         return f"{{% raw %}}{value}{{% endraw %}}"
 
     @classmethod
-    def from_yaml_file(cls: type[T], file: str | Path) -> T:
+    def from_yaml_file(cls, file: str | Path) -> Self:
         """
         Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
 
