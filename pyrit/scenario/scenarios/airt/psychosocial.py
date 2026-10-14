@@ -41,11 +41,13 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.models.parameter import Parameter
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConstraintError,
     DatasetSource,
@@ -460,44 +462,74 @@ class Psychosocial(Scenario):
         """
         Resolve the ``sub_harm`` run parameter into the ordered list of sub-harm configs.
 
-        Accepts ``None`` / ``"all"`` (both sub-harms) or a single sub-harm name. Order follows
-        ``_SUB_HARMS`` for deterministic results.
+        Accepts ``None`` / ``"all"`` (both sub-harms) or a single sub-harm name. Only sub-harms whose
+        dataset is in the dataset configuration are kept, so selecting a subset of the datasets also
+        narrows the run. Order follows ``_SUB_HARMS`` for deterministic results.
 
         Returns:
             list[_SubHarm]: The selected sub-harms.
 
         Raises:
             ValueError: If an unknown sub-harm name is requested.
+            DatasetConstraintError: If none of the requested sub-harms has its dataset configured.
         """
         requested = self.params.get("sub_harm")
         if not requested or requested == "all":
-            return list(_SUB_HARMS)
-        name = str(requested)
-        if name not in _SUB_HARMS_BY_NAME:
-            raise ValueError(
-                f"Unknown psychosocial sub_harm '{name}'. Valid values: {sorted(_SUB_HARMS_BY_NAME)} (or 'all')."
+            requested_harms = list(_SUB_HARMS)
+        else:
+            name = str(requested)
+            if name not in _SUB_HARMS_BY_NAME:
+                raise ValueError(
+                    f"Unknown psychosocial sub_harm '{name}'. Valid values: {sorted(_SUB_HARMS_BY_NAME)} (or 'all')."
+                )
+            requested_harms = [_SUB_HARMS_BY_NAME[name]]
+        configured = set(self._dataset_config.dataset_names)
+        selected = [harm for harm in requested_harms if harm.dataset_name in configured]
+        if not selected:
+            raise DatasetConstraintError(
+                f"Psychosocial sub_harm '{requested or 'all'}' needs "
+                f"{', '.join(repr(harm.dataset_name) for harm in requested_harms)}, but the selected datasets are "
+                f"{sorted(configured)}."
             )
-        return [_SUB_HARMS_BY_NAME[name]]
+        return selected
 
-    def _validate_runtime_configuration(self) -> None:
-        config = self._dataset_config
-        allowed = {harm.dataset_name for harm in _SUB_HARMS}
-        if set(config.dataset_names) - allowed:
-            raise DatasetConstraintError("Psychosocial sources must match its sub-harm datasets.")
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        config = self._default_dataset_config
         by_name = {source.name: source for source in config.sources}
-        self._dataset_config = config.with_overrides(
+        return config.with_overrides(
             sources=[
                 by_name.get(harm.dataset_name, DatasetSource(name=harm.dataset_name))
                 for harm in self._selected_sub_harms()
             ]
         )
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """
+        Describe named datasets allowed for the selected sub-harm parameter.
+
+        Returns:
+            ScenarioDatasetOptions: Parameter-aware source selection capabilities.
+        """
+        return ScenarioDatasetOptions(
+            mode=DatasetSelectionMode.SUBSET,
+            allowed_names=[harm.dataset_name for harm in self._selected_sub_harms()],
+        )
+
+    def _effective_sub_harms(self) -> list[_SubHarm]:
+        return [harm for harm in self._selected_sub_harms() if harm.dataset_name in self._dataset_config.dataset_names]
+
+    def _validate_runtime_configuration(self) -> None:
+        if isinstance(self._dataset_config, CompoundDatasetAttackConfiguration):
+            raise DatasetConstraintError("Psychosocial requires flat sources, not compound children.")
+        if set(self._dataset_config.dataset_names) - set(self.get_dataset_options().allowed_names):
+            raise DatasetConstraintError("Psychosocial sources must match the selected sub-harm datasets.")
         super()._validate_runtime_configuration()
         cap = self._dataset_config.max_total
-        if cap != "all" and cap < len(self._selected_sub_harms()):
+        if cap != "all" and cap < len(self._effective_sub_harms()):
             raise DatasetConstraintError(
                 f"Psychosocial max_total ({cap}) must cover every selected sub-harm "
-                f"({len(self._selected_sub_harms())}). Increase the total limit to at least "
-                f"{len(self._selected_sub_harms())}, or select one sub-harm."
+                f"({len(self._effective_sub_harms())}). Increase the total limit to at least "
+                f"{len(self._effective_sub_harms())}, or select one sub-harm."
             )
 
     async def _resolve_seed_groups_by_dataset_async(
@@ -516,7 +548,7 @@ class Psychosocial(Scenario):
             harm.dataset_name: self._dataset_config._sample_source_groups(
                 name=harm.dataset_name, groups=populations.get(harm.dataset_name, [])
             )
-            for harm in self._selected_sub_harms()
+            for harm in self._effective_sub_harms()
         }
         return sample_with_coverage(
             groups_by_dataset=selected,
@@ -592,7 +624,7 @@ class Psychosocial(Scenario):
         # Resolved lazily so a no-arg ``Psychosocial()`` works for registry metadata introspection.
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
 
-        sub_harms = self._selected_sub_harms()
+        sub_harms = self._effective_sub_harms()
         techniques = [t for t in context.scenario_techniques if isinstance(t, PsychosocialTechnique)]
         max_turns = int(self.params.get("max_turns", 5))
         seed_groups_by_dataset = context.seed_groups_by_dataset

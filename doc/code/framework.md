@@ -289,6 +289,16 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
   root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
   evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
+- Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
+  root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
+  its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A
+  failure to start is recorded as the attempt's error result; a failure to stop is logged and
+  does not replace the attempt's outcome or stop the other observers. `FileWriteScorer` then
+  records a baseline through a `SurfaceLifecycleSource` when `ContentWritten.require_content_change`
+  is true. It evaluates whether final content differs from the baseline and matches the criterion.
+  This is state comparison, not write-event detection or writer attribution. Equal snapshots
+  do not prove that no writes occurred. Attempts sharing a root still run one at a time.
+  Presence remains the default; a required comparison without a baseline is undetermined.
 - Raw `ObservationSource` implementations acquire evidence without criteria.
   `ConversationSource` captures whole-conversation references; the conversation scorer owns
   role filtering and rendering. `TargetJudge` is a separate, expectation-bound collaborator:
@@ -434,6 +444,7 @@ The below describes the user-facing surfaces built on top of the framework.
 - Surfaces targets, scenarios, and health/version endpoints; served via `uvicorn` with Swagger/ReDoc docs.
 - Wherever possible it should reuse other components rather than reimplementing them (e.g. the registry to build components, `pyrit.models` for its model layer), while adding presentation-specific information on top as needed.
 - Organized into `routes/`, `services/`, `models/`, `mappers/`, and `middleware/`, and launched through the `pyrit_backend` command (configurable via `PYRIT_API_HOST` / `PYRIT_API_PORT` / `PYRIT_API_RELOAD`).
+- Saved-result analytics routes consume the cached SDK directly and serialize shared models. The shared runtime owns admission, busy checks, SDK draining and cache invalidation before memory replacement/disposal, including work still cleaning up after an HTTP timeout. It does not calculate statistics or add an SDK authorization scope.
 
 ## [CLI](../scanner/0_scanner)
 

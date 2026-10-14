@@ -32,6 +32,12 @@ class PlagiarismScorer(MessageFloatScaleScorer):
 
     _DEFAULT_VALIDATOR: ScorerPromptValidator = ScorerPromptValidator(supported_data_types=["text"])
 
+    # Separators that are kept when they sit between two decimal digits, mapped to the
+    # form they take in the token. Dropping them would join the digits on either side,
+    # so "2.5" would collide with "25" and "2,500" with "2500". Fraction slashes fold
+    # to ASCII "/"; decimal points and thousands separators are kept as written.
+    _NUMERIC_SEPARATORS: dict[str, str] = {"/": "/", "\u2044": "/", ".": ".", ",": ","}
+
     def __init__(
         self,
         *,
@@ -90,16 +96,18 @@ class PlagiarismScorer(MessageFloatScaleScorer):
 
         Text is normalized to NFKC first so that compatibility forms (fullwidth
         letters, mathematical alphanumerics, decomposed accents) fold to a single
-        representation. Fraction separators between decimal digits are preserved
-        as ``/`` instead of joining the numerator and denominator. Compact
-        fractions remain separate from a preceding whole number.
+        representation. Numeric separators between decimal digits are preserved
+        instead of joining the digits on either side: fraction separators as ``/``,
+        and decimal points and thousands separators (``.`` and ``,``) as written,
+        so that ``2.5`` does not tokenize the same as ``25``. Compact fractions
+        remain separate from a preceding whole number.
 
         Combining marks are kept only after a retained word character or another
         attached mark, so meaningful vowel signs survive without keeping orphaned
         marks from removed emoji, punctuation, or whitespace.
 
         Returns:
-            list[str]: Lowercase word tokens with numeric fraction separators preserved.
+            list[str]: Lowercase word tokens with numeric separators preserved.
         """
         text = self._normalize_text(text)
         characters: list[str] = []
@@ -116,12 +124,12 @@ class PlagiarismScorer(MessageFloatScaleScorer):
                 if char.isspace():
                     characters.append(char)
                 elif (
-                    char in {"/", "\u2044"}
+                    char in self._NUMERIC_SEPARATORS
                     and 0 < index < len(text) - 1
                     and text[index - 1].isdecimal()
                     and text[index + 1].isdecimal()
                 ):
-                    characters.append("/")
+                    characters.append(self._NUMERIC_SEPARATORS[char])
         return "".join(characters).split()
 
     def _normalize_text(self, text: str) -> str:

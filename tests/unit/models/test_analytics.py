@@ -78,6 +78,12 @@ def test_legacy_scenario_counts_do_not_fabricate_an_outcome_breakdown() -> None:
     assert counts.completed == 2
 
 
+def test_scenario_counts_accept_the_exact_truncated_percentage() -> None:
+    ScenarioProgressCounts(completed=100, succeeded=29, success_percentage=29, errors=0, retries=0)
+    with pytest.raises(ValidationError, match="success_percentage"):
+        ScenarioProgressCounts(completed=100, succeeded=29, success_percentage=28, errors=0, retries=0)
+
+
 @pytest.mark.parametrize(
     "changes",
     [

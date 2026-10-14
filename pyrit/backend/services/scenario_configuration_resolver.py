@@ -7,13 +7,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models.dataset_limit import DatasetLimit, normalize_dataset_limit
 from pyrit.registry import ConverterRegistry, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import DatasetSource
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
+    from pyrit.models.scenario_dataset import ScenarioDatasetRequest
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
 
@@ -91,9 +90,7 @@ class ScenarioConfigurationResolver:
         scenario_class: type[Scenario],
         objective_target: Any | None = None,
         techniques: list[str] | None = None,
-        dataset_names: list[str] | None = None,
-        max_dataset_size: DatasetLimit = "default",
-        dataset_filters: dict[str, list[str]] | None = None,
+        datasets: ScenarioDatasetRequest | None = None,
         include_baseline: bool | None = None,
         max_concurrency: int | None = None,
         max_retries: int | None = None,
@@ -102,7 +99,7 @@ class ScenarioConfigurationResolver:
         """
         Resolve shared launch and estimate fields into scenario parameters.
 
-        Omitted, null, empty, and "default" limits retain the default. "all" removes only the total limit.
+        Dataset edits pass through unchanged; the scenario applies and validates them.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -122,11 +119,9 @@ class ScenarioConfigurationResolver:
         if memory_labels:
             resolved["memory_labels"] = memory_labels
 
-        filters = dataset_filters or {}
-        total_limit = normalize_dataset_limit(max_dataset_size)
-        has_total_override = total_limit != "default"
-        needs_introspection = bool(techniques) or bool(dataset_names) or has_total_override or bool(filters)
-        if not needs_introspection:
+        if datasets is not None:
+            resolved["dataset_overrides"] = datasets
+        if not techniques:
             return resolved
 
         try:
@@ -146,20 +141,6 @@ class ScenarioConfigurationResolver:
             resolved["scenario_techniques"] = technique_enums
             if technique_converters:
                 resolved["technique_converters"] = technique_converters
-
-        if dataset_names or has_total_override or filters:
-            default_config = introspection_instance._default_dataset_config
-            config = default_config.with_overrides(filters=filters)
-            if dataset_names:
-                existing_sources = {source.name: source for source in config.sources}
-                config = config.with_overrides(
-                    sources=[
-                        existing_sources[name] if name in existing_sources else DatasetSource(name=name)
-                        for name in dataset_names
-                    ]
-                )
-            config = config.with_overrides(max_total=total_limit)
-            resolved["dataset_config"] = config
 
         return resolved
 

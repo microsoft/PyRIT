@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     AdversarialBenchmarkTechnique: type[ScenarioTechnique]
     CyberTechnique: type[ScenarioTechnique]
     DoctorTechnique: type[ScenarioTechnique]
+    ExecuteTechnique: type[ScenarioTechnique]
     JailbreakTechnique: type[ScenarioTechnique]
     LeakageTechnique: type[ScenarioTechnique]
     MultilingualTechnique: type[ScenarioTechnique]
@@ -23,6 +24,7 @@ _REGISTRY_TECHNIQUE_BUILDERS = {
         "_build_benchmark_technique",
     ),
     "CyberTechnique": ("pyrit.scenario.scenarios.airt.cyber", "_build_cyber_technique"),
+    "ExecuteTechnique": ("pyrit.scenario.scenarios.technique.execute", "_build_execute_technique"),
     "LeakageTechnique": ("pyrit.scenario.scenarios.airt.leakage", "_build_leakage_technique"),
     "MultilingualTechnique": (
         "pyrit.scenario.scenarios.airt.multilingual",
@@ -58,6 +60,7 @@ def reset_dynamic_technique_caches() -> None:
         "pyrit.scenario.scenarios.airt",
         "pyrit.scenario.scenarios.benchmark",
         "pyrit.scenario.scenarios.garak",
+        "pyrit.scenario.scenarios.technique",
     }
     for technique_name, (module_name, builder_name) in _REGISTRY_TECHNIQUE_BUILDERS.items():
         builder = getattr(import_module(module_name), builder_name)

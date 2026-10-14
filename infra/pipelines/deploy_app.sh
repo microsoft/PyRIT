@@ -225,6 +225,7 @@ main() {
     --template-file "$template_file" --mode Incremental --parameters "${parameters[@]}"
   start_unchanged_revision
   verify_readiness 300 "$expected_public_access" "$immutable_image"
+  wait_for_runtime_readiness "$health_url" "$revision" 300
   warn_if_sql_public
   echo "Deployment healthy: $revision; verified $health_url; ACA public access: $expected_public_access; egress IPv4: $egress_ip"
 }

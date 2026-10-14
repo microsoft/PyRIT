@@ -23,7 +23,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from pydantic import ValidationError
 
@@ -70,6 +70,18 @@ class _CountableAttempt(Protocol):
 
     @property
     def result_role(self) -> AttackResultRole | None: ...
+
+    @property
+    def attempt_index(self) -> int | None: ...
+
+    @property
+    def attack_result_id(self) -> str: ...
+
+    @property
+    def child_attack_result_ids(self) -> Sequence[str]: ...
+
+
+_AttemptT = TypeVar("_AttemptT", bound=_CountableAttempt)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +160,13 @@ class ScenarioAttempt:
     attempt_id: str
     total_retries: int
     result_role: AttackResultRole | None
+    attempt_index: int | None
+    child_attack_result_ids: tuple[str, ...]
+
+    @property
+    def attack_result_id(self) -> str:
+        """The persisted result ID."""
+        return self.attempt_id
 
 
 def load_scenario_run_plan(scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
@@ -255,7 +274,32 @@ def resolve_attack_result_attempt(
         attempt_id=str(attack_result.attack_result_id),
         total_retries=retries if isinstance(retries, int) else 0,
         result_role=AttackResultMetadata.from_metadata(metadata=attribution_data).result_role,
+        attempt_index=AttackResultMetadata.from_metadata(metadata=attribution_data).attempt_index,
+        child_attack_result_ids=tuple(attack_result.metadata.get("child_attack_result_ids", ())),
     )
+
+
+def select_execution_attempts(attempts: Sequence[_AttemptT]) -> Sequence[_AttemptT]:
+    """
+    Select actual attempts without counting their orchestration envelope again.
+
+    Returns:
+        Sequence[_AttemptT]: Target-facing or legacy attempts, or orchestration-only evidence.
+    """
+    by_id = {attempt.attack_result_id: attempt for attempt in attempts}
+    execution_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.result_role != AttackResultRole.ORCHESTRATION
+        or (
+            attempt.outcome == AttackOutcome.ERROR
+            and not any(
+                child_id in by_id and by_id[child_id].outcome == AttackOutcome.ERROR
+                for child_id in attempt.child_attack_result_ids
+            )
+        )
+    ]
+    return execution_attempts if execution_attempts else attempts
 
 
 def retry_pressure(*, attempts_per_unit: Iterable[int], persisted_retries: Iterable[int]) -> int:
@@ -338,8 +382,9 @@ def count_execution_units(
     """
     Count effective execution units from chronologically ordered attempts.
 
-    Each item in ``attempts_by_unit`` must expose ``outcome`` and ``total_retries`` and be ordered
-    oldest first; the last attempt decides the unit's outcome.
+    Attempts are ordered oldest first. The latest top-level result decides the unit's
+    outcome; children cannot complete their compound unit. Historical pressure excludes
+    orchestration envelopes when execution attempts exist for the unit.
 
     Returns:
         ScenarioProgressCounts: Shared statistics for latest unit outcomes plus historical errors and retries.
@@ -353,11 +398,14 @@ def count_execution_units(
         attempts = attempts_by_unit.get(unit, ())
         if not attempts:
             continue
-        counts[attempts[-1].outcome] += 1
-        errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in attempts)
+        completions = [attempt for attempt in attempts if getattr(attempt, "attempt_index", None) is None]
+        if completions:
+            counts[completions[-1].outcome] += 1
+        execution_attempts = select_execution_attempts(attempts)
+        errors += sum(int(attempt.outcome == AttackOutcome.ERROR) for attempt in execution_attempts)
         retries += retry_pressure(
-            attempts_per_unit=[len(attempts)],
-            persisted_retries=[attempt.total_retries for attempt in attempts],
+            attempts_per_unit=[len(execution_attempts)],
+            persisted_retries=[attempt.total_retries for attempt in execution_attempts],
         )
         unit_attempts.extend(attempts)
 
@@ -525,6 +573,13 @@ def compute_scenario_statistics(
             producer_attempts=producer_attempts,
         )
 
+    atomic_attack_attempts = {}
+    for name, group_attempts in producer_attempts_by_name.items():
+        grouped: dict[ScenarioExecutionUnit, list[ScenarioAttempt]] = {}
+        for attempt in group_attempts:
+            grouped.setdefault(attempt.unit, []).append(attempt)
+        atomic_attack_attempts[name] = sum(len(select_execution_attempts(group)) for group in grouped.values())
+
     return ScenarioExecutionStatistics(
         overall=_count(counted_units, producer_attempts=attempts),
         atomic_attacks={
@@ -541,7 +596,8 @@ def compute_scenario_statistics(
             )
             for name in display_group_names
         },
-        attempts=len(attempts),
+        attempts=sum(len(select_execution_attempts(unit_attempts)) for unit_attempts in attempts_by_unit.values()),
+        atomic_attack_attempts=atomic_attack_attempts,
         unattributed_attempts=unattributed_attempts,
     )
 

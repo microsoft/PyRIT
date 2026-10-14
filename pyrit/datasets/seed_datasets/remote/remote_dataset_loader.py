@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import io
 import logging
+import os
 import tempfile
 import zipfile
 from abc import ABC, abstractmethod
@@ -53,6 +54,9 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
     The public fetch method assigns REMOTE origin, including for local source files
     and cached downloads.
     """
+
+    # Seconds to wait for a remote server before giving up, so a stalled download cannot hang forever.
+    REQUEST_TIMEOUT_SECONDS: ClassVar[int] = 60
 
     FILE_TYPE_HANDLERS: ClassVar[dict[str, dict[str, Callable[..., Any]]]] = {
         "json": {"read": read_json, "write": write_json},
@@ -185,8 +189,8 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         if not date_str:
             return None
         try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
+            return datetime.fromisoformat(date_str)
+        except (ValueError, TypeError, AttributeError):
             return None
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
@@ -285,7 +289,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             ValueError: If the file_type is invalid.
             Exception: If the request to fetch examples fails.
         """
-        response = requests.get(source)
+        response = requests.get(source, timeout=self.REQUEST_TIMEOUT_SECONDS)
         if response.status_code == 200:
             if file_type in self.FILE_TYPE_HANDLERS:
                 if file_type == "json":
@@ -420,7 +424,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             Returns:
                 Dataset: The loaded dataset from Hugging Face.
             """
-            cache_dir = str(DB_DATA_PATH / "huggingface") if cache else None
+            cache_dir = (os.getenv("HF_DATASETS_CACHE") or str(DB_DATA_PATH / "huggingface")) if cache else None
 
             # Reuse cached data when caching is enabled; force a re-download otherwise so
             # cache=False genuinely picks up upstream edits instead of silently reusing the cache.
@@ -528,7 +532,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
                     temp_to_clean = zip_path
 
                     logger.info(f"Downloading zip archive from {source}")
-                    with requests.get(source, stream=True) as response:
+                    with requests.get(source, stream=True, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
                         response.raise_for_status()
                         with zip_path.open("wb") as fh:
                             for chunk in response.iter_content(chunk_size=1 << 16):

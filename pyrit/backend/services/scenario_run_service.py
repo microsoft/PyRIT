@@ -24,7 +24,12 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import TypeAdapter, ValidationError
 
 from pyrit.analytics.outcome_statistics import success_percentage
-from pyrit.analytics.scenario_statistics import compute_scenario_statistics
+from pyrit.analytics.scenario_statistics import (
+    ScenarioAttempt,
+    compute_scenario_statistics,
+    resolve_attack_result_attempt,
+    select_execution_attempts,
+)
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
 from pyrit.backend.services.pagination import (
@@ -103,6 +108,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "target_name",
     "adversarial_target_name",
     "techniques",
+    "datasets",
     "dataset_names",
     "max_dataset_size",
     "dataset_filters",
@@ -110,6 +116,8 @@ _LAUNCH_REQUEST_FIELDS = (
     "max_retries",
     "include_baseline",
 )
+# Fields added after the first saved launch records; older records omit them.
+_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size"})
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -325,12 +333,14 @@ class ScenarioRunService:
             # Launch records from before per-run target selection used the server default.
             raw_request = {"adversarial_target_name": None, **raw_request}
         if not isinstance(raw_request, dict) or any(
-            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size"
+            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name not in _OPTIONAL_LAUNCH_FIELDS
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
-            request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}, strict=True
+            # JSON validation accepts saved enum values as strings while keeping strict type checks.
+            request = RunScenarioRequest.model_validate_json(
+                json.dumps({name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}),
+                strict=True,
             )
         except ValidationError as exc:
             raise ScenarioRunConflictError(
@@ -353,13 +363,15 @@ class ScenarioRunService:
         identifier = stored.scenario_identifier
         if (
             "scenario_techniques" in declared_names and request.techniques is None and identifier.techniques is None
-        ) or ("dataset_config" in declared_names and request.dataset_names is None and identifier.datasets is None):
+        ) or ("dataset_config" in declared_names and request.dataset_request is None and identifier.datasets is None):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
             for name, value in identifier.params.items()
             if name not in {"version", "techniques", "datasets"}
         }
+        # Dataset names are not copied from the identity: the saved request reproduces them, and the
+        # stored-identity check on initialization rejects any difference.
         return request.model_copy(
             update={
                 "scenario_result_id": str(stored.id),
@@ -369,9 +381,6 @@ class ScenarioRunService:
                 "techniques": request.techniques
                 if request.techniques is not None or "scenario_techniques" not in declared_names
                 else identifier.techniques,
-                "dataset_names": request.dataset_names
-                if request.dataset_names is not None or "dataset_config" not in declared_names
-                else identifier.datasets,
                 "labels": dict(stored.labels) if "memory_labels" in declared_names else None,
             },
             deep=True,
@@ -604,9 +613,7 @@ class ScenarioRunService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
+                datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
                 if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
@@ -1209,7 +1216,7 @@ class ScenarioRunService:
         scenario_class = scenario_registry.get_class(request.scenario_name)
         declared = scenario_class.supported_parameters()
         declared_names = {parameter.name for parameter in declared}
-        launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
+        launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
         numeric_parameters = [
             parameter for parameter in declared if parameter.name in {"max_concurrency", "max_retries"}
         ]
@@ -1444,21 +1451,27 @@ class ScenarioRunService:
         # a COMPLETED scenario can still hide errored objectives or rate-limit retries.
         failed_attacks: list[AttackErrorSummary] = []
         attack_retries: list[AttackRetrySummary] = []
-        persisted_retries: list[int] = []
         overload_events: deque[Any] = deque(maxlen=_MAX_OVERLOAD_EVENTS)
-        attempts_by_unit: dict[ResultUnitIdentity, int] = {}
+        attempts_by_unit: dict[ResultUnitIdentity, list[ScenarioAttempt]] = {}
         plan_lookup = self._progress_read_model.build_plan_lookup(plan=plan)
         for atomic_attack_name, results in scenario_result.attack_results.items():
             for attack_result in results:
-                unit_identity = self._progress_read_model.resolve_result_unit_identity(
+                attempt = resolve_attack_result_attempt(
                     atomic_attack_name=atomic_attack_name,
                     attack_result=attack_result,
                     plan_lookup=plan_lookup,
                 )
-                attempts_by_unit[unit_identity] = attempts_by_unit.get(unit_identity, 0) + 1
+                attempts_by_unit.setdefault(attempt.unit, []).append(attempt)
+        execution_ids = {
+            attempt.attempt_id
+            for attempts in attempts_by_unit.values()
+            for attempt in select_execution_attempts(attempts)
+        }
+        for atomic_attack_name, results in scenario_result.attack_results.items():
+            for attack_result in results:
+                if str(attack_result.attack_result_id) not in execution_ids:
+                    continue
                 retries = getattr(attack_result, "total_retries", 0)
-                if isinstance(retries, int):
-                    persisted_retries.append(retries)
 
                 retry_events = getattr(attack_result, "retry_events", None)
                 if isinstance(retry_events, list) and retry_events:
@@ -1481,10 +1494,7 @@ class ScenarioRunService:
                             total_retries=max(0, retries) if isinstance(retries, int) else 0,
                         )
                     )
-        total_retries = self._progress_read_model.total_retry_pressure(
-            attempts_per_unit=attempts_by_unit.values(),
-            persisted_retries=persisted_retries,
-        )
+        total_retries = overall_counts.retries
 
         updated_at = scenario_result.creation_time
         if terminal and scenario_result.completion_time is not None:

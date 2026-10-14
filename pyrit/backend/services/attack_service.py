@@ -68,6 +68,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
+from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import (
     AttackResultKeysetCursor,
     CentralMemory,
@@ -80,6 +81,7 @@ from pyrit.models import (
     AttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     ComponentIdentifier,
     Conversation,
     ConversationStats,
@@ -156,7 +158,7 @@ class AttackService:
         """
         List attacks with optional filtering and pagination.
 
-        Queries AttackResult entries from the database.
+        Queries every saved result ID, including results sharing a main conversation.
 
         Args:
             attack_types: Filter by attack type names (case-insensitive). May be specified
@@ -202,11 +204,13 @@ class AttackService:
         # row on the previous page — and a fingerprint of the filters it was generated for.
         # Decoding against the current request's filters makes a cursor minted for a different
         # filter set fall back to the first page instead of seeking within the wrong result
-        # set. The memory layer deduplicates, applies the turn bounds, orders by recency, seeks
+        # set. The memory layer applies the turn bounds, orders by recency, seeks
         # past the anchor, and limits in SQL, so only one page's worth of rows is materialized
         # instead of the full table.
+        result_selection = AttackResultSelection.ALL_RESULTS
         normalized_labels = normalize_label_filters(labels=labels)
         fingerprint_values: dict[str, Any] = {
+            "result_selection": result_selection.value,
             "attack_types": effective_attack_types,
             "converter_types": effective_converter_types,
             "converter_types_match": converter_types_match,
@@ -232,6 +236,7 @@ class AttackService:
             else None
         )
         results = await self._memory.get_attack_results_async(
+            result_selection=result_selection,
             outcome=outcome,
             operator=operator,
             operation=operation,
@@ -863,13 +868,13 @@ class AttackService:
             return None
 
         automated_score = results[0].automated_score
-        if automated_score is None or automated_score.score_value is None:
-            outcome = AttackOutcome.UNDETERMINED
+        # Follow the attack-side contract of attack_outcome_from_score (#3181): read the
+        # typed score value instead of comparing the raw string, and treat an undetermined
+        # score as neither achievement nor refutation.
+        outcome = AttackOutcome.UNDETERMINED if automated_score is None else attack_outcome_from_score(automated_score)
+        if outcome is AttackOutcome.UNDETERMINED or automated_score is None:
             outcome_reason = None
         else:
-            outcome = (
-                AttackOutcome.SUCCESS if automated_score.score_value.casefold() == "true" else AttackOutcome.FAILURE
-            )
             outcome_reason = automated_score.score_rationale
 
         await self._memory.update_attack_result_by_id_async(

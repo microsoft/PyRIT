@@ -409,7 +409,7 @@ class DataTypeSerializer(abc.ABC):
 
     def _is_azure_storage_url(self, path: str) -> bool:
         """
-        Validate whether the given path is an Azure Storage URL.
+        Classify HTTP(S) URLs by the Azure Blob Storage hostname suffix.
 
         Args:
             path (str): Path or URL to check.
@@ -419,7 +419,8 @@ class DataTypeSerializer(abc.ABC):
 
         """
         parsed = urlparse(path)
-        return parsed.scheme in ("http", "https") and "blob.core.windows.net" in parsed.netloc
+        hostname = parsed.hostname or ""
+        return parsed.scheme in ("http", "https") and hostname.endswith(".blob.core.windows.net")
 
 
 class TextDataTypeSerializer(DataTypeSerializer):
