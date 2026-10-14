@@ -128,7 +128,9 @@ class WebSocketCopilotTarget(PromptTarget):
                 Defaults to ``wss://substrate.svc.cloud.microsoft/m365Copilot/Chathub``.
             max_requests_per_minute (int | None): Maximum number of requests per minute.
             model_name (str): The model name. Defaults to "copilot".
-            response_timeout_seconds (int): Timeout for receiving responses in seconds. Defaults to 60s.
+            response_timeout_seconds (int): Timeout in seconds for each receive loop. The user-response
+                loop shares one overall budget across streamed messages rather than resetting between
+                messages. The handshake has its own budget. Defaults to 60s.
             authenticator (Authenticator | None): Copilot authentication strategy. Supported
                 implementations are ``BrowserSessionCopilotAuthenticator``,
                 ``CopilotAuthenticator``, and ``ManualCopilotAuthenticator``. If None, a new
@@ -517,6 +519,8 @@ class WebSocketCopilotTarget(PromptTarget):
 
         The method polls for messages, ignoring PARTIAL_RESPONSE streaming updates
         until it receives either FINAL_CONTENT (success), STREAM_END, or UNKNOWN (error).
+        Each input has one receive timeout budget; streaming messages do not reset the
+        response deadline.
 
         Args:
             message_pieces (list[MessagePiece]): List of message pieces containing text and/or images.
@@ -530,7 +534,7 @@ class WebSocketCopilotTarget(PromptTarget):
             str: The final response text from Copilot.
 
         Raises:
-            TimeoutError: If no response received within the specified timeout period.
+            TimeoutError: If receiving a complete response exceeds the overall timeout period.
             RuntimeError: If WebSocket connection closes unexpectedly, protocol violation occurs,
                 or maximum message iterations exceeded.
         """
@@ -567,55 +571,60 @@ class WebSocketCopilotTarget(PromptTarget):
                 max_message_iterations = 1000
                 iteration_count = 0
                 stop_polling = False
+                timeout_message = (
+                    f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
+                )
+                timeout_scope = asyncio.timeout(self._response_timeout_seconds)
 
-                while not stop_polling:
-                    # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
-                    iteration_count += 1
-                    if iteration_count > max_message_iterations:
-                        raise RuntimeError(
-                            f"Exceeded maximum message iterations ({max_message_iterations}) "
-                            "while waiting for Copilot response."
-                        )
+                try:
+                    async with timeout_scope:
+                        while not stop_polling:
+                            # Prevent infinite loops (e.g. if Copilot somehow never sends a terminating message)
+                            iteration_count += 1
+                            if iteration_count > max_message_iterations:
+                                raise RuntimeError(
+                                    f"Exceeded maximum message iterations ({max_message_iterations}) "
+                                    "while waiting for Copilot response."
+                                )
 
-                    try:
-                        raw_message = await asyncio.wait_for(
-                            websocket.recv(),
-                            timeout=self._response_timeout_seconds,
-                        )
-                    except TimeoutError:
-                        raise TimeoutError(
-                            f"Timed out waiting for Copilot response after {self._response_timeout_seconds} seconds."
-                        ) from None
+                            try:
+                                raw_message = await websocket.recv()
+                            except TimeoutError:
+                                raise TimeoutError(timeout_message) from None
 
-                    if raw_message is None:
-                        raise RuntimeError(
-                            "WebSocket connection closed unexpectedly: received None from websocket.recv()"
-                        )
+                            if raw_message is None:
+                                raise RuntimeError(
+                                    "WebSocket connection closed unexpectedly: received None from websocket.recv()"
+                                )
 
-                    message_str = raw_message if isinstance(raw_message, str) else raw_message.decode("utf-8")
-                    parsed_messages = self._parse_raw_message(message_str)
+                            message_str = raw_message if isinstance(raw_message, str) else raw_message.decode("utf-8")
+                            parsed_messages = self._parse_raw_message(message_str)
 
-                    for msg_type, content in parsed_messages:
-                        if msg_type in (
-                            CopilotMessageType.UNKNOWN,
-                            CopilotMessageType.FINAL_CONTENT,
-                            CopilotMessageType.STREAM_END,
-                        ):
-                            stop_polling = True
-                            # Not breaking here to process all messages in this batch,
-                            # possibly including FINAL_CONTENT
+                            for msg_type, content in parsed_messages:
+                                if msg_type in (
+                                    CopilotMessageType.UNKNOWN,
+                                    CopilotMessageType.FINAL_CONTENT,
+                                    CopilotMessageType.STREAM_END,
+                                ):
+                                    stop_polling = True
+                                    # Not breaking here to process all messages in this batch,
+                                    # possibly including FINAL_CONTENT
 
-                            if msg_type == CopilotMessageType.FINAL_CONTENT:
-                                response = content
-                            elif msg_type == CopilotMessageType.UNKNOWN:
-                                logger.debug("Received unknown or empty message type.")
+                                    if msg_type == CopilotMessageType.FINAL_CONTENT:
+                                        response = content
+                                    elif msg_type == CopilotMessageType.UNKNOWN:
+                                        logger.debug("Received unknown or empty message type.")
 
-                        # PING is Copilot's acknowledgment of the protocol handshake (first message in inputs[])
-                        # It should arrive after the handshake, not after a user prompt
-                        # If we're processing a user prompt and receive PING, something is wrong - ignore it
-                        # and keep polling for the actual FINAL_CONTENT response
-                        elif msg_type == CopilotMessageType.PING and not is_user_input:
-                            stop_polling = True
+                                # PING is Copilot's acknowledgment of the protocol handshake (first message in inputs[])
+                                # It should arrive after the handshake, not after a user prompt
+                                # If we're processing a user prompt and receive PING, something is wrong - ignore it
+                                # and keep polling for the actual FINAL_CONTENT response
+                                elif msg_type == CopilotMessageType.PING and not is_user_input:
+                                    stop_polling = True
+                except TimeoutError:
+                    if timeout_scope.expired():
+                        raise TimeoutError(timeout_message) from None
+                    raise
 
             return response
 

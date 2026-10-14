@@ -11,7 +11,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr
+from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_ITEMS,
+    REGISTRY_INSTANCE_NAME_PATTERN,
+    IdentifierStr,
+)
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
 from pyrit.models.component_spec import SourceInstanceSpec
 
@@ -151,8 +156,18 @@ class ConverterPreviewRequest(BaseModel):
             raise ValueError("converter_specs must match converter_ids in order")
         return self
 
-    start_token: str = Field(default="⟪", min_length=1, description="Opening marker for selected text regions")
-    end_token: str = Field(default="⟫", min_length=1, description="Closing marker for selected text regions")
+    start_token: str = Field(
+        default="⟪",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Opening marker for selected text regions",
+    )
+    end_token: str = Field(
+        default="⟫",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Closing marker for selected text regions",
+    )
 
 
 class ConverterPreviewResponse(BaseModel):

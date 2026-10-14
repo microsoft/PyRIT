@@ -149,13 +149,18 @@ class TestTemporaryComponents:
         original = source.get_identifier()
         service = TargetService()
         spec = SourceInstanceSpec(source_name="source", source_hash=original.hash, params={"temperature": 1.5})
-        built = await service.create_target_async(
-            request=CreateTargetRequest(
-                type="OpenAIChatTarget",
-                register=False,
-                source=spec,
+        with patch.object(service, "_enforce_code_execution_permission_async", new_callable=AsyncMock) as permission:
+            built = await service.create_target_async(
+                request=CreateTargetRequest(
+                    type="OpenAIChatTarget",
+                    register=False,
+                    source=spec,
+                )
             )
-        )
+        permission.assert_awaited_once()
+        assert permission.call_args.kwargs["params"]["temperature"] == 1.5
+        assert permission.call_args.kwargs["params"]["api_key"] == "test-only-key"
+        assert permission.call_args.kwargs["is_admin"] is False
         assert built.identifier.temperature == 1.5
         binding = TargetBinding(
             source_name="source",

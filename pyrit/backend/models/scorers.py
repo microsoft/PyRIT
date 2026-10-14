@@ -5,7 +5,7 @@
 
 from pydantic import BaseModel, Field, model_validator
 
-from pyrit.backend.models.common import REGISTRY_INSTANCE_NAME_PATTERN, PaginationInfo
+from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter, ScorerIdentifier
 from pyrit.models.catalog.scorer import ScorerInstance
 
@@ -39,8 +39,10 @@ class CreateScorerRequest(BaseModel):
         None, min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name"
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
-    type: str = Field(..., description="Scorer class name")
-    params: dict[str, JSONValue] = Field(default_factory=dict, description="Scorer constructor parameters")
+    type: IdentifierStr = Field(..., description="Scorer class name")
+    params: dict[IdentifierStr, JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
+    )
 
     @model_validator(mode="after")
     def _validate_registration(self) -> "CreateScorerRequest":
