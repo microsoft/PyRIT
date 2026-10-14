@@ -130,6 +130,24 @@ class TestLiteLLMDecisionTarget:
         assert first.get_identifier() != other_route.get_identifier()
         assert "header-secret" not in first.get_identifier().model_dump_json()
 
+    @pytest.mark.parametrize("route", [None, "primary"])
+    async def test_caller_header_changes_do_not_change_request_or_identity_async(
+        self, *, decision_sdk: MagicMock, route: str | None
+    ) -> None:
+        headers = {"X-Route": route} if route is not None else {}
+        target = LiteLLMDecisionTarget(model_name=MODEL, endpoint=ENDPOINT, api_key="test-api-key", headers=headers)
+        identifier = target.get_identifier()
+        headers["X-Route"] = "secondary"
+        headers["X-New"] = "caller-only"
+
+        await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
+
+        decision_sdk.adecisions.assert_awaited_once()
+        expected_headers = {"X-Route": route} if route is not None else None
+        assert decision_sdk.adecisions.call_args.kwargs.get("extra_headers") == expected_headers
+        assert target.get_identifier() == identifier
+        assert identifier.params.get("headers") == expected_headers
+
     @pytest.mark.parametrize("cost", [0.0, 0.000001, None])
     async def test_decision_cost_does_not_use_chat_pricing_async(
         self, *, target: LiteLLMDecisionTarget, decision_sdk: MagicMock, cost: float | None
@@ -166,6 +184,20 @@ class TestLiteLLMDecisionTarget:
         with pytest.raises(ValueError, match="decision|Decision"):
             await target.send_prompt_async(message=_request(text))
         decision_sdk.adecisions.assert_not_awaited()
+
+    @pytest.mark.parametrize("state", ["context", {}, [], {"response": "Paris."}, ["context", {"response": "Paris."}]])
+    async def test_supported_state_shapes_reach_sdk_async(
+        self,
+        *,
+        target: LiteLLMDecisionTarget,
+        decision_sdk: MagicMock,
+        state: str | dict[str, object] | list[object],
+    ) -> None:
+        await target.send_prompt_async(message=_request(json.dumps({**REQUEST, "state": state})))
+
+        decision_sdk.adecisions.assert_awaited_once()
+        assert decision_sdk.adecisions.call_args.kwargs["state"] == state
+        assert decision_sdk.adecisions.call_args.kwargs["questions"] == REQUEST["questions"]
 
     async def test_token_provider_is_resolved_async(self, decision_sdk: MagicMock) -> None:
         token_provider = AsyncMock(return_value="current-test-key")
@@ -214,12 +246,24 @@ class TestLiteLLMDecisionTarget:
             await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
         decision_sdk.adecisions.assert_awaited_once()
 
-    async def test_real_sdk_routes_openrouter_request_async(self) -> None:
+    @pytest.mark.parametrize(
+        ("provider_probability", "probability"),
+        [(0.82, 0.82), (True, 1.0), (False, 0.0), ("0.82", 0.82)],
+    )
+    async def test_real_sdk_routes_and_normalizes_openrouter_response_async(
+        self, *, provider_probability: object, probability: float
+    ) -> None:
         pytest.importorskip("litellm")
         from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
         target = LiteLLMDecisionTarget(model_name=MODEL, endpoint=ENDPOINT, api_key="test-api-key")
-        http_response = httpx.Response(200, json=RESPONSE, request=httpx.Request("POST", f"{ENDPOINT}/alpha/decisions"))
+        provider_response = {
+            **RESPONSE,
+            "answers": {"objective_achieved": {"type": "noul", "noul": provider_probability}},
+        }
+        http_response = httpx.Response(
+            200, json=provider_response, request=httpx.Request("POST", f"{ENDPOINT}/alpha/decisions")
+        )
         with patch.object(AsyncHTTPHandler, "post", new_callable=AsyncMock, return_value=http_response) as post:
             responses = await target.send_prompt_async(message=_request(json.dumps(REQUEST)))
 
@@ -227,4 +271,8 @@ class TestLiteLLMDecisionTarget:
         assert post.call_args.args[0] == f"{ENDPOINT}/alpha/decisions"
         body: dict[str, Any] = post.call_args.kwargs["json"]
         assert body == {**REQUEST, "model": "microsoft/microsoft-decision-1"}
-        assert json.loads(responses[0].get_value()) == RESPONSE
+        expected_response = {
+            **RESPONSE,
+            "answers": {"objective_achieved": {"type": "noul", "noul": probability}},
+        }
+        assert json.loads(responses[0].get_value()) == expected_response

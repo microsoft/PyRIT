@@ -162,6 +162,7 @@ class TestScorerInitializerInitialize:
         assert isinstance(wrapped, FloatScaleThresholdScorer)
         assert raw.get_chat_target() is target
         assert isinstance(wrapped._scorer, DecisionScorer)
+        assert wrapped._scorer is not raw
         assert wrapped._scorer.get_chat_target() is target
         assert wrapped._scorer.get_identifier() == raw.get_identifier()
         assert wrapped._threshold == 0.7

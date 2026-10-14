@@ -124,6 +124,7 @@ print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 # Uses Microsoft-Decision-1 to estimate whether a text response achieves its objective.
 # It returns a model probability from `0.0` to `1.0`, not calibrated confidence.
 # The instructions and criteria are in `pyrit/datasets/score/decision/objective_achieved.yaml`.
+# LiteLLM converts Boolean and numeric-string answers to numbers before the scorer validates them.
 # %%
 from pyrit.models import ContentScorable, ScoringExpectation
 from pyrit.prompt_target import LiteLLMDecisionTarget

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 import yaml
 from unit.mocks import store_message_async
@@ -101,6 +102,8 @@ def decision_question_file(tmp_path: Path) -> Path:
 
 @pytest.mark.usefixtures("patch_central_database", "decision_api")
 class TestDecisionScorer:
+    """Validate target JSON independently of LiteLLM's provider-response parsing."""
+
     @pytest.mark.parametrize("probability", [0, 0.69, 0.7, 0.82, 1])
     async def test_score_round_trips_and_replays_async(
         self, *, sqlite_instance: MemoryInterface, probability: float
@@ -326,7 +329,7 @@ class TestDecisionScorer:
         assert len(requests) == 1
 
     @pytest.mark.parametrize("probability", [None, True, False, "0.82", [], -0.1, 1.1, float("nan"), float("inf")])
-    async def test_invalid_probability_retries_and_raises_async(self, probability: object) -> None:
+    async def test_invalid_target_probability_retries_and_raises_async(self, probability: object) -> None:
         requests: list[dict[str, Any]] = []
         scorer = _scorer(responses=[json.dumps(_response(probability))], requests=requests)
 
@@ -467,3 +470,87 @@ class TestDecisionScorer:
 
         assert score.get_value() == 0.82
         assert score.score_metadata == {}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestDecisionScorerSDK:
+    @pytest.mark.parametrize(
+        ("provider_probability", "probability", "verdict"),
+        [(True, 1.0, True), (False, 0.0, False), ("0.82", 0.82, True), (0.69, 0.69, False), (0.7, 0.7, True)],
+    )
+    async def test_sdk_probability_conversion_persists_and_replays_async(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        provider_probability: object,
+        probability: float,
+        verdict: bool,
+    ) -> None:
+        pytest.importorskip("litellm")
+        from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+
+        endpoint = "https://openrouter.ai/api"
+        target = LiteLLMDecisionTarget(model_name=MODEL, endpoint=endpoint, api_key="test-api-key")
+        raw = DecisionScorer(chat_target=target)
+        scorer = FloatScaleThresholdScorer(scorer=raw, threshold=0.7)
+        message = await store_message_async(MessagePiece(role="assistant", original_value="Paris.").to_message())
+        expectation = ScoringExpectation(objective=OBJECTIVE, conditions=(MatchesObjective(),))
+        http_response = httpx.Response(
+            200,
+            json=_response(provider_probability),
+            request=httpx.Request("POST", f"{endpoint}/alpha/decisions"),
+        )
+
+        with patch.object(AsyncHTTPHandler, "post", new_callable=AsyncMock, return_value=http_response) as post:
+            score = (await scorer.score_async(scorable=MessageScorable.from_message(message), expectation=expectation))[
+                0
+            ]
+            stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+            assert stored.get_value() is verdict
+            assert stored.score_type == "true_false"
+            assert stored.score_category == ["task_achieved"]
+            comparison = "=" if probability == 0.7 else ">" if verdict else "<"
+            assert stored.score_rationale == (
+                f"based on DecisionScorer\nNormalized scale score: {probability} {comparison} threshold 0.7"
+            )
+            assert stored.scored_expectation == expectation
+            assert stored.message_piece_id == message.get_piece().id
+            assert stored.score_metadata == {
+                **METADATA,
+                FloatScaleThresholdScorer.ORIGINAL_FLOAT_VALUE_KEY: probability,
+            }
+            assert len(stored.observation_ids) == 1
+            observation = (await sqlite_instance.get_observations_async(observation_ids=stored.observation_ids))[0]
+
+            replay = (await raw.score_observation_async(observation=observation, expectation=expectation))[0]
+            assert replay.get_value() == probability
+            assert replay.score_type == "float_scale"
+            assert replay.score_category == ["task_achieved"]
+            assert replay.score_rationale == ""
+            assert replay.score_metadata == METADATA
+            assert replay.observation_ids == stored.observation_ids
+            post.assert_awaited_once()
+            assert post.call_args.kwargs["json"]["state"] == {"objective": OBJECTIVE, "response": "Paris."}
+
+    @pytest.mark.parametrize("provider_probability", [-0.1, 1.1, "1.1"])
+    async def test_sdk_probability_outside_range_retries_and_raises_async(self, provider_probability: object) -> None:
+        pytest.importorskip("litellm")
+        from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+
+        endpoint = "https://openrouter.ai/api"
+        target = LiteLLMDecisionTarget(model_name=MODEL, endpoint=endpoint, api_key="test-api-key")
+        scorer = DecisionScorer(chat_target=target)
+        http_response = httpx.Response(
+            200,
+            json=_response(provider_probability),
+            request=httpx.Request("POST", f"{endpoint}/alpha/decisions"),
+        )
+
+        with patch.object(AsyncHTTPHandler, "post", new_callable=AsyncMock, return_value=http_response) as post:
+            with pytest.raises(InvalidJsonException, match="finite number"):
+                await scorer.score_async(
+                    scorable=ContentScorable(value="Paris."),
+                    expectation=ScoringExpectation(objective=OBJECTIVE),
+                )
+
+            assert post.await_count == 2

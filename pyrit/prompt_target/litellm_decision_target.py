@@ -4,11 +4,12 @@
 import json
 import math
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from pyrit.models import (
     ComponentIdentifier,
     Message,
+    MessagePiece,
     TokenUsage,
     construct_response_from_request,
     read_usage_int,
@@ -20,9 +21,24 @@ from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, re
 from pyrit.prompt_target.common.utils import limit_requests_per_minute, set_token_usage_metadata
 from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 
+if TYPE_CHECKING:
+    from litellm.types.decisions import DecisionsResponse
+
+
+class _DecisionRequest(TypedDict):
+    """A validated state/questions request for the decision API."""
+
+    state: str | dict[str, object] | list[object]
+    questions: dict[str, object]
+
 
 class LiteLLMDecisionTarget(LiteLLMChatTarget):
-    """Send prepared state and typed questions through LiteLLM's decision API."""
+    """
+    Send prepared state and typed questions through LiteLLM's decision API.
+
+    Responses use the SDK's JSON types. LiteLLM converts Boolean answers and
+    numeric strings to numbers before returning them.
+    """
 
     _SUPPORTS_TOOL_CALL_HISTORY = False
     _DEFAULT_CONFIGURATION = TargetConfiguration(capabilities=TargetCapabilities())
@@ -58,7 +74,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
                 when neither this value nor ``LITELLM_ENDPOINT`` is set.
             api_key (str | Callable[[], str | Awaitable[str]] | None): API key or token
                 provider. Uses the same credential lookup as ``LiteLLMChatTarget``.
-            headers (dict[str, str] | None): Extra provider request headers.
+            headers (dict[str, str] | None): Extra provider request headers, copied at construction.
             max_requests_per_minute (int | None): Optional request rate limit.
             custom_configuration (TargetConfiguration | None): Target capability overrides.
             trace_config (TargetTraceConfig | None): Optional per-request tracing.
@@ -72,7 +88,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
             model_name=model_name,
             endpoint=endpoint,
             api_key=api_key,
-            headers=headers,
+            headers=dict(headers) if headers is not None else None,
             max_requests_per_minute=max_requests_per_minute,
             custom_configuration=custom_configuration or self._DEFAULT_CONFIGURATION,
             trace_config=trace_config,
@@ -113,9 +129,28 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
         decision_api = getattr(litellm, "asystemone", None) or getattr(litellm, "adecisions", None)
         if decision_api is None:
             raise ImportError("LiteLLMDecisionTarget requires litellm>=1.104.2. Install `pyrit[litellm]`.")
-        message = normalized_conversation[-1]
+        request, body = await self._prepare_decision_request_async(message=normalized_conversation[-1])
+        try:
+            response = await decision_api(**body)
+        except APIError as exc:
+            return self._handle_litellm_exception(exc=exc, request=request)
+        return [self._build_decision_response(request=request, response=response)]
+
+    async def _prepare_decision_request_async(self, *, message: Message) -> tuple[MessagePiece, dict[str, Any]]:
+        """
+        Prepare the decision SDK arguments for one request.
+
+        Args:
+            message (Message): The prepared decision request.
+
+        Returns:
+            tuple[MessagePiece, dict[str, Any]]: The request piece and SDK arguments.
+
+        Raises:
+            ValueError: If the request is not a state/questions JSON object.
+        """
         request = message.get_piece()
-        body = {
+        body: dict[str, Any] = {
             **self._parse_request(request.converted_value),
             "model": self._model_name,
             "api_key": await self._resolve_api_key_async(),
@@ -126,10 +161,22 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
         headers = request_trace_headers(request=message, headers=self._headers or {})
         if headers:
             body["extra_headers"] = headers
-        try:
-            response = await decision_api(**body)
-        except APIError as exc:
-            return self._handle_litellm_exception(exc=exc, request=request)
+        return request, body
+
+    def _build_decision_response(self, *, request: MessagePiece, response: "DecisionsResponse") -> Message:
+        """
+        Build response evidence with decision usage and cost metadata.
+
+        Args:
+            request (MessagePiece): The request associated with the response.
+            response (DecisionsResponse): The SDK-normalized decision response.
+
+        Returns:
+            Message: The response as JSON text with usage and cost metadata.
+
+        Raises:
+            ValueError: If the reported cost is invalid.
+        """
         result = construct_response_from_request(
             request=request,
             response_text_pieces=[response.model_dump_json(exclude_none=True)],
@@ -145,15 +192,15 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
         )
         set_token_usage_metadata(pieces=result.message_pieces, usage=usage)
         self._capture_response_cost(pieces=result.message_pieces, response=response)
-        return [result]
+        return result
 
     @staticmethod
-    def _extract_response_cost(*, response: Any) -> float | None:
+    def _extract_response_cost(*, response: "DecisionsResponse") -> float | None:
         """
         Read decision cost without using Chat Completions pricing.
 
         Args:
-            response (Any): The LiteLLM decision response.
+            response (DecisionsResponse): The LiteLLM decision response.
 
         Returns:
             float | None: Provider-reported or SDK-calculated cost, when available.
@@ -172,7 +219,7 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
         return float(cost)
 
     @staticmethod
-    def _parse_request(text: str) -> dict[str, Any]:
+    def _parse_request(text: str) -> _DecisionRequest:
         try:
             body = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -183,4 +230,4 @@ class LiteLLMDecisionTarget(LiteLLMChatTarget):
             raise ValueError("Decision state must be text, a JSON object, or a JSON array.")
         if not isinstance(body["questions"], dict) or not body["questions"]:
             raise ValueError("Decision questions must be a nonempty JSON object.")
-        return body
+        return cast("_DecisionRequest", body)

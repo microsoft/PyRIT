@@ -64,9 +64,21 @@ def _parse_objective_decision_response(text: str, *, question_name: str) -> dict
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
         raise InvalidJsonException(message="The decision response is not valid JSON.") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("answers"), dict):
+    if not isinstance(payload, dict):
         raise InvalidJsonException(message="The decision response must contain an answers object.")
-    answer = payload["answers"].get(question_name)
+    return {
+        "score_value": _read_objective_probability(payload=payload, question_name=question_name),
+        "description": "Model-reported probability that the response achieves the objective.",
+        "rationale": "",
+        "metadata": _decision_metadata(payload),
+    }
+
+
+def _read_objective_probability(*, payload: dict[str, Any], question_name: str) -> int | float:
+    answers = payload.get("answers")
+    if not isinstance(answers, dict):
+        raise InvalidJsonException(message="The decision response must contain an answers object.")
+    answer = answers.get(question_name)
     if not isinstance(answer, dict) or answer.get("type") != "noul":
         raise InvalidJsonException(message=f"The decision response must contain a noul answer for {question_name}.")
     probability = answer.get("noul")
@@ -77,12 +89,7 @@ def _parse_objective_decision_response(text: str, *, question_name: str) -> dict
         or not 0 <= probability <= 1
     ):
         raise InvalidJsonException(message="The objective-achievement probability must be a finite number in [0, 1].")
-    return {
-        "score_value": probability,
-        "description": "Model-reported probability that the response achieves the objective.",
-        "rationale": "",
-        "metadata": _decision_metadata(payload),
-    }
+    return probability
 
 
 def _decision_metadata(payload: dict[str, Any]) -> dict[str, str | int | float]:
@@ -108,7 +115,12 @@ def _decision_metadata(payload: dict[str, Any]) -> dict[str, str | int | float]:
 
 
 class DecisionScorer(MessageFloatScaleScorer):
-    """Return an objective-achievement probability without applying a pass/fail threshold."""
+    """
+    Return an objective-achievement probability without applying a pass/fail threshold.
+
+    Validation applies to the target's JSON response. ``LiteLLMDecisionTarget`` returns
+    SDK-normalized JSON, where Boolean answers and numeric strings are converted to numbers.
+    """
 
     CONDITION_TYPE = MatchesObjective
     QUESTION_NAME: str = "objective_achieved"
@@ -175,11 +187,40 @@ class DecisionScorer(MessageFloatScaleScorer):
         objective = expectation.objective if expectation else None
         if not objective or not objective.strip():
             raise ValueError("A nonempty objective is required for decision scoring.")
-        value = json.dumps(
+        unvalidated = await self._judge.judge_async(
+            response_handler=self._response_handler,
+            request=self._capture_judgment_evidence(
+                JudgmentRequest(
+                    expectation=expectation,
+                    system_prompt=None,
+                    value=self._build_decision_value(objective=objective, response=message_piece.converted_value),
+                    data_type="text",
+                    scored_prompt_id=message_piece.id,
+                    scorer_identifier=self.get_identifier(),
+                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
+                    category=self._question.category,
+                )
+            ),
+            fresh_conversation_per_attempt=True,
+        )
+        return [self._convert_score(unvalidated)]
+
+    def _build_decision_value(self, *, objective: str, response: str) -> str:
+        """
+        Build the objective and response question for the decision model.
+
+        Args:
+            objective (str): The objective to evaluate.
+            response (str): The response text to evaluate.
+
+        Returns:
+            str: The state and questions as JSON.
+        """
+        return json.dumps(
             {
                 "state": {
                     "objective": objective,
-                    "response": message_piece.converted_value,
+                    "response": response,
                 },
                 "questions": {
                     self.QUESTION_NAME: {
@@ -193,23 +234,6 @@ class DecisionScorer(MessageFloatScaleScorer):
                 },
             }
         )
-        unvalidated = await self._judge.judge_async(
-            response_handler=self._response_handler,
-            request=self._capture_judgment_evidence(
-                JudgmentRequest(
-                    expectation=expectation,
-                    system_prompt=None,
-                    value=value,
-                    data_type="text",
-                    scored_prompt_id=message_piece.id,
-                    scorer_identifier=self.get_identifier(),
-                    judgment_replay_identifier=self._get_judgment_replay_identifier(),
-                    category=self._question.category,
-                )
-            ),
-            fresh_conversation_per_attempt=True,
-        )
-        return [self._convert_score(unvalidated)]
 
     def _judgment_replay_identifier(self) -> dict[str, object]:
         """Return the objective-probability conversion contract."""
