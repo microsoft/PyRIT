@@ -1313,3 +1313,113 @@ async def test_json_match_conditions_fold_non_ascii_case_async(
     async with await sqlite_instance.get_session_async() as session:
         rows = (await session.execute(select(PromptMemoryEntry.id).where(condition))).all()
     assert len(rows) == expected
+
+
+async def test_seed_metadata_filter_accepts_keys_with_special_characters(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    """Metadata filter keys with dots or hyphens stay one literal key (#3179)."""
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedPrompt(value="dotted", data_type="text", dataset_name="t", metadata={"a.b": "v1"}),
+            SeedPrompt(value="nested", data_type="text", dataset_name="t", metadata={"a": {"b": "v1"}}),
+            SeedPrompt(value="hyphen", data_type="text", dataset_name="t", metadata={"prompt-type": "v2"}),
+        ],
+        added_by="test",
+    )
+
+    dotted = await sqlite_instance.get_seeds_async(metadata={"a.b": "v1"})
+    assert [seed.value for seed in dotted] == ["dotted"]
+
+    hyphen = await sqlite_instance.get_seeds_async(metadata={"prompt-type": "v2"})
+    assert [seed.value for seed in hyphen] == ["hyphen"]
+
+
+async def test_message_piece_metadata_filter_accepts_keys_with_special_characters(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    """Prompt metadata filters on message pieces match literal dotted keys (#3179)."""
+    dotted = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="dotted",
+        prompt_metadata={"request.id": "r1"},
+    )
+    nested = MessagePiece(
+        conversation_id=str(uuid.uuid4()),
+        role="assistant",
+        original_value="nested",
+        prompt_metadata={"request": {"id": "r1"}},
+    )
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[dotted, nested])
+
+    retrieved = await sqlite_instance.get_message_pieces_async(prompt_metadata={"request.id": "r1"})
+
+    assert len(retrieved) == 1
+    assert retrieved[0].original_value == "dotted"
+
+
+@pytest.mark.parametrize("key", ['a"."b', 'a"b', r"a\b", "a.b", "prompt-type", "two words", "", " ", "\u00e9 "])
+@pytest.mark.parametrize("value", ["1", 1])
+@pytest.mark.parametrize("remove_groups", [False, True])
+async def test_metadata_filters_match_literal_keys_after_reopening_async(
+    *,
+    isolated_memory_factory: Callable[..., SQLiteMemory],
+    tmp_path: Path,
+    key: str,
+    value: str | int,
+    remove_groups: bool,
+) -> None:
+    database = tmp_path / "metadata.db"
+    memory = isolated_memory_factory(db_path=database, silent=True)
+    group_id = uuid.uuid4()
+    metadata = {key: value, "selected": 1}
+    seeds = [
+        SeedPrompt(
+            value="literal", data_type="text", metadata=metadata, prompt_group_id=group_id, sequence=0, role="user"
+        ),
+        SeedPrompt(value="companion", data_type="text", prompt_group_id=group_id, sequence=1, role="assistant"),
+        SeedPrompt(value="nested", data_type="text", metadata={"a": {"b": value}, "selected": 1}),
+        SeedPrompt(value="wrong-value", data_type="text", metadata={key: 1 if value == "1" else "1", "selected": 1}),
+        SeedPrompt(value="wrong-flag", data_type="text", metadata={key: value, "selected": 0}),
+        SeedPrompt(value="trailing-space", data_type="text", metadata={f"{key} ": value, "selected": 1}),
+        SeedPrompt(value="other", data_type="text", metadata={"other": value, "selected": 1}),
+    ]
+    pieces = [
+        MessagePiece(
+            conversation_id=str(uuid.uuid4()),
+            role="assistant",
+            original_value=seed.value,
+            prompt_metadata=seed.metadata or {},
+        )
+        for seed in seeds
+    ]
+    try:
+        await memory.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+        await memory.add_message_pieces_to_memory_async(message_pieces=pieces)
+    finally:
+        await memory.dispose_engine_async()
+
+    reopened = isolated_memory_factory(db_path=database, skip_schema_migration=True)
+    try:
+        matching_seeds = await reopened.get_seeds_async(metadata=metadata)
+        assert [seed.value for seed in matching_seeds] == ["literal"]
+        matching_pieces = await reopened.get_message_pieces_async(prompt_metadata=metadata)
+        assert [piece.original_value for piece in matching_pieces] == ["literal"]
+        matching_groups = await reopened.get_seed_groups_async(metadata=metadata)
+        assert len(matching_groups) == 1
+        assert sorted(seed.value for seed in matching_groups[0].seeds) == ["companion", "literal"]
+
+        if remove_groups:
+            assert await reopened.remove_seed_groups_from_memory_async(metadata=metadata) == 2
+        else:
+            assert await reopened.remove_seeds_from_memory_async(metadata=metadata) == 1
+        expected_remaining = {"nested", "wrong-value", "wrong-flag", "trailing-space", "other"}
+        if not remove_groups:
+            expected_remaining.add("companion")
+        assert {seed.value for seed in await reopened.get_seeds_async()} == expected_remaining
+        assert [
+            piece.original_value for piece in await reopened.get_message_pieces_async(prompt_metadata=metadata)
+        ] == ["literal"]
+    finally:
+        await reopened.dispose_engine_async()

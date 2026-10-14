@@ -175,6 +175,7 @@ class AttackAnalyticsQueryCompiler:
         self._converter_arrays: dict[
             AttackAnalyticsConverterDirection, tuple[ColumnElement[Any], ColumnElement[Any]]
         ] = {}
+        self._filter_projections: dict[int, ColumnElement[Any]] = {}
 
     def totals(self) -> Select[*tuple[Any, ...]]:
         """
@@ -869,7 +870,9 @@ class AttackAnalyticsQueryCompiler:
         A retained converter list takes precedence: migration backfills can have
         fewer edges than recorded members when a child has no usable hash.
         Edges remain a fallback for identifiers without a retained converter list.
-        A recorded [] means no converters, unlike absent identifier metadata.
+        A recorded [] means no converters, unlike absent identifier metadata. A recorded
+        attack identifier with no list or edges also means no converters, because
+        identifiers omit an empty converter list.
 
         Args:
             direction (AttackAnalyticsConverterDirection): Request or response pipeline;
@@ -930,6 +933,11 @@ class AttackAnalyticsQueryCompiler:
             self._from = self._from.outerjoin(arrays, arrays.c.attack_identifier_hash == self.attack.c.hash)
             path = f"children.{direction.value}_converters"
             retained = JsonContainer(self.attack.c.identifier_json, f"$.{path}")
+            # Identifiers leave out an empty converter list, so a recorded attack with no
+            # converter list or edges ran without converters, which is not missing metadata.
+            recorded_without_converters = case(
+                (self.attack.c.hash.isnot(None), literal("[]", UnicodeText())), else_=null()
+            )
             self._converter_arrays[direction] = (
                 func.coalesce(
                     retained,
@@ -939,8 +947,9 @@ class AttackAnalyticsQueryCompiler:
                     ),
                     JsonContainer(self.root.c.atomic_attack_identifier, f"$.children.attack.{path}"),
                     arrays.c.names,
+                    recorded_without_converters,
                 ),
-                func.coalesce(retained, arrays.c.names),
+                func.coalesce(retained, arrays.c.names, recorded_without_converters),
             )
         value = self._converter_arrays[direction][0 if embedded else 1]
         return _Source(value=value, label=value, array=True, converters=True, insensitive=True)
@@ -1005,13 +1014,20 @@ class AttackAnalyticsQueryCompiler:
             return or_(*matches)
         raw = source.value
         if self.dialect == "mssql" and (missing or no_converters):
-            self._from, projected = self._grouping_projection(
-                origin=self._from,
-                values=[raw.label(f"filter_source_{index}")],
-                name=f"filter_source_{index}",
-                force=True,
-            )
-            raw = projected[0]
+            # The lateral join belongs to the compiler, not to one statement:
+            # report_async runs totals() and then groups()/matrix() on the same
+            # instance, so re-adding it would duplicate the correlation name.
+            if index in self._filter_projections:
+                raw = self._filter_projections[index]
+            else:
+                self._from, projected = self._grouping_projection(
+                    origin=self._from,
+                    values=[raw.label(f"filter_source_{index}")],
+                    name=f"filter_source_{index}",
+                    force=True,
+                )
+                self._filter_projections[index] = projected[0]
+                raw = projected[0]
         items = JsonArrayItems(raw).table_valued(column("key"), column("value"), column("type"))
         items = items.alias(f"filter_items_{index}")
         kind, value, _ = self._array_key(source=source, raw=raw, items=items)

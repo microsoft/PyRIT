@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, computed_field, field_serializer, model_v
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
     MAX_ITEMS,
     IdentifierStr,
     LabelDict,
@@ -600,7 +601,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     source_conversation_id: uuid.UUID | None = None
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
-    target_registry_name: str | None = None
+    target_registry_name: IdentifierStr | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -701,10 +702,16 @@ class AddMessageRequest(MessageRequest):
         description="Ordered registry-backed converter pipelines to apply to the response.",
     )
     start_token: str = Field(
-        default="⟪", min_length=1, description="Opening marker for request and response converter pipelines"
+        default="⟪",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Opening marker for request and response converter pipelines",
     )
     end_token: str = Field(
-        default="⟫", min_length=1, description="Closing marker for request and response converter pipelines"
+        default="⟫",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Closing marker for request and response converter pipelines",
     )
     target_conversation_id: IdentifierStr = Field(
         ...,

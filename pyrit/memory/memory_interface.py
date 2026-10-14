@@ -3038,7 +3038,12 @@ class MemoryInterface(abc.ABC):
             self._execute_get_conversation_messages,
             conversation_id=response.conversation_id,
         )
-        return conversation[response.sequence - 1]
+        preceding_messages = [msg for msg in conversation if msg.sequence < response.sequence]
+        if not preceding_messages:
+            raise ValueError(
+                f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
+            )
+        return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
         self, *, identifier_filters: Sequence[IdentifierFilter]
