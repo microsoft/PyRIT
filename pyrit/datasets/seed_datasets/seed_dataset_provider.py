@@ -325,7 +325,11 @@ class SeedDatasetProvider(ABC):
                 logger.debug(f"Skipping {provider_name} - not in filter list")
                 return None
 
-            dataset = await provider.fetch_dataset_async(cache=cache)
+            try:
+                dataset = await provider.fetch_dataset_async(cache=cache)
+            except Exception as exc:
+                exc.add_note(f"Failed to fetch dataset {provider.dataset_name!r} using provider {provider_name}.")
+                raise
             return (provider.dataset_name, dataset)
 
         # Create semaphore to limit concurrency

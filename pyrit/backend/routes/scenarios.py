@@ -15,6 +15,7 @@ Route structure:
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
     ScenarioRunListResponse,
@@ -135,6 +136,32 @@ async def estimate_scenario_run_size(  # pyrit-async-suffix-exempt
             detail=f"Scenario '{scenario_name}' not found",
         )
     return estimate
+
+
+@router.post(
+    "/catalog/{scenario_name}/datasets/load",
+    response_model=ScenarioDatasetLoadResponse,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid dataset selection"},
+        404: {"model": ProblemDetail, "description": "Scenario not found"},
+    },
+)
+async def load_scenario_datasets_async(
+    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest
+) -> ScenarioDatasetLoadResponse:
+    """
+    Load missing selected datasets on explicit request, without starting a scan.
+
+    Returns:
+        ScenarioDatasetLoadResponse: Selected settings and stored metadata.
+    """
+    try:
+        result = await get_scenario_service().load_datasets_async(scenario_name=scenario_name, request=request)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Scenario '{scenario_name}' not found")
+    return result
 
 
 # ============================================================================

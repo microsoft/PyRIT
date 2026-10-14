@@ -127,6 +127,21 @@ class TestSeedDatasetProvider:
             datasets = await SeedDatasetProvider.fetch_datasets_async()
             assert len(datasets) == 2
 
+    async def test_fetch_datasets_async_adds_context_to_fetch_error(self) -> None:
+        failure = ValueError("SeedDataset cannot be empty")
+        mock_provider = MagicMock(__name__="FailingProvider")
+        mock_provider.return_value.dataset_name = "empty_dataset"
+        mock_provider.return_value.fetch_dataset_async = AsyncMock(side_effect=failure)
+
+        with (
+            patch.dict(SeedDatasetProvider._registry, {"FailingProvider": mock_provider}, clear=True),
+            pytest.raises(ValueError, match="SeedDataset cannot be empty") as exc_info,
+        ):
+            await SeedDatasetProvider.fetch_datasets_async()
+
+        assert exc_info.value is failure
+        assert exc_info.value.__notes__ == ["Failed to fetch dataset 'empty_dataset' using provider FailingProvider."]
+
     async def test_fetch_datasets_async_with_filter(self):
         """Test fetching datasets with filter."""
         mock_provider1 = MagicMock(__name__="P1")

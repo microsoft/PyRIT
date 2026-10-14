@@ -83,6 +83,7 @@ class DatasetService:
                     selection_key=f"dataset:named:{dataset_name}",
                     loaded=summary is not None,
                     provider_available=dataset_name in provider_names,
+                    origins=list(summary.origins) if summary else [],
                     logical_examples=summary.logical_examples if summary else None,
                     seed_pieces=summary.seed_pieces if summary else None,
                     objectives=summary.objectives if summary else None,
@@ -100,6 +101,7 @@ class DatasetService:
                     selection_key="dataset:unnamed",
                     loaded=True,
                     provider_available=False,
+                    origins=list(unnamed_summary.origins),
                     logical_examples=unnamed_summary.logical_examples,
                     seed_pieces=unnamed_summary.seed_pieces,
                     objectives=unnamed_summary.objectives,
@@ -290,6 +292,7 @@ class DatasetService:
             modalities=tuple(sorted({modality for summary in unnamed for modality in summary.modalities})),
             harm_categories=tuple(sorted({category for summary in unnamed for category in summary.harm_categories})),
             has_unlabeled_harm_categories=any(summary.has_unlabeled_harm_categories for summary in unnamed),
+            origins=tuple(sorted({origin for summary in unnamed for origin in summary.origins})),
         )
 
 

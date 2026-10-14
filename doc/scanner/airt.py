@@ -43,8 +43,8 @@ objective_target = OpenAIChatTarget()
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques role_play_movie_script \
-#   --dataset-names airt_hate \
-#   --max-dataset-size 1
+#   --datasets airt_hate \
+#   --max-total 1
 # ```
 #
 # **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, role_play_movie_script, many_shot, tap
@@ -84,8 +84,8 @@ await output_scenario_async(scenario_result)
 #
 # Each sub-harm escalates a simulated multi-turn conversation toward the objective, then layers the
 # selected converter techniques on top (natural-language rewrites that preserve emotional framing;
-# obfuscation converters like base64/morse are excluded). Datasets are bound to the sub-harms, so
-# `--dataset-names` is ignored (`--max-dataset-size` still applies).
+# obfuscation converters like base64/morse are excluded). `--datasets` can select a subset of the
+# selected sub-harms' datasets; `--max-total` must cover each selected sub-harm.
 #
 # **Available techniques:** ALL, DEFAULT, tone, language, persuasion, deterministic, crescendo
 
@@ -124,7 +124,7 @@ await output_scenario_async(scenario_result)
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques role_play_movie_script \
-#   --max-dataset-size 1
+#   --max-total 1
 # ```
 #
 # **Available techniques:** Use `pyrit_scan run airt.cyber --list-scenario-parameters` to inspect
@@ -169,8 +169,8 @@ await output_scenario_async(scenario_result)
 # pyrit_scan run airt.jailbreak \
 #   --initializers target \
 #   --target openai_chat \
-#   --dataset-names harmbench \
-#   --max-dataset-size 1
+#   --datasets harmbench \
+#   --max-total 1
 # ```
 #
 # **Available technique selectors:** ALL, DEFAULT, and SINGLE_TURN currently select both
@@ -213,8 +213,8 @@ await output_scenario_async(scenario_result)
 # pyrit_scan airt.multilingual \
 #   --initializers target \
 #   --target openai_chat \
-#   --dataset-names harmbench \
-#   --max-dataset-size 1
+#   --datasets harmbench \
+#   --max-total 1
 # ```
 #
 # **Available techniques:** `prompt_sending` is the default. Every registry technique (`role_play_*`,
@@ -254,7 +254,7 @@ await output_scenario_async(scenario_result)
 # plagiarism detection.
 #
 # ```bash
-# pyrit_scan run airt.leakage --target openai_chat --techniques first_letter --max-dataset-size 1
+# pyrit_scan run airt.leakage --target openai_chat --techniques first_letter --max-total 1
 # ```
 #
 # **Available techniques:** ALL, SINGLE_TURN, MULTI_TURN, IP, SENSITIVE_DATA, FirstLetter, Image, RolePlay, Crescendo
@@ -308,7 +308,7 @@ await output_scenario_async(scenario_result)
 #   --initializers target \
 #   --target openai_chat \
 #   --techniques context_compliance \
-#   --max-dataset-size 1
+#   --max-total 1
 # ```
 #
 # **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, ContextCompliance, RolePlay,

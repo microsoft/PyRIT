@@ -19,7 +19,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from pyrit.common.async_compatibility import run_legacy_sync_async
-from pyrit.models import ScenarioRunSizeEstimate, ScenarioTechniqueSummary, class_name_to_snake_case
+from pyrit.models import (
+    ScenarioDatasetOptions,
+    ScenarioDatasetSettings,
+    ScenarioRunSizeEstimate,
+    ScenarioTechniqueSummary,
+    class_name_to_snake_case,
+)
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
@@ -67,6 +73,11 @@ class ScenarioMetadata(RegistryMetadata):
 
     # Default dataset names used by this scenario.
     default_datasets: tuple[str, ...] = field(kw_only=True)
+
+    # Dataset changes the scenario accepts, and its default dataset settings. Both are static:
+    # they never depend on memory contents or on a run-size estimate succeeding.
+    dataset_options: ScenarioDatasetOptions = field(kw_only=True, default_factory=ScenarioDatasetOptions)
+    dataset_defaults: ScenarioDatasetSettings = field(kw_only=True, default_factory=ScenarioDatasetSettings)
 
     # Scenario-declared custom parameters.
     supported_parameters: tuple[Parameter, ...] = field(kw_only=True, default=())
@@ -232,6 +243,8 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
+            dataset_options=instance.get_dataset_options(),
+            dataset_defaults=instance.get_default_dataset_settings(),
             supported_parameters=supported_parameters,
             baseline_policy=instance.BASELINE_ATTACK_POLICY.value,
             include_baseline_by_default=instance.BASELINE_ATTACK_POLICY.value == "enabled",

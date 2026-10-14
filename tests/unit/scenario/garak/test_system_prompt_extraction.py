@@ -106,11 +106,15 @@ class TestSystemPromptExtractionAtomicAttacks:
     async def _init(self, scenario, mock_objective_target, techniques=None):
         with (
             patch.object(scenario._dataset_config, "prepare_async", new_callable=AsyncMock),
-            patch.object(scenario._dataset_config, "_collect_named_seeds_async", new_callable=AsyncMock),
-            patch.object(SystemPromptExtraction, "_load_system_prompts_async", return_value=list(SYSTEM_PROMPTS)),
+            patch.object(
+                scenario._dataset_config,
+                "_collect_named_seeds_async",
+                return_value={DATASET_EXTRACTION_TEMPLATES: []},
+            ),
+            patch.object(SystemPromptExtraction, "_sample_system_prompts", return_value=list(SYSTEM_PROMPTS)),
             patch.object(
                 SystemPromptExtraction,
-                "_load_templates_by_category_async",
+                "_group_templates",
                 return_value={k: list(v) for k, v in TEMPLATES_BY_CATEGORY.items()},
             ),
         ):
