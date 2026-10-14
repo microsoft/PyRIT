@@ -114,6 +114,15 @@ Use `uv run` to execute Python with the virtual environment:
 uv run python your_script.py
 ```
 
+Remote dataset loaders use `HF_DATASETS_CACHE` when it is set. Otherwise they cache
+Hugging Face data under `dbdata/huggingface`. On Windows, a long worktree path can
+cause `WinError 206` when Hugging Face creates a cache lock file. Set a shorter
+cache path before you start the server or script:
+
+```powershell
+$env:HF_DATASETS_CACHE = Join-Path $env:TEMP "pyrit-hf"
+```
+
 #### Running Tests
 
 ```bash

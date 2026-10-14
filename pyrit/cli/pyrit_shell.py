@@ -434,8 +434,12 @@ class PyRITShell(cmd.Cmd):
             --max-concurrency <N>           Maximum concurrent operations
             --max-retries <N>               Maximum retry attempts
             --memory-labels <JSON>          JSON string of labels
-            --dataset-names <name> ...      Override default dataset names
-            --max-dataset-size <N>          Maximum items per dataset
+            --datasets <name[:N|:all]> ...  Select sources and optional caps
+            --max-per-dataset <N|all>       Default per-source cap
+            --max-total <N|all>             Combined attack-group cap
+            --dataset-fetch <policy>       never or if_missing
+            --dataset-names <name> ...      Deprecated source selection
+            --max-dataset-size <N>          Deprecated total cap
             --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)
 
         Notes:
@@ -452,8 +456,8 @@ class PyRITShell(cmd.Cmd):
             return
 
         from pyrit.cli._cli_args import (
+            build_dataset_request_fields,
             build_parameters_from_api,
-            collapse_dataset_filters,
             extract_scenario_args,
             parse_run_arguments,
         )
@@ -517,12 +521,11 @@ class PyRITShell(cmd.Cmd):
             request_kwargs["max_concurrency"] = args["max_concurrency"]
         if args.get("max_retries") is not None:
             request_kwargs["max_retries"] = args["max_retries"]
-        if args.get("dataset_names"):
-            request_kwargs["dataset_names"] = args["dataset_names"]
-        if args.get("max_dataset_size") is not None:
-            request_kwargs["max_dataset_size"] = args["max_dataset_size"]
-        if args.get("dataset_filters"):
-            request_kwargs["dataset_filters"] = collapse_dataset_filters(args["dataset_filters"])
+        try:
+            request_kwargs.update(build_dataset_request_fields(args))
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
         if args.get("memory_labels"):
             request_kwargs["labels"] = args["memory_labels"]
 
@@ -530,7 +533,11 @@ class PyRITShell(cmd.Cmd):
         if scenario_params:
             request_kwargs["scenario_params"] = scenario_params
 
-        request = RunScenarioRequest(**request_kwargs)
+        try:
+            request = RunScenarioRequest(**request_kwargs)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return
 
         # Start run
         print(f"\nRunning scenario: {scenario_name}")
