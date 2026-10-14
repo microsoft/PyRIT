@@ -27,11 +27,12 @@ from pyrit.cli._cli_args import (
     ARG_HELP,
     _parse_initializer_arg,
     add_results_arguments,
+    build_dataset_request_fields,
     build_parameters_from_api,
-    collapse_dataset_filters,
     non_negative_int,
     parse_dataset_filter,
     parse_dataset_limit,
+    parse_dataset_source,
     positive_int,
     validate_log_level_argparse,
 )
@@ -313,6 +314,19 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     parser.add_argument("--memory-labels", type=str, help=ARG_HELP["memory_labels"])
     parser.add_argument("--dataset-names", type=str, nargs="+", help=ARG_HELP["dataset_names"])
     parser.add_argument("--max-dataset-size", type=parse_dataset_limit, help=ARG_HELP["max_dataset_size"])
+    parser.add_argument(
+        "--datasets",
+        type=parse_dataset_source,
+        nargs="+",
+        help="Ordered dataset names with optional :N or :all source caps",
+    )
+    parser.add_argument(
+        "--max-per-dataset", type=parse_dataset_limit, help="Default source cap; use all for no source cap"
+    )
+    parser.add_argument("--max-total", type=parse_dataset_limit, help="Combined attack-group cap")
+    parser.add_argument(
+        "--dataset-fetch", choices=["never", "if_missing"], help="Preparation policy for missing datasets"
+    )
     parser.add_argument(
         "--dataset-filters",
         type=parse_dataset_filter,
@@ -1004,12 +1018,7 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
         kwargs["max_concurrency"] = parsed_args.max_concurrency
     if parsed_args.max_retries is not None:
         kwargs["max_retries"] = parsed_args.max_retries
-    if parsed_args.dataset_names:
-        kwargs["dataset_names"] = parsed_args.dataset_names
-    if parsed_args.max_dataset_size is not None:
-        kwargs["max_dataset_size"] = parsed_args.max_dataset_size
-    if parsed_args.dataset_filters:
-        kwargs["dataset_filters"] = collapse_dataset_filters(parsed_args.dataset_filters)
+    kwargs.update(build_dataset_request_fields(vars(parsed_args)))
     if parsed_args.memory_labels:
         kwargs["labels"] = parse_memory_labels(json_string=parsed_args.memory_labels)
 
@@ -1062,7 +1071,11 @@ async def _run_scenario_async(
     from pyrit.models import ScenarioRunState
 
     scenario_name = parsed_args.scenario_name
-    request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
+    try:
+        request = _build_run_request(parsed_args=parsed_args, scenario_name=scenario_name)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
 
     print(f"\nRunning scenario: {scenario_name}")
     sys.stdout.flush()

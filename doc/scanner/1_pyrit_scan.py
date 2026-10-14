@@ -125,8 +125,16 @@
 # on demand, so a full dataset preload is not required:
 #
 # ```shell
-# pyrit_scan run garak.figstep --target openai_chat --dataset-names figstep_pro --max-dataset-size 1
+# pyrit_scan run garak.figstep --target openai_chat --datasets figstep_pro --max-total 1 --dataset-fetch if_missing
 # ```
+#
+# Scanner and shell share `--datasets name[:N|:all]`, `--max-per-dataset`, `--max-total`,
+# and `--dataset-fetch never|if_missing`. Source limits apply before the combined total.
+# Omitted, empty, or `default` keeps the scenario setting; `all` removes only its own cap.
+# `list-scenarios` displays allowed sources and defaults. Ingredient/compound scenarios
+# restrict controls to preserve their shaping. `--dataset-filters` works with either form.
+# Deprecated `--dataset-names` and `--max-dataset-size` cannot be mixed with the new flags.
+# Discovery and estimates never fetch; only a new run prepares absent registered datasets.
 #
 # Custom initialization scripts are loaded by the backend at startup: list them in the
 # `initialization_scripts` section of the config the server loads (paths are relative to your

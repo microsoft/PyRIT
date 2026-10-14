@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
+from typing import assert_type
 
 import pytest
 
@@ -39,12 +40,14 @@ def yaml_file_for_from_dict(tmp_path: Path) -> Path:
 
 def test_from_yaml_file_basic(yaml_file: Path):
     obj = _SimpleYaml.from_yaml_file(yaml_file)
+    assert_type(obj, _SimpleYaml)
     assert obj.name == "hello"
     assert obj.value == 42
 
 
 def test_from_yaml_file_uses_from_dict_if_available(yaml_file_for_from_dict: Path):
     obj = _WithFromDict.from_yaml_file(yaml_file_for_from_dict)
+    assert_type(obj, _WithFromDict)
     assert obj.name == "LOWER"
 
 

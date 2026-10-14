@@ -374,7 +374,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         """
         Generate SQL conditions for filtering by prompt metadata.
 
-        Uses JSON_VALUE() function specific to SQL Azure to query metadata fields in JSON format.
+        Uses OPENJSON() to compare free-form metadata keys literally rather than
+        interpreting them as JSON path expressions. Only strings, numbers, and
+        booleans match, preserving JSON_VALUE() scalar filtering semantics.
 
         Args:
             prompt_metadata (dict[str, str | int]): Dictionary of metadata key-value pairs to filter by.
@@ -383,15 +385,26 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             list: List containing a single SQLAlchemy text condition with bound parameters.
         """
         json_validation = "ISJSON(prompt_metadata) = 1"
-        json_conditions = " AND ".join([f"JSON_VALUE(prompt_metadata, '$.{key}') = :{key}" for key in prompt_metadata])
+        json_conditions, bindparams = [], {}
+        for index, (key, value) in enumerate(prompt_metadata.items()):
+            key_param, value_param = f"md_key_{index}", f"md_value_{index}"
+            alias = f"metadata_{index}"
+            json_conditions.append(
+                f"EXISTS (SELECT 1 FROM OPENJSON(prompt_metadata) AS [{alias}] "
+                f"WHERE [{alias}].[key] = :{key_param} "
+                f"AND DATALENGTH([{alias}].[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND [{alias}].[type] IN (1, 2, 3) "
+                f"AND [{alias}].[value] = :{value_param})"
+            )
+            bindparams[key_param] = key
+            bindparams[value_param] = str(value)
+
         # Combine both conditions
-        conditions = f"{json_validation} AND {json_conditions}"
+        conditions = f"{json_validation} AND " + " AND ".join(json_conditions)
 
         # Create SQL condition using SQLAlchemy's text() with bindparams
         # for safe parameter passing, preventing SQL injection
-        # Note: JSON_VALUE always returns nvarchar in SQL Server, so we must convert all values to strings
-        # to avoid type conversion errors when comparing mixed types (e.g., int and string)
-        condition = text(conditions).bindparams(**{key: str(value) for key, value in prompt_metadata.items()})
+        condition = text(conditions).bindparams(**bindparams)
         return [condition]
 
     def _get_message_pieces_prompt_metadata_conditions(

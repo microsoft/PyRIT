@@ -152,7 +152,7 @@ async function activateMockTarget(page: Page) {
   await objectiveDefault.selectOption({ index: 1 });
 
   // Return to Chat view
-  await page.getByTitle("Chat").click();
+  await page.getByTitle("Technique.execute").click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
@@ -170,18 +170,18 @@ test.describe("Application Smoke Tests", () => {
   });
 
   test("should display chat ribbon", async ({ page }) => {
-    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
-    await page.getByTitle("Chat").click();
+    await expect(page.getByTitle("Technique.execute")).toBeVisible({ timeout: 10000 });
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 10000 });
   });
 
   test("should have New Attack button", async ({ page }) => {
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByRole("button", { name: /new attack/i })).toBeVisible();
   });
 
   test("should offer the target picker without a bottom warning", async ({ page }) => {
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByRole("combobox", { name: "Chat target" })).toBeVisible();
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
@@ -190,7 +190,7 @@ test.describe("Application Smoke Tests", () => {
 test.describe("Theme Toggle", () => {
   test("should toggle dark/light theme", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTitle("Chat")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTitle("Technique.execute")).toBeVisible({ timeout: 10000 });
 
     // The app defaults to system mode, so the toggle button title should say "Theme: System"
     const themeBtn = page.getByTitle("Theme: System");
@@ -374,7 +374,7 @@ test.describe("Multiple Messages", () => {
 test.describe("Chat without target", () => {
   test("should disable input when no target is selected", async ({ page }) => {
     await page.goto("/");
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
 
     await expect(page.getByRole("textbox")).toBeDisabled();
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -912,7 +912,7 @@ test.describe("Target type scenarios", () => {
       .selectOption("dall-e-image-gen");
 
     // Navigate to chat
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     // Scope queries to the badge so we don't also match the (hidden)
     // copy of the target text that Fluent's Tooltip renders into the DOM.
     const badge = page.getByTestId("target-badge");

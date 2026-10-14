@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
-from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPrompt
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -217,6 +217,7 @@ class PromptInject(Scenario):
     """
 
     VERSION: int = 3
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     DEFAULT_GOAL_TEXTS: ClassVar[tuple[str, str, str]] = _DEFAULT_GOAL_TEXTS
     TECHNIQUE_DATASET_NAME: ClassVar[str] = "prompt_inject_techniques"
@@ -392,7 +393,7 @@ class PromptInject(Scenario):
         Raises:
             DatasetConstraintError: If a selected technique has no template.
         """
-        seeds = await CentralMemory.get_memory_instance().get_seeds_async(dataset_name=self.TECHNIQUE_DATASET_NAME)
+        seeds = await self._dataset_config._collect_seeds_for_dataset_async(dataset_name=self.TECHNIQUE_DATASET_NAME)
         templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
         selected = {technique.value for technique in self._scenario_techniques}
         missing = selected - templates.keys()

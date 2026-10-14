@@ -25,8 +25,8 @@
 # pyrit_scan run adaptive.text_adaptive \
 #   --initializers target \
 #   --target openai_chat \
-#   --dataset-names airt_hate \
-#   --max-dataset-size 2 \
+#   --datasets airt_hate \
+#   --max-total 2 \
 #   --max-attempts-per-objective 2
 # ```
 

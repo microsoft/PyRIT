@@ -3,14 +3,12 @@
 
 import abc
 from pathlib import Path
-from typing import TypeVar
+from typing import Self
 
 import yaml
 
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
-
-T = TypeVar("T", bound="YamlLoadable")
 
 
 class YamlLoadable(abc.ABC):  # noqa: B024
@@ -19,7 +17,7 @@ class YamlLoadable(abc.ABC):  # noqa: B024
     """
 
     @classmethod
-    def from_yaml_file(cls: type[T], file: Path | str) -> T:
+    def from_yaml_file(cls, file: Path | str) -> Self:
         """
         Create a new object from a YAML file.
 
@@ -27,7 +25,7 @@ class YamlLoadable(abc.ABC):  # noqa: B024
             file: The input file path.
 
         Returns:
-            A new object of type T.
+            A new object of the concrete class.
 
         Raises:
             FileNotFoundError: If the input YAML file path does not exist.
@@ -45,6 +43,6 @@ class YamlLoadable(abc.ABC):  # noqa: B024
         # If this class provides a from_dict factory, use it;
         # otherwise, just instantiate directly with **yaml_data
         if hasattr(cls, "from_dict") and callable(getattr(cls, "from_dict")):  # noqa: B009
-            result: T = cls.from_dict(yaml_data)  # type: ignore[ty:call-non-callable]
+            result: Self = cls.from_dict(yaml_data)  # type: ignore[ty:call-non-callable]
             return result
         return cls(**yaml_data)
