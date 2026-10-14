@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+import inspect
 from typing import assert_type
 
 import pytest
@@ -48,6 +49,13 @@ async def test_wait_for_completion_preserves_cancellation_async() -> None:
 
     with pytest.raises(asyncio.CancelledError, match="requested cancellation"):
         await wait_for_completion_async(future=future)
+
+
+def test_wait_for_completion_defaults_to_a_backstop_timeout() -> None:
+    # A default low enough to be reached under CI load turns the watchdog into a latency
+    # assertion, failing unrelated tests with TimeoutError instead of catching a deadlock.
+    parameter = inspect.signature(wait_for_completion_async).parameters["timeout"]
+    assert parameter.default == 300
 
 
 async def test_wait_for_completion_timeout_does_not_cancel_task_async() -> None:
