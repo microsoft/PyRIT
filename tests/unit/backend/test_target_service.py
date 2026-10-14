@@ -6,6 +6,7 @@ Tests for backend target service.
 """
 
 import os
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +14,7 @@ import pytest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
-from pyrit.prompt_target import PromptTarget, TargetCapabilities
+from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
 from pyrit.registry import TargetRegistry
 from unit.mocks import MockPromptTarget
 
@@ -257,6 +258,22 @@ class TestListTargetTypes:
         assert "api_key" in openai_entry.supported_auth_modes
         assert "identity" in openai_entry.supported_auth_modes
 
+    async def test_types_include_github_copilot_form_parameters_async(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "GitHubCopilotTarget")
+        parameters = {parameter.name: parameter for parameter in entry.parameters}
+        assert parameters["model_name"].required
+        assert not parameters["github_token"].required
+        assert parameters["github_token"].sensitive
+        assert {"working_directory", "retain_session", "response_timeout_seconds", "max_requests_per_minute"} <= set(
+            parameters
+        )
+        assert not {"endpoint", "api_key", "underlying_model"} & set(parameters)
+        assert "identity" not in entry.supported_auth_modes
+
     @pytest.mark.parametrize(
         ("target_type", "parameter_names"),
         [
@@ -416,6 +433,80 @@ class TestListTargetTypes:
         assert parameter.required is required
         assert parameter.type_name == type_name
         assert parameter.choices == choices
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("github_token", "environment_token", "expected_token"),
+    [
+        ("test-github-token", "", "test-github-token"),
+        (None, "environment-github-token", "environment-github-token"),
+        ("test-github-token", "environment-github-token", "test-github-token"),
+    ],
+)
+async def test_create_github_copilot_target_async(
+    *, github_token: str | None, environment_token: str, expected_token: str
+) -> None:
+    service = TargetService()
+    params = {"model_name": "gpt-5-mini"}
+    if github_token is not None:
+        params["github_token"] = github_token
+
+    with (
+        patch.dict("sys.modules", {"copilot": ModuleType("copilot")}),
+        patch.dict(os.environ, {"GITHUB_TOKEN": environment_token}),
+    ):
+        target = await service.create_target_async(
+            request=CreateTargetRequest(type="GitHubCopilotTarget", params=params)
+        )
+
+    assert target.identifier.class_name == "GitHubCopilotTarget"
+    assert target.identifier.params["model_name"] == "gpt-5-mini"
+    target_obj = service.get_target_object(target_registry_name=target.target_registry_name)
+    assert isinstance(target_obj, GitHubCopilotTarget)
+    assert target_obj._github_token == expected_token
+    assert "github_token" not in target.model_dump_json()
+    assert "test-github-token" not in target.model_dump_json()
+    assert "environment-github-token" not in target.model_dump_json()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("github_token", "environment_token"),
+    [
+        (None, None),
+        (None, ""),
+        (None, " \t"),
+        ("", ""),
+        (" \t", ""),
+        ("", "environment-github-token"),
+    ],
+)
+async def test_create_github_copilot_target_requires_token_async(
+    *, github_token: str | None, environment_token: str | None
+) -> None:
+    service = TargetService()
+    params = {"model_name": "gpt-5-mini"}
+    if github_token is not None:
+        params["github_token"] = github_token
+    environment = {"GH_TOKEN": "sdk-fallback-token"}
+    if environment_token is not None:
+        environment["GITHUB_TOKEN"] = environment_token
+
+    with (
+        patch.dict(os.environ, environment, clear=True),
+        patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+        pytest.raises(
+            ValueError,
+            match=r"Enter GitHub Token or configure GITHUB_TOKEN for this CoPyRIT instance.*\.env/\.env\.local",
+        ),
+    ):
+        await service.create_target_async(
+            request=CreateTargetRequest(name="copilot", type="GitHubCopilotTarget", params=params)
+        )
+
+    create_instance.assert_not_called()
+    assert service.get_target_object(target_registry_name="copilot") is None
 
 
 class TestCreateTarget:

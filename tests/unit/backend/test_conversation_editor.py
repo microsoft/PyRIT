@@ -476,7 +476,10 @@ class TestConversationEditor:
     ) -> None:
         request = draft()
         request.target_registry_name = "responses"
-        payload = '{"type":"web_search_call","call_id":"web-1","query":"query","extension":{"keep":true}}'
+        payload = (
+            '{"type":"web_search_call","id":"ws-1","status":"completed",'
+            '"action":{"type":"search","query":"query"},"extension":{"keep":true}}'
+        )
         request.messages = [
             ConversationMessageRequest(
                 role="simulated_assistant",

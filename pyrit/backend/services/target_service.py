@@ -26,10 +26,11 @@ from pyrit.backend.models.targets import (
     TargetTypeEntry,
     TargetTypeResponse,
 )
-from pyrit.common import REQUIRED_VALUE
+from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.parameter import Parameter
+from pyrit.prompt_target import GitHubCopilotTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -236,8 +237,10 @@ class TargetService:
         parameters so the target validates its own endpoint and authenticates
         itself. The request-level ``auth_mode`` is authoritative and is forwarded
         via ``get_auth_mode_parameters`` to targets that accept it, so the choice
-        is explicit rather than inferred from a missing key. The response is built
-        before the target is registered, so a failed request leaves no registered target.
+        is explicit rather than inferred from a missing key. GitHub Copilot
+        requires an explicit or environment token rather than SDK login discovery
+        in CoPyRIT. The response is built before the target is registered, so a
+        failed request leaves no registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -285,6 +288,18 @@ class TargetService:
                         params.pop(parameter.name, None)
 
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+
+        if issubclass(target_cls, GitHubCopilotTarget):
+            github_token = params.get("github_token")
+            if github_token is None:
+                github_token = default_values.get_non_required_value(
+                    env_var_name=target_cls.GITHUB_TOKEN_ENVIRONMENT_VARIABLE
+                )
+            if not isinstance(github_token, str) or not github_token.strip():
+                raise ValueError(
+                    "GitHub Copilot requires a GitHub token in CoPyRIT. Enter GitHub Token or configure "
+                    "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
+                )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.

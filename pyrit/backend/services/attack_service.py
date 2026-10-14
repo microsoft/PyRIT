@@ -68,6 +68,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
+from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import (
     AttackResultKeysetCursor,
     CentralMemory,
@@ -867,13 +868,13 @@ class AttackService:
             return None
 
         automated_score = results[0].automated_score
-        if automated_score is None or automated_score.score_value is None:
-            outcome = AttackOutcome.UNDETERMINED
+        # Follow the attack-side contract of attack_outcome_from_score (#3181): read the
+        # typed score value instead of comparing the raw string, and treat an undetermined
+        # score as neither achievement nor refutation.
+        outcome = AttackOutcome.UNDETERMINED if automated_score is None else attack_outcome_from_score(automated_score)
+        if outcome is AttackOutcome.UNDETERMINED or automated_score is None:
             outcome_reason = None
         else:
-            outcome = (
-                AttackOutcome.SUCCESS if automated_score.score_value.casefold() == "true" else AttackOutcome.FAILURE
-            )
             outcome_reason = automated_score.score_rationale
 
         await self._memory.update_attack_result_by_id_async(

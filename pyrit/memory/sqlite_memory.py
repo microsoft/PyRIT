@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.sql.expression import TextClause
 from sqlalchemy.util.concurrency import greenlet_spawn
 
 from pyrit.common.path import DB_DATA_PATH
@@ -36,6 +35,7 @@ from pyrit.memory.memory_models import (
     Base,
     PromptMemoryEntry,
     ScenarioResultEntry,
+    SeedEntry,
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import DiskStorageIO
@@ -395,36 +395,46 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             )
         ]
 
-    def _get_message_pieces_prompt_metadata_conditions(
-        self, *, prompt_metadata: dict[str, str | int]
-    ) -> list[TextClause]:
+    def _get_message_pieces_prompt_metadata_conditions(self, *, prompt_metadata: dict[str, str | int]) -> list[Any]:
         """
         Generate SQLAlchemy filter conditions for filtering conversation pieces by prompt metadata.
+
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
         Returns:
             list: A list of SQLAlchemy conditions.
         """
-        json_conditions = " AND ".join(
-            [f"JSON_EXTRACT(prompt_metadata, '$.{key}') = :{key}" for key in prompt_metadata]
-        )
-
-        # Create SQL condition using SQLAlchemy's text() with bindparams
-        # Note: We do NOT convert values to string here, to allow integer comparison in JSON
-        condition = text(json_conditions).bindparams(**dict(prompt_metadata.items()))
-        return [condition]
+        conditions = []
+        metadata_entries = func.json_each(PromptMemoryEntry.prompt_metadata).table_valued("key", "value")
+        for key, value in prompt_metadata.items():
+            conditions.append(
+                select(1)
+                .select_from(metadata_entries)
+                .where(metadata_entries.c.key == key, metadata_entries.c.value == value)
+                .correlate(PromptMemoryEntry)
+                .exists()
+            )
+        return conditions
 
     def _get_seed_metadata_conditions(self, *, metadata: dict[str, str | int]) -> Any:
         """
         Generate SQLAlchemy filter conditions for filtering seed prompts by metadata.
 
-        Returns:
-            Any: A SQLAlchemy text condition with bound parameters.
-        """
-        json_conditions = " AND ".join([f"JSON_EXTRACT(prompt_metadata, '$.{key}') = :{key}" for key in metadata])
+        Match literal object keys through json_each(), without interpreting keys as JSON paths.
 
-        # Create SQL condition using SQLAlchemy's text() with bindparams
-        # Note: We do NOT convert values to string here, to allow integer comparison in JSON
-        return text(json_conditions).bindparams(**dict(metadata.items()))
+        Returns:
+            Any: A SQLAlchemy condition matching every requested metadata key and value.
+        """
+        metadata_entries = func.json_each(SeedEntry.prompt_metadata).table_valued("key", "value")
+        conditions = [
+            select(1)
+            .select_from(metadata_entries)
+            .where(metadata_entries.c.key == key, metadata_entries.c.value == value)
+            .correlate(SeedEntry)
+            .exists()
+            for key, value in metadata.items()
+        ]
+        return and_(*conditions)
 
     def _get_condition_json_property_match(
         self,

@@ -587,14 +587,20 @@ New runs save the adversarial target selection with their launch configuration. 
 
 #### Creating Targets
 
-Click "New Target" to open the creation dialog. Fill in:
+Click "New Target" to open the creation dialog. Fill in the fields shown for the
+selected target; required fields and authentication options depend on the target:
 
-- **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
-- **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
-- **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
-- **API Key** (optional): Stored in memory only (not persisted to disk)
+- **Target Type** (required): Select from backend-discovered targets supported by the form, including `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, `AzureMLChatTarget`, and `GitHubCopilotTarget`.
+- **Endpoint URL**: Your Azure OpenAI, OpenAI API, or Azure ML endpoint, when applicable.
+- **Model / Deployment Name**: e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`.
+- **API Key** (optional): Stored in memory only (not persisted to disk).
 
-For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
+For `AzureMLChatTarget`, **Advanced settings** include **Max New Tokens**,
+**Temperature**, **Top P**, and **Repetition Penalty**.
+
+For GitHub Copilot, provide a model ID and either a GitHub token or an
+instance-configured `GITHUB_TOKEN`; see the
+[framework example](../code/targets/github_copilot_target.ipynb).
 
 #### Auto-Populating Targets
 
