@@ -633,6 +633,19 @@ class TestCreateTargetCodeExecution:
 
         assert create_instance.call_args.kwargs["params"]["trust_remote_code"] is True
 
+    @pytest.mark.parametrize("value", [False, "false", "no", "0"])
+    async def test_create_target_forwards_coerced_false_to_constructor_for_non_admin(self, value: object) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=False)
+
+        assert create_instance.call_args.kwargs["params"]["trust_remote_code"] is False
+
     async def test_declared_code_execution_parameter_missing_from_metadata_fails_closed(self) -> None:
         service = TargetService()
         hugging_face_cls = service._registry.get_class("HuggingFaceChatTarget")
