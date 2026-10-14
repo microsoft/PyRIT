@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 
+from typing import assert_type
+
 from pyrit.models.identifiers import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -122,6 +124,18 @@ class TestBuildSeedIdentifier:
 
 class TestBuildAtomicAttackIdentifier:
     """Tests for AtomicAttackIdentifier.build."""
+
+    def test_build_preserves_subclass_type(self):
+        class CustomAtomicAttackIdentifier(AtomicAttackIdentifier):
+            pass
+
+        base_res = AtomicAttackIdentifier.build(attack_identifier=_make_attack())
+        subclass_res = CustomAtomicAttackIdentifier.build(attack_identifier=_make_attack())
+
+        assert_type(base_res, AtomicAttackIdentifier)
+        assert_type(subclass_res, CustomAtomicAttackIdentifier)
+        assert type(base_res) is AtomicAttackIdentifier
+        assert type(subclass_res) is CustomAtomicAttackIdentifier
 
     def test_returns_component_identifier(self):
         result = AtomicAttackIdentifier.build(attack_identifier=_make_attack())
