@@ -50,7 +50,7 @@ from pyrit.models import (
     MessagePiece,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 logger = logging.getLogger(__name__)
@@ -315,24 +315,24 @@ class MessageSendService:
 
     async def _validate_repeat_history_async(self, *, request: MessageSendRequest, target: PromptTarget | None) -> None:
         """
-        Reject repeating a send into copies of a conversation the target can't be handed.
-
-        Repeat-send copies the existing turns into new conversations. A target without editable history
-        keeps its own copy of the conversation (for example a Copilot session or an A2A context), so it
-        would answer each copy without the earlier turns while memory shows them.
+        Check that the target can initialize the repeated conversations from stored history.
 
         Raises:
-            ValueError: If the target lacks editable history and the conversation has turns besides a
-                system prompt.
+            ValueError: If non-system history cannot be replayed through native support,
+                a configured adapter, or a provider-specific restoration path.
         """
-        if target is None or target.configuration.includes(capability=CapabilityName.EDITABLE_HISTORY):
+        if target is None:
             return
         history = await self._memory.get_conversation_messages_async(conversation_id=request.target_conversation_id)
-        if any(message.api_role != "system" for message in history):
+        if not any(message.api_role != "system" for message in history):
+            return
+        try:
+            target.validate_history_replay()
+        except ValueError as exc:
             raise ValueError(
-                f"{type(target).__name__} keeps its own conversation history, so a send can't be repeated into "
-                "copies of a conversation that already has turns. Repeat the send from a new conversation instead."
-            )
+                f"{type(target).__name__} cannot initialize copies of this conversation from stored history. "
+                "Repeat the send from a new conversation or configure a supported history adapter or restoration path."
+            ) from exc
 
     async def _execute_validated_message_async(
         self,

@@ -46,6 +46,7 @@ from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ConverterResult
 from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -59,7 +60,7 @@ from pyrit.models import (
     PromptDataType,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from unit.async_utils import wait_for_completion_async
 from unit.backend.mocks import (
@@ -2986,7 +2987,7 @@ class TestAsyncMessageSend:
             await service.get_status_async(attack_result_id=ar.attack_result_id, send_id=status.send_id)
         ).state == MessageSendState.COMPLETED
 
-    async def test_repeat_send_rejects_copying_history_into_a_stateful_target_async(
+    async def test_repeat_send_rejects_copying_history_without_replay_support_async(
         self,
         *,
         real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
@@ -3002,7 +3003,7 @@ class TestAsyncMessageSend:
             capabilities=TargetCapabilities(supports_multi_turn=True, supports_multi_message_pieces=True)
         )
 
-        with pytest.raises(ValueError, match="keeps its own conversation history"):
+        with pytest.raises(ValueError, match="cannot initialize copies"):
             await service.submit_async(
                 attack_result_id=ar.attack_result_id,
                 request=_submission(conversation_id=ar.conversation_id, submission_id="repeat", count=3),
@@ -3012,15 +3013,57 @@ class TestAsyncMessageSend:
         assert [piece.role for piece in pieces] == ["user", "assistant"]
         assert not service._scheduler._conversations
 
-    async def test_repeat_send_into_a_stateful_target_is_fine_on_a_new_conversation_async(
+    @pytest.mark.parametrize("capability", [CapabilityName.EDITABLE_HISTORY, CapabilityName.MULTI_TURN])
+    async def test_repeat_send_replays_history_through_a_configured_adapter_async(
         self,
         *,
         real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        capability: CapabilityName,
+    ) -> None:
+        service, ar, target, _ = real_send_context
+        first = await service.submit_async(
+            attack_result_id=ar.attack_result_id, request=_submission(conversation_id=ar.conversation_id)
+        )
+        assert (await _settle_send_async(service=service, status=first)).state == MessageSendState.COMPLETED
+        target._configuration = TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=capability == CapabilityName.EDITABLE_HISTORY),
+            normalizer_overrides={capability: HistorySquashNormalizer()},
+        )
+
+        with patch.object(
+            target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async
+        ) as provider:
+            status = await service.submit_async(
+                attack_result_id=ar.attack_result_id,
+                request=_submission(conversation_id=ar.conversation_id, submission_id="repeat", count=3),
+            )
+            assert (await _settle_send_async(service=service, status=status)).state == MessageSendState.COMPLETED
+
+        assert provider.await_count == 3
+        for call in provider.call_args_list:
+            conversation = call.kwargs["normalized_conversation"]
+            assert len(conversation) == 1
+            prompt = conversation[0].get_piece().converted_value
+            assert "[Conversation History]" in prompt
+            assert "User: Hello" in prompt
+            assert "Assistant: default" in prompt
+            assert "[Current Message]" in prompt
+
+    @pytest.mark.parametrize("system_history", [False, True])
+    async def test_repeat_send_without_replay_support_is_fine_on_a_new_conversation_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        system_history: bool,
     ) -> None:
         service, ar, target, _ = real_send_context
         target._configuration = TargetConfiguration(
-            capabilities=TargetCapabilities(supports_multi_turn=True, supports_multi_message_pieces=True)
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True, supports_multi_message_pieces=True, supports_system_prompt=True
+            )
         )
+        if system_history:
+            await target.set_system_prompt_async(system_prompt="Be brief.", conversation_id=ar.conversation_id)
 
         status = await service.submit_async(
             attack_result_id=ar.attack_result_id,

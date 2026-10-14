@@ -8,10 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.chat import ChatCompletion
-from unit.mocks import get_sample_conversations, openai_chat_response_json_dict
+from unit.mocks import MockPromptTarget, get_sample_conversations, openai_chat_response_json_dict
 
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
@@ -118,6 +119,71 @@ def test_validate_history_preserves_provider_validation(azure_openai_target: Ope
     with patch.object(azure_openai_target, "validate_tool_history", side_effect=ValueError("provider constraint")):
         with pytest.raises(ValueError, match="provider constraint"):
             azure_openai_target.validate_history(history)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("configuration", "allowed"),
+    [
+        pytest.param(
+            TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=True)
+            ),
+            True,
+            id="native-editable-history",
+        ),
+        pytest.param(
+            TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=True)),
+            False,
+            id="no-replay-path",
+        ),
+        pytest.param(
+            TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=True),
+                policy=CapabilityHandlingPolicy(
+                    behaviors={CapabilityName.EDITABLE_HISTORY: UnsupportedCapabilityBehavior.ADAPT}
+                ),
+            ),
+            False,
+            id="policy-without-adapter",
+        ),
+        pytest.param(
+            TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=True),
+                normalizer_overrides={CapabilityName.EDITABLE_HISTORY: HistorySquashNormalizer()},
+            ),
+            True,
+            id="explicit-history-adapter",
+        ),
+        pytest.param(
+            TargetConfiguration(
+                capabilities=TargetCapabilities(),
+                policy=CapabilityHandlingPolicy(
+                    behaviors={CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT}
+                ),
+            ),
+            True,
+            id="single-turn-history-adaptation",
+        ),
+        pytest.param(
+            TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=True),
+                normalizer_overrides={CapabilityName.MULTI_TURN: HistorySquashNormalizer()},
+            ),
+            False,
+            id="unused-multi-turn-adapter",
+        ),
+    ],
+)
+def test_validate_history_replay_checks_configured_path(*, configuration: TargetConfiguration, allowed: bool) -> None:
+    target = MockPromptTarget(custom_configuration=configuration)
+    if allowed:
+        target.validate_history_replay()
+    else:
+        with pytest.raises(ValueError, match="supports_editable_history"):
+            target.validate_history_replay()
+    assert target.configuration is configuration
+    assert not target.prompt_sent
 
 
 async def test_set_system_prompt(azure_openai_target: OpenAIChatTarget, mock_attack_strategy: AttackStrategy):
