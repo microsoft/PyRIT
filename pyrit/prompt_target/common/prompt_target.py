@@ -89,6 +89,12 @@ class PromptTarget(Identifiable):
     # configured and does not let callers choose it.
     upload_directory_parameter: ClassVar[str | None] = None
 
+    # Targets whose construction can run model repository code name the boolean constructor
+    # parameter that enables it (e.g. ``"trust_remote_code"``). The create-target API builds
+    # them only for an administrator when that parameter resolves true; direct Python use is
+    # unaffected.
+    code_execution_parameter: ClassVar[str | None] = None
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.

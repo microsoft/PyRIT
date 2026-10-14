@@ -10,6 +10,7 @@ Target types are set at app startup via initializers - you cannot add new types 
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
@@ -86,6 +87,10 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
             "model": ProblemDetail,
             "description": "Invalid target type or parameters",
         },
+        403: {
+            "model": ProblemDetail,
+            "description": "Administrator access is required to run model repository code",
+        },
     },
 )
 async def create_target(
@@ -107,7 +112,16 @@ async def create_target(
     service = get_target_service()
 
     try:
-        return await service.create_target_async(request=body, upload_directory=_target_upload_directory(request))
+        return await service.create_target_async(
+            request=body,
+            upload_directory=_target_upload_directory(request),
+            is_admin=has_admin_access(request),
+        )
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

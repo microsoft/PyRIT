@@ -275,6 +275,14 @@ class TestListTargetTypes:
         assert not {"endpoint", "api_key", "underlying_model"} & set(parameters)
         assert "identity" not in entry.supported_auth_modes
 
+    async def test_types_include_hugging_face_target_async(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "HuggingFaceChatTarget")
+        assert "trust_remote_code" in {parameter.name for parameter in entry.parameters}
+
     @pytest.mark.parametrize(
         ("target_type", "parameter_names"),
         [
@@ -527,6 +535,148 @@ async def test_create_github_copilot_target_requires_token_async(
 
     create_instance.assert_not_called()
     assert service.get_target_object(target_registry_name="copilot") is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateTargetCodeExecution:
+    """Admin gate for targets whose construction runs model repository code."""
+
+    @staticmethod
+    def _request(params: dict[str, object] | None = None) -> CreateTargetRequest:
+        return CreateTargetRequest(name="hf", type="HuggingFaceChatTarget", params={"model_id": "m", **(params or {})})
+
+    @pytest.mark.parametrize(
+        ("params", "expected_written"),
+        [
+            ({}, None),
+            ({"trust_remote_code": False}, False),
+            ({"trust_remote_code": "false"}, False),
+            ({"trust_remote_code": "0"}, False),
+            ({"trust_remote_code": "no"}, False),
+        ],
+    )
+    async def test_remote_code_disabled_is_allowed_for_non_admin(
+        self, params: dict[str, object], expected_written: bool | None
+    ) -> None:
+        service = TargetService()
+        resolved = dict(params)
+
+        await service._enforce_code_execution_permission_async(
+            target_type="HuggingFaceChatTarget", params=resolved, is_admin=False
+        )
+
+        assert resolved.get("trust_remote_code") is expected_written
+
+    @pytest.mark.parametrize("value", [True, "true", "True", " TRUE ", "1", "yes"])
+    async def test_remote_code_enabled_requires_admin(self, value: object) -> None:
+        service = TargetService()
+
+        with pytest.raises(PermissionError, match="requires administrator access"):
+            await service._enforce_code_execution_permission_async(
+                target_type="HuggingFaceChatTarget", params={"trust_remote_code": value}, is_admin=False
+            )
+
+    @pytest.mark.parametrize("value", [True, "true", "1", "yes"])
+    async def test_admin_may_enable_remote_code_and_value_is_coerced(self, value: object) -> None:
+        service = TargetService()
+        resolved: dict[str, object] = {"trust_remote_code": value}
+
+        await service._enforce_code_execution_permission_async(
+            target_type="HuggingFaceChatTarget", params=resolved, is_admin=True
+        )
+
+        assert resolved["trust_remote_code"] is True
+
+    @pytest.mark.parametrize("is_admin", [False, True])
+    @pytest.mark.parametrize("value", [1, 2, 1.0, [True]])
+    async def test_non_boolean_remote_code_is_rejected(self, value: object, is_admin: bool) -> None:
+        service = TargetService()
+
+        with pytest.raises(ValueError, match="trust_remote_code"):
+            await service._enforce_code_execution_permission_async(
+                target_type="HuggingFaceChatTarget", params={"trust_remote_code": value}, is_admin=is_admin
+            )
+
+    async def test_target_without_code_execution_parameter_is_untouched(self) -> None:
+        service = TargetService()
+        resolved = {"endpoint": "https://example.test"}
+
+        await service._enforce_code_execution_permission_async(
+            target_type="OpenAIChatTarget", params=resolved, is_admin=False
+        )
+
+        assert resolved == {"endpoint": "https://example.test"}
+
+    @pytest.mark.parametrize("value", [True, "true", "1", "yes"])
+    async def test_create_target_rejects_non_admin_remote_code_before_construction(self, value: object) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=False)
+
+        create_instance.assert_not_called()
+        assert service.get_target_object(target_registry_name="hf") is None
+
+    async def test_create_target_rejects_non_boolean_remote_code_before_construction(self) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(ValueError, match="trust_remote_code"),
+        ):
+            await service.create_target_async(request=self._request({"trust_remote_code": 1}), is_admin=False)
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_without_code_execution_parameter_ignores_admin_flag(self, sqlite_instance) -> None:
+        service = TargetService()
+
+        target = await service.create_target_async(
+            request=CreateTargetRequest(name="text", type="TextTarget", params={}), is_admin=False
+        )
+
+        assert target.identifier.class_name == "TextTarget"
+
+    @pytest.mark.parametrize("value", [True, "true", "yes"])
+    async def test_create_target_forwards_coerced_true_to_constructor_for_admin(self, value: object) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=True)
+
+        assert create_instance.call_args.kwargs["params"]["trust_remote_code"] is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "0"])
+    async def test_create_target_forwards_coerced_false_to_constructor_for_non_admin(self, value: object) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request({"trust_remote_code": value}), is_admin=False)
+
+        assert create_instance.call_args.kwargs["params"]["trust_remote_code"] is False
+
+    async def test_declared_code_execution_parameter_missing_from_metadata_fails_closed(self) -> None:
+        service = TargetService()
+        hugging_face_cls = service._registry.get_class("HuggingFaceChatTarget")
+
+        with (
+            patch.object(hugging_face_cls, "code_execution_parameter", "nonexistent_flag"),
+            pytest.raises(ValueError, match="does not expose it"),
+        ):
+            await service._enforce_code_execution_permission_async(
+                target_type="HuggingFaceChatTarget", params={"nonexistent_flag": True}, is_admin=False
+            )
 
 
 class TestCreateTarget:
