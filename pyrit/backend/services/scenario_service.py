@@ -13,7 +13,9 @@ from functools import lru_cache
 from time import monotonic
 
 from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.models.catalog.scenario import (
     RegisteredScenario,
@@ -69,6 +71,8 @@ def _metadata_to_registered_scenario(
         max_concrete_techniques=metadata.max_concrete_techniques,
         technique_summaries=list(metadata.technique_summaries),
         default_datasets=list(metadata.default_datasets),
+        dataset_options=metadata.dataset_options,
+        dataset_defaults=metadata.dataset_defaults,
         supported_parameters=[
             parameter.for_external_catalog()
             for parameter in metadata.supported_parameters
@@ -237,6 +241,46 @@ class ScenarioService:
         estimate = task.result()
         assert isinstance(estimate, ScenarioRunSizeEstimate)
         return estimate
+
+    async def load_datasets_async(
+        self, *, scenario_name: str, request: ScenarioRunSizeEstimateRequest
+    ) -> ScenarioDatasetLoadResponse | None:
+        """
+        Resolve the same source selection as launch and load only its missing datasets.
+
+        Returns:
+            ScenarioDatasetLoadResponse | None: Selected metadata, or None for an unknown scenario.
+        """
+        try:
+            scenario_class = self._registry.get_class(scenario_name)
+        except KeyError:
+            return None
+        reject_non_external_params(
+            params=request.scenario_params or {},
+            declared=scenario_class.supported_parameters(),
+            owner=scenario_name,
+        )
+        resolver = ScenarioConfigurationResolver()
+        adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
+        objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
+        with override_default_adversarial_target(adversarial_target):
+            kwargs = await asyncio.to_thread(
+                resolver.resolve_configuration,
+                scenario_name=scenario_name,
+                scenario_class=scenario_class,
+                techniques=request.techniques,
+                datasets=request.dataset_request,
+                objective_target=objective_target,
+                include_baseline=request.include_baseline,
+            )
+            scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+            scenario.set_params_from_args(args={**(request.scenario_params or {}), **kwargs})
+            settings = await scenario.load_datasets_async()
+        metadata = await get_dataset_service().list_datasets_async()
+        names = {source.name for source in settings.sources}
+        return ScenarioDatasetLoadResponse(
+            settings=settings, items=[item for item in metadata.items if item.name in names]
+        )
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate."""
@@ -504,9 +548,7 @@ class ScenarioService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
+                datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
             )
             return await self._registry.create_and_estimate_async(

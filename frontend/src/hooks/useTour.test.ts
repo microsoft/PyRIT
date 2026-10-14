@@ -121,6 +121,7 @@ describe('useTour', () => {
       '[data-tour="history-tabs"]',
       '[data-tour="registry-tabs"]',
     ])
+    expect(steps[0].content).toContain('Technique.execute opens Chat')
     expect(steps[0].content).toContain('Scanner launches full test campaigns')
     expect(steps[4].content).toContain('Scanner runs a whole campaign')
     expect(steps[5].content).toContain('The Attacks tab lists individual conversations')

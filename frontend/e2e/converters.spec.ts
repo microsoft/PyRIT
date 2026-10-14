@@ -469,7 +469,7 @@ async function activateMockTarget(page: Page) {
   await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
   await objectiveDefault.selectOption({ index: 1 });
 
-  await page.getByTitle("Chat", { exact: true }).click();
+  await page.getByTitle("Technique.execute", { exact: true }).click();
   await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
 }
 
@@ -568,7 +568,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await page.getByTitle("Registry", { exact: true }).click();
     await page.getByRole("combobox", { name: "Default objective target", exact: true })
       .selectOption(targetRegistryName);
-    await page.getByTitle("Chat", { exact: true }).click();
+    await page.getByTitle("Technique.execute", { exact: true }).click();
     await expect(page.getByTestId("chat-input")).toBeEnabled();
   });
 

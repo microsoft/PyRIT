@@ -11,6 +11,7 @@ from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, PromptDataType
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -68,6 +69,9 @@ class FigStep(Scenario):
     """
 
     VERSION: int = 1
+    DATASET_OPTIONS = ScenarioDatasetOptions(
+        mode=DatasetSelectionMode.SUBSET, allowed_names=["figstep", "figstep_pro"], max_selected=1
+    )
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements(
         native_required=frozenset({CapabilityName.MULTI_MESSAGE_PIECES}),
         required_input_modalities=_FIGSTEP_INPUT_MODALITIES,

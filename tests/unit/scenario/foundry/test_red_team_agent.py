@@ -45,6 +45,7 @@ from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration
@@ -138,6 +139,9 @@ def mock_dataset_config(mock_memory_seed_groups):
     mock_config.with_overrides.return_value = mock_config
     mock_config.sources = ()
     mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_memory_seed_groups)
     mock_config.dataset_names = ["foundry_red_team"]
     return mock_config

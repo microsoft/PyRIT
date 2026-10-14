@@ -20,6 +20,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     OutputMatches,
+    ScenarioDatasetRequest,
     ScenarioRunSizeEstimateStatus,
     Seed,
     SeedDataset,
@@ -417,7 +418,7 @@ class TestProPILE:
             scenario_name="garak.propile",
             scenario_class=ProPILE,
             objective_target=target,
-            max_dataset_size=size,
+            datasets=ScenarioDatasetRequest(max_total=size),
         )
         scenario.set_params_from_args(args=args)
         with patch.object(
@@ -426,6 +427,8 @@ class TestProPILE:
             estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
             await scenario.initialize_async()
 
+        assert estimate.dataset_options.per_dataset_limit is False
+        assert estimate.dataset_options.total_limit is True
         total = None if size == "all" else size or 20
         assert estimate.status is (
             ScenarioRunSizeEstimateStatus.Approximate

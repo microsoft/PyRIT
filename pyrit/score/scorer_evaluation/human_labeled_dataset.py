@@ -15,6 +15,8 @@ from pyrit.models import Message, MessagePiece, PromptDataType
 from pyrit.score.scorer_evaluation.metrics_type import MetricsType
 
 if TYPE_CHECKING:
+    from collections.abc import Hashable
+
     from pyrit.models.harm_definition import HarmDefinition
 
 logger = logging.getLogger(__name__)
@@ -271,11 +273,21 @@ class HumanLabeledDataset:
         if not harm_definition_version and parsed_harm_definition_version:
             harm_definition_version = parsed_harm_definition_version
 
+        # Preserve text before pandas can infer numeric or boolean values.
+        text_dtypes: dict[Hashable, type[str]] = dict.fromkeys(
+            (
+                cls.STANDARD_ASSISTANT_RESPONSE_COL,
+                cls.STANDARD_OBJECTIVE_COL,
+                cls.STANDARD_HARM_COL,
+                cls.STANDARD_DATA_TYPE_COL,
+            ),
+            str,
+        )
         # Try UTF-8 first, fall back to latin-1 for files with special characters
         try:
-            eval_df = pd.read_csv(csv_path, comment="#", encoding="utf-8")
+            eval_df = pd.read_csv(csv_path, comment="#", encoding="utf-8", dtype=text_dtypes)
         except UnicodeDecodeError:
-            eval_df = pd.read_csv(csv_path, comment="#", encoding="latin-1")
+            eval_df = pd.read_csv(csv_path, comment="#", encoding="latin-1", dtype=text_dtypes)
 
         # Drop rows where every column is NaN (e.g. trailing blank lines in the CSV)
         eval_df = eval_df.dropna(how="all")
