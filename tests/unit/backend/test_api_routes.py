@@ -907,6 +907,15 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
             mock_get_service.assert_not_called()
 
+    def test_get_conversation_messages_rejects_oversized_conversation_id(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            response = client.get(
+                "/api/attacks/attack/messages", params={"conversation_id": "c" * (MAX_IDENTIFIER_LENGTH + 1)}
+            )
+
+            assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+            mock_get_service.assert_not_called()
+
     def test_parse_labels_value_with_extra_colons(self, client: TestClient) -> None:
         """Test that _parse_labels handles values containing colons (split on first only)."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
