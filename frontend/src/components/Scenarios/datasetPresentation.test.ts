@@ -1,6 +1,6 @@
 import type { ScenarioDatasetOptions, ScenarioDatasetSettings } from '@/types'
 
-import { datasetPolicies } from './datasetPresentation'
+import { datasetNameWithOrigin, datasetPolicies } from './datasetPresentation'
 
 const SETTINGS: ScenarioDatasetSettings = {
   sources: [
@@ -12,6 +12,19 @@ const SETTINGS: ScenarioDatasetSettings = {
 const OPTIONS: ScenarioDatasetOptions = {
   mode: 'any', allowed_names: [], per_dataset_limit: true, total_limit: true, supports_overrides: true, filters: true,
 }
+
+describe('datasetNameWithOrigin', () => {
+  it.each(['local', 'remote', 'generated', 'user'])('displays recorded %s origin', (origin) => {
+    expect(datasetNameWithOrigin('sample', {
+      name: 'sample', selection_key: 'dataset:named:sample', loaded: true, provider_available: false,
+      origins: [origin], logical_examples: 1, seed_pieces: 1, objectives: 1, modalities: [], harm_categories: [],
+      has_unlabeled_harm_categories: false,
+    })).toBe(`sample (${origin})`)
+  })
+  it('does not guess the origin of an unloaded dataset', () => {
+    expect(datasetNameWithOrigin('sample', undefined)).toBe('sample (unknown)')
+  })
+})
 
 describe('datasetPolicies', () => {
   it('uses effective source policies rather than the default global policy', () => {

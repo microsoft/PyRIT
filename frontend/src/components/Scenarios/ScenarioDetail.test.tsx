@@ -329,7 +329,7 @@ describe('ScenarioDetail', () => {
     await user.type(screen.getByLabelText(/^iterations/), '1.5')
     await user.type(screen.getByLabelText(/^note/), 'Keep this value')
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'stale-dataset', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'stale-dataset (unknown)', exact: true }))
     await setObjectiveLimit(user, '0')
     await user.click(screen.getAllByRole('button', { name: 'Filter harm category cyber' })[0])
     await user.click(screen.getAllByRole('button', { name: 'Filter data type Text' })[0])
@@ -1314,9 +1314,9 @@ describe('ScenarioDetail', () => {
 
     const addDataset = screen.getByRole('combobox', { name: 'Add dataset' })
     await user.click(addDataset)
-    await user.click(screen.getByRole('option', { name: 'ds_a', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
     await user.click(addDataset)
-    await user.click(screen.getByRole('option', { name: 'ds_b', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'ds_b (unknown)', exact: true }))
     await user.click(screen.getByRole('button', { name: 'Remove harmbench' }))
     await setObjectiveLimit(user, '25')
     await user.click(screen.getAllByRole('button', { name: 'Filter harm category other' })[0])
@@ -1393,7 +1393,7 @@ describe('ScenarioDetail', () => {
       call[1].scenario_params?.scope === 'one' && call[1].datasets === undefined,
     )).toBe(true)
     await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
-    await screen.findByText('remote', { exact: true })
+    await screen.findByText('remote (unknown)', { exact: true })
   })
 
   it('rejects a non-positive-integer max dataset size', async () => {
@@ -1423,7 +1423,7 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/foundry.red_team_agent')
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -1451,7 +1451,7 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/foundry.red_team_agent')
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -1471,7 +1471,7 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/foundry.red_team_agent')
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     const preview = await openRunPreview(user)
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
     const warning = within(preview).getByRole('alert')
@@ -1491,10 +1491,10 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
     await act(async () => resolveEstimate({ ...makeEstimate(8), effective_datasets: defaults }))
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(screen.getByRole('radio', { name: 'Refresh' }))
     await user.click(screen.getByRole('button', { name: 'Remove ds_b' }))
     await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
-    await user.click(screen.getByRole('option', { name: 'ds_b', exact: true }))
+    await user.click(screen.getByRole('option', { name: 'ds_b (unknown)', exact: true }))
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
@@ -1532,7 +1532,7 @@ describe('ScenarioDetail', () => {
     }))
     mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
     renderDetail('/scanner/foundry.red_team_agent')
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
     const preview = await openRunPreview(user)
     const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
     await waitFor(() => expect(confirm).toBeEnabled())

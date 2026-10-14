@@ -50,6 +50,11 @@ export function datasetChoices(
   return [...names].filter((name) => options.mode === 'any' || options.allowed_names.includes(name)).sort()
 }
 
+export function datasetNameWithOrigin(name: string, dataset: DatasetInfo | undefined): string {
+  const origins = [...new Set(dataset?.origins ?? [])]
+  return `${name} (${origins.length > 0 ? origins.join(', ') : 'unknown'})`
+}
+
 export function datasetFacts(datasets: DatasetInfo[], names: string[]) {
   const loaded = datasets.filter((item) => item.loaded && names.includes(item.name))
   return {
