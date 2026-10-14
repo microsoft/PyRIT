@@ -1,4 +1,29 @@
-import type { DatasetInfo, ScenarioDatasetOptions, ScenarioDatasetSettings, ScenarioDatasetSourceSettings } from '@/types'
+import type {
+  DatasetFetchPolicy, DatasetInfo, ScenarioDatasetOptions, ScenarioDatasetRequest,
+  ScenarioDatasetSettings, ScenarioDatasetSourceInput, ScenarioDatasetSourceSettings,
+} from '@/types'
+
+function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
+  return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
+}
+
+export function datasetPolicies(
+  request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
+  effective: ScenarioDatasetSettings, options: ScenarioDatasetOptions,
+): Array<{ name: string; fetch: DatasetFetchPolicy }> {
+  const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
+  const canEditSources = options.supports_overrides && options.source_settings !== false
+  return selected.map((source) => {
+    const settings = effective.sources.find((item) => item.name === source.name)
+      ?? defaults.sources.find((item) => item.name === source.name)
+    return {
+      name: source.name,
+      fetch: canEditSources ? explicitDatasetPolicy(source.fetch) ?? settings?.fetch
+        ?? explicitDatasetPolicy(request.fetch) ?? defaults.fetch
+        : settings?.fetch ?? defaults.fetch,
+    }
+  })
+}
 
 export function parseCaseLimit(text: string): number | null {
   const value = text.trim()

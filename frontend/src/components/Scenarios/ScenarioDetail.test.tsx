@@ -3,10 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes } from 'react-router'
 
-import { scenariosApi, targetsApi } from '@/services/api'
+import { datasetsApi, scenariosApi, targetsApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import type {
   RegisteredScenario,
+  ScenarioDatasetSettings,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
@@ -165,6 +166,7 @@ async function openRunPreview(user: ReturnType<typeof userEvent.setup>): Promise
 
 async function confirmRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await openRunPreview(user)
+  await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
   await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
 }
 
@@ -225,7 +227,7 @@ describe('ScenarioDetail', () => {
     mockListTargets.mockReset()
     mockStartRun.mockReset()
     mockGetScenario.mockResolvedValue(makeScenario())
-    mockEstimateRun.mockReturnValue(new Promise(() => {}))
+    mockEstimateRun.mockResolvedValue(makeEstimate(8))
     mockStartRun.mockResolvedValue({ scenario_result_id: 'sr-default' })
   })
 
@@ -1408,6 +1410,138 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 
+  it.each(['user', 'unknown'])('warns before replacing %s data and confirms through Run preview', async (origin) => {
+    const user = userEvent.setup()
+    jest.mocked(datasetsApi.listDatasets).mockResolvedValueOnce({ items: [{
+      name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
+      logical_examples: 8, origins: [origin], modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
+    }] })
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(8), effective_datasets: {
+        sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
+      },
+    })
+    renderDetail('/scanner/foundry.red_team_agent')
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    expect(within(preview).getByRole('alert')).toHaveTextContent('full stored datasets: harmbench')
+    expect(within(preview).getByRole('alert')).toHaveTextContent('User or unknown-origin data will be replaced: harmbench')
+    expect(within(preview).getByRole('alert')).toHaveTextContent('prevent older runs from resuming')
+    await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
+    expect(mockStartRun).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    const confirmed = await screen.findByRole('dialog', { name: 'Run preview' })
+    await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
+    expect(mockStartRun).toHaveBeenCalledTimes(1)
+    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+      fetch: 'always', sources: [{ name: 'harmbench', fetch: 'always' }],
+    })
+  })
+
+  it('shows a replacement warning when dataset metadata cannot be checked', async () => {
+    const user = userEvent.setup()
+    jest.mocked(datasetsApi.listDatasets).mockRejectedValueOnce(new Error('Metadata unavailable'))
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(8), effective_datasets: {
+        sources: [{ name: 'harmbench', max_size: 5, fetch: 'always', configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
+      },
+    })
+    renderDetail('/scanner/foundry.red_team_agent')
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    expect(within(preview).getByRole('alert')).toHaveTextContent('Existing data could not be checked for: harmbench')
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('uses current backend policies instead of a global refresh draft for the warning', async () => {
+    const user = userEvent.setup()
+    mockEstimateRun.mockResolvedValue({
+      ...makeEstimate(8), effective_datasets: {
+        sources: [
+          { name: 'harmbench', max_size: 5, fetch: 'never', configured_provider: false },
+          { name: 'remote', max_size: 5, fetch: 'always', configured_provider: false },
+        ],
+        max_per_dataset: 5, max_total: 'all', fetch: 'always', filters: {},
+      },
+    })
+    renderDetail('/scanner/foundry.red_team_agent')
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    const preview = await openRunPreview(user)
+    await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+    const warning = within(preview).getByRole('alert')
+    expect(warning).toHaveTextContent('full stored datasets: remote.')
+    expect(warning).not.toHaveTextContent('harmbench')
+  })
+
+  it('waits for the current projection after removing and re-adding a default source', async () => {
+    const user = userEvent.setup()
+    const defaults: ScenarioDatasetSettings = {
+      sources: ['ds_a', 'ds_b'].map((name) => ({ name, max_size: 5, fetch: 'if_missing', configured_provider: false })),
+      max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({ default_datasets: ['ds_a', 'ds_b'], dataset_defaults: defaults }))
+    let resolveEstimate: (value: ScenarioRunSizeEstimateResponse) => void = () => {}
+    mockEstimateRun.mockImplementation(() => new Promise((resolve) => { resolveEstimate = resolve }))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
+    await act(async () => resolveEstimate({ ...makeEstimate(8), effective_datasets: defaults }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset loading' }), 'always')
+    await user.click(screen.getByRole('button', { name: 'Remove ds_b' }))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(screen.getByRole('option', { name: 'ds_b', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+    const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
+    expect(confirm).toBeDisabled()
+    expect(within(preview).getByRole('status')).toHaveTextContent('Checking dataset refresh policies')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1].datasets?.sources).toEqual([
+      { name: 'ds_a', fetch: 'always' }, { name: 'ds_b' },
+    ]))
+    await act(async () => resolveEstimate({
+      ...makeEstimate(8), effective_datasets: {
+        ...defaults, fetch: 'always', sources: defaults.sources.map((source) => ({ ...source, fetch: 'always' })),
+      },
+    }))
+    expect(confirm).toBeEnabled()
+    expect(within(preview).getByRole('alert')).toHaveTextContent('full stored datasets: ds_a, ds_b.')
+    await user.click(confirm)
+    expect(mockStartRun).toHaveBeenCalledTimes(1)
+    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({
+      fetch: 'always', sources: [{ name: 'ds_a', fetch: 'always' }, { name: 'ds_b' }],
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run preview' })).not.toBeInTheDocument())
+  })
+
+  it('allows confirmation with an explicit uncertainty warning when a protected-policy estimate fails', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      dataset_defaults: {
+        sources: [{ name: 'harmbench', max_size: 5, fetch: 'if_missing', configured_provider: false }],
+        max_per_dataset: 5, max_total: 'all', fetch: 'if_missing', filters: {},
+      },
+      dataset_options: {
+        mode: 'fixed', allowed_names: [], supports_overrides: true, source_settings: false,
+        per_dataset_limit: false, total_limit: true, filters: true,
+      },
+    }))
+    mockEstimateRun.mockRejectedValue(new Error('Estimate unavailable'))
+    renderDetail('/scanner/foundry.red_team_agent')
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Dataset loading' }), 'always')
+    const preview = await openRunPreview(user)
+    const confirm = within(preview).getByRole('button', { name: 'Launch scan' })
+    await waitFor(() => expect(confirm).toBeEnabled())
+    expect(within(preview).getByRole('alert')).toHaveTextContent('Cannot confirm which datasets will refresh')
+    expect(within(preview).queryByRole('status')).not.toBeInTheDocument()
+    await user.click(confirm)
+    expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ fetch: 'always' })
+  })
+
   it.each([
     ['Max concurrency', '500', 'Max concurrency must be an integer from 1 to 100.'],
     ['Max concurrency', '1.5', 'Max concurrency must be an integer from 1 to 100.'],
@@ -1652,6 +1786,7 @@ describe('ScenarioDetail', () => {
     await openRunPreview(user)
 
     const button = screen.getByTestId('confirm-launch-scenario-btn')
+    await waitFor(() => expect(button).toBeEnabled())
     // Fire two rapid clicks without waiting between them (userEvent.click awaits internally,
     // so dispatch native clicks to simulate a true double-click within one tick).
     act(() => {
@@ -1733,7 +1868,7 @@ describe('ScenarioDetail', () => {
       await user.click(confirm)
       expect(mockStartRun).not.toHaveBeenCalled()
       view.updateDefaults({ defaultsReady: true, labels: { operator: 'roakey', operation: 'config_op_v2' } })
-      expect(confirm).toBeEnabled()
+      await waitFor(() => expect(confirm).toBeEnabled())
       await user.click(confirm)
       expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
         target_name: 'target-b',

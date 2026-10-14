@@ -46,7 +46,7 @@ function Harness({
       name: source.name,
       max_size: typeof source.max_size === 'number' || source.max_size === 'all'
         ? source.max_size : defaults.sources.find((item) => item.name === source.name)?.max_size ?? defaults.max_per_dataset,
-      fetch: source.fetch === 'never' || source.fetch === 'if_missing' ? source.fetch
+      fetch: source.fetch === 'never' || source.fetch === 'if_missing' || source.fetch === 'always' ? source.fetch
         : defaults.sources.find((item) => item.name === source.name)?.fetch ?? defaults.fetch,
       configured_provider: false,
     })),
@@ -231,27 +231,30 @@ describe('ScenarioDatasetTable', () => {
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({})
   })
 
-  it('uses a single switch that updates all selected source loading policies', async () => {
+  it('uses a single selector that updates all selected source loading policies', async () => {
     const user = userEvent.setup()
     const onChange = jest.fn()
     render(<Harness onChange={onChange} />)
     await addDataset(user, 'remote')
-    await user.click(screen.getByRole('switch', { name: 'Load missing data when the scan starts' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset loading' }), 'if_missing')
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual({
       fetch: 'if_missing', sources: [{ name: 'stored', fetch: 'if_missing' }, { name: 'remote', fetch: 'if_missing' }],
     })
-    await user.click(screen.getByRole('switch', { name: 'Load missing data when the scan starts' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset loading' }), 'never')
     expect(onChange.mock.calls.at(-1)?.[0].sources.every((source: { fetch: string }) => source.fetch === 'never')).toBe(true)
     expect(screen.getByRole('button', { name: 'Load datasets' })).toBeEnabled()
   })
 
-  it('keeps missing-data loading on by default and hides all loading controls once data is loaded', () => {
+  it('keeps missing-data loading on by default and allows refresh after data is loaded', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
     const defaults = { ...DEFAULTS, sources: [{ name: 'remote', max_size: 4 as const, fetch: 'if_missing' as const, configured_provider: false }] }
-    const view = render(<Harness defaults={defaults} />)
-    expect(screen.getByRole('switch', { name: 'Load missing data when the scan starts' })).toBeChecked()
-    view.rerender(<Harness defaults={defaults} datasets={[{ ...REMOTE, loaded: true, logical_examples: 100 }]} />)
+    const view = render(<Harness defaults={defaults} onChange={onChange} />)
+    expect(screen.getByRole('combobox', { name: 'Dataset loading' })).toHaveValue('if_missing')
+    view.rerender(<Harness defaults={defaults} onChange={onChange} datasets={[{ ...REMOTE, loaded: true, logical_examples: 100 }]} />)
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset loading' }), 'always')
+    expect(onChange.mock.calls.at(-1)?.[0]).toEqual({ fetch: 'always', sources: [{ name: 'remote', fetch: 'always' }] })
     expect(screen.queryByText(/All selected datasets are loaded/)).not.toBeInTheDocument()
   })
 
@@ -272,8 +275,37 @@ describe('ScenarioDatasetTable', () => {
   it('does not pretend a global policy can replace protected source-specific loading rules', () => {
     render(<Harness options={{ ...OPTIONS, mode: 'fixed', source_settings: false }}
       datasets={[{ ...STORED, loaded: false, provider_available: true }]} />)
-    expect(screen.getByRole('switch', { name: 'Load missing data when the scan starts' })).not.toBeChecked()
-    expect(screen.getByRole('switch', { name: 'Load missing data when the scan starts' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Dataset loading' })).toHaveValue('never')
+    expect(screen.getByRole('combobox', { name: 'Dataset loading' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Load datasets' })).toBeEnabled()
+  })
+
+  it('does not preload missing refresh sources and permits loading after changing the policy', async () => {
+    const user = userEvent.setup()
+    const onLoad = jest.fn()
+    render(<Harness onLoad={onLoad} initialRequest={{
+      sources: [{ name: 'remote', fetch: 'always' }],
+    }} />)
+    const load = screen.getByRole('button', { name: 'Load datasets' })
+    expect(load).toBeDisabled()
+    expect(screen.getByText(/Datasets set to refresh will load when the scan starts/)).toBeInTheDocument()
+    await user.click(load)
+    expect(onLoad).not.toHaveBeenCalled()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset loading' }), 'if_missing')
+    expect(load).toBeEnabled()
+    await user.click(load)
+    expect(onLoad).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows loading missing non-refresh sources when the refresh source is already stored', async () => {
+    const user = userEvent.setup()
+    const onLoad = jest.fn()
+    render(<Harness onLoad={onLoad} initialRequest={{
+      sources: [{ name: 'stored', fetch: 'always' }, { name: 'remote', fetch: 'if_missing' }],
+    }} />)
+    const load = screen.getByRole('button', { name: 'Load datasets' })
+    expect(load).toBeEnabled()
+    await user.click(load)
+    expect(onLoad).toHaveBeenCalledTimes(1)
   })
 })

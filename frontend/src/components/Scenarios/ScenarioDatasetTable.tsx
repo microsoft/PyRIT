@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import {
-  Badge, Button, Combobox, Divider, MessageBar, MessageBarBody, Option, Switch,
+  Badge, Button, Combobox, Divider, Field, MessageBar, MessageBarBody, Option, Select,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, ToggleButton, Tooltip,
 } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
@@ -14,7 +14,7 @@ import type {
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { datasetChoices, datasetFacts, datasetSize, parseCaseLimit } from './datasetPresentation'
+import { datasetChoices, datasetFacts, datasetPolicies, datasetSize, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 
 interface ScenarioDatasetTableProps {
@@ -123,11 +123,9 @@ export default function ScenarioDatasetTable({
   const validationError = errors[0] ?? null
   useEffect(() => { onValidationChange(validationError) }, [validationError, onValidationChange])
 
-  const policies = selected.map((source) => !canEditSources
-    ? settingsFor(source.name)?.fetch ?? defaults.fetch
-    : source.fetch ?? (
-    request.fetch === 'never' || request.fetch === 'if_missing' ? request.fetch : settingsFor(source.name)?.fetch ?? defaults.fetch
-  ))
+  const policies = datasetPolicies(request, defaults, effective, options).map((source) => source.fetch)
+  const hasMissingRefresh = selected.some((source, index) => policies[index] === 'always'
+    && !datasets.some((item) => item.name === source.name && item.loaded))
   const mixedPolicies = policies.some((policy) => policy !== policies[0])
   const canSetLoading = options.supports_overrides && (canEditSources || (
     !mixedPolicies && policies.every((policy) => policy === effective.fetch)
@@ -144,9 +142,13 @@ export default function ScenarioDatasetTable({
     <div className={styles.root}>
       {!allLoaded && selected.length > 0 && <div className={styles.toolbar}>
         {onLoad && <Button appearance="primary" className={styles.button}
-          disabled={busy || loading || !loadEnabled || requiresImport || metadataError !== null || validationError !== null}
+          disabled={busy || loading || !loadEnabled || hasMissingRefresh || requiresImport
+            || metadataError !== null || validationError !== null}
           onClick={onLoad}>{preparing ? 'Loading datasets...' : 'Load datasets'}</Button>}
         {requiresImport && <Text size={200}>Import the missing datasets into PyRIT first.</Text>}
+        {hasMissingRefresh && <Text size={200}>
+          Datasets set to refresh will load when the scan starts. Change the loading policy to load them now.
+        </Text>}
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
       {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
@@ -237,13 +239,22 @@ export default function ScenarioDatasetTable({
       {selected.length > 0 && <Divider />}
       {canFilter && emptySelections.length > 0 && <Button className={styles.button} disabled={busy}
         onClick={() => setEmptySelections([])}>Restore metadata selection</Button>}
-      {!allLoaded && selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Already loaded data is kept.'} relationship="description">
+      {selected.length > 0 && <Tooltip content={loadingDisabledReason || 'Refresh replaces the full stored dataset for a new scan.'} relationship="description">
         <span className={styles.loadingRule}>
-          <Switch label="Load missing data when the scan starts" checked={policies.every((policy) => policy === 'if_missing')}
-            disabled={busy || !canSetLoading} onChange={(_, data) => changeLoading(data.checked ? 'if_missing' : 'never')} />
+          <Field label="Dataset loading">
+            <Select aria-label="Dataset loading" value={mixedPolicies ? '' : policies[0]}
+              disabled={busy || !canSetLoading} onChange={(_, data) => {
+                if (data.value === 'never' || data.value === 'if_missing' || data.value === 'always') changeLoading(data.value)
+              }}>
+              {mixedPolicies && <option value="" disabled>Mixed source policies</option>}
+              <option value="never">Use stored data only</option>
+              <option value="if_missing">Load missing data</option>
+              <option value="always">Refresh for each new scan</option>
+            </Select>
+          </Field>
         </span>
       </Tooltip>}
-      {!allLoaded && mixedPolicies && <Text size={200}>The selected datasets currently use different loading rules.</Text>}
+      {mixedPolicies && <Text size={200}>The selected datasets currently use different loading rules.</Text>}
       {options.supports_overrides && options.total_limit && <DatasetLimitControl label="Maximum objectives"
         value={request.max_total} defaultValue={defaults.max_total} draft={drafts.total} disabled={busy}
         onDraftChange={(text) => updateDraft('total', text)} onChange={updateTotal} />}

@@ -3,10 +3,12 @@
 
 """Named selection, explicit preparation, and durable storage contracts."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.exc import SQLAlchemyError
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
@@ -417,7 +419,7 @@ async def test_provider_failure_is_not_cached_or_persisted(*, memory: MagicMock,
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("origin", list(SeedOrigin))
-@pytest.mark.parametrize("policy", list(DatasetFetchPolicy))
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.IF_MISSING])
 async def test_memory_only_reuse_and_new_run_rechecks_presence(
     *, sqlite_instance: SQLiteMemory, origin: SeedOrigin, policy: DatasetFetchPolicy, configured_provider: bool
 ) -> None:
@@ -554,12 +556,13 @@ async def test_preparation_resolves_only_unconfigured_missing_providers(memory: 
     assert memory.add_seed_datasets_to_memory_async.await_count == 2
 
 
-async def test_configured_provider_takes_precedence(memory: MagicMock) -> None:
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.IF_MISSING, DatasetFetchPolicy.ALWAYS])
+async def test_configured_provider_takes_precedence(*, memory: MagicMock, policy: DatasetFetchPolicy) -> None:
     configured = MagicMock(spec=SeedDatasetProvider)
     configured.dataset_name = "fresh"
     configured.fetch_dataset_async.return_value = dataset("fresh")
     registered = MagicMock(spec=SeedDatasetProvider)
-    config = DatasetAttackConfiguration(sources=[DatasetSource(name="fresh", provider=configured)])
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="fresh", provider=configured)], fetch=policy)
     with (
         patch.object(CentralMemory, "get_memory_instance", return_value=memory),
         patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fresh": registered}) as lookup,
@@ -597,3 +600,186 @@ async def test_compound_preparation_requires_one_provider_per_name(
             provider.fetch_dataset_async.assert_not_awaited()
             memory.add_seed_datasets_to_memory_async.assert_not_awaited()
     second.fetch_dataset_async.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("stored", [False, True])
+@pytest.mark.parametrize("compound", [False, True])
+async def test_refresh_replaces_complete_dataset_and_repeats_on_new_preparation_async(
+    *, sqlite_instance: SQLiteMemory, configured_provider: bool, stored: bool, compound: bool
+) -> None:
+    if stored:
+        await sqlite_instance.add_seeds_to_memory_async(
+            seeds=[SeedObjective(value="Manual edit", dataset_name="fresh", origin=SeedOrigin.USER)], added_by="user"
+        )
+    await sqlite_instance.add_seeds_to_memory_async(seeds=dataset("other", 1).seeds, added_by="test")
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "fresh"
+    fresh = dataset("fresh", 3)
+    for seed in fresh.seeds:
+        seed.origin = SeedOrigin.GENERATED
+    provider.fetch_dataset_async.return_value = fresh
+    child = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="fresh", provider=provider if configured_provider else None)],
+        fetch=DatasetFetchPolicy.ALWAYS,
+        max_total=1,
+    )
+    config = CompoundDatasetAttackConfiguration(configurations=[child, child]) if compound else child
+    with patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fresh": provider}) as lookup:
+        await config.prepare_async()
+        stored_seeds = await sqlite_instance.get_seeds_async(dataset_name="fresh")
+        assert {seed.value for seed in stored_seeds} == {"fresh-0", "fresh-1", "fresh-2"}
+        assert all(
+            seed.origin is SeedOrigin.GENERATED and seed.added_by == "DatasetConfiguration" for seed in stored_seeds
+        )
+        for _ in range(2):
+            await config.get_attack_seed_groups_async()
+        provider.fetch_dataset_async.assert_awaited_once()
+        assert provider.fetch_dataset_async.await_args.kwargs == {"cache": False}
+        assert lookup.await_count == (0 if configured_provider else 1)
+        provider.fetch_dataset_async.return_value = dataset("fresh", 2)
+        await config.prepare_async()
+    assert provider.fetch_dataset_async.await_count == 2
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="fresh")) == 2
+    assert len(await sqlite_instance.get_seeds_async(dataset_name="other")) == 1
+
+
+@pytest.mark.parametrize("compound", [False, True])
+async def test_refresh_preflight_rejects_stored_memory_only_source_before_fetch_async(
+    *, memory: MagicMock, compound: bool
+) -> None:
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "a"
+    sources = [DatasetSource(name="a", provider=provider), DatasetSource(name="b")]
+    config = (
+        CompoundDatasetAttackConfiguration(
+            configurations=[
+                DatasetAttackConfiguration(sources=[source], fetch=DatasetFetchPolicy.ALWAYS) for source in sources
+            ]
+        )
+        if compound
+        else DatasetAttackConfiguration(sources=sources, fetch=DatasetFetchPolicy.ALWAYS)
+    )
+    with (
+        patch.object(CentralMemory, "get_memory_instance", return_value=memory),
+        patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={}),
+        pytest.raises(DatasetConstraintError, match="no provider to refresh"),
+    ):
+        await config.prepare_async()
+    provider.fetch_dataset_async.assert_not_awaited()
+    memory.replace_seeds_for_dataset_async.assert_not_awaited()
+
+
+@pytest.mark.parametrize("policy", [DatasetFetchPolicy.NEVER, DatasetFetchPolicy.IF_MISSING])
+async def test_refresh_compound_rejects_conflicting_policies_before_fetch_async(
+    *, memory: MagicMock, policy: DatasetFetchPolicy
+) -> None:
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "a"
+    config = CompoundDatasetAttackConfiguration(
+        configurations=[
+            DatasetAttackConfiguration(sources=[DatasetSource(name="a", provider=provider)], fetch=fetch)
+            for fetch in (DatasetFetchPolicy.ALWAYS, policy)
+        ]
+    )
+    with (
+        patch.object(CentralMemory, "get_memory_instance", return_value=memory),
+        pytest.raises(DatasetConstraintError, match="conflicting fetch policies"),
+    ):
+        await config.prepare_async()
+    provider.fetch_dataset_async.assert_not_awaited()
+    memory.get_seed_dataset_names_async.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("failure", ["fetch", "cancel", "empty", "dataset-name", "seed-name", "prepare", "insert"])
+async def test_refresh_failure_preserves_stored_values_and_ids_async(
+    *, sqlite_instance: SQLiteMemory, configured_provider: bool, failure: str
+) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Keep this edit", dataset_name="fresh", origin=SeedOrigin.USER)], added_by="user"
+    )
+    before = await sqlite_instance.get_seeds_async(dataset_name="fresh")
+    provider = MagicMock(spec=SeedDatasetProvider)
+    provider.dataset_name = "fresh"
+    result = dataset("wrong" if failure == "dataset-name" else "fresh", 2)
+    if failure == "empty":
+        result.seeds = []
+    elif failure == "seed-name":
+        result.seeds[0].dataset_name = "wrong"
+    provider.fetch_dataset_async.return_value = result
+    if failure == "fetch":
+        provider.fetch_dataset_async.side_effect = RuntimeError("Fetch failed")
+    elif failure == "cancel":
+        provider.fetch_dataset_async.side_effect = asyncio.CancelledError("Fetch cancelled")
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="fresh", provider=provider if configured_provider else None)],
+        fetch=DatasetFetchPolicy.ALWAYS,
+    )
+
+    def fail_insert(mapper: object, connection: object, target: SeedEntry) -> None:
+        raise SQLAlchemyError("Insert failed")
+
+    preparation = sqlite_instance._prepare_seed_for_storage_async
+    if failure == "insert":
+        event.listen(SeedEntry, "before_insert", fail_insert)
+    try:
+        with (
+            patch.object(SeedDatasetProvider, "get_providers_by_name_async", return_value={"fresh": provider}),
+            patch.object(
+                sqlite_instance,
+                "_prepare_seed_for_storage_async",
+                side_effect=RuntimeError("Preparation failed") if failure == "prepare" else preparation,
+            ),
+            pytest.raises(
+                (RuntimeError, asyncio.CancelledError, DatasetConstraintError, SQLAlchemyError),
+                match="failed|cancelled|must return",
+            ),
+        ):
+            await config.prepare_async()
+    finally:
+        if failure == "insert":
+            event.remove(SeedEntry, "before_insert", fail_insert)
+    after = await sqlite_instance.get_seeds_async(dataset_name="fresh")
+    assert [(seed.id, seed.value, seed.origin, seed.added_by) for seed in after] == [
+        (seed.id, seed.value, seed.origin, seed.added_by) for seed in before
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("failure", ["fetch", "invalid", "write"])
+async def test_refresh_checks_all_fetches_before_independent_writes_async(
+    *, sqlite_instance: SQLiteMemory, failure: str
+) -> None:
+    for name in ("first", "last"):
+        await sqlite_instance.add_seeds_to_memory_async(
+            seeds=[SeedObjective(value="Original", dataset_name=name)], added_by="test"
+        )
+    first = MagicMock(spec=SeedDatasetProvider)
+    first.dataset_name = "first"
+    first.fetch_dataset_async.return_value = dataset("first", 1)
+    last = MagicMock(spec=SeedDatasetProvider)
+    last.dataset_name = "last"
+    last.fetch_dataset_async.return_value = dataset("wrong" if failure == "invalid" else "last", 1)
+    if failure == "fetch":
+        last.fetch_dataset_async.side_effect = RuntimeError("Last fetch failed")
+    config = DatasetAttackConfiguration(
+        sources=[DatasetSource(name=provider.dataset_name, provider=provider) for provider in (first, last)],
+        fetch=DatasetFetchPolicy.ALWAYS,
+    )
+    replace = sqlite_instance.replace_seeds_for_dataset_async
+
+    async def replace_async(*, dataset_name: str, seeds: list[SeedObjective], added_by: str) -> int:
+        if failure == "write" and dataset_name == "last":
+            raise RuntimeError("Last write failed")
+        return await replace(dataset_name=dataset_name, seeds=seeds, added_by=added_by)
+
+    with (
+        patch.object(sqlite_instance, "replace_seeds_for_dataset_async", side_effect=replace_async),
+        pytest.raises((RuntimeError, DatasetConstraintError), match="Last .* failed|must return"),
+    ):
+        await config.prepare_async()
+    assert [seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="first")] == [
+        "first-0" if failure == "write" else "Original"
+    ]
+    assert [seed.value for seed in await sqlite_instance.get_seeds_async(dataset_name="last")] == ["Original"]
