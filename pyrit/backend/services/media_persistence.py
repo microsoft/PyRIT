@@ -17,12 +17,19 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
-from pyrit.memory import data_serializer_factory
+from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import MEDIA_PATH_DATA_TYPES
 
 if TYPE_CHECKING:
     from pyrit.backend.models.attacks import MessagePieceRequest
     from pyrit.models import PromptDataType
+
+
+_ALLOWED_MEDIA_SUBDIRECTORIES = frozenset({"prompt-memory-entries", "seed-prompt-entries"})
+
+
+class MediaAccessDeniedError(ValueError):
+    """A local media path is outside the API's allowed storage directories."""
 
 
 class MediaOrigin(str, Enum):
@@ -48,6 +55,55 @@ class MediaPersistenceResult:
 
 
 SerializerFactory = Callable[..., Any]
+
+
+def validate_media_path(*, path: str, allowed_root: Path) -> Path:
+    """
+    Resolve symlinks and parent components before checking results-directory containment.
+
+    Args:
+        path (str): The local media path.
+        allowed_root (Path): The configured results directory.
+
+    Returns:
+        The canonical path in an allowed media subdirectory.
+
+    Raises:
+        MediaAccessDeniedError: If the path is outside the allowed media directories.
+    """
+    real_path = Path(path).resolve(strict=False)
+    try:
+        relative_parts = real_path.relative_to(allowed_root.resolve(strict=False)).parts
+    except ValueError as exc:
+        raise MediaAccessDeniedError("Access denied: path is outside the allowed results directory.") from exc
+
+    if not relative_parts or relative_parts[0] not in _ALLOWED_MEDIA_SUBDIRECTORIES:
+        raise MediaAccessDeniedError("Access denied: path is not in a media subdirectory.")
+
+    return real_path
+
+
+async def validate_local_media_path_async(*, path: str) -> Path:
+    """
+    Validate a local media path against the configured results directory.
+
+    Args:
+        path (str): The local media path.
+
+    Returns:
+        The canonical path in an allowed media subdirectory.
+
+    Raises:
+        RuntimeError: If memory or its results path is not configured.
+        MediaAccessDeniedError: If the path is outside the allowed media directories.
+    """
+    try:
+        memory = CentralMemory.get_memory_instance()
+    except ValueError as exc:
+        raise RuntimeError("Memory not initialized; cannot determine results path.") from exc
+    if not memory.results_path:
+        raise RuntimeError("Memory results_path is not configured.")
+    return await asyncio.to_thread(validate_media_path, path=path, allowed_root=Path(memory.results_path))
 
 
 def _is_raw_base64(value: str) -> bool:
@@ -102,6 +158,9 @@ async def persist_media_value_async(
     attack ingestion and converter preview while keeping origin detection,
     extension resolution, and persistence in one component.
 
+    Local paths and ``/api/media`` references must be in a media subdirectory
+    of the configured results directory, as required by ``GET /api/media``.
+
     Returns:
         A typed result containing the resolved value and persistence metadata.
     """
@@ -116,14 +175,17 @@ async def persist_media_value_async(
 
     if value.startswith("/api/media"):
         parsed = urlparse(value)
-        file_path = parse_qs(parsed.query).get("path", [None])[0]
-        return MediaPersistenceResult(
-            value=file_path or value,
-            origin=MediaOrigin.MEDIA_REFERENCE,
-            persisted=False,
-            resolved=file_path is not None,
-            mime_type=mime_type,
-        )
+        if parsed.path == "/api/media":
+            file_path = parse_qs(parsed.query).get("path", [None])[0]
+            if file_path is None:
+                raise ValueError("Media reference must include a path.")
+            return MediaPersistenceResult(
+                value=str(await validate_local_media_path_async(path=file_path)),
+                origin=MediaOrigin.MEDIA_REFERENCE,
+                persisted=False,
+                resolved=True,
+                mime_type=mime_type,
+            )
 
     data_uri_mime_type: str | None = None
     payload = value
@@ -133,17 +195,19 @@ async def persist_media_value_async(
         origin = MediaOrigin.DATA_URI
     else:
         try:
-            if await asyncio.to_thread(Path(value).is_file):
-                return MediaPersistenceResult(
-                    value=value,
-                    origin=MediaOrigin.LOCAL_PATH,
-                    persisted=False,
-                    resolved=True,
-                    mime_type=mime_type,
-                )
+            is_file = await asyncio.to_thread(Path(value).is_file)
         except (OSError, ValueError):
             if require_valid_base64_after_path_error and not _is_raw_base64(value):
                 raise
+            is_file = False
+        if is_file:
+            return MediaPersistenceResult(
+                value=str(await validate_local_media_path_async(path=value)),
+                origin=MediaOrigin.LOCAL_PATH,
+                persisted=False,
+                resolved=True,
+                mime_type=mime_type,
+            )
 
     extension = _resolve_extension(
         data_type=data_type,
