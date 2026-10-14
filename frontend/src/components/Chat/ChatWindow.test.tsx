@@ -7183,4 +7183,39 @@ describe("ChatWindow Integration", () => {
       })))
     })
   })
+
+  describe('converter restoration warning', () => {
+    it('does not show converter restoration warning on fresh empty chat with no conversation', async () => {
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={mockTarget}
+            attackResultId={null}
+            conversationId={null}
+            activeConversationId={null}
+            defaultsReady={true}
+          />
+        </TestWrapper>,
+      )
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument()
+      expect(screen.getByText('There are no messages in this conversation yet.')).toBeInTheDocument()
+    })
+
+    it('does not show converter restoration warning while fresh chat is loading without active target', async () => {
+      render(
+        <TestWrapper>
+          <ChatWindow
+            {...defaultProps}
+            activeTarget={null}
+            attackResultId={null}
+            conversationId={null}
+            activeConversationId={null}
+            defaultsReady={false}
+          />
+        </TestWrapper>,
+      )
+      expect(screen.queryByText(/Converter choices could not be restored/)).not.toBeInTheDocument()
+    })
+  })
 })

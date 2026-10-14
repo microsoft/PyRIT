@@ -16,15 +16,29 @@ canonical models.
 from datetime import datetime
 from enum import Enum
 from math import prod
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, BeforeValidator, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
-from pyrit.models.dataset_limit import normalize_dataset_limit
 from pyrit.models.parameter import Parameter
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.models.results.scenario_result import ScenarioRunState
 from pyrit.models.retry_event import RetryEvent
+from pyrit.models.scenario_dataset import (
+    DATASET_FILTERS,
+    DatasetLimitInputValue,
+    DatasetSourceInput,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
+)
 from pyrit.models.scenario_dataset_size_estimate import (
     DatasetLimitInput,
     IndeterminateDatasetSize,
@@ -46,28 +60,6 @@ _RequestLabels = Annotated[
         Annotated[str, Field(max_length=MAX_LABEL_VALUE_LENGTH)],
     ],
     Field(max_length=MAX_ITEMS),
-]
-
-# Authoritative set of dataset seed filters exposed over the run request surface. Each entry
-# is used verbatim as a ``MemoryInterface.get_seeds`` keyword argument, so a filter key IS the
-# get_seeds kwarg. Every exposed filter must be a list-valued (Sequence) get_seeds parameter.
-# Adding a filterable field is a one-line change here; the CLI ``--dataset-filters`` help text
-# describes these keys, and this request model validates them server-side (covering the GUI too).
-#
-# Comma-list semantics differ per key because ``get_seeds`` treats each field differently, and
-# that behavior lives in ``pyrit.memory`` (this layer cannot import it). As of today
-# (see ``MemoryInterface.get_seeds`` / ``_add_list_conditions``):
-#   - harm_categories -> AND + substring: a seed must be tagged with EVERY value, and each value
-#     is a substring match (``cyber`` matches ``cyber_harm``). So ``harm_categories=cyber,violence``
-#     is an intersection, not a union.
-#   - data_types -> OR + exact: a seed matches ANY value, compared for exact equality. So
-#     ``data_types=text,image_path`` is a union.
-DATASET_FILTERS: frozenset[str] = frozenset({"harm_categories", "data_types"})
-
-
-_RequestDatasetLimit = Annotated[
-    Annotated[int, Field(ge=1, strict=True)] | Literal["all", "default"] | None,
-    BeforeValidator(normalize_dataset_limit),
 ]
 
 
@@ -96,6 +88,45 @@ class ScenarioRunSizeEstimateStatus(str, Enum):
     Approximate = "approximate"
     Conditional = "conditional"
     Unavailable = "unavailable"
+
+
+class _DatasetRequestModel(BaseModel):
+    """Dataset selection shared by launch and estimate requests."""
+
+    datasets: ScenarioDatasetRequest | None = Field(
+        None, description="Dataset sources, limits, fetch policy, and filters. Omit to use scenario defaults."
+    )
+    dataset_names: _RequestNames | None = Field(None, description="Deprecated; use datasets.sources.")
+    max_dataset_size: DatasetLimitInputValue = Field("default", description="Deprecated; use datasets.max_total.")
+    dataset_filters: _RequestFilters | None = Field(
+        None, description="Deprecated; use datasets.filters. Accepted keys: harm_categories, data_types."
+    )
+
+    @property
+    def dataset_request(self) -> ScenarioDatasetRequest | None:
+        """The dataset edits, converted from the deprecated fields when they are used."""
+        if self.datasets is not None or not self._uses_deprecated_dataset_fields():
+            return self.datasets
+        return ScenarioDatasetRequest(
+            sources=[DatasetSourceInput(name=name) for name in self.dataset_names] if self.dataset_names else None,
+            max_total=self.max_dataset_size,
+            filters=self.dataset_filters or None,
+        )
+
+    @field_validator("dataset_filters")
+    @classmethod
+    def _validate_dataset_filters(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
+        return _validate_dataset_filter_mapping(value)
+
+    @model_validator(mode="after")
+    def _validate_dataset_form(self) -> Self:
+        if self.datasets is not None and self._uses_deprecated_dataset_fields():
+            raise ValueError("Use either 'datasets' or the deprecated dataset fields, not both.")
+        self.dataset_request  # noqa: B018 - converts deprecated fields so invalid values fail here
+        return self
+
+    def _uses_deprecated_dataset_fields(self) -> bool:
+        return bool(self.dataset_names) or self.max_dataset_size != "default" or bool(self.dataset_filters)
 
 
 class ScenarioRunSizeEstimateCondition(str, Enum):
@@ -210,6 +241,9 @@ class ScenarioRunSizeEstimate(BaseModel):
     components: list[ScenarioRunSizeComponent] = Field(default_factory=list)
     datasets: list[ScenarioDatasetSummary] = Field(default_factory=list)
     dataset_size: ScenarioDatasetSizeEstimate = Field(default_factory=IndeterminateDatasetSize)
+    dataset_options: ScenarioDatasetOptions = Field(default_factory=ScenarioDatasetOptions)
+    dataset_defaults: ScenarioDatasetSettings = Field(default_factory=ScenarioDatasetSettings)
+    effective_datasets: ScenarioDatasetSettings = Field(default_factory=ScenarioDatasetSettings)
     dataset_limit: DatasetLimitInput = Field(default_factory=DatasetLimitInput)
     effective_parameters: dict[str, bool | int | float | str | list[str]] = Field(
         default_factory=dict,
@@ -376,11 +410,18 @@ class RegisteredScenario(BaseModel):
         description="Concrete ordered technique expansion for every aggregate selector",
     )
     all_techniques: list[str] = Field(..., description="All available concrete technique names")
+    max_concrete_techniques: int | None = Field(
+        None,
+        ge=1,
+        description="Maximum resolved concrete techniques per run; None means unrestricted. Excludes baseline.",
+    )
     technique_summaries: list[ScenarioTechniqueSummary] = Field(
         default_factory=list,
         description="Descriptions and tags for the available concrete techniques",
     )
     default_datasets: list[str] = Field(..., description="Default dataset names used by the scenario")
+    dataset_options: ScenarioDatasetOptions = Field(default_factory=ScenarioDatasetOptions)
+    dataset_defaults: ScenarioDatasetSettings = Field(default_factory=ScenarioDatasetSettings)
     baseline_policy: Literal["enabled", "disabled", "forbidden"] = Field(
         "enabled", description="Whether baseline execution is enabled, disabled, or forbidden"
     )
@@ -402,7 +443,7 @@ class RegisteredScenario(BaseModel):
     )
 
 
-class ScenarioRunSizeEstimateRequest(BaseModel):
+class ScenarioRunSizeEstimateRequest(_DatasetRequestModel):
     """Request-specific scenario run-size configuration."""
 
     adversarial_target_name: _RequestName | None = Field(
@@ -417,19 +458,6 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
     techniques: _RequestTechniques | None = Field(
         None, description="Technique names to estimate (uses scenario default if omitted)"
     )
-    dataset_names: _RequestNames | None = Field(
-        None, description="Dataset names to estimate (uses scenario default if omitted)"
-    )
-    max_dataset_size: _RequestDatasetLimit = Field(
-        "default",
-        description="Total selected logical seed-group limit. Omitted, null, empty, or 'default': scenario default. "
-        "'all': no total limit. "
-        "Per-dataset limits remain in effect.",
-    )
-    dataset_filters: _RequestFilters | None = Field(
-        None,
-        description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
-    )
     include_baseline: bool | None = Field(
         None,
         description="Override the scenario baseline default; forbidden scenarios reject true",
@@ -439,19 +467,8 @@ class ScenarioRunSizeEstimateRequest(BaseModel):
         description="Scenario-declared parameters such as Jailbreak template and attempt counts",
     )
 
-    @field_validator("dataset_filters")
-    @classmethod
-    def _validate_dataset_filters(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
-        """
-        Validate estimate dataset filters against the shared allow-list.
 
-        Returns:
-            dict[str, list[str]] | None: Validated filters.
-        """
-        return _validate_dataset_filter_mapping(value)
-
-
-class RunScenarioRequest(BaseModel):
+class RunScenarioRequest(_DatasetRequestModel):
     """Request body for starting a scenario run."""
 
     scenario_name: _RequestName = Field(..., description="Scenario name (e.g., 'foundry.red_team_agent')")
@@ -468,21 +485,6 @@ class RunScenarioRequest(BaseModel):
     )
     techniques: _RequestTechniques | None = Field(
         None, description="Technique names to use (uses scenario default if omitted)"
-    )
-    dataset_names: _RequestNames | None = Field(
-        None, description="Dataset names to use (uses scenario default if omitted)"
-    )
-    max_dataset_size: _RequestDatasetLimit = Field(
-        "default",
-        description="Total selected logical seed-group limit. Omitted, null, empty, or 'default': scenario default. "
-        "'all': no total limit. "
-        "Per-dataset limits remain in effect.",
-    )
-    dataset_filters: _RequestFilters | None = Field(
-        None,
-        description=(
-            "Dataset seed filters keyed by field, applied before sampling. Accepted keys: harm_categories, data_types."
-        ),
     )
     max_concurrency: int | None = Field(10, ge=1, le=100, description="Maximum concurrent operations")
     max_retries: int | None = Field(0, ge=0, le=20, description="Maximum retry attempts on failure")
@@ -507,17 +509,6 @@ class RunScenarioRequest(BaseModel):
         description="Optional ID of an existing ScenarioResult to resume. "
         "If provided, the scenario will resume from prior progress instead of starting fresh.",
     )
-
-    @field_validator("dataset_filters")
-    @classmethod
-    def _validate_dataset_filters(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
-        """
-        Reject any dataset-filter key not in the exposed ``DATASET_FILTERS`` allow-list.
-
-        Returns:
-            dict[str, list[str]] | None: The validated filters, unchanged.
-        """
-        return _validate_dataset_filter_mapping(value)
 
 
 class AttackErrorSummary(BaseModel):

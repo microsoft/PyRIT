@@ -326,6 +326,14 @@ def test_identifier_includes_behavioral_params_and_excludes_key(patch_central_da
     assert "sk-secret" not in json.dumps(params)
 
 
+@pytest.mark.usefixtures("patch_central_database", "litellm_stub")
+def test_identifier_distinguishes_extra_body_parameters() -> None:
+    low = LiteLLMChatTarget(model_name="openai/gpt-4o", extra_body_parameters={"reasoning_effort": "low"})
+    high = LiteLLMChatTarget(model_name="openai/gpt-4o", extra_body_parameters={"reasoning_effort": "high"})
+    assert low.get_identifier().params["extra_body_parameters"] == {"reasoning_effort": "low"}
+    assert low.get_identifier().hash != high.get_identifier().hash
+
+
 # ---------------------------------------------------------------------------
 # Request body
 # ---------------------------------------------------------------------------

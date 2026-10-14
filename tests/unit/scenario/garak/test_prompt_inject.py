@@ -7,6 +7,7 @@ import random
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.analytics.technique_analysis import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
@@ -21,7 +22,6 @@ from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PromptInjectTechnique,
 )
 from pyrit.score import SubStringScorer, TrueFalseScorer
-from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_id(name: str) -> ComponentIdentifier:

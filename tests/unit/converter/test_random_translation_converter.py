@@ -17,7 +17,7 @@ def test_random_translation_converter_raises_when_converter_target_is_none():
 
 
 @pytest.fixture
-def mock_target() -> PromptTarget:
+def mock_target() -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     response = Message(
         message_pieces=[

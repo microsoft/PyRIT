@@ -88,11 +88,16 @@ class AudioFrequencyConverter(Converter):
             phase = np.exp(1j * 2 * np.pi * self._shift_value * np.arange(len(data)) / sample_rate)
             if data.ndim > 1:
                 phase = phase[:, np.newaxis]
-            shifted_data = data * phase
+            # 8-bit PCM is unsigned and centred on 128, so shift around that midpoint.
+            midpoint = 128 if data.dtype == np.uint8 else 0
+            shifted_data = (data.astype(np.float64) - midpoint) * phase
 
-            # Floating-point WAV samples already use a normalized amplitude scale.
-            output_dtype = data.dtype if np.issubdtype(data.dtype, np.floating) else np.dtype(np.int16)
-            output_data = shifted_data.real.astype(output_dtype)
+            # Keep the input sample format so integer audio isn't rescaled or wrapped.
+            output_data = shifted_data.real + midpoint
+            if np.issubdtype(data.dtype, np.integer):
+                info = np.iinfo(data.dtype)
+                output_data = np.clip(output_data, info.min, info.max)
+            output_data = output_data.astype(data.dtype)
 
             # Write to a fresh buffer so a shorter output cannot retain input bytes.
             output_bytes_io = io.BytesIO()

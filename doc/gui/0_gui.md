@@ -34,7 +34,7 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+CoPyRIT has three main views, accessible from the left sidebar: **Technique.execute** (Chat), **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
 
 ### Themes
 
@@ -443,6 +443,12 @@ Human score changes do not require a registered objective target. The original o
 
 The History view lists all past attacks with filtering and pagination.
 
+Each saved result ID is a separate row, even when several results share one
+conversation. Failed attempts followed by successful retries are not collapsed.
+Existing filters and recency ordering are unchanged. A pagination cursor from
+before this selection change restarts at the first page. Scenario run statistics
+still count their latest execution units, not these raw result rows.
+
 <img width="1664" alt="Attack history view" src="images/history.png" />
 
 #### Filters
@@ -544,7 +550,59 @@ Defaults are saved in this browser, separately for each signed-in account. They 
 
 A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
 
-Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Dataset override**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+
+### Scenario datasets
+
+**Datasets** is a separate section below **Techniques**. Its table has **Dataset**,
+**Size**, and **Include Criteria** columns. **Size** shows an upper bound, such as **Up to 4
+of 200**, when the stored total is known, or **Up to 4** before loading. This is not
+an exact selected count: filters and the combined objective limit can reduce it.
+Click a supported size to edit its limit, use all available examples, or reset to
+the displayed default. Required reference data shows its stored size without a
+limit editor.
+
+Select a name from **Add dataset** to add it immediately. Provider names remain
+available before their data is stored. Selecting a name never loads it. The remove
+icon is available only when the scenario permits removal and another source will
+remain. A scenario that permits only one source uses **Choose dataset** to replace
+it. **Browse datasets**, beside **Reset datasets**, opens the dataset browser.
+**Reset datasets** restores source defaults and row limits without clearing
+the combined objective limit or filters.
+
+**Load datasets** appears only while selected data is missing. It loads missing
+sources and keeps existing data, including manual edits. It may download data or
+use a configured generator, but does not start a scan. A missing source without a
+provider must be imported first. When all selected data is loaded, the load button
+and loading controls are omitted.
+
+Loaded rows show harm categories and data types as differently colored chips.
+All labels start checked when there is no configured filter. Uncheck labels to
+narrow the existing filters for **all selected datasets**, not just the row clicked.
+Checking all labels restores the default request when no filter was configured.
+Partial category selections require every checked label and retain substring
+matching; data types match any checked type. An empty selection blocks launch
+instead of silently restoring all data. Selection is shown on the metadata chips;
+there is no separate filter list below the table. No preview of data values is provided.
+
+**Maximum objectives** shows its resolved value. Click it to enter a positive
+integer, use all available objectives, or reset to the displayed default. This
+limits objectives, not prompts sent. Four objectives with three techniques produce
+12 attacks, plus four more if the baseline is enabled. Each attack can send several
+prompts. The run estimate shows the resulting attacks.
+
+Scenarios that build objectives from templates or reference data apply the total
+limit to the completed objectives, not to the required reference data. Their
+generation limits still apply. A scenario that requires one objective per selected
+technique rejects a total limit smaller than the number of techniques.
+
+**Load missing data when the scan starts** is one switch for the selected sources.
+Its initial state reflects their resolved loading rules, which normally load
+missing data. Turning it off prevents automatic loading on scan start without
+disabling the manual load action. Existing source-specific rules are not silently
+replaced until the switch is changed. Closing a limit editor does not clear an
+invalid draft. Estimate and launch use the same dataset edits.
+Resume uses the saved request and original selection and never loads datasets.
 
 #### Core Adversarial Default Override
 
@@ -568,14 +626,20 @@ New runs save the adversarial target selection with their launch configuration. 
 
 #### Creating Targets
 
-Click "New Target" to open the creation dialog. Fill in:
+Click "New Target" to open the creation dialog. Fill in the fields shown for the
+selected target; required fields and authentication options depend on the target:
 
-- **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
-- **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
-- **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
-- **API Key** (optional): Stored in memory only (not persisted to disk)
+- **Target Type** (required): Select from backend-discovered targets supported by the form, including `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, `AzureMLChatTarget`, and `GitHubCopilotTarget`.
+- **Endpoint URL**: Your Azure OpenAI, OpenAI API, or Azure ML endpoint, when applicable.
+- **Model / Deployment Name**: e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`.
+- **API Key** (optional): Stored in memory only (not persisted to disk).
 
-For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
+For `AzureMLChatTarget`, **Advanced settings** include **Max New Tokens**,
+**Temperature**, **Top P**, and **Repetition Penalty**.
+
+For GitHub Copilot, provide a model ID and either a GitHub token or an
+instance-configured `GITHUB_TOKEN`; see the
+[framework example](../code/targets/github_copilot_target.ipynb).
 
 #### Auto-Populating Targets
 
@@ -617,6 +681,10 @@ runtime operation is active. Wait for the work to finish, or cancel it with its 
 When the runtime is idle, PyRIT closes admission and checks again before it changes runtime state. This second check
 prevents newly admitted work from overlapping replacement.
 
+Analytics also remains busy while a query's native database/session cleanup is
+running after an HTTP timeout. Live apply waits for the user to retry once that
+work has drained; receiving a timeout response does not make memory safe to replace.
+
 Operation status survives a browser disconnect or navigation; other connected clients detect runtime generation
 changes and refresh catalogs without discarding chat or configuration drafts.
 
@@ -626,6 +694,10 @@ client disconnect and their offloaded writes. Cancelling the shutdown caller doe
 a single request or cleanup failure is re-raised unchanged, while multiple failures are reported together.
 Shutdown can therefore wait for an outstanding operation. Runtime readiness reports `ready: false` and
 `state: stopping` as soon as shutdown closes admission, including while an accepted live apply finishes.
+
+Analytics shutdown closes its shared SDK lifetime on the owning event loop and
+clears the cached dependency before memory disposal. If that drain fails, the
+backend retains the owner and memory rather than disposing resources still in use.
 
 If validation fails, PyRIT does not change the live runtime. Repair the saved source and retry. If startup fails, or
 if live initialization fails after replacement starts, runtime operations stay unavailable until you restart the
@@ -645,7 +717,10 @@ API clients can use administrator-only `GET /api/config/runtime`, `POST /api/con
 returns HTTP 202 and is tracked in status. Outcomes distinguish busy, unsupported, version-conflict,
 invalid-configuration, and restart-required. Authenticated non-admin clients can read readiness and generation only
 at `GET /api/runtime`.
-`GET /api/health` reports server responsiveness, not runtime readiness.
+`GET /api/health` remains HTTP 200 for server responsiveness, even when runtime initialization fails.
+It preserves `status`, `timestamp`, and `service`, and includes `ready`, `state`, and the serving ACA
+`revision` (or `null` outside ACA) for deployment readiness checks. Responses are uncached and do not
+expose configuration or exception details.
 
 ---
 

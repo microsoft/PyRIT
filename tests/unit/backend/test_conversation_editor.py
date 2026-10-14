@@ -153,11 +153,11 @@ class TestConversationEditor:
         *,
         response_target: OpenAIResponseTarget,
         sqlite_instance: SQLiteMemory,
-        tmp_path: Path,
+        managed_media_path: Path,
         data_type: PromptDataType,
         related: bool,
     ) -> None:
-        media = tmp_path / "history.bin"
+        media = managed_media_path.with_name("history.bin")
         await asyncio.to_thread(media.write_bytes, b"history bytes")
         service = AttackService()
         source = await service.save_conversation_async(request=draft())
@@ -211,9 +211,9 @@ class TestConversationEditor:
         *,
         response_target: OpenAIResponseTarget,
         sqlite_instance: SQLiteMemory,
-        tmp_path: Path,
+        managed_media_path: Path,
     ) -> None:
-        media = tmp_path / "original.wav"
+        media = managed_media_path.with_name("original.wav")
         await asyncio.to_thread(media.write_bytes, b"original audio bytes")
         service = AttackService()
         request = draft()
@@ -476,7 +476,10 @@ class TestConversationEditor:
     ) -> None:
         request = draft()
         request.target_registry_name = "responses"
-        payload = '{"type":"web_search_call","call_id":"web-1","query":"query","extension":{"keep":true}}'
+        payload = (
+            '{"type":"web_search_call","id":"ws-1","status":"completed",'
+            '"action":{"type":"search","query":"query"},"extension":{"keep":true}}'
+        )
         request.messages = [
             ConversationMessageRequest(
                 role="simulated_assistant",

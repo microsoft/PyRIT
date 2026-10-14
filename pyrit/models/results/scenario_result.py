@@ -258,7 +258,7 @@ class ScenarioResult(BaseModel):
             return 0
 
         successful_results = sum(1 for result in all_results if result.outcome == AttackOutcome.SUCCESS)
-        return int((successful_results / total_results) * 100)
+        return successful_results * 100 // total_results
 
     @staticmethod
     def normalize_scenario_name(scenario_name: str) -> str:

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.models import DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
@@ -54,6 +55,7 @@ class _MetadataScenario:
     """Minimal scenario-shaped metadata source."""
 
     BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Enabled
+    MAX_CONCRETE_TECHNIQUES = None
     uses_default_adversarial_target = False
 
     @classmethod
@@ -70,6 +72,14 @@ class _MetadataScenario:
     def _resolve_scenario_techniques(self, *, scenario_techniques):
         """Resolve the concrete defaults."""
         return _MetadataTechnique.resolve(scenario_techniques, default=self._default_technique)
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """Return fixed dataset options."""
+        return ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED)
+
+    def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
+        """Return default dataset settings."""
+        return ScenarioDatasetSettings(max_total=4)
 
 
 class _MarkdownMetadataScenario(_MetadataScenario):
@@ -151,6 +161,7 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
     metadata = ScenarioRegistry()._build_metadata("sample", _MetadataScenario)
 
     assert metadata.default_technique == "default"
+    assert metadata.max_concrete_techniques is None
     assert metadata.uses_default_adversarial_target is False
     assert metadata.default_techniques == ("one", "two")
     assert metadata.technique_summaries[0].model_dump() == {
@@ -167,6 +178,8 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "all": ("one", "two"),
         "default": ("one", "two"),
     }
+    assert metadata.dataset_options.mode is DatasetSelectionMode.FIXED
+    assert metadata.dataset_defaults.max_total == 4
 
 
 def test_build_metadata_reports_scenario_owned_adversarial_usage() -> None:

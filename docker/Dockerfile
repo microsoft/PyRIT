@@ -57,13 +57,13 @@ COPY --chown=vscode:vscode doc/ /app/doc/
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
 RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
-        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright]==$PYRIT_VERSION; \
+        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]==$PYRIT_VERSION; \
         echo "Removing local source so the installed PyPI package isn't shadowed"; \
         rm -rf /app/pyrit /app/frontend /app/build_scripts /app/pyproject.toml /app/MANIFEST.in /app/README.md /app/LICENSE; \
     elif [ "$PYRIT_SOURCE" = "local" ]; then \
         echo "Installing PyRIT from local source"; \
         export PYRIT_SOURCE_COMMIT="$GIT_COMMIT" PYRIT_SOURCE_DIRTY="$GIT_MODIFIED"; \
-        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright]; \
+        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]; \
         echo "Building frontend..."; \
         if [ "$GIT_MODIFIED" = "true" ]; then \
             /opt/venv/bin/python -m build_scripts.prepare_package --development; \

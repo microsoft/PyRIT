@@ -110,6 +110,7 @@ class TestBinaryConverterValidationDeprecation:
         for converter_type in (CustomBinaryConverter, InheritedCustomBinaryConverter):
             validated_prompts.clear()
             converter = converter_type(word_selection_strategy=WordIndexSelectionStrategy(indices=[0]))
+            result = None
             with warnings.catch_warnings(record=True) as recorded:
                 warnings.simplefilter("always", DeprecationWarning)
                 with (
@@ -121,4 +122,5 @@ class TestBinaryConverterValidationDeprecation:
             assert validated_prompts == ["hello 👋"]
             assert [warning.category for warning in recorded] == ([DeprecationWarning] if mode == "super" else [])
             if mode != "reject":
+                assert result is not None
                 assert result.output_text.endswith("👋")

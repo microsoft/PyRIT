@@ -83,7 +83,7 @@ class TestScorerInitializerInitialize:
             if var in os.environ:
                 del os.environ[var]
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 
@@ -259,7 +259,7 @@ class TestScorerInitializerBestObjective:
         ScorerRegistry.reset_registry_singleton()
         TargetRegistry.reset_registry_singleton()
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 
@@ -391,7 +391,7 @@ class TestScorerInitializerCategoryTags:
         for var in self.CONTENT_SAFETY_ENV_VARS:
             os.environ.pop(var, None)
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 
@@ -543,7 +543,7 @@ class TestScorerInitializerRoundRobin:
         ScorerRegistry.reset_registry_singleton()
         TargetRegistry.reset_registry_singleton()
 
-    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> OpenAIChatTarget:
+    def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
         from pyrit.models.identifiers import ComponentIdentifier
 

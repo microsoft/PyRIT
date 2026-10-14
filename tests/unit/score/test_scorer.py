@@ -1890,7 +1890,7 @@ async def test_score_response_multiple_scorers_failure_cancels_and_drains_siblin
     assert events == ["slow_started", "failing_raised", "slow_cancelled", "slow_finalized"]
 
 
-async def test_score_response_multiple_scorers_outer_cancellation_during_drain_waits_for_cleanup():
+async def test_score_response_multiple_scorers_outer_cancellation_during_drain_waits_for_cleanup_async() -> None:
     response = Message(message_pieces=[MessagePiece(role="assistant", original_value="response")])
     slow_started = asyncio.Event()
     slow_cleanup_started = asyncio.Event()
@@ -1898,7 +1898,7 @@ async def test_score_response_multiple_scorers_outer_cancellation_during_drain_w
     events: list[str] = []
     slow_task: asyncio.Task[list[Score]] | None = None
 
-    async def slow_score_async(**kwargs) -> list[Score]:
+    async def slow_score_async(**kwargs: object) -> list[Score]:
         nonlocal slow_task
         slow_task = asyncio.current_task()
         events.append("slow_started")
@@ -1913,8 +1913,9 @@ async def test_score_response_multiple_scorers_outer_cancellation_during_drain_w
             raise
         finally:
             events.append("slow_finalized")
+        raise AssertionError("Scorer unexpectedly completed without cancellation")
 
-    async def failing_score_async(**kwargs) -> list[Score]:
+    async def failing_score_async(**kwargs: object) -> list[Score]:
         await slow_started.wait()
         events.append("failing_raised")
         raise RuntimeError("deterministic scorer failure")

@@ -46,7 +46,9 @@ def memory() -> MagicMock:
 
 @pytest.fixture(params=[False, True], ids=["registered", "configured"])
 def configured_provider(request: pytest.FixtureRequest) -> bool:
-    return request.param
+    value = request.param
+    assert isinstance(value, bool)
+    return value
 
 
 @pytest.mark.parametrize("provider", [object(), SeedDatasetProvider])

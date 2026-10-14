@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
+
 import pytest
 
 from pyrit.common.path import SCORER_EVALS_PATH
@@ -11,6 +13,35 @@ from pyrit.score import (
     MetricsType,
     ObjectiveHumanLabeledEntry,
 )
+
+
+@pytest.mark.parametrize("value", ["00123", "1e3", "1.2300", "True"])
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
+@pytest.mark.parametrize("metrics_type", [MetricsType.OBJECTIVE, MetricsType.HARM])
+def test_from_csv_preserves_numeric_and_boolean_text(
+    tmp_path: Path, value: str, encoding: str, metrics_type: MetricsType
+) -> None:
+    column = "objective" if metrics_type == MetricsType.OBJECTIVE else "harm_category"
+    label = "1" if metrics_type == MetricsType.OBJECTIVE else "0.5"
+    csv_path = tmp_path / "text.csv"
+    csv_path.write_text(
+        f"assistant_response,{column},human_score,notes\n{value},00456,{label},café\n",
+        encoding=encoding,
+    )
+
+    dataset = HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=metrics_type, version="1.0")
+    entry = dataset.entries[0]
+    piece = entry.conversation[0].message_pieces[0]
+
+    assert piece.original_value == value
+    assert piece.converted_value == value
+    if isinstance(entry, ObjectiveHumanLabeledEntry):
+        assert entry.objective == "00456"
+        assert entry.human_scores == [True]
+    else:
+        assert isinstance(entry, HarmHumanLabeledEntry)
+        assert entry.harm_category == "00456"
+        assert entry.human_scores == [0.5]
 
 
 @pytest.fixture
