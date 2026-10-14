@@ -6,7 +6,7 @@ from __future__ import annotations
 import copy
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Self, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -306,7 +306,7 @@ class Message(BaseModel):
         prompt: str,
         role: ChatMessageRole,
         prompt_metadata: dict[str, str | int] | None = None,
-    ) -> Message:
+    ) -> Self:
         """
         Build a single-piece message from prompt text.
 
@@ -316,14 +316,14 @@ class Message(BaseModel):
             prompt_metadata (dict[str, str | int] | None): Optional prompt metadata.
 
         Returns:
-            Message: Constructed message instance.
+            Self: Constructed message instance.
 
         """
         piece = MessagePiece(original_value=prompt, role=role, prompt_metadata=prompt_metadata or {})
         return cls(message_pieces=[piece])
 
     @classmethod
-    def from_system_prompt(cls, system_prompt: str) -> Message:
+    def from_system_prompt(cls, system_prompt: str) -> Self:
         """
         Build a message from a system prompt.
 
@@ -331,13 +331,13 @@ class Message(BaseModel):
             system_prompt (str): System instruction text.
 
         Returns:
-            Message: Constructed system-role message.
+            Self: Constructed system-role message.
 
         """
         return cls.from_prompt(prompt=system_prompt, role="system")
 
     @classmethod
-    def from_system_prompts(cls, *system_prompts: str) -> list[Message]:
+    def from_system_prompts(cls, *system_prompts: str) -> list[Self]:
         """
         Build a list of system-role messages, ready to pass as ``prepended_conversation``.
 
@@ -345,7 +345,7 @@ class Message(BaseModel):
             *system_prompts (str): System instruction texts. When omitted, returns an empty list.
 
         Returns:
-            list[Message]: One system-role message per input, in order.
+            list[Self]: One system-role message per input, in order.
 
         """
         return [cls.from_system_prompt(system_prompt) for system_prompt in system_prompts]
