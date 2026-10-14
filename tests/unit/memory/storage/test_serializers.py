@@ -20,6 +20,7 @@ from pyrit.memory.storage import (
     AzureBlobStorageIO,
     BinaryPathDataTypeSerializer,
     DataTypeSerializer,
+    DiskStorageIO,
     ErrorDataTypeSerializer,
     ImagePathDataTypeSerializer,
     StorageIO,
@@ -285,14 +286,58 @@ async def test_get_sha256_from_image_file(sqlite_instance):
     assert sha256_hash == expected_hash
 
 
-def test_is_azure_storage_url(sqlite_instance):
-    """Test Azure Storage URL validation."""
-    valid_url = "https://mystorageaccount.blob.core.windows.net/container/file.txt"
-    invalid_url = "https://example.com/file.txt"
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("https://account.blob.core.windows.net/container/file.txt", True),
+        ("http://account.blob.core.windows.net/container/file.txt", True),
+        ("https://ACCOUNT.BLOB.CORE.WINDOWS.NET/container/file.txt", True),
+        ("https://account.blob.core.windows.net:443/container/file.txt", True),
+        ("http://account.blob.core.windows.net:8080/container/file.txt", True),
+        ("https://account.blob.core.windows.net/container/file.txt?sig=token#fragment", True),
+        ("https://account.blob.core.windows.net", True),
+        ("https://blob.core.windows.net.attacker.example/container/file.txt", False),
+        ("https://account.blob.core.windows.net.attacker.example/container/file.txt", False),
+        ("https://blob.core.windows.net@attacker.example/container/file.txt", False),
+        ("https://account.blob.core.windows.net:password@attacker.example/container/file.txt", False),
+        ("https://notblob.core.windows.net/container/file.txt", False),
+        ("https://blob.core.windows.net/container/file.txt", False),
+        ("https://example.com/blob.core.windows.net/file.txt", False),
+        ("https://example.com/file.txt?host=account.blob.core.windows.net", False),
+        ("ftp://account.blob.core.windows.net/container/file.txt", False),
+        ("//account.blob.core.windows.net/container/file.txt", False),
+        ("https:///container/file.txt", False),
+        (r"C:\data\blob.core.windows.net\file.txt", False),
+        ("", False),
+    ],
+)
+def test_is_azure_storage_url(*, path: str, expected: bool) -> None:
+    serializer = TextDataTypeSerializer(prompt_text="")
+    assert serializer._is_azure_storage_url(path) is expected
 
-    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="url", value=valid_url)
-    assert serializer._is_azure_storage_url(valid_url) is True
-    assert serializer._is_azure_storage_url(invalid_url) is False
+
+@pytest.mark.parametrize(
+    ("path", "expected_azure"),
+    [
+        ("https://account.blob.core.windows.net/container/file.png", True),
+        ("http://otheraccount.blob.core.windows.net/othercontainer/file.png", True),
+        ("https://account.blob.core.windows.net.attacker.example/container/file.png", False),
+        ("https://blob.core.windows.net@attacker.example/container/file.png", False),
+    ],
+)
+def test_get_storage_io_selects_by_hostname(*, path: str, expected_azure: bool) -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.results_storage_io = storage
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="image_path", value=path)
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock, return_value=mock_memory):
+        selected_storage = serializer._get_storage_io()
+
+    if expected_azure:
+        assert selected_storage is storage
+    else:
+        assert isinstance(selected_storage, DiskStorageIO)
 
 
 async def test_read_data_local_file_with_dummy_image(sqlite_instance):

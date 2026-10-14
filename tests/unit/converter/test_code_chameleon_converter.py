@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 import re
+
+import pytest
 
 from pyrit.converter import CodeChameleonConverter
 
@@ -77,8 +80,8 @@ def string_to_tree(problem_description):
         if node_dict is None:
             return None
         node = TreeNode(node_dict['value'])
-        node.left = helper(json.loads(node_dict['left'])) if node_dict['left'] else None
-        node.right = helper(json.loads(node_dict['right'])) if node_dict['right'] else None
+        node.left = helper(node_dict['left']) if node_dict['left'] else None
+        node.right = helper(node_dict['right']) if node_dict['right'] else None
         return node
 
     return helper(json.loads(problem_description))
@@ -146,7 +149,11 @@ async def test_codechameleon_converter_length_encrypt_decrypt() -> None:
         """
 The following is the decryption function.
 ```python
+import json
+
 def decryption(encrypted_problem):
+    if isinstance(encrypted_problem, str):
+        encrypted_problem = json.loads(encrypted_problem)
     # Create an empty sentence
     sentence = [''] * len(encrypted_problem)
     # Iterate through the list and place each word at the correct position
@@ -167,3 +174,56 @@ def test_codechameleon_converter_input_supported() -> None:
     converter = CodeChameleonConverter(encrypt_type="length")
     assert converter.input_supported("text") is True
     assert converter.input_supported("image_path") is False
+
+
+@pytest.mark.parametrize("encrypt_type", ["reverse", "odd_even", "binary_tree", "length"])
+@pytest.mark.parametrize(
+    ("prompt", "expected_prompt"),
+    [
+        pytest.param("How to cut down a tree?", "How to cut down a tree?", id="original"),
+        pytest.param("", "", id="empty"),
+        pytest.param(" \t\n ", "", id="whitespace-only"),
+        pytest.param("one", "one", id="single-node"),
+        pytest.param("one two", "one two", id="right-subtree"),
+        pytest.param("one two three", "one two three", id="both-subtrees"),
+        pytest.param("one two three four five six", "one two three four five six", id="nested-even"),
+        pytest.param("one two three four five six seven", "one two three four five six seven", id="nested-odd"),
+        pytest.param("\tone\n two\r\nthree  ", "one two three", id="normalized-whitespace"),
+        pytest.param(
+            'say "hello" then {check} [brackets] back\\slash',
+            'say "hello" then {check} [brackets] back\\slash',
+            id="escaped-values",
+        ),
+        pytest.param("one two one two one", "one two one two one", id="repeated-words"),
+        pytest.param("caf\u00e9 \u4f60\u597d \U0001f642", "caf\u00e9 \u4f60\u597d \U0001f642", id="unicode"),
+    ],
+)
+async def test_codechameleon_converter_decryption_execution_async(
+    *, encrypt_type: str, prompt: str, expected_prompt: str
+) -> None:
+    converter = CodeChameleonConverter(encrypt_type=encrypt_type)
+    output = await converter.convert_async(prompt=prompt, input_type="text")
+    assert output.output_type == "text"
+
+    code_match = re.search(
+        r"The following is the decryption function\.\s*```python\n(.*?)\n```", output.output_text, re.DOTALL
+    )
+    assert code_match is not None
+    code = code_match.group(1)
+
+    problem_match = re.search(
+        r"The encrypted_problem you need to solve is: (.*?)\nShow the finished ProblemSolver",
+        output.output_text,
+        re.DOTALL,
+    )
+    assert problem_match is not None
+    encrypted_problem = problem_match.group(1)
+
+    namespace: dict[str, object] = {}
+    exec(code, namespace)
+    decryption = namespace["decryption"]
+    assert callable(decryption)
+    expected_prompt = prompt if encrypt_type == "reverse" else expected_prompt
+    assert decryption(encrypted_problem) == expected_prompt
+    if encrypt_type == "length":
+        assert decryption(json.loads(encrypted_problem)) == expected_prompt

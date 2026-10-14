@@ -41,7 +41,7 @@ describe("Navigation", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
 
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Chat" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Technique.execute" })).toHaveAttribute(
       "aria-current",
       "page"
     );
@@ -61,9 +61,12 @@ describe("Navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("home");
   });
 
-  it("renders the chat button", () => {
+  it("renders the Technique.execute button for chat", () => {
     renderWithProvider(<Navigation {...defaultProps} />);
-    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Technique.execute" })).toHaveAttribute(
+      "title",
+      "Technique.execute"
+    );
   });
 
   it("renders the registry button", () => {
@@ -80,7 +83,7 @@ describe("Navigation", () => {
       <Navigation {...defaultProps} onNavigate={onNavigate} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Chat" }));
+    await user.click(screen.getByRole("button", { name: "Technique.execute" }));
     expect(onNavigate).toHaveBeenCalledWith("chat");
   });
 
@@ -139,7 +142,7 @@ describe("Navigation", () => {
 
     expect(labels).toEqual([
       "Home",
-      "Chat",
+      "Technique.execute",
       "History",
       "Scanner",
       "Datasets",

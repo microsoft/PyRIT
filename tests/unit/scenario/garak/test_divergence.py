@@ -19,6 +19,7 @@ from pyrit.models import (
     DivergesFromRepetition,
     Message,
     MessagePiece,
+    ScenarioDatasetRequest,
     Seed,
     SeedDataset,
     SeedObjective,
@@ -154,7 +155,7 @@ class TestDivergence:
             scenario_name="garak.divergence",
             scenario_class=Divergence,
             objective_target=MockPromptTarget(),
-            max_dataset_size=size,
+            datasets=ScenarioDatasetRequest(max_total=size),
         )
         scenario.set_params_from_args(args=args)
         with patch.object(

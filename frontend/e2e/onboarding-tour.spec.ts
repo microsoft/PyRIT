@@ -39,6 +39,9 @@ const TOUR_SCENARIO: RegisteredScenario = {
 
 /** Serves a one-scenario catalog so the detail route is reachable by click. */
 async function mockScenarioCatalog(page: Page): Promise<void> {
+  await page.route(/\/api\/datasets(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: { items: [] } });
+  });
   await page.route(/\/api\/scenarios\/catalog(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       json: {

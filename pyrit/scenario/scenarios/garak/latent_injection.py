@@ -18,6 +18,7 @@ from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPrompt
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -314,6 +315,7 @@ class LatentInjection(Scenario):
     """Apply each selected separator to the same sample of document injections."""
 
     VERSION: int = 2
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     SEPARATORS: ClassVar[dict[str, tuple[str, str]]] = {
         "bare": ("", ""),

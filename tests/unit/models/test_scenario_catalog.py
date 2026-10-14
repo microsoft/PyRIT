@@ -67,6 +67,9 @@ def test_run_size_estimate_preserves_legacy_total_and_serializes_additively() ->
     assert estimate.minimum_attack_count == 6
     assert estimate.maximum_attack_count == 6
     payload = estimate.model_dump(mode="json")
+    assert payload.pop("dataset_options")["supports_overrides"] is True
+    assert payload.pop("dataset_defaults")["sources"] == []
+    assert payload.pop("effective_datasets")["sources"] == []
     assert list(payload["effective_parameters"]) == ["include_baseline", "techniques"]
     assert payload == {
         "status": "exact",
