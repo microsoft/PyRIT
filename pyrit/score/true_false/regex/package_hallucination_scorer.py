@@ -95,8 +95,10 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
             re.compile(r"^\s*gem\s+['\"]([a-zA-Z0-9_-]+)['\"]", re.MULTILINE),
         ],
         PackageEcosystem.JAVASCRIPT: [
+            # Scan named bindings without nested repetitions, which backtrack exponentially
+            # when a generated import is missing its closing brace or module specifier.
             re.compile(
-                r"^import(?:(?:\s+[^\s{},]+\s*(?:,|\s+))?(?:\s*\{(?:\s*[^\s\"'{}]+\s*,?)+})?\s*"
+                r"^import(?:(?:\s+[^\s{},]+\s*(?:,|\s+))?(?:\s*\{\s*[^\s\"'{}][^\"'{}]*})?\s*"
                 r"|\s*\*\s*as\s+[^ \s{}]+\s+)from\s*['\"]([^'\"\s]+)['\"]",
                 re.MULTILINE,
             ),

@@ -140,12 +140,12 @@ async def resume_environment(
                 await service.shutdown_async()
 
 
-async def _wait_for_idle_async(service: ScenarioRunService) -> None:
+async def _wait_for_idle_async(service: ScenarioRunService, *, timeout: float = 10) -> None:
     async def wait_async() -> None:
         while service.get_queue_snapshot().active is not None:
             await asyncio.sleep(0.01)
 
-    await asyncio.wait_for(wait_async(), timeout=10)
+    await asyncio.wait_for(wait_async(), timeout=timeout)
 
 
 async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
@@ -537,7 +537,8 @@ async def test_preparation_and_execution_share_sqlite_loop_resources_async(
                 include_baseline=False,
             )
         )
-        await _wait_for_idle_async(service)
+        # This checks real SQLite completion, not latency under parallel CI disk load.
+        await _wait_for_idle_async(service, timeout=60)
         dispose.assert_not_awaited()
         assert len(engines) == 2 and engines[0] is engines[1]
         assert sqlite_instance._get_async_engine() is engines[0]

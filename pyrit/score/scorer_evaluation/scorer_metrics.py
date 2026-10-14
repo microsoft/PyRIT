@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
 
 import numpy as np
 
@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier
     from pyrit.models.harm_definition import HarmDefinition
 
-T = TypeVar("T", bound="ScorerMetrics")
 M = TypeVar("M", bound="ScorerMetrics")
 
 
@@ -123,7 +122,7 @@ class ScorerMetrics:
         return json.dumps(non_finite_to_none(asdict(self)), default=_json_default, allow_nan=False)
 
     @classmethod
-    def from_json_file(cls: type[T], file_path: str | Path) -> T:
+    def from_json_file(cls, file_path: str | Path) -> Self:
         """
         Load a metrics instance from a JSON file on disk.
 
