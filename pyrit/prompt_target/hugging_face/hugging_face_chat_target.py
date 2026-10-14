@@ -36,7 +36,7 @@ class HuggingFaceChatTarget(PromptTarget):
         )
     )
 
-    loads_local_code: ClassVar[bool] = True
+    code_execution_parameter: ClassVar[str | None] = "trust_remote_code"
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None
