@@ -34,6 +34,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -168,6 +169,9 @@ class Encoding(Scenario):
     """
 
     VERSION: int = 2
+    DATASET_OPTIONS = ScenarioDatasetOptions(
+        mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, source_settings=False
+    )
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @apply_defaults

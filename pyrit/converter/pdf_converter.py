@@ -18,6 +18,11 @@ from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 
+# Generated PDFs are meant to be read, so they default to black text. Injected text defaults to white so it
+# stays hidden on a typical page.
+_GENERATED_TEXT_COLOR: tuple[int, int, int] = (0, 0, 0)
+_INJECTED_TEXT_COLOR: tuple[int, int, int] = (255, 255, 255)
+
 
 class PDFConverter(Converter):
     """
@@ -43,7 +48,7 @@ class PDFConverter(Converter):
         prompt_template: SeedPrompt | None = None,
         font_type: str = "Helvetica",
         font_size: int = 12,
-        font_color: tuple[int, int, int] = (255, 255, 255),
+        font_color: tuple[int, int, int] | None = None,
         page_width: int = 210,
         page_height: int = 297,
         column_width: int = 0,
@@ -58,7 +63,9 @@ class PDFConverter(Converter):
             prompt_template (SeedPrompt | None, optional): A ``SeedPrompt`` object representing a template.
             font_type (str): Font type for the PDF. Defaults to "Helvetica".
             font_size (int): Font size for the PDF. Defaults to 12.
-            font_color (tuple): Font color for the PDF in RGB format. Defaults to (255, 255, 255).
+            font_color (tuple[int, int, int] | None): Text color in RGB format (0-255). Generated PDFs use it,
+                or black when it isn't set. Injection items without their own ``font_color`` use it, or white
+                when it isn't set, so injected text stays hidden by default.
             page_width (int): Width of the PDF page in mm. Defaults to 210 (A4 width).
             page_height (int): Height of the PDF page in mm. Defaults to 297 (A4 height).
             column_width (int): Width of each column in the PDF. Defaults to 0 (full page width).
@@ -87,7 +94,9 @@ class PDFConverter(Converter):
         self._injection_items = injection_items or []
 
         # Validate font color
-        if not (isinstance(font_color, tuple) and len(font_color) == 3 and all(0 <= c <= 255 for c in font_color)):
+        if font_color is not None and not (
+            isinstance(font_color, tuple) and len(font_color) == 3 and all(0 <= c <= 255 for c in font_color)
+        ):
             raise ValueError(f"Invalid font_color: {font_color}. Must be a tuple of three integers (0-255).")
 
         # If a valid path is provided, load it into memory as BytesIO
@@ -129,6 +138,7 @@ class PDFConverter(Converter):
                 "page_height": self._page_height,
                 "prompt_template_hash": template_hash,
                 "existing_pdf_path": existing_pdf_path,
+                "font_color": list(self._font_color) if self._font_color is not None else None,
             }
         )
 
@@ -235,6 +245,8 @@ class PDFConverter(Converter):
         reportlab_font = font_map.get(self._font_type, "Helvetica")
 
         c.setFont(reportlab_font, self._font_size)
+        fill_color = self._font_color or _GENERATED_TEXT_COLOR
+        c.setFillColorRGB(*(channel / 255.0 for channel in fill_color))
 
         margin = 10 * mm
         x = margin
@@ -263,6 +275,7 @@ class PDFConverter(Converter):
                 if y < margin + line_height:
                     c.showPage()
                     c.setFont(reportlab_font, self._font_size)
+                    c.setFillColorRGB(*(channel / 255.0 for channel in fill_color))
                     y = page_height_pt - margin
 
                 # Draw the text (ReportLab origin is bottom-left)
@@ -312,7 +325,7 @@ class PDFConverter(Converter):
                         text = item.get("text", "")
                         font = item.get("font", self._font_type)
                         font_size = item.get("font_size", self._font_size)
-                        font_color = item.get("font_color", self._font_color)
+                        font_color = item.get("font_color", self._font_color or _INJECTED_TEXT_COLOR)
 
                         # Coordinate validation before calling _inject_text_into_page
                         if not (0 <= x <= page_width and 0 <= y <= page_height):

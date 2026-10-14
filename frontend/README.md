@@ -29,8 +29,8 @@ conversation panel, and select the copy at its full
 `/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
 within a target-free attack keeps it target-free until you send a prompt.
 When you save an edited conversation, its final user turn moves to the prompt
-box instead of saved history. Attachments retain their metadata, including video
-remix IDs. You can enter and edit prompts without a target.
+box instead of saved history. Text and attachments retain their metadata,
+including text-only video remix IDs. You can enter and edit prompts without a target.
 Send stays disabled until you select a target; no target-warning box is shown.
 
 **Use in scan** saves a target-free copy through the selected turn
@@ -53,7 +53,19 @@ The **Datasets** page shows summaries of datasets already loaded into the backen
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
 Use the same memory as the backend, then select **Refresh** in the catalog.
-Provider-loading controls and individual-example browsing are not available yet.
+The catalog does not download providers or prefetch individual examples.
+
+Open a dataset to inspect its stored examples. Search matches text prompts and
+objectives on the server, not dataset names, and it does not search
+simulated-conversation JSON. Filter by that seed type to find those examples.
+Matching ignores ASCII case only. Examples stay in the groups the server
+returns, including multimodal members. Expanding an example loads its stored
+records for inspection only: nothing is executed, imported into chat, or played
+as media. Filters, page size, and the open example stay in the address bar.
+**Back to datasets** returns to the catalog search, facets, and sort you came
+from. A direct link without that return state goes to `/datasets`.
+On narrow screens, scroll the example table horizontally to read its columns.
+Expanded details stack each label above its stored value.
 
 ## Resuming a scenario run
 

@@ -101,8 +101,13 @@ function DraftPieceEditor({ piece, disabled, onChange, onAttachments, onConverte
       })
   }, [media, onChange, piece.draftId])
   const changeAttachments = useCallback((attachments: MessageAttachment[]): void => {
+    if (media) {
+      const nextUrls = new Set(attachments.map((attachment: MessageAttachment) => attachment.url))
+      const current = draftAttachment(piece)
+      if (!nextUrls.has(current.url) && current.url.startsWith('blob:')) URL.revokeObjectURL(current.url)
+    }
     onAttachments(piece.draftId, attachments)
-  }, [onAttachments, piece.draftId])
+  }, [media, piece, onAttachments])
   const clearConversion = (): void => onChange(piece.draftId, (current: ConversationDraftPiece) => ({
     ...current, converted_value: undefined, converted_value_data_type: undefined, applied_converter_ids: [],
   }))

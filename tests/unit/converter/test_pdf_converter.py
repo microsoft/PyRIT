@@ -2,8 +2,10 @@
 # Licensed under the MIT license.
 
 
+import re
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -574,3 +576,80 @@ async def test_existing_pdf_output_preserves_source_stem(sqlite_instance):
     suffix = "_Jonathon_Sanchez.pdf"
     assert output_name.endswith(suffix)
     assert output_name[: -len(suffix)].isdigit()
+
+
+_FILL_COLOR_OP = re.compile(rb"([\d.]+) ([\d.]+) ([\d.]+) rg")
+
+
+def _page_fill_colors(pdf_path: Path) -> list[set[tuple[int, int, int]]]:
+    """Return the RGB fill colors (0-255) each page's content stream sets."""
+    reader = PdfReader(pdf_path)
+    return [
+        {
+            (round(float(red) * 255), round(float(green) * 255), round(float(blue) * 255))
+            for red, green, blue in _FILL_COLOR_OP.findall(page.get_contents().get_data())
+        }
+        for page in reader.pages
+    ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("font_color", "expected"),
+    [(None, (0, 0, 0)), ((255, 0, 0), (255, 0, 0)), ((255, 255, 255), (255, 255, 255))],
+)
+async def test_convert_async_generated_pdf_uses_font_color_on_every_page_async(
+    *, font_color: tuple[int, int, int] | None, expected: tuple[int, int, int]
+) -> None:
+    converter = PDFConverter(font_color=font_color)
+
+    result = await converter.convert_async(prompt="\n".join(f"line {index}" for index in range(120)))
+
+    page_colors = _page_fill_colors(Path(result.output_text))
+    assert len(page_colors) > 1
+    assert all(colors == {expected} for colors in page_colors)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("converter_color", "item_color", "expected"),
+    [
+        (None, None, (255, 255, 255)),
+        ((0, 0, 255), None, (0, 0, 255)),
+        ((0, 0, 255), (255, 0, 0), (255, 0, 0)),
+        (None, (255, 0, 0), (255, 0, 0)),
+    ],
+)
+async def test_convert_async_injected_text_color_async(
+    *,
+    mock_pdf_path: Path,
+    converter_color: tuple[int, int, int] | None,
+    item_color: tuple[int, int, int] | None,
+    expected: tuple[int, int, int],
+) -> None:
+    item: dict[str, Any] = {"page": 0, "x": 50, "y": 700, "text": "Injected Text"}
+    if item_color is not None:
+        item["font_color"] = item_color
+    converter = PDFConverter(existing_pdf=mock_pdf_path, injection_items=[item], font_color=converter_color)
+
+    result = await converter.convert_async(prompt="")
+
+    assert expected in _page_fill_colors(Path(result.output_text))[0]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_distinguishes_font_color() -> None:
+    default = PDFConverter().get_identifier()
+    red = PDFConverter(font_color=(255, 0, 0)).get_identifier()
+    white = PDFConverter(font_color=(255, 255, 255)).get_identifier()
+
+    assert "font_color" not in default.params
+    assert red.params["font_color"] == [255, 0, 0]
+    assert len({default.hash, red.hash, white.hash}) == 3
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("font_color", [(256, 0, 0), (0, 0), [0, 0, 0]])
+def test_init_rejects_invalid_font_color(font_color: Any) -> None:
+    with pytest.raises(ValueError, match="Invalid font_color"):
+        PDFConverter(font_color=font_color)

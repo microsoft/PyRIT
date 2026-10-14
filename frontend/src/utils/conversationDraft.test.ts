@@ -5,6 +5,20 @@ import { buildMessagePieces } from './messageMapper'
 import { draftConverterInputs, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it('preserves text-only remix metadata through composer restoration and request construction', async () => {
+    const prompt = draftMessageToInput({
+      id: 'user', role: 'user', pieces: [{
+        draftId: 'text', data_type: 'text', original_value: 'Change the background',
+        prompt_metadata: { video_id: 'existing-video', custom: 'preserved' },
+      }],
+    })
+    expect(prompt.attachments).toEqual([])
+    expect(await buildMessagePieces(prompt.text, prompt.attachments, prompt.textMetadata)).toEqual([{
+      data_type: 'text', original_value: 'Change the background',
+      prompt_metadata: { video_id: 'existing-video', custom: 'preserved' },
+    }])
+  })
+
   it('moves text and media to the composer without losing converted content or local files', () => {
     const file = new File(['image'], 'image.png', { type: 'image/png' })
     const prompt = draftMessageToInput({

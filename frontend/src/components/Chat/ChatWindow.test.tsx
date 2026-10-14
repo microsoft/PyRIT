@@ -1016,6 +1016,57 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
+  it("should send a text-only video remix with its metadata after saving the editor", async () => {
+    const user = userEvent.setup();
+    const metadata = { video_id: "existing-video", custom: "preserved" };
+    const source: BackendMessage[] = [{
+      role: "user", turn_number: 0, created_at: "",
+      message_pieces: [{
+        id: "text-remix", original_value_data_type: "text", original_value: "Change the background",
+        converted_value_data_type: "text", converted_value: "Change the background",
+        prompt_metadata: metadata, scores: [], response_error: "none",
+      }],
+    }];
+    const empty = { conversation_id: "saved", messages: [], target_response_status: null };
+    mockedAttacksApi.getMessages.mockImplementation(async (_attackId, conversationId) => (
+      conversationId === "source" ? { ...empty, conversation_id: "source", messages: source } : empty
+    ));
+    mockedAttacksApi.saveConversation.mockResolvedValue({
+      attack: {
+        attack_result_id: "existing", conversation_id: "saved", attack_type: "ManualAttack",
+        objective: "", converters: [], message_count: 0, related_conversation_ids: [],
+        labels: {}, created_at: "", updated_at: "",
+      },
+      messages: empty,
+    });
+    mockedMapper.buildMessagePieces.mockImplementation(actualMessageMapper.buildMessagePieces);
+    mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
+    mockedAttacksApi.submitMessageSend.mockImplementation(() => new Promise(() => {}));
+    function SavedRemixHarness() {
+      const [conversationId, setConversationId] = useState("source");
+      return <ChatWindow {...defaultProps} attackResultId="existing" conversationId={conversationId}
+        activeConversationId={conversationId} onSelectConversation={setConversationId} />;
+    }
+    const router = createMemoryRouter([{ path: "/", element: <SavedRemixHarness /> }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+    await user.click(await screen.findByRole("button", { name: "Edit Conversation", exact: true }));
+    await screen.findByRole("region", { name: "Message 1" });
+    await user.click(screen.getByRole("button", { name: "Save conversation" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save conversation" }));
+    const input = await screen.findByPlaceholderText("Type prompt here");
+    await waitFor(() => expect(input).toHaveValue("Change the background"));
+    expect(mockedAttacksApi.saveConversation.mock.calls[0][0].messages).toEqual([]);
+    await user.type(input, " to blue");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledWith(
+      "existing", expect.objectContaining({
+        pieces: [{ data_type: "text", original_value: "Change the background to blue", prompt_metadata: metadata }],
+      }),
+    ));
+  });
+
   it("should keep a target-free attack unbound when copying a system turn", async () => {
     const user = userEvent.setup();
     const source: BackendMessage[] = [{
@@ -4148,7 +4199,8 @@ describe("ChatWindow Integration", () => {
     }
     expect(mockedMapper.buildMessagePieces).toHaveBeenLastCalledWith(
       "live draft",
-      [expect.objectContaining({ file, name: "live.png" })]
+      [expect.objectContaining({ file, name: "live.png" })],
+      undefined,
     );
   });
 
@@ -6054,7 +6106,8 @@ describe("ChatWindow Integration", () => {
           { ...copiedAttachments[0], draftId: expect.any(String) },
           { ...copiedAttachments[1], draftId: expect.any(String) },
           { ...copiedAttachments[2], draftId: expect.any(String) },
-        ]
+        ],
+        undefined,
       );
     });
   });
@@ -7081,7 +7134,7 @@ describe("ChatWindow Integration", () => {
         labels: { operation: "config_op_v2" },
       }))
       expect(mockedMapper.buildMessagePieces).toHaveBeenLastCalledWith(
-        'prepared draft', expect.arrayContaining([expect.objectContaining({ file })]),
+        'prepared draft', expect.arrayContaining([expect.objectContaining({ file })]), undefined,
       )
     })
 

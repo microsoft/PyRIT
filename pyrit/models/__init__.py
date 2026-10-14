@@ -137,6 +137,15 @@ if TYPE_CHECKING:
     from pyrit.models.results.scenario_result import ScenarioResult, ScenarioRunState
     from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
     from pyrit.models.retry_event import RetryEvent
+    from pyrit.models.scenario_dataset import (
+        DatasetFetchPolicy,
+        DatasetSelectionMode,
+        DatasetSourceInput,
+        ScenarioDatasetOptions,
+        ScenarioDatasetRequest,
+        ScenarioDatasetSettings,
+        ScenarioDatasetSourceSettings,
+    )
     from pyrit.models.scenario_dataset_size_estimate import (
         AllAvailableDatasetSize,
         BoundedDatasetSize,
@@ -202,6 +211,7 @@ if TYPE_CHECKING:
         ScoreStatus,
         ScoreType,
         ScoringExpectation,
+        SurfaceBaseline,
         SurfaceCoverage,
         SurfaceEntry,
         SurfaceMatch,
@@ -273,6 +283,13 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationObservationPayload": "pyrit.models.score",
     "AllAvailableDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
     "BoundedDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
+    "DatasetFetchPolicy": "pyrit.models.scenario_dataset",
+    "DatasetSelectionMode": "pyrit.models.scenario_dataset",
+    "DatasetSourceInput": "pyrit.models.scenario_dataset",
+    "ScenarioDatasetOptions": "pyrit.models.scenario_dataset",
+    "ScenarioDatasetRequest": "pyrit.models.scenario_dataset",
+    "ScenarioDatasetSettings": "pyrit.models.scenario_dataset",
+    "ScenarioDatasetSourceSettings": "pyrit.models.scenario_dataset",
     "DatasetLimitInput": "pyrit.models.scenario_dataset_size_estimate",
     "DatasetLimitState": "pyrit.models.scenario_dataset_size_estimate",
     "IndeterminateDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
@@ -392,6 +409,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScoreStatus": "pyrit.models.score",
     "ScoreType": "pyrit.models.score",
     "ScoringExpectation": "pyrit.models.score",
+    "SurfaceBaseline": "pyrit.models.score",
     "SurfaceCoverage": "pyrit.models.score",
     "SurfaceEntry": "pyrit.models.score",
     "SurfaceMatch": "pyrit.models.score",

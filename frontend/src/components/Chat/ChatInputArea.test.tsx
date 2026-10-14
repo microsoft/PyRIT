@@ -948,6 +948,28 @@ describe("ChatInputArea", () => {
     expect(new Set(withNewCopy.map((attachment: MessageAttachment) => attachment.draftId)).size).toBe(3);
   });
 
+  it("should retain restored text metadata on edits and retries and clear it with the draft", async () => {
+    const user = userEvent.setup();
+    const ref = React.createRef<ChatInputAreaHandle>();
+    const metadata = { video_id: "existing-video" };
+    const onSend = jest.fn().mockResolvedValueOnce(retryableOutcome).mockResolvedValue(sentOutcome);
+    render(<TestWrapper><ChatInputArea ref={ref} {...defaultProps} onSend={onSend} /></TestWrapper>);
+    React.act(() => { ref.current?.restoreDraft("Change the background", [], metadata); });
+    await user.type(screen.getByRole("textbox"), " to blue");
+    expect(ref.current?.getTextMetadata()).toEqual(metadata);
+    await user.click(getSendButton());
+    expect(ref.current?.getTextMetadata()).toEqual(metadata);
+    await user.click(getSendButton());
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue(""));
+    expect(ref.current?.getTextMetadata()).toBeUndefined();
+    React.act(() => { ref.current?.restoreDraft("Another remix", [], metadata); });
+    React.act(() => { ref.current?.setText("An unrelated copied prompt"); });
+    expect(ref.current?.getTextMetadata()).toBeUndefined();
+    React.act(() => { ref.current?.restoreDraft("Another remix", [], metadata); });
+    await user.clear(screen.getByRole("textbox"));
+    expect(ref.current?.getTextMetadata()).toBeUndefined();
+  });
+
   it("should keep uploaded duplicate filenames distinct and preserve remaining identity on removal and send", async () => {
     const user = userEvent.setup();
     const onAttachmentsChange = jest.fn();

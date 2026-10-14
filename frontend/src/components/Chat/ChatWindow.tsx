@@ -104,6 +104,7 @@ interface RecoverableSendDraft {
   historyCutoffIndex: number
   failedRequestMessageIndex: number
   originalValue: string
+  textMetadata?: Record<string, unknown>
   attachments: MessageAttachment[]
   conversions: Record<string, PieceConversion>
   source: 'live' | 'persisted'
@@ -122,6 +123,7 @@ interface PendingSend {
   readonly controller: AbortController
   readonly draftRevision: number | undefined
   readonly originalValue: string
+  readonly textMetadata?: Record<string, unknown>
   readonly attachments: MessageAttachment[]
   readonly conversions: Record<string, PieceConversion>
   readonly priorUserPieceIds: Set<string>
@@ -209,6 +211,8 @@ function getPersistedProcessingRecovery(
   }
 
   const originalDraft = backendMessageToOriginalDraft(failedRequest)
+  const textMetadata = failedRequest.message_pieces.filter((piece) => piece.original_value_data_type === 'text')
+    .reduce<Record<string, unknown>>((metadata: Record<string, unknown>, piece) => ({ ...metadata, ...piece.prompt_metadata }), {})
   return {
     conversationId,
     failedRequestTurnNumber: responseStatus.request_turn_number,
@@ -216,6 +220,7 @@ function getPersistedProcessingRecovery(
     historyCutoffIndex: getRecoveryHistoryCutoff(response.messages, responseStatus.request_turn_number),
     failedRequestMessageIndex: response.messages.indexOf(failedRequest),
     originalValue: originalDraft.content,
+    textMetadata: Object.keys(textMetadata).length ? textMetadata : undefined,
     attachments: (originalDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
     conversions: {},
     source: 'persisted',
@@ -727,6 +732,7 @@ export default function ChatWindow({
     const recoveredDraft: RecoverableSendDraft | undefined = processingFailure && recovery ? {
       ...recovery,
       originalValue: operation.originalValue,
+      textMetadata: operation.textMetadata,
       attachments: operation.attachments,
       conversions: operation.conversions,
       converterGeneration: operation.converterGeneration,
@@ -911,7 +917,7 @@ export default function ChatWindow({
     const attachments = operation.attachments.map(withDraftIdentity)
     setChatInputText(operation.originalValue)
     setDraftAttachments(attachments)
-    inputBoxRef.current?.restoreDraft(operation.originalValue, attachments)
+    inputBoxRef.current?.restoreDraft(operation.originalValue, attachments, operation.textMetadata)
     restoreConversions(
       operation.originalValue, attachments, sameGeneration ? operation.conversions : {},
       sameGeneration ? operation.pipelines : undefined,
@@ -968,6 +974,7 @@ export default function ChatWindow({
       controller: new AbortController(),
       draftRevision: inputBoxRef.current?.getDraftRevision(),
       originalValue,
+      textMetadata: inputBoxRef.current?.getTextMetadata(),
       attachments: attachments.map((attachment) => ({ ...attachment })),
       conversions,
       priorUserPieceIds: new Set(loadedUserPieceIdsRef.current.get(initialSendConvId)),
@@ -1035,7 +1042,7 @@ export default function ChatWindow({
     try {
       // Build message pieces from text + attachments — always use original text
       const pieceIds = buildDraftPieceIds(originalValue, attachments, conversions)
-      const originalPieces = await buildMessagePieces(originalValue, attachments)
+      const originalPieces = await buildMessagePieces(originalValue, attachments, operation.textMetadata)
       if (textConversion && !originalValue.trim()) {
         originalPieces.unshift({ data_type: 'text', original_value: originalValue })
       }
@@ -1264,6 +1271,7 @@ export default function ChatWindow({
     inputBoxRef.current?.restoreDraft(
       recoverableSend.originalValue,
       attachments,
+      recoverableSend.textMetadata,
     )
     inputBoxRef.current?.focus()
     setRecoveredDraftWarningConversationId(recoverableSend.missingConverterSelections ? destinationConversationId : null)
@@ -1485,7 +1493,7 @@ export default function ChatWindow({
         setChatInputText(pendingPrompt.text)
         setDraftAttachments(attachments)
         restoreConversions(pendingPrompt.text, attachments, {}, {})
-        inputBoxRef.current?.restoreDraft(pendingPrompt.text, attachments)
+        inputBoxRef.current?.restoreDraft(pendingPrompt.text, attachments, pendingPrompt.textMetadata)
         inputBoxRef.current?.focus()
       }
     }, history)

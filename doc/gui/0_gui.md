@@ -16,8 +16,9 @@ pyrit_backend
 
 Then open `http://localhost:8000` in your browser.
 
-Authentication-disabled local servers deny administrator operations by default. To enable configuration and initializer
-administration for a trusted local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
+Authentication-disabled local servers deny administrator operations by default. To enable administrator operations
+(configuration, initializer administration, and creating targets that run model repository code) for a trusted local
+development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
 setting on a network-accessible deployment.
 
 ### Docker
@@ -34,7 +35,7 @@ To deploy an isolated instance for an external team, see [Deploy a New Instance]
 
 ## Views
 
-CoPyRIT has three main views, accessible from the left sidebar: **Chat**, **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
+CoPyRIT has three main views, accessible from the left sidebar: **Technique.execute** (Chat), **Attack History**, and **Target Configuration**. The **Theme** menu is available at the bottom of the sidebar.
 
 ### Themes
 
@@ -511,7 +512,59 @@ Defaults are saved in this browser, separately for each signed-in account. They 
 
 A missing or changed default is shown as unavailable. Select a new default or clear it; CoPyRIT does not silently substitute a different target. If browser storage is unavailable, a warning states that the choice applies only in the current session.
 
-Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters** above **Dataset override**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+Scanner forms let you override either selection for one run. **Objective Target** is the target the scenario runs against. **Adversarial Target**, under **Parameters**, is the target used to generate attacks. The adversarial selector appears only for scenarios whose available techniques use the shared default; scenarios with no such use, including the explicit-target adversarial benchmark, do not show it or send an override. **Use server default** clears the per-run adversarial override. Changes to your defaults do not change existing chats or queued/running scans. Explicit adversarial targets in a scenario or technique still take priority. Scorer targets are unchanged.
+
+### Scenario datasets
+
+**Datasets** is a separate section below **Techniques**. Its table has **Dataset**,
+**Size**, and **Include Criteria** columns. **Size** shows an upper bound, such as **Up to 4
+of 200**, when the stored total is known, or **Up to 4** before loading. This is not
+an exact selected count: filters and the combined objective limit can reduce it.
+Click a supported size to edit its limit, use all available examples, or reset to
+the displayed default. Required reference data shows its stored size without a
+limit editor.
+
+Select a name from **Add dataset** to add it immediately. Provider names remain
+available before their data is stored. Selecting a name never loads it. The remove
+icon is available only when the scenario permits removal and another source will
+remain. A scenario that permits only one source uses **Choose dataset** to replace
+it. **Browse datasets**, beside **Reset datasets**, opens the dataset browser.
+**Reset datasets** restores source defaults and row limits without clearing
+the combined objective limit or filters.
+
+**Load datasets** appears only while selected data is missing. It loads missing
+sources and keeps existing data, including manual edits. It may download data or
+use a configured generator, but does not start a scan. A missing source without a
+provider must be imported first. When all selected data is loaded, the load button
+and loading controls are omitted.
+
+Loaded rows show harm categories and data types as differently colored chips.
+All labels start checked when there is no configured filter. Uncheck labels to
+narrow the existing filters for **all selected datasets**, not just the row clicked.
+Checking all labels restores the default request when no filter was configured.
+Partial category selections require every checked label and retain substring
+matching; data types match any checked type. An empty selection blocks launch
+instead of silently restoring all data. Selection is shown on the metadata chips;
+there is no separate filter list below the table. No preview of data values is provided.
+
+**Maximum objectives** shows its resolved value. Click it to enter a positive
+integer, use all available objectives, or reset to the displayed default. This
+limits objectives, not prompts sent. Four objectives with three techniques produce
+12 attacks, plus four more if the baseline is enabled. Each attack can send several
+prompts. The run estimate shows the resulting attacks.
+
+Scenarios that build objectives from templates or reference data apply the total
+limit to the completed objectives, not to the required reference data. Their
+generation limits still apply. A scenario that requires one objective per selected
+technique rejects a total limit smaller than the number of techniques.
+
+**Load missing data when the scan starts** is one switch for the selected sources.
+Its initial state reflects their resolved loading rules, which normally load
+missing data. Turning it off prevents automatic loading on scan start without
+disabling the manual load action. Existing source-specific rules are not silently
+replaced until the switch is changed. Closing a limit editor does not clear an
+invalid draft. Estimate and launch use the same dataset edits.
+Resume uses the saved request and original selection and never loads datasets.
 
 #### Core Adversarial Default Override
 
@@ -535,14 +588,20 @@ New runs save the adversarial target selection with their launch configuration. 
 
 #### Creating Targets
 
-Click "New Target" to open the creation dialog. Fill in:
+Click "New Target" to open the creation dialog. Fill in the fields shown for the
+selected target; required fields and authentication options depend on the target:
 
-- **Target Type** (required): Select from `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, or `AzureMLChatTarget`
-- **Endpoint URL** (required): Your Azure OpenAI, OpenAI API, or Azure ML endpoint
-- **Model / Deployment Name** (required): e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`
-- **API Key** (optional): Stored in memory only (not persisted to disk)
+- **Target Type** (required): Select from backend-discovered targets supported by the form, including `OpenAIChatTarget`, `OpenAICompletionTarget`, `OpenAIImageTarget`, `OpenAIVideoTarget`, `OpenAITTSTarget`, `OpenAIResponseTarget`, `AzureMLChatTarget`, and `GitHubCopilotTarget`.
+- **Endpoint URL**: Your Azure OpenAI, OpenAI API, or Azure ML endpoint, when applicable.
+- **Model / Deployment Name**: e.g., `gpt-4o`, `dall-e-3`, `Llama-3.2-3B-Instruct`.
+- **API Key** (optional): Stored in memory only (not persisted to disk).
 
-For `AzureMLChatTarget`, additional fields are available: **Max New Tokens**, **Temperature**, **Top P**, and **Repetition Penalty**.
+For `AzureMLChatTarget`, **Advanced settings** include **Max New Tokens**,
+**Temperature**, **Top P**, and **Repetition Penalty**.
+
+For GitHub Copilot, provide a model ID and either a GitHub token or an
+instance-configured `GITHUB_TOKEN`; see the
+[framework example](../code/targets/github_copilot_target.ipynb).
 
 #### Auto-Populating Targets
 

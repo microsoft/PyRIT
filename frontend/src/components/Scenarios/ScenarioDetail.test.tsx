@@ -8,6 +8,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import type {
   AddMessageResponse,
   RegisteredScenario,
+  ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
@@ -18,6 +19,11 @@ jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 jest.mock('@/services/api', () => ({
   attacksApi: { getConversation: jest.fn(), saveConversation: jest.fn() },
+  datasetsApi: { listDatasets: jest.fn().mockResolvedValue({ items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
+    name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+    logical_examples: 8, seed_pieces: null, objectives: null, modalities: ['text', 'image_path', 'audio_path'],
+    harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
+  })) }) },
   scenariosApi: {
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
@@ -163,6 +169,20 @@ async function openRunPreview(user: ReturnType<typeof userEvent.setup>): Promise
 async function confirmRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await openRunPreview(user)
   await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
+}
+
+async function openObjectiveLimit(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: 'Edit Maximum objectives' }))
+}
+
+async function setObjectiveLimit(user: ReturnType<typeof userEvent.setup>, value: string): Promise<void> {
+  await openObjectiveLimit(user)
+  const all = screen.getByRole('checkbox', { name: 'All available for Maximum objectives' })
+  if (all instanceof HTMLInputElement && all.checked) await user.click(all)
+  const input = screen.getByRole('textbox', { name: 'Maximum objectives' })
+  await user.clear(input)
+  await user.type(input, value)
+  await user.keyboard('{Escape}')
 }
 
 function renderDetail(
@@ -608,18 +628,19 @@ describe('ScenarioDetail', () => {
     await flushRenderedPromises()
     await user.type(screen.getByLabelText(/^iterations/), '1.5')
     await user.type(screen.getByLabelText(/^note/), 'Keep this value')
-    await user.type(screen.getByLabelText('Dataset override'), 'stale-dataset')
-    await user.type(screen.getByLabelText('Max dataset size'), '0')
-    await user.type(screen.getByLabelText('Harm categories'), 'stale-harm')
-    await user.type(screen.getByLabelText('Data types'), 'stale-type')
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(screen.getByRole('option', { name: 'stale-dataset', exact: true }))
+    await setObjectiveLimit(user, '0')
+    await user.click(screen.getAllByRole('button', { name: 'Filter harm category cyber' })[0])
+    await user.click(screen.getAllByRole('button', { name: 'Filter data type Text' })[0])
     for (const label of ['Max concurrency', 'Max retries']) {
       const input = screen.getByRole('spinbutton', { name: label })
       await user.clear(input)
       await user.type(input, '500')
       await user.tab()
     }
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('iterations must be an integer.')
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Maximum objectives must be a positive integer')
 
     mockGetScenario.mockResolvedValue(makeScenario({
       supported_parameter_names: ['note'],
@@ -778,8 +799,9 @@ describe('ScenarioDetail', () => {
     expect(within(screen.getByRole('region', { name: 'Objective Target' })).queryByRole(
       'combobox', { name: 'Adversarial Target' },
     )).not.toBeInTheDocument()
-    expect(fallback.compareDocumentPosition(within(parameters).getByRole('textbox', { name: 'Dataset override' })))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
+    expect(within(datasetsSection).getByRole('table', { name: 'Selected datasets' })).toBeInTheDocument()
+    expect(datasetsSection.compareDocumentPosition(parameters)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(fallback).toHaveAccessibleDescription('The registered target this scenario uses to generate attacks.')
     expect(fallback).toHaveValue('adversary')
     expect(within(fallback).queryByRole('option', { name: 'target-a' })).not.toBeInTheDocument()
@@ -1467,10 +1489,7 @@ describe('ScenarioDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Parameters' })).toBeInTheDocument()
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
-    expect(screen.getByTestId('max-dataset-size-input')).toHaveValue(8)
-    expect(screen.getByText(
-      'The scenario default is 8. Edit it to override the default.',
-    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 8')
     const estimate = screen.getByTestId('run-estimate')
     expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
     expect(within(estimate).getByText('8')).toBeInTheDocument()
@@ -1500,7 +1519,7 @@ describe('ScenarioDetail', () => {
 
     renderDetail('/scanner/foundry.red_team_agent')
 
-    expect(await screen.findByTestId('max-dataset-size-input')).toHaveValue(5)
+    expect(await screen.findByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 5')
     expect(await screen.findByText('Up to 10')).toBeInTheDocument()
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
   })
@@ -1514,7 +1533,7 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    expect(await screen.findByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(null)
+    expect(await screen.findByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('All available')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
   })
@@ -1528,9 +1547,8 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
-    expect(input).toBeDisabled()
-    expect(input).toHaveValue(null)
+    await screen.findByRole('table', { name: 'Selected datasets' })
+    expect(screen.queryByRole('textbox', { name: 'Maximum objectives' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
   })
 
@@ -1544,9 +1562,10 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
-    expect(input).toHaveValue(5)
-    await user.clear(input)
+    await setObjectiveLimit(user, '2')
+    await openObjectiveLimit(user)
+    await user.click(screen.getByRole('button', { name: 'Reset to 5' }))
+    await user.keyboard('{Escape}')
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
@@ -1558,13 +1577,14 @@ describe('ScenarioDetail', () => {
   it('sends an explicit all total for both estimation and launch', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
-    const unlimited = await screen.findByRole('checkbox', { name: 'No total dataset limit' })
-    await user.click(unlimited)
-    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toBeDisabled()
-    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('max_dataset_size', 'all'))
+    await setObjectiveLimit(user, '2')
+    await openObjectiveLimit(user)
+    await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
-    expect(mockStartRun.mock.calls[0][0]).toHaveProperty('max_dataset_size', 'all')
+    expect(mockStartRun.mock.calls[0][0]).toHaveProperty('datasets.max_total', 'all')
   })
 
   it('restores the scenario default when no-total-limit is unchecked', async () => {
@@ -1576,11 +1596,11 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    const unlimited = await screen.findByRole('checkbox', { name: 'No total dataset limit' })
-    await user.click(unlimited)
-    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('max_dataset_size', 'all'))
-    await user.click(unlimited)
-    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(5)
+    await openObjectiveLimit(user)
+    await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
+    await user.click(screen.getByRole('button', { name: 'Reset to 5' }))
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size'))
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
@@ -1592,17 +1612,22 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.type(screen.getByTestId('dataset-override-input'), 'ds_a, ds_b')
-    await user.type(screen.getByTestId('max-dataset-size-input'), '25')
-    await user.type(screen.getByTestId('harm-categories-filter-input'), 'cyber, violence')
-    await user.type(screen.getByTestId('data-types-filter-input'), 'text, image_path')
+    const addDataset = screen.getByRole('combobox', { name: 'Add dataset' })
+    await user.click(addDataset)
+    await user.click(screen.getByRole('option', { name: 'ds_a', exact: true }))
+    await user.click(addDataset)
+    await user.click(screen.getByRole('option', { name: 'ds_b', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Remove harmbench' }))
+    await setObjectiveLimit(user, '25')
+    await user.click(screen.getAllByRole('button', { name: 'Filter harm category other' })[0])
+    await user.click(screen.getAllByRole('button', { name: 'Filter data type Audio' })[0])
     await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
-    expect(request.dataset_names).toEqual(['ds_a', 'ds_b'])
-    expect(request.max_dataset_size).toBe(25)
-    expect(request.dataset_filters).toEqual({
+    expect(request.datasets.sources).toEqual([{ name: 'ds_a' }, { name: 'ds_b' }])
+    expect(request.datasets.max_total).toBe(25)
+    expect(request.datasets.filters).toEqual({
       harm_categories: ['cyber', 'violence'],
       data_types: ['text', 'image_path'],
     })
@@ -1611,11 +1636,13 @@ describe('ScenarioDetail', () => {
       expect.objectContaining({
         target_name: 'target-a',
         techniques: ['default_technique'],
-        dataset_names: ['ds_a', 'ds_b'],
-        max_dataset_size: 25,
-        dataset_filters: {
+        datasets: {
+          sources: [{ name: 'ds_a' }, { name: 'ds_b' }],
+          max_total: 25,
+          filters: {
           harm_categories: ['cyber', 'violence'],
           data_types: ['text', 'image_path'],
+          },
         },
         include_baseline: true,
       }),
@@ -1624,17 +1651,62 @@ describe('ScenarioDetail', () => {
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('labels')
   })
 
+  it('refreshes parameter-aware defaults after invalid source edits without silently dropping them', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      supported_parameters: [
+        { name: 'scope', type_name: 'str', required: false, default: 'all', choices: null, is_list: false },
+      ],
+    }))
+    mockEstimateRun.mockImplementation(async (_name: string, request: ScenarioRunSizeEstimateRequest) => {
+      const narrowed = request.scenario_params?.scope === 'one'
+      if (narrowed && request.datasets?.sources) {
+        throw { isAxiosError: true, response: { status: 400, data: { detail: 'Dataset is outside the selected scope.' } } }
+      }
+      const name = narrowed ? 'remote' : 'harmbench'
+      const settings = {
+        sources: [{ name, max_size: 5, fetch: 'never', configured_provider: false }],
+        max_per_dataset: 5, max_total: 5, fetch: 'never', filters: {},
+      }
+      return {
+        ...makeEstimate(10), dataset_defaults: settings, effective_datasets: settings,
+        dataset_options: {
+          mode: 'subset', allowed_names: [name], per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true,
+        },
+      }
+    })
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByRole('table', { name: 'Selected datasets' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveTextContent('Up to 5'))
+    await user.click(screen.getByRole('button', { name: 'Edit harmbench objective limit' }))
+    const all = screen.getByRole('checkbox', { name: 'All available for harmbench objective limit' })
+    if (all instanceof HTMLInputElement && all.checked) await user.click(all)
+    await user.clear(screen.getByRole('textbox', { name: 'harmbench objective limit' }))
+    await user.type(screen.getByRole('textbox', { name: 'harmbench objective limit' }), '1')
+    await user.keyboard('{Escape}')
+    await user.clear(screen.getByTestId('scenario-param-scope'))
+    await user.type(screen.getByTestId('scenario-param-scope'), 'one')
+    await screen.findByText('Select a permitted source: harmbench')
+    expect(screen.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveTextContent('Up to 1')
+    expect(mockEstimateRun.mock.calls.some((call) =>
+      call[1].scenario_params?.scope === 'one' && call[1].datasets === undefined,
+    )).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
+    await screen.findByText('remote', { exact: true })
+  })
+
   it('rejects a non-positive-integer max dataset size', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.type(screen.getByTestId('max-dataset-size-input'), '0')
+    await setObjectiveLimit(user, '0')
     await user.click(screen.getByTestId('launch-scenario-btn'))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Max dataset size must be a positive integer.',
-    )
+    expect(await screen.findAllByRole('alert')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ textContent: expect.stringContaining('Maximum objectives must be a positive integer.') }),
+    ]))
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 

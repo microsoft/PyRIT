@@ -699,7 +699,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Navigate back to chat
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByTestId("new-attack-btn")).toBeVisible();
 
     // Chat should show the selected target type. Scope to the badge to
@@ -716,7 +716,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     });
 
     await page.goto("/");
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     await expect(page.getByRole("textbox")).toBeEnabled();
     await page.getByRole("textbox").fill("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -727,7 +727,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
 
     // Return to chat — send should be enabled when there's text
-    await page.getByTitle("Chat").click();
+    await page.getByTitle("Technique.execute").click();
     const input = page.getByRole("textbox");
     await input.fill("Hello");
     await expect(page.getByRole("button", { name: /send/i })).toBeEnabled();

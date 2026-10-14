@@ -2972,6 +2972,45 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(self._get_conversation, conversation_id=conversation_id)
 
+    def _get_attack_result_for_conversation(self, *, conversation_id: str) -> AttackResult | None:
+        """
+        Read the newest result that names this main or pruned conversation.
+
+        Returns:
+            AttackResult | None: The newest referring result, or None if none exists.
+        """
+        entries = self._query_entries(
+            AttackResultEntry,
+            conditions=or_(
+                AttackResultEntry.conversation_id == conversation_id,
+                self._get_condition_json_array_match(
+                    json_column=AttackResultEntry.pruned_conversation_ids,
+                    property_path="$",
+                    array_to_match=[conversation_id],
+                ),
+            ),
+            order_by=self._attack_results_recency_order_by(),
+            limit=1,
+        )
+        return entries[0].get_attack_result() if entries else None
+
+    async def get_attack_result_for_conversation_async(self, *, conversation_id: str) -> AttackResult | None:
+        """
+        Read the newest result that references a main or pruned conversation.
+
+        This also works for upgraded history without a conversation-to-attack link.
+        Internal conversation references are not included.
+
+        Args:
+            conversation_id (str): The conversation ID to resolve.
+
+        Returns:
+            AttackResult | None: The newest referring result, or None if none exists.
+        """
+        return await self._run_database_operation_async(
+            self._get_attack_result_for_conversation, conversation_id=conversation_id
+        )
+
     def _get_attack_result_conversations(self, *, attack_result_id: str) -> list[Conversation]:
         """
         Return the conversations owned by the attack execution that produced ``attack_result_id``.
@@ -3038,7 +3077,12 @@ class MemoryInterface(abc.ABC):
             self._execute_get_conversation_messages,
             conversation_id=response.conversation_id,
         )
-        return conversation[response.sequence - 1]
+        preceding_messages = [msg for msg in conversation if msg.sequence < response.sequence]
+        if not preceding_messages:
+            raise ValueError(
+                f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
+            )
+        return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
         self, *, identifier_filters: Sequence[IdentifierFilter]
@@ -4338,6 +4382,7 @@ class MemoryInterface(abc.ABC):
                     SeedEntry.dataset_name.label("dataset_name"),
                     SeedEntry.data_type,
                     SeedEntry.harm_categories,
+                    SeedEntry.origin,
                 )
                 .where(named_condition)
                 .distinct()
@@ -4350,6 +4395,7 @@ class MemoryInterface(abc.ABC):
                 named_aggregate.c.objectives,
                 named_metadata.c.data_type,
                 named_metadata.c.harm_categories,
+                named_metadata.c.origin,
             ).join(
                 named_metadata,
                 named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
@@ -4366,7 +4412,10 @@ class MemoryInterface(abc.ABC):
                 .subquery()
             )
             unnamed_metadata = (
-                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+                select(SeedEntry.data_type, SeedEntry.harm_categories, SeedEntry.origin)
+                .where(unnamed_condition)
+                .distinct()
+                .subquery()
             )
             unnamed_statement = select(
                 unnamed_aggregate.c.dataset_name,
@@ -4375,6 +4424,7 @@ class MemoryInterface(abc.ABC):
                 unnamed_aggregate.c.objectives,
                 unnamed_metadata.c.data_type,
                 unnamed_metadata.c.harm_categories,
+                unnamed_metadata.c.origin,
             ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
 
             combined_statement = named_statement.union_all(unnamed_statement)
@@ -4394,9 +4444,12 @@ class MemoryInterface(abc.ABC):
                         "modalities": set(),
                         "harm_categories": set(),
                         "has_unlabeled_harm_categories": False,
+                        "origins": set(),
                     }
                     dataset_order.append(dataset_name)
                 summary = summaries_by_dataset[dataset_name]
+                if row["origin"]:
+                    summary["origins"].add(row["origin"])
                 if row["data_type"]:
                     summary["modalities"].add(row["data_type"])
                 categories = row["harm_categories"] or []
@@ -4414,6 +4467,7 @@ class MemoryInterface(abc.ABC):
                     modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
                     harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
                     has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                    origins=tuple(sorted(summaries_by_dataset[dataset_name]["origins"])),
                 )
                 for dataset_name in dataset_order
             ]

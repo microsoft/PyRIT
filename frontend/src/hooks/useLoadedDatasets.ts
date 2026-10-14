@@ -10,6 +10,8 @@ interface LoadedDatasetsState {
   readonly loading: boolean
   readonly error: string | null
   readonly retry: () => void
+  /** Reloads catalog metadata without hiding a page that already has data. */
+  readonly refresh: () => void
 }
 
 /**
@@ -62,5 +64,9 @@ export function useLoadedDatasets(): LoadedDatasetsState {
     setRefetchCount((count) => count + 1)
   }, [])
 
-  return { datasets, loading, error, retry }
+  const refresh = useCallback(() => {
+    setRefetchCount((count) => count + 1)
+  }, [])
+
+  return { datasets, loading, error, retry, refresh }
 }

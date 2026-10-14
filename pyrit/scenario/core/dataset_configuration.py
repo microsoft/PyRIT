@@ -47,6 +47,7 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -65,13 +66,6 @@ _ItemT = TypeVar("_ItemT")
 
 class _Unset(Enum):
     VALUE = "unset"
-
-
-class DatasetFetchPolicy(str, Enum):
-    """When preparation may load a provider's dataset into memory."""
-
-    NEVER = "never"
-    IF_MISSING = "if_missing"
 
 
 def _resolve_limit(*, name: str, value: DatasetLimit | _Unset, default: ResolvedDatasetLimit) -> ResolvedDatasetLimit:
@@ -521,19 +515,25 @@ class DatasetConfiguration:
     def _preparation_sources(self) -> list[tuple[DatasetSource, DatasetFetchPolicy]]:
         return [(source, source.fetch or self.fetch) for source in self.sources]
 
-    async def prepare_async(self) -> None:
+    async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
         """
         Check all sources, then populate missing datasets from configured or registered providers.
+
+        Args:
+            fetch: Optional policy for this operation only. Source settings remain unchanged.
 
         Raises:
             DatasetConstraintError: If a missing source cannot be fetched or provider data is invalid.
         """
         self.validate_configuration()
+        if fetch is not None and not isinstance(fetch, DatasetFetchPolicy):
+            raise DatasetConstraintError("'fetch' must be a DatasetFetchPolicy.")
         if self.source_kind is DatasetSourceKind.INLINE:
             return
         policies: dict[str, DatasetFetchPolicy] = {}
         configured_providers: dict[str, SeedDatasetProvider | None] = {}
         for source, policy in self._preparation_sources():
+            policy = fetch if fetch is not None else policy
             name = source.name
             if name in policies and policies[name] is not policy:
                 raise DatasetConstraintError(f"Dataset '{name}' has conflicting fetch policies.")
@@ -1026,6 +1026,11 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             max_total=max_total, max_dataset_size=max_dataset_size, max_per_dataset="all", validators=validators
         )
         self._configurations = list(configurations)
+
+    @property
+    def configurations(self) -> tuple[DatasetAttackConfiguration, ...]:
+        """The child configurations, in order."""
+        return tuple(self._configurations)
 
     @property
     def has_sampling_limits(self) -> bool:
