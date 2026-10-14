@@ -50,9 +50,11 @@ async def test_local_sqlite_workload_counts_requests_writes_and_continuations_as
     sqlite_instance: SQLiteMemory,
     compatibility_headers: dict[str, str],
 ) -> None:
-    budgets = partial(AnalyticsExecution, queue_timeout=30.0, report_timeout=30.0, quick_timeout=30.0)
+    # Unit tests check semantics; the integration workload asserts production latency. Budgets must
+    # stay finite but unreachable, because an expired budget answers 504 and would be counted here as
+    # a failed request: a loaded runner's report tail exceeded 30s and failed this test for latency.
+    budgets = partial(AnalyticsExecution, queue_timeout=300.0, report_timeout=300.0, quick_timeout=300.0)
     workload = AnalyticsBenchmark(memory=sqlite_instance, app=benchmark_app, headers=compatibility_headers, count=1_000)
-    # Unit tests check semantics; the integration workload asserts production latency.
     with patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=budgets):
         report = await workload.run_async(analysts=5, iterations=1)
     assert not workload.failures
@@ -62,7 +64,7 @@ async def test_local_sqlite_workload_counts_requests_writes_and_continuations_as
     assert report["verification_requests"] == {"successful": 2, "errors": 0}
     assert report["peak_concurrent_requests"] == 5
     for measurement in report["workloads"].values():
-        assert measurement["successful_requests"] == 6
+        assert measurement["successful_requests"] == 6, report["failures"]
         assert measurement["error_requests"] == measurement["not_sent"] == 0
 
 
