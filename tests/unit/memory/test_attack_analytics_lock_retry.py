@@ -300,7 +300,7 @@ async def test_sqlite_lock_retry_cancellation_restores_connection_async(
     *, file_memory: SQLiteMemory, method: str, cancel: str
 ) -> None:
     reader = AttackAnalyticsReader(memory=file_memory)
-    observed = asyncio.Event()
+    observed, release = asyncio.Event(), asyncio.Event()
     engine = file_memory._get_async_engine()
     async with engine.connect() as writer:
         default_timeout = (await writer.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
@@ -308,7 +308,12 @@ async def test_sqlite_lock_retry_cancellation_restores_connection_async(
         control = QueryControl(deadline=time.monotonic() + 10)
         with (
             patch.object(
-                reader, "_retry_sqlite_busy_async", side_effect=_observe_busy(reader=reader, observed=observed)
+                reader,
+                "_retry_sqlite_busy_async",
+                # Park the request between retry attempts so cancellation is delivered with no
+                # statement in flight. Cancelling mid-statement discards the connection instead
+                # of restoring it, which is covered by tests/unit/memory/test_sqlite_cancellation.py.
+                side_effect=_observe_busy(reader=reader, observed=observed, release=release),
             ),
             patch.object(
                 reader, "_sqlite_busy_timeout_async", wraps=reader._sqlite_busy_timeout_async
@@ -325,6 +330,7 @@ async def test_sqlite_lock_retry_cancellation_restores_connection_async(
                     assert await cursor.fetchone() == (0,)
                 if cancel == "control":
                     control.cancel()
+                    release.set()
                     with pytest.raises(AnalyticsTimeoutException):
                         await wait_for_completion_async(future=task)
                     assert control.expired
@@ -332,12 +338,14 @@ async def test_sqlite_lock_retry_cancellation_restores_connection_async(
                     assert not task.cancelled() and task.cancelling() == 0
                 else:
                     task.cancel("requested cancellation")
+                    release.set()
                     with pytest.raises(asyncio.CancelledError, match="requested cancellation"):
                         await wait_for_completion_async(future=task)
                 assert configure_timeout.await_args_list[-1].kwargs["timeout_ms"] == default_timeout
                 async with engine.connect() as connection:
                     assert (await connection.exec_driver_sql("PRAGMA busy_timeout")).scalar_one() == default_timeout
             finally:
+                release.set()
                 await writer.rollback()
                 if not task.done():
                     task.cancel()
