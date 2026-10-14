@@ -41,12 +41,14 @@ from pyrit.backend.services.pagination import (
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_progress_read_model import (
     ResultUnitIdentity,
+    ScenarioPlanLookup,
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import (
+    MemoryInterface,
     ScenarioHistoryAggregate,
     ScenarioHistoryKeysetCursor,
     ScenarioHistoryRunRecord,
@@ -58,8 +60,11 @@ from pyrit.models import (
     AttackResult,
     ComponentIdentifier,
     ScenarioAttackResultDelta,
+    ScenarioHierarchyNode,
+    ScenarioHierarchyProjection,
     ScenarioIdentifier,
     ScenarioProgressHeader,
+    ScenarioProgressResult,
     ScenarioQueueEntry,
     ScenarioQueueSnapshot,
     ScenarioResult,
@@ -195,7 +200,13 @@ class ScenarioRunService:
     multiple replicas require a shared database-backed scheduler or lease.
     """
 
-    def __init__(self, *, max_concurrent_runs: int = _DEFAULT_MAX_CONCURRENT_RUNS) -> None:
+    def __init__(
+        self,
+        *,
+        max_concurrent_runs: int = _DEFAULT_MAX_CONCURRENT_RUNS,
+        memory: MemoryInterface | None = None,
+        progress_read_model: ScenarioProgressReadModel | None = None,
+    ) -> None:
         """
         Initialize the scenario run service.
 
@@ -204,10 +215,12 @@ class ScenarioRunService:
         """
         if max_concurrent_runs < 1:
             raise ValueError("max_concurrent_runs must be at least 1.")
-        self._memory = CentralMemory.get_memory_instance()
+        self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
         self._active_tasks: dict[str, _ActiveTask] = {}
         self._configuration_resolver = ScenarioConfigurationResolver()
-        self._progress_read_model = ScenarioProgressReadModel(memory=self._memory)
+        self._progress_read_model = (
+            progress_read_model if progress_read_model is not None else ScenarioProgressReadModel(memory=self._memory)
+        )
         self._technique_metadata_cache: dict[str, dict[str, ScenarioTechniqueSummary]] = {}
 
         self._preparations: set[asyncio.Task[_PreparedRun]] = set()
@@ -1476,11 +1489,16 @@ class ScenarioRunService:
                 retry_events = getattr(attack_result, "retry_events", None)
                 if isinstance(retry_events, list) and retry_events:
                     overload_events.extend(retry_events)
+                    truncated_retries = retry_events[:100]
+                    retries_truncated = len(retry_events) > 100
+                    total_r = max(0, retries) if isinstance(retries, int) else len(retry_events)
                     attack_retries.append(
                         AttackRetrySummary(
                             attack_result_id=str(attack_result.attack_result_id),
                             atomic_attack_name=atomic_attack_name,
-                            retries=retry_events,
+                            total_retries=total_r,
+                            retries=truncated_retries,
+                            retries_truncated=retries_truncated,
                         )
                     )
 
@@ -2226,6 +2244,129 @@ class ScenarioRunService:
         if timestamp.tzinfo is None:
             raise ValueError("Cursor timestamp must include a timezone.")
         return AttackResultKeysetCursor(timestamp=timestamp, attack_result_id=attack_result_id)
+
+    async def get_run_hierarchy_async(
+        self,
+        *,
+        scenario_result_id: str,
+        max_nodes: int = 1000,
+    ) -> ScenarioHierarchyProjection | None:
+        """
+        Get the bounded result hierarchy projection for a scenario run.
+
+        Args:
+            scenario_result_id: The persisted scenario run ID.
+            max_nodes: Maximum nodes to assemble in the hierarchy tree.
+
+        Returns:
+            ScenarioHierarchyProjection | None: The hierarchy projection, or None if the run does not exist.
+        """
+        header_result = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if header_result is None:
+            return None
+
+        try:
+            plan = self._load_run_plan(scenario_result=header_result)
+        except (ValidationError, ValueError):
+            logger.warning(
+                "Scenario run %s has invalid persisted plan metadata; treating the plan as unavailable.",
+                scenario_result_id,
+            )
+            plan = None
+        plan_complete = plan is not None
+        terminal = header_result.scenario_run_state in (
+            ScenarioRunState.COMPLETED,
+            ScenarioRunState.FAILED,
+            ScenarioRunState.CANCELLED,
+        )
+        snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+        objective_scorer_identifier = header_result.objective_scorer_identifier
+        if not isinstance(objective_scorer_identifier, ComponentIdentifier):
+            objective_scorer_identifier = None
+
+        progress_snapshot = await self._progress_read_model.get_snapshot_async(
+            scenario_result_id=scenario_result_id,
+            plan=plan,
+            plan_complete=plan_complete,
+            active_group_ids=snapshot.active_group_ids,
+            terminal=terminal,
+            objective_scorer_identifier=objective_scorer_identifier,
+        )
+
+        return self._progress_read_model.build_scenario_hierarchy(
+            scenario_result_id=scenario_result_id,
+            scenario_name=header_result.scenario_name,
+            scenario_version=header_result.scenario_version,
+            status=header_result.scenario_run_state,
+            snapshot=progress_snapshot,
+            max_nodes=max_nodes,
+        )
+
+    async def get_run_hierarchy_node_async(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_id: str,
+    ) -> ScenarioHierarchyNode | None:
+        """
+        Get bounded single-node hierarchy details and generic conversation projections without full-run hydration.
+
+        Args:
+            scenario_result_id: The persisted scenario run ID.
+            attack_result_id: The target attack result ID.
+
+        Returns:
+            ScenarioHierarchyNode | None: The node details, or None if the node is not found in this run.
+        """
+        deltas = await self._memory.get_scenario_attack_result_deltas_by_ids_async(
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=[attack_result_id],
+        )
+        if not deltas:
+            return None
+
+        target_delta = deltas[0]
+
+        header_result = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        plan = None
+        if header_result is not None:
+            try:
+                plan = self._load_run_plan(scenario_result=header_result)
+            except (ValidationError, ValueError):
+                plan = None
+
+        plan_lookup = ScenarioPlanLookup.from_plan(plan=plan)
+        target_result = self._progress_read_model._map_progress_delta(
+            delta=target_delta,
+            plan_lookup=plan_lookup,
+        )
+
+        child_ids = target_result.child_attack_result_ids
+        children_deltas: list[ScenarioAttackResultDelta] = []
+        children_results: list[ScenarioProgressResult] = []
+        if child_ids:
+            children_deltas = list(
+                await self._memory.get_scenario_attack_result_deltas_by_ids_async(
+                    scenario_result_id=scenario_result_id,
+                    attack_result_ids=child_ids,
+                )
+            )
+            children_results = [
+                self._progress_read_model._map_progress_delta(delta=d, plan_lookup=plan_lookup) for d in children_deltas
+            ]
+
+        conversations = await self._memory.get_attack_result_conversation_projections_async(
+            attack_result_id=attack_result_id,
+            include_messages=True,
+        )
+
+        return self._progress_read_model.build_hierarchy_node(
+            delta=target_delta,
+            result=target_result,
+            children_deltas=children_deltas,
+            children_results=children_results,
+            conversations=conversations,
+        )
 
     async def get_run_results_async(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """

@@ -400,6 +400,8 @@ class ScenarioAttackResultDelta(BaseModel):
     total_retries: int = 0
     error_type: str | None = None
     error_message: str | None = None
+    executed_turns: int = 0
+    outcome_reason: str | None = None
     attribution_data: dict[str, Any] = Field(default_factory=dict)
     attack_metadata: dict[str, Any] = Field(default_factory=dict)
     score: ScenarioProgressScore | None = None

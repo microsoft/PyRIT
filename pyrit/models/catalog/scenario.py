@@ -526,9 +526,11 @@ class AttackRetrySummary(BaseModel):
 
     attack_result_id: str = Field(..., description="Stable ID of the attack result (used to de-duplicate)")
     atomic_attack_name: str = Field(..., description="Atomic-attack cell that retried")
+    total_retries: int = Field(0, ge=0, description="Total retry attempts recorded for this attack")
     retries: list[RetryEvent] = Field(
         default_factory=list, description="Retry attempts, each with component role/name, endpoint, and exception"
     )
+    retries_truncated: bool = Field(False, description="Whether the retries list was truncated to a maximum budget")
 
 
 class ScenarioOverloadSummary(BaseModel):

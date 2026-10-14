@@ -1068,3 +1068,58 @@ def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guar
     compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
     assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql
+
+
+def test_scenario_attack_result_deltas_by_ids_statement_compiles_mssql(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    scenario_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+    stmt = memory_interface._build_scenario_attack_result_deltas_by_ids_statement(
+        scenario_result_id=scenario_id,
+        attack_result_ids=child_ids,
+    )
+    compiled = stmt.compile(dialect=mssql.dialect())
+    compiled_str = str(compiled)
+
+    assert "[AttackResultEntries].attribution_parent_id =" in compiled_str
+    assert "[AttackResultEntries].id IN (" in compiled_str
+    assert "LEFT OUTER JOIN [ScoreEntries]" in compiled_str
+    assert "[AttackResultEntries].executed_turns" in compiled_str
+    assert "[AttackResultEntries].outcome_reason" in compiled_str
+
+
+def test_scenario_attack_result_deltas_by_ids_chunks_over_2100_ids_mssql(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    scenario_id = str(uuid.uuid4())
+    # Generate 2,500 distinct IDs - exceeds SQL Server 2,100 bind parameter limit
+    large_id_count = 2500
+    child_ids = [str(uuid.uuid4()) for _ in range(large_id_count)]
+
+    # 1. Statement generator bounds parameters strictly to _MAX_BIND_VARS - 10
+    stmt = memory_interface._build_scenario_attack_result_deltas_by_ids_statement(
+        scenario_result_id=scenario_id,
+        attack_result_ids=child_ids,
+    )
+    compiled = stmt.compile(dialect=mssql.dialect())
+    # Total bind variables (child IDs + attribution_parent_id) must not exceed 2000
+    assert len(compiled.params) <= 2000
+
+    # 2. Execution chunks IDs in batches and executes each statement within limits
+    session = MagicMock()
+    session.execute.return_value.mappings.return_value.all.return_value = []
+    with patch.object(memory_interface, "_get_session", return_value=session):
+        deltas = memory_interface._execute_get_scenario_attack_result_deltas_by_ids(
+            scenario_result_id=scenario_id,
+            attack_result_ids=child_ids,
+        )
+
+    assert deltas == []
+    # 2,500 IDs with chunk size 1990 requires exactly 2 batches
+    assert session.execute.call_count == 2
+    for call in session.execute.call_args_list:
+        chunk_stmt = call.args[0]
+        chunk_compiled = chunk_stmt.compile(dialect=mssql.dialect())
+        assert len(chunk_compiled.params) <= 2000
