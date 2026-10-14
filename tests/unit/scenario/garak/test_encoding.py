@@ -10,6 +10,7 @@ import pytest
 from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
+from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
@@ -65,6 +66,9 @@ def mock_dataset_config(mock_attack_seed_groups):
     mock_config.with_overrides.return_value = mock_config
     mock_config.sources = ()
     mock_config.max_total = "all"
+    mock_config.max_per_dataset = "all"
+    mock_config.fetch = DatasetFetchPolicy.IF_MISSING
+    mock_config._filters = {}
     mock_config.get_attack_seed_groups_async = AsyncMock(return_value=mock_attack_seed_groups)
     mock_config.dataset_names = ["garak_slur_terms_en", "garak_web_html_js"]
     return mock_config

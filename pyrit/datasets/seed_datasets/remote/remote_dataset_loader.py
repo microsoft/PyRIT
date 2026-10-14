@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import io
 import logging
+import os
 import tempfile
 import zipfile
 from abc import ABC, abstractmethod
@@ -188,8 +189,8 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
         if not date_str:
             return None
         try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
+            return datetime.fromisoformat(date_str)
+        except (ValueError, TypeError, AttributeError):
             return None
 
     def _get_cache_file_name(self, *, source: str, file_type: str) -> str:
@@ -423,7 +424,7 @@ class _RemoteDatasetLoader(SeedDatasetProvider, ABC):
             Returns:
                 Dataset: The loaded dataset from Hugging Face.
             """
-            cache_dir = str(DB_DATA_PATH / "huggingface") if cache else None
+            cache_dir = (os.getenv("HF_DATASETS_CACHE") or str(DB_DATA_PATH / "huggingface")) if cache else None
 
             # Reuse cached data when caching is enabled; force a re-download otherwise so
             # cache=False genuinely picks up upstream edits instead of silently reusing the cache.

@@ -2,9 +2,8 @@
 # Licensed under the MIT license.
 
 import ast
-import asyncio
-import time
 from pathlib import Path
+from threading import get_ident
 from typing import Any
 from unittest.mock import patch
 
@@ -230,23 +229,17 @@ async def test_non_string_mutated_prompt_raises(mock_mitre_data: list[dict[str, 
 
 async def test_fetch_does_not_block_event_loop(mock_mitre_data: list[dict[str, Any]]) -> None:
     loader = _CyberSecEvalMitreDataset()
+    event_loop_thread = get_ident()
 
-    def slow_fetch(**kwargs: Any) -> list[dict[str, Any]]:
-        time.sleep(0.3)
+    def fetch_on_worker(**kwargs: Any) -> list[dict[str, Any]]:
+        assert get_ident() != event_loop_thread
         return mock_mitre_data
 
-    heartbeat_delays: list[float] = []
-    start = time.monotonic()
+    with patch.object(loader, "_fetch_from_url", side_effect=fetch_on_worker) as mock_fetch:
+        dataset = await loader.fetch_dataset_async()
 
-    async def heartbeat() -> None:
-        await asyncio.sleep(0.01)
-        heartbeat_delays.append(time.monotonic() - start)
-
-    with patch.object(loader, "_fetch_from_url", side_effect=slow_fetch):
-        dataset, _ = await asyncio.gather(loader.fetch_dataset_async(), heartbeat())
-
+    mock_fetch.assert_called_once()
     assert len(dataset.seeds) == 4
-    assert heartbeat_delays[0] < 0.2
 
 
 async def test_empty_mutated_prompt_is_skipped_with_warning(

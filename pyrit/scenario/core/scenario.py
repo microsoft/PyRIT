@@ -55,6 +55,12 @@ from pyrit.models import (
     config_hash,
 )
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models.scenario_dataset import (
+    DatasetFetchPolicy,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
+)
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.registry import ScorerRegistry
@@ -63,6 +69,8 @@ from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
 )
+from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
+from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -354,6 +362,11 @@ class Scenario(ABC):
                 opaque=True,
             ),
             Parameter(
+                name="dataset_overrides",
+                description="Serializable dataset edits applied on top of the dataset configuration.",
+                opaque=True,
+            ),
+            Parameter(
                 name="technique_converters",
                 description="Mapping of concrete technique name to extra request converters to append.",
                 opaque=True,
@@ -642,6 +655,22 @@ class Scenario(ABC):
     @final
     async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
+        Estimate without preparation and expose resolved defaults separately from edits.
+
+        Returns:
+            ScenarioRunSizeEstimate: Estimate with dataset defaults and effective settings.
+        """
+        estimate = await self._get_run_size_estimate_async(target_is_configured=target_is_configured)
+        return estimate.model_copy(
+            update={
+                "dataset_options": self.get_dataset_options(),
+                "dataset_defaults": project_dataset_settings(self._resolved_default_dataset_config),
+                "effective_datasets": project_dataset_settings(self._dataset_config),
+            }
+        )
+
+    async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+        """
         Estimate the currently configured run without creating or persisting it.
 
         ``set_params_from_args`` should be called first for a request-specific
@@ -663,6 +692,9 @@ class Scenario(ABC):
         if target_is_configured and self._objective_target is None:
             raise ValueError("target_is_configured requires a resolved objective_target")
         budget = self._get_run_size_budget()
+        cap = self._dataset_config.max_total
+        if cap != "all" and isinstance(budget, BoundedDatasetSize):
+            budget = BoundedDatasetSize(value=min(cap, budget.value))
         dataset_limit = self._get_dataset_limit_input()
         if isinstance(budget, IndeterminateDatasetSize):
             return ScenarioRunSizeEstimate.unavailable(
@@ -744,7 +776,7 @@ class Scenario(ABC):
 
     def _get_dataset_limit_input(self) -> DatasetLimitInput:
         """Return the editable limit, never an aggregate population budget."""
-        if not self.USES_DATASET_SIZE_LIMIT:
+        if not self.get_dataset_options().total_limit:
             return DatasetLimitInput(state=DatasetLimitState.NotApplicable)
         limit = self._dataset_config.max_total
         return DatasetLimitInput(state=DatasetLimitState.Value, value=limit) if limit != "all" else DatasetLimitInput()
@@ -823,7 +855,6 @@ class Scenario(ABC):
 
         dataset_config = params.get("dataset_config")
         self._dataset_config_provided = dataset_config is not None
-        self._dataset_config = (dataset_config if dataset_config else self._default_dataset_config).with_overrides()
         self._max_concurrency = params.get("max_concurrency", 4)
         self._max_retries = params.get("max_retries", 0)
         self._memory_labels = params.get("memory_labels") or {}
@@ -853,7 +884,49 @@ class Scenario(ABC):
                     f"received {[technique.value for technique in self._scenario_techniques]}."
                 )
         self._technique_converters = params.get("technique_converters") or {}
+        self._resolved_default_dataset_config = self._resolve_default_dataset_config().with_overrides()
+        self._dataset_config = (
+            dataset_config if dataset_config is not None else self._resolved_default_dataset_config
+        ).with_overrides()
+        options = self.get_dataset_options()
+        raw_overrides = params.get("dataset_overrides")
+        if raw_overrides is not None:
+            self._dataset_config = apply_dataset_overrides(
+                config=self._dataset_config,
+                request=ScenarioDatasetRequest.model_validate(raw_overrides),
+                options=options,
+            )
         self._validate_runtime_configuration()
+
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        """
+        Resolve parameter-aware defaults before any override or preparation.
+
+        Returns:
+            DatasetAttackConfiguration: Scenario-owned resolved default configuration.
+        """
+        return self._default_dataset_config
+
+    DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """Return the scenario's named-dataset capabilities for the current parameters."""
+        return self.DATASET_OPTIONS
+
+    def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
+        """Return the default dataset settings for the current parameters, without reading memory."""
+        return project_dataset_settings(self._resolve_default_dataset_config())
+
+    async def load_datasets_async(self) -> ScenarioDatasetSettings:
+        """
+        Load missing selected datasets explicitly, without creating or executing a run.
+
+        Returns:
+            ScenarioDatasetSettings: Resolved settings, with the scan's policies unchanged.
+        """
+        self._resolve_runtime_configuration(require_objective_target=False)
+        await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
+        return project_dataset_settings(self._dataset_config)
 
     def _validate_runtime_configuration(self) -> None:
         """
@@ -863,10 +936,18 @@ class Scenario(ABC):
             ValueError: If an ingredient-only scenario receives per-dataset limits.
         """
         self._dataset_config.validate_configuration()
+        cap = self._dataset_config.max_total
+        minimum = max(1, len(self._get_required_objective_keys()))
+        if cap != "all" and cap < minimum:
+            raise ValueError(f"Select at least {minimum} objectives, or select fewer techniques.")
         if not self.USES_DATASET_SIZE_LIMIT and any(
             self._dataset_config.source_limit(source.name) != "all" for source in self._dataset_config.sources
         ):
             raise ValueError("This scenario uses ingredient datasets and does not support per-dataset limits.")
+
+    def _get_required_objective_keys(self) -> list[str]:
+        """Return population names that must retain at least one objective."""
+        return []
 
     @final
     async def initialize_async(self) -> None:
@@ -930,6 +1011,15 @@ class Scenario(ABC):
         else:
             await self._dataset_config.prepare_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
+        if not is_resume and self._dataset_config.max_total != "all":
+            count = sum(len(groups) for groups in seed_groups_by_dataset.values())
+            if count > self._dataset_config.max_total:
+                seed_groups_by_dataset = sample_with_coverage(
+                    groups_by_dataset=seed_groups_by_dataset,
+                    cap=self._dataset_config.max_total,
+                    required_keys=self._get_required_objective_keys(),
+                    key=lambda name, _: name,
+                )
         # A fresh run's result id is chosen now, so attacks built below can already refer to the run.
         new_result_id = uuid.uuid4()
         context = self._build_scenario_context(
