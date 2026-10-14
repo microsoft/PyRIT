@@ -288,27 +288,36 @@ async def test_cancelled_waiter_preserves_run_lock_without_blocking_other_runs()
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-@pytest.mark.parametrize("owner_exit", ["cancellation", "storage-error"])
-async def test_interrupted_owner_keeps_run_lock_for_waiters(owner_exit: str) -> None:
+@pytest.mark.parametrize("owner_exit", ["success", "cancellation", "storage-error"])
+@patch.object(ScenarioProgressReadModel, "_CACHE_MAX_RUNS", 1)
+async def test_owner_handoff_keeps_waiter_cache_under_pressure(owner_exit: str) -> None:
     memory = MagicMock(spec=MemoryInterface)
     first = _make_delta(run_id="run", index=0)
     second = _make_delta(run_id="run", index=1)
     owner_blocked = asyncio.Event()
     waiter_blocked = asyncio.Event()
+    other_blocked = asyncio.Event()
     release_owner = asyncio.Event()
     release_waiter = asyncio.Event()
+    release_other = asyncio.Event()
     cursors: list[AttackResultKeysetCursor | None] = []
 
     async def get_deltas_async(
         *, scenario_result_id: str, cursor: AttackResultKeysetCursor | None, limit: int
     ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        if scenario_result_id == "other":
+            other_blocked.set()
+            await release_other.wait()
+            return [_make_delta(run_id="other")], False
         cursors.append(cursor)
         if len(cursors) == 1:
             return [first], True
         if len(cursors) == 2:
             owner_blocked.set()
             await release_owner.wait()
-            raise RuntimeError("storage failed")
+            if owner_exit == "storage-error":
+                raise RuntimeError("storage failed")
+            return [], False
         if len(cursors) == 3:
             waiter_blocked.set()
             await release_waiter.wait()
@@ -325,6 +334,7 @@ async def test_interrupted_owner_keeps_run_lock_for_waiters(owner_exit: str) -> 
     owner = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="run"))
     waiter = None
     successor = None
+    other = None
     try:
         await asyncio.wait_for(owner_blocked.wait(), timeout=5)
         state = read_model._refresh_states["run"]
@@ -335,19 +345,30 @@ async def test_interrupted_owner_keeps_run_lock_for_waiters(owner_exit: str) -> 
         assert state.callers == 2
         assert not waiter.done()
 
+        other = asyncio.create_task(_get_snapshot_async(read_model=read_model, run_id="other"))
+        await asyncio.wait_for(other_blocked.wait(), timeout=5)
+        assert list(read_model._cache) == ["run", "other"]
+        assert set(read_model._refresh_states) == {"run", "other"}
+
         if owner_exit == "cancellation":
             owner.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await owner
         else:
             release_owner.set()
-            with pytest.raises(RuntimeError, match="storage failed"):
-                await asyncio.wait_for(owner, timeout=5)
+            if owner_exit == "storage-error":
+                with pytest.raises(RuntimeError, match="storage failed"):
+                    await asyncio.wait_for(owner, timeout=5)
+            else:
+                initial = await asyncio.wait_for(owner, timeout=5)
+                assert initial.deltas == (first,)
         await asyncio.wait_for(waiter_blocked.wait(), timeout=5)
         assert read_model._refresh_states["run"] is state
         assert state.callers == 1
         assert state.lock.locked()
         assert read_model._cache["run"] is entry
+        assert len(read_model._cache) == 2
+        assert not other.done()
 
         successor_started = asyncio.Event()
         successor = asyncio.create_task(wait_for_snapshot_async(successor_started))
@@ -365,11 +386,18 @@ async def test_interrupted_owner_keeps_run_lock_for_waiters(owner_exit: str) -> 
         second_cursor = AttackResultKeysetCursor(timestamp=second.timestamp, attack_result_id=second.attack_result_id)
         assert cursors == [None, first_cursor, first_cursor, second_cursor]
         assert not state.lock.locked()
+        assert list(read_model._cache) == ["other"]
+        assert set(read_model._refresh_states) == {"other"}
+
+        release_other.set()
+        await asyncio.wait_for(other, timeout=5)
+        assert len(read_model._cache) == 1
         assert not read_model._refresh_states
     finally:
         release_owner.set()
         release_waiter.set()
-        tasks = get_defined_tasks(owner, waiter, successor)
+        release_other.set()
+        tasks = get_defined_tasks(owner, waiter, successor, other)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
