@@ -1212,7 +1212,8 @@ async def test_get_message_pieces_by_literal_label_key_async(
         ]
     )
 
-    pieces = await sqlite_instance.get_message_pieces_async(labels={key: value})
+    with pytest.warns(DeprecationWarning, match=r"get_message_pieces_async\(labels=\.\.\.\)"):
+        pieces = await sqlite_instance.get_message_pieces_async(labels={key: value})
     assert [p.conversation_id for p in pieces] == ["conv_1"]
 
 
@@ -1235,9 +1236,11 @@ async def test_get_message_pieces_literal_labels_match_one_attack_without_duplic
         ]
     )
 
-    pieces = await sqlite_instance.get_message_pieces_async(labels=labels, role="user")
+    with pytest.warns(DeprecationWarning, match=r"get_message_pieces_async\(labels=\.\.\.\)"):
+        pieces = await sqlite_instance.get_message_pieces_async(labels=labels, role="user")
+        narrowed = await sqlite_instance.get_message_pieces_async(labels=labels, conversation_id="conv_2")
     assert [p.conversation_id for p in pieces] == ["conv_1"]
-    assert await sqlite_instance.get_message_pieces_async(labels=labels, conversation_id="conv_2") == []
+    assert narrowed == []
 
 
 async def test_get_attack_results_by_labels_multiple(sqlite_instance: MemoryInterface):

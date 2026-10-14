@@ -141,6 +141,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _deprecate_message_labels(*, method: str) -> None:
+    """
+    Warn that message-level label filtering is going away.
+
+    Labels live on attack results, so callers should pick conversations from those results.
+
+    Args:
+        method (str): The memory method that received ``labels``.
+    """
+    print_deprecation_message(
+        old_item=f"MemoryInterface.{method}(labels=...)",
+        new_item=(
+            "MemoryInterface.get_attack_results_async(labels=...), then fetch messages for each result's "
+            "conversation_id, get_active_conversation_ids() or get_all_conversation_ids()"
+        ),
+        removed_in="1.4.0",
+    )
+
+
 class AttackStateConflictError(ValueError):
     """An atomic attack write no longer matches the state read by its caller."""
 
@@ -8009,7 +8028,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8025,6 +8046,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_prompt_scores_async")
         return await self._run_database_operation_async(
             self._execute_get_prompt_scores,
             role=role,
@@ -8185,7 +8208,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8209,6 +8234,8 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_message_pieces_async")
         return await self._run_database_operation_async(
             self._execute_get_message_pieces,
             role=role,

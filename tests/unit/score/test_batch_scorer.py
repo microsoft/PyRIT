@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_sample_conversations
 
-from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece
-from pyrit.score import BatchScorer
+from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
+from pyrit.models import AttackOutcome, AttackResult, AttackResultSelection, Message, MessagePiece
+from pyrit.score import BatchScorer, SubStringScorer
 
 
 @pytest.fixture
@@ -76,6 +76,13 @@ class TestBatchScorerScoreResponsesByFilters:
         """Test scoring with all filter parameters."""
         memory = MagicMock(spec=MemoryInterface)
         memory.get_message_pieces_async = AsyncMock(return_value=[sample_conversations[1].message_pieces[0]])
+        test_conversation_id = str(uuid.uuid4())
+        memory.get_attack_results_async = AsyncMock(
+            return_value=[
+                MagicMock(spec=AttackResult, conversation_id=test_conversation_id),
+                MagicMock(spec=AttackResult, conversation_id="other-conversation"),
+            ]
+        )
 
         with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
             scorer = MagicMock()
@@ -83,7 +90,6 @@ class TestBatchScorerScoreResponsesByFilters:
 
             batch_scorer = BatchScorer()
 
-            test_conversation_id = str(uuid.uuid4())
             test_prompt_ids = ["id1", "id2"]
             test_labels = {"test": "value"}
             test_data_type = "text"
@@ -98,11 +104,13 @@ class TestBatchScorerScoreResponsesByFilters:
                 not_data_type=test_not_data_type,
             )
 
-            # Should call memory with all parameters including None for unspecified ones
+            # Labels select attack results first; messages are then filtered without labels.
+            memory.get_attack_results_async.assert_awaited_once_with(
+                labels=test_labels, result_selection=AttackResultSelection.ALL_RESULTS
+            )
             memory.get_message_pieces_async.assert_called_once_with(
                 conversation_id=test_conversation_id,
                 prompt_ids=test_prompt_ids,
-                labels=test_labels,
                 sent_after=None,
                 sent_before=None,
                 original_values=None,
@@ -201,7 +209,6 @@ class TestBatchScorerErrorHandling:
             memory.get_message_pieces_async.assert_called_once_with(
                 conversation_id=None,
                 prompt_ids=None,
-                labels=None,
                 sent_after=None,
                 sent_before=None,
                 original_values=None,
@@ -356,3 +363,48 @@ class TestBatchScorerErrorHandling:
             assert len(scorables) == 1
             assert len(scorables[0].message_piece_ids) == 1
             assert scorables[0].message_piece_ids[0] == original_piece_id
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("narrow_to", "expected"),
+    [(None, {"conv-a", "conv-c"}), ("conv-a", {"conv-a"}), ("conv-b", set())],
+)
+async def test_score_responses_by_labels_uses_the_labelled_attack_conversations_async(
+    *, sqlite_instance: SQLiteMemory, narrow_to: str | None, expected: set[str]
+) -> None:
+    for conversation_id, operation in (("conv-a", "op-a"), ("conv-b", "op-b"), ("conv-c", "op-a")):
+        await sqlite_instance.add_message_pieces_to_memory_async(
+            message_pieces=[
+                MessagePiece(role="user", original_value="ask", conversation_id=conversation_id, sequence=0),
+                MessagePiece(role="assistant", original_value="reply", conversation_id=conversation_id, sequence=1),
+            ]
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    conversation_id=conversation_id,
+                    objective="objective",
+                    outcome=AttackOutcome.FAILURE,
+                    labels={"operation": operation},
+                )
+            ]
+        )
+    batch_scorer = BatchScorer()
+    scorer = SubStringScorer(substring="reply", categories=["test"])
+
+    if not expected:
+        # conv-b isn't labelled op-a, so narrowing to it leaves nothing to score.
+        with pytest.raises(ValueError, match="No entries match"):
+            await batch_scorer.score_responses_by_filters_async(
+                scorer=scorer, labels={"operation": "op-a"}, conversation_id=narrow_to
+            )
+        return
+    scores = await batch_scorer.score_responses_by_filters_async(
+        scorer=scorer, labels={"operation": "op-a"}, conversation_id=narrow_to
+    )
+
+    scored = await sqlite_instance.get_message_pieces_async(prompt_ids=[score.message_piece_id for score in scores])
+    assert {piece.conversation_id for piece in scored} == expected
+    replies = {piece.id for piece in scored if piece.api_role == "assistant"}
+    assert all(score.get_value() for score in scores if score.message_piece_id in replies)
