@@ -184,6 +184,39 @@ def _normalize_attribution_filter_values(*, field: str, raw: str | Sequence[obje
     return tuple(validated)
 
 
+def _activity_operation_name(entry: AttackResultEntry | ScenarioResultEntry) -> str | None:
+    """
+    Read the deprecated Operation name stored on activity.
+
+    TODO(PyRIT 1.4): Remove this helper with Operation name attribution.
+
+    Returns:
+        str | None: The attack's dedicated name, else the ``operation`` label, else None.
+    """
+    name = (entry.labels or {}).get("operation")
+    if isinstance(entry, AttackResultEntry):
+        name = entry.operation or name
+    return name
+
+
+def _check_operation_name_change(*, existing: AttackResultEntry | ScenarioResultEntry, incoming: str | None) -> None:
+    """
+    Allow changing the Operation name only on activity without an Operation ID, as before IDs existed.
+
+    TODO(PyRIT 1.4): Remove this helper with Operation name attribution.
+
+    Raises:
+        ValueError: If the name of activity attributed by Operation ID changes.
+    """
+    if incoming == _activity_operation_name(existing):
+        return
+    if existing.operation_id is not None:
+        raise ValueError("Operation attribution is immutable")
+    print_deprecation_message(
+        old_item="Changing the Operation name of saved activity", new_item="operation_id", removed_in="1.4.0"
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _PreparedScorableContent:
     """A loose-content value prepared for durable database persistence."""
@@ -249,6 +282,7 @@ class ScenarioHistoryRunRecord:
     plan_atomic_groups: str | list[dict[str, Any]] | None
     plan_seed_id_map: str | list[dict[str, str]] | None
     started_at: datetime | None = None
+    operation_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -319,6 +353,7 @@ class _AttackResultQuery:
         "converter_classes",
         "targeted_harm_categories",
         "identifier_filters",
+        "operation_ids",
     )
 
     attack_result_ids: Sequence[str] | None = None
@@ -335,6 +370,7 @@ class _AttackResultQuery:
     labels: Mapping[str, str | Sequence[str]] | None = None
     operator: str | Sequence[str] | None = None
     operation: str | Sequence[str] | None = None
+    operation_ids: Sequence[uuid.UUID] | None = None
     targeted_harm_categories: Sequence[str] | None = None
     identifier_filters: Sequence[IdentifierFilter] | None = None
     scenario_result_id: str | None = None
@@ -586,34 +622,114 @@ class MemoryInterface(abc.ABC):
             return existing[0]
 
     async def get_operations_async(
-        self, *, operation_id: uuid.UUID | None = None, name: str | None = None
+        self,
+        *,
+        operation_ids: Sequence[uuid.UUID] | None = None,
+        name: str | None = None,
     ) -> list[Operation]:
         """
-        Read operations ordered by name, optionally matching an ID or a name regardless of case and spacing.
+        Read operations ordered by name, optionally matching IDs or a name regardless of case and spacing.
 
         Returns:
             list[Operation]: The matching operations.
         """
         statement = select(OperationEntry).order_by(OperationEntry.name_key)
-        if operation_id is not None:
-            statement = statement.where(OperationEntry.id == operation_id)
+        if operation_ids is not None:
+            statement = statement.where(OperationEntry.id.in_(operation_ids))
         if name is not None:
             statement = statement.where(OperationEntry.name_key == operation_name_key(name))
         async with await self.get_session_async() as session:
             return [entry.get_operation() for entry in (await session.scalars(statement)).all()]
 
-    async def add_finding_async(self, finding: Finding) -> Finding:
+    async def require_operation_async(self, *, operation_id: uuid.UUID) -> Operation:
         """
-        Save a finding.
+        Read a saved Operation by ID without creating or resolving a name.
 
         Returns:
-            Finding: The saved finding.
+            Operation: The saved record.
+
+        Raises:
+            LookupError: If the Operation does not exist.
+        """
+        operations = await self.get_operations_async(operation_ids=[operation_id])
+        if not operations:
+            raise LookupError(f"Operation {operation_id} not found")
+        return operations[0]
+
+    async def update_operation_async(self, *, operation_id: uuid.UUID, description: str) -> Operation:
+        """
+        Replace an operation's description. The last save wins; the name and identity are unchanged.
+
+        Returns:
+            Operation: The updated operation.
+
+        Raises:
+            LookupError: If the Operation does not exist.
+        """
+        async with await self.get_session_async() as session, session.begin():
+            entry = await session.get(OperationEntry, operation_id)
+            if entry is None:
+                raise LookupError(f"Operation {operation_id} not found")
+            entry.description = description
+            await session.flush()
+            return entry.get_operation()
+
+    async def resolve_operation_id_async(
+        self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None
+    ) -> uuid.UUID | None:
+        """
+        Return the saved Operation for an ID or a deprecated Operation name, without creating one.
+
+        An ID takes precedence over a name. Names match regardless of case and surrounding whitespace.
+        Until 1.4.0, a name that matches no saved Operation is kept as a plain name rather than rejected.
+
+        TODO(PyRIT 1.4): Remove ``operation_name`` with Operation name attribution.
+
+        Returns:
+            uuid.UUID | None: The saved Operation's ID, or None when no ID is given and no saved Operation
+                has the name.
+
+        Raises:
+            ValueError: If the ID is malformed.
+            LookupError: If the ID does not belong to a saved Operation.
+        """
+        if operation_name is not None:
+            print_deprecation_message(
+                old_item="Attributing activity by Operation name", new_item="operation_id", removed_in="1.4.0"
+            )
+        if operation_id is not None:
+            normalized = operation_id if isinstance(operation_id, uuid.UUID) else uuid.UUID(str(operation_id))
+            return (await self.require_operation_async(operation_id=normalized)).id
+        if operation_name is None:
+            return None
+        operations = await self.get_operations_async(name=operation_name)
+        return operations[0].id if operations else None
+
+    async def add_finding_async(self, *, finding: Finding, evidence: FindingEvidence | None = None) -> Finding:
+        """
+        Save a finding, and optionally its evidence, in one transaction.
+
+        Returns:
+            Finding: The saved finding, or the finding already saved with this ID.
+
+        Raises:
+            IntegrityError: If the insert fails for a reason other than a taken ID.
         """
         entry = FindingEntry(finding)
-        async with await self.get_session_async() as session, session.begin():
-            session.add(entry)
-            await session.flush()
-            return entry.get_finding()
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                session.add(entry)
+                await session.flush()
+                if evidence is not None:
+                    session.add(FindingEvidenceEntry(evidence))
+                    await session.flush()
+                return entry.get_finding()
+        except IntegrityError:
+            async with await self.get_session_async() as session:
+                existing = await session.get(FindingEntry, finding.id)
+                if existing is None:
+                    raise
+                return existing.get_finding()
 
     async def update_finding_async(
         self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
@@ -2191,6 +2307,9 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
+                    existing = session.get(type(entry), entry.id)
+                    self._validate_activity_operation(session=session, entry=entry, existing=existing)
                 session.merge(entry)
                 session.commit()
             except SQLAlchemyError as e:
@@ -2242,6 +2361,20 @@ class MemoryInterface(abc.ABC):
                     raise ValueError("Prompt entries used by scorer observations are immutable.")
                 for entry in entries:
                     entry_in_session = session.get(type(entry), entry.id)  # type: ignore[ty:unresolved-attribute]
+                    if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
+                        assert entry_in_session is None or isinstance(
+                            entry_in_session, (AttackResultEntry, ScenarioResultEntry)
+                        )
+                        current = entry_in_session if entry_in_session is not None else entry
+                        if "operation_id" in update_fields and update_fields["operation_id"] != current.operation_id:
+                            raise ValueError("Operation attribution is immutable")
+                        if "operation" in update_fields:
+                            _check_operation_name_change(existing=current, incoming=update_fields["operation"])
+                        if "operation" in (update_fields.get("labels") or {}):
+                            _check_operation_name_change(
+                                existing=current, incoming=update_fields["labels"]["operation"]
+                            )
+                        self._validate_activity_operation(session=session, entry=entry, existing=entry_in_session)
                     if entry_in_session is None:
                         entry_in_session = session.merge(entry)
                     if isinstance(entry_in_session, AttackResultEntry):
@@ -5100,8 +5233,38 @@ class MemoryInterface(abc.ABC):
                 identifier=AtomicAttackIdentifier.from_component_identifier(attack_result.atomic_attack_identifier),
             )
         entry = AttackResultEntry(entry=attack_result)
+        self._validate_activity_operation(session=session, entry=entry)
         session.add(entry)
         return entry
+
+    @staticmethod
+    def _validate_activity_operation(
+        *,
+        session: Session,
+        entry: AttackResultEntry | ScenarioResultEntry,
+        existing: AttackResultEntry | ScenarioResultEntry | None = None,
+    ) -> None:
+        """
+        Enforce saved references and keep Operation IDs and ID-attributed names unchanged on existing activity.
+
+        Until 1.4.0, new activity may still carry only an Operation name, with a deprecation warning.
+
+        TODO(PyRIT 1.4): Reject Operation names on new activity and drop the name checks.
+
+        Raises:
+            LookupError: If the supplied Operation does not exist.
+            ValueError: If an existing ID, or the name of ID-attributed activity, changes.
+        """
+        if existing is not None:
+            if entry.operation_id != existing.operation_id:
+                raise ValueError("Operation attribution is immutable")
+            _check_operation_name_change(existing=existing, incoming=_activity_operation_name(entry))
+        elif entry.operation_id is None and _activity_operation_name(entry) is not None:
+            print_deprecation_message(
+                old_item="Saving activity with only an Operation name", new_item="operation_id", removed_in="1.4.0"
+            )
+        if entry.operation_id is not None and session.get(OperationEntry, entry.operation_id) is None:
+            raise LookupError(f"Operation {entry.operation_id} not found")
 
     def _execute_add_conversation_branches_to_attack(
         self,
@@ -5293,8 +5456,19 @@ class MemoryInterface(abc.ABC):
     def _apply_attack_fields_in_session(
         self, *, session: Session, entry: AttackResultEntry, update_fields: Mapping[str, Any]
     ) -> None:
-        """Persist prepared fields and their identifier references in the caller's transaction."""
+        """
+        Persist prepared fields and their identifier references in the caller's transaction.
+
+        Raises:
+            ValueError: If an update changes the Operation ID or the name of ID-attributed activity.
+        """
         for field, value in update_fields.items():
+            if field == "operation_id" and value != entry.operation_id:
+                raise ValueError("Operation attribution is immutable")
+            if field == "operation":
+                _check_operation_name_change(existing=entry, incoming=value)
+            if field == "labels" and "operation" in (value or {}):
+                _check_operation_name_change(existing=entry, incoming=value["operation"])
             if field == "atomic_attack_identifier" and value is not None:
                 identifier = AtomicAttackIdentifier.model_validate(value)
                 identifier = AtomicAttackIdentifier.from_component_identifier(
@@ -5434,6 +5608,7 @@ class MemoryInterface(abc.ABC):
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operator: str | Sequence[str] | None = None,
         operation: str | Sequence[str] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
@@ -5486,6 +5661,8 @@ class MemoryInterface(abc.ABC):
                 for that label. Defaults to None.
             operator (str | Sequence[str] | None, optional): Filter by dedicated operator values.
             operation (str | Sequence[str] | None, optional): Filter by dedicated operation values.
+            operation_ids (Sequence[uuid.UUID] | None, optional): Filter by saved Operation IDs.
+                Legacy rows that only carry an operation name never match. Defaults to None.
             targeted_harm_categories (Sequence[str] | None, optional): Filter results by the
                 harm categories targeted by the attack (stored on
                 ``AttackResultEntry.targeted_harm_categories``, auto-populated from the
@@ -5545,6 +5722,7 @@ class MemoryInterface(abc.ABC):
             labels=labels,
             operator=operator,
             operation=operation,
+            operation_ids=operation_ids,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
@@ -5649,6 +5827,8 @@ class MemoryInterface(abc.ABC):
             conditions.append(AttackResultEntry.operator.in_(query.operator))
         if query.operation:
             conditions.append(AttackResultEntry.operation.in_(query.operation))
+        if query.operation_ids:
+            conditions.append(AttackResultEntry.operation_id.in_(query.operation_ids))
         if query.scenario_result_id:
             conditions.append(AttackResultEntry.attribution_parent_id == uuid.UUID(query.scenario_result_id))
         elif not query.include_scenario_attacks:
@@ -6048,6 +6228,8 @@ class MemoryInterface(abc.ABC):
                         session=session,
                         scenario_identifier=scenario_result.scenario_identifier,
                     )
+                for entry in entries:
+                    self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
                 session.commit()
             except SQLAlchemyError:
@@ -6290,6 +6472,7 @@ class MemoryInterface(abc.ABC):
         scenario_names: Sequence[str] | None = None,
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -6316,6 +6499,7 @@ class MemoryInterface(abc.ABC):
             scenario_names=scenario_names,
             statuses=statuses,
             labels=labels,
+            operation_ids=operation_ids,
             cursor=cursor,
             limit=limit,
         )
@@ -9502,6 +9686,7 @@ class MemoryInterface(abc.ABC):
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operator: str | Sequence[str] | None = None,
         operation: str | Sequence[str] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
@@ -9539,6 +9724,7 @@ class MemoryInterface(abc.ABC):
             labels=labels,
             operator=operator,
             operation=operation,
+            operation_ids=operation_ids,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
@@ -9567,6 +9753,7 @@ class MemoryInterface(abc.ABC):
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operator: str | Sequence[str] | None = None,
         operation: str | Sequence[str] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         targeted_harm_categories: Sequence[str] | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
         scenario_result_id: str | None = None,
@@ -9619,6 +9806,8 @@ class MemoryInterface(abc.ABC):
                 for that label. Defaults to None.
             operator (str | Sequence[str] | None, optional): Filter by dedicated operator values.
             operation (str | Sequence[str] | None, optional): Filter by dedicated operation values.
+            operation_ids (Sequence[uuid.UUID] | None, optional): Filter by saved Operation IDs.
+                Legacy rows that only carry an operation name never match. Defaults to None.
             targeted_harm_categories (Sequence[str] | None, optional): Filter results by the
                 harm categories targeted by the attack (stored on
                 ``AttackResultEntry.targeted_harm_categories``, auto-populated from the
@@ -9677,6 +9866,7 @@ class MemoryInterface(abc.ABC):
             labels=labels,
             operator=operator,
             operation=operation,
+            operation_ids=operation_ids,
             targeted_harm_categories=targeted_harm_categories,
             identifier_filters=identifier_filters,
             scenario_result_id=scenario_result_id,
@@ -10087,6 +10277,7 @@ class MemoryInterface(abc.ABC):
         scenario_names: Sequence[str] | None = None,
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -10104,7 +10295,12 @@ class MemoryInterface(abc.ABC):
             removed_in="1.4.0",
         )
         return self._execute_get_scenario_run_history_page(
-            scenario_names=scenario_names, statuses=statuses, labels=labels, cursor=cursor, limit=limit
+            scenario_names=scenario_names,
+            statuses=statuses,
+            labels=labels,
+            operation_ids=operation_ids,
+            cursor=cursor,
+            limit=limit,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.get_scenario_run_history_page)
@@ -10114,6 +10310,7 @@ class MemoryInterface(abc.ABC):
         scenario_names: Sequence[str] | None = None,
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
@@ -10138,6 +10335,7 @@ class MemoryInterface(abc.ABC):
             scenario_names=scenario_names,
             statuses=statuses,
             labels=labels,
+            operation_ids=operation_ids,
             cursor=cursor,
             limit=limit,
         )

@@ -23,6 +23,7 @@ export const useOperationsStyles = makeStyles({
     gap: tokens.spacingHorizontalM,
   },
   heading: { margin: 0, overflowWrap: 'anywhere', minWidth: 0 },
+  headerActions: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
   link: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -57,7 +58,7 @@ export const useOperationsStyles = makeStyles({
     marginTop: tokens.spacingVerticalS,
   },
   description: { whiteSpace: 'pre-wrap', maxWidth: '75ch', marginBottom: 0 },
-  findingActions: { marginTop: tokens.spacingVerticalM },
+  notice: { flexShrink: 0 },
   table: {
     minWidth: '100%',
     tableLayout: 'auto',

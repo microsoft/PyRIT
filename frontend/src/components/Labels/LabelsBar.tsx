@@ -8,13 +8,16 @@ import {
   Popover,
   PopoverTrigger,
   PopoverSurface,
+  mergeClasses,
 } from '@fluentui/react-components'
 import {
   DismissRegular,
   WarningRegular,
   TagRegular,
 } from '@fluentui/react-icons'
+import type { OperationSelectionState } from '@/hooks/useOperationSelection'
 import { labelsApi } from '@/services/api'
+import type { Operation } from '@/types'
 import OperationPicker from './OperationPicker'
 import { useLabelsBarStyles } from './LabelsBar.styles'
 
@@ -29,18 +32,28 @@ const validateValue = (value: string): string | null => {
 
 const DUMMY_VALUES: Record<string, string> = {
   operator: 'roakey',
-  operation: 'op_trash_panda',
 }
 
 const METADATA_KEYS = new Set(['operator', 'operation'])
 
-interface LabelsBarProps {
+export interface OperationControlProps {
+  operation?: OperationSelectionState
+  onOperationChange?: (operation: Operation | null) => void
+  onRetryOperation?: () => void
+}
+
+interface LabelsBarProps extends OperationControlProps {
   labels: Record<string, string>
   onLabelsChange: (labels: Record<string, string>) => void
   operatorReadOnly?: boolean
 }
 
-export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = false }: LabelsBarProps) {
+const NO_OPERATION: OperationSelectionState = { status: 'empty' }
+
+export default function LabelsBar({
+  labels, onLabelsChange, operatorReadOnly = false,
+  operation = NO_OPERATION, onOperationChange = () => {}, onRetryOperation = () => {},
+}: LabelsBarProps) {
   const styles = useLabelsBarStyles()
   const [isPopoverOpen, setIsPopoverOpen] = useState(false)
   const [newKey, setNewKey] = useState('')
@@ -90,7 +103,6 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
         ...resp.labels,
         // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
         operator: [...new Set([...(resp.operators ?? resp.labels.operator ?? []), ...(prev.operator || [])])],
-        operation: [...new Set([...(resp.operations ?? resp.labels.operation ?? []), ...(prev.operation || [])])],
       })))
       .catch(() => setError('Could not load label suggestions.'))
   }, [])
@@ -103,6 +115,8 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
     .filter(([key, value]) => isDummyValue(key, value))
     .map(([key]) => key)
   const hasDummyValues = placeholderKeys.length > 0
+  const operatorTip = operatorReadOnly ? 'Derived from your signed-in account'
+    : isDummyValue('operator', labels.operator ?? '') ? 'Placeholder value — type to change' : null
 
   const validateKey = (key: string): string | null => {
     if (!key) return 'Key is required'
@@ -183,13 +197,6 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
     if (e.key === 'Escape') endEdit(session)
   }
 
-  const handleSelectOperation = (operation: string) => {
-    commitLabels({ ...labelsRef.current, operation })
-    setEditingLabel(null)
-    setEditValue('')
-    setError('')
-  }
-
   const handleAddKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleAddLabel()
     if (e.key === 'Escape') setIsPopoverOpen(false)
@@ -212,10 +219,6 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
   const [visibleCount, setVisibleCount] = useState(Infinity)
 
   const headerEntries = useMemo(() => Object.entries(labels).filter(([key]) => !METADATA_KEYS.has(key)), [labels])
-  const labelEntries = useMemo(
-    () => headerEntries.filter(([key]) => !METADATA_KEYS.has(key)),
-    [headerEntries]
-  )
 
   useEffect(() => {
     const root = rootRef.current
@@ -324,27 +327,14 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
   }
 
   const renderLabelBadge = (key: string, value: string, idx: number) => {
-    const isDummy = isDummyValue(key, value)
-    const isReadOnly = key === 'operator' && operatorReadOnly
-    const isRequired = key === 'operator'
     // The popover renders its own editor, so only one is mounted at a time.
-    const isEditing = editingLabel === key && !isPopoverOpen
-
-    if (isEditing) {
-      // The picker is wider than a plain input, so let its row give way rather
-      // than push the control past the edge the bar clips at.
-      const canShrink = key === 'operation'
+    if (editingLabel === key && !isPopoverOpen) {
       return (
         <div
           key={key}
           data-label-idx={idx}
           className={styles.inputRow}
-          style={{
-            display: 'inline-flex',
-            position: 'relative',
-            flexShrink: canShrink ? 1 : 0,
-            minWidth: canShrink ? 0 : undefined,
-          }}
+          style={{ display: 'inline-flex', position: 'relative', flexShrink: 0 }}
         >
           {renderValueEditor(key, value)}
         </div>
@@ -355,33 +345,28 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
       <div
         key={key}
         data-label-idx={idx}
-        className={`${styles.labelBadge} ${isDummy ? styles.labelDummy : styles.labelNormal}`}
+        className={`${styles.labelBadge} ${styles.labelNormal}`}
         style={{ flexShrink: 0 }}
         // The pill's own padding sits outside the edit control, so a click that
         // lands on it reaches nothing. Forward only those: anything on a child
         // is that child's to handle.
         onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
       >
-        <Tooltip
-          content={isReadOnly ? 'Derived from your signed-in account' : isDummy ? `Placeholder value — click to change` : `Click to edit`}
-          relationship="description"
-        >
+        <Tooltip content="Click to edit" relationship="description">
           <div
             className={styles.labelEdit}
             onClick={() => handleStartEdit(key)}
             onKeyDown={e => handleStartEditKeyDown(e, key)}
             role="button"
-            tabIndex={isReadOnly ? -1 : 0}
-            aria-disabled={isReadOnly}
-            aria-label={isReadOnly ? `Signed-in operator: ${value}` : key === 'operation' && !value
-              ? 'Select operation' : `Edit ${key}${key === 'operation' || isRequired ? '' : ' label'}, currently ${value}`}
+            tabIndex={0}
+            aria-label={`Edit ${key} label, currently ${value}`}
             data-testid={`label-${key}`}
           >
-            <Text size={200} weight="semibold">{key === 'operation' && !value ? 'Select operation' : `${key}:`}</Text>
+            <Text size={200} weight="semibold">{key}:</Text>
             {value && <Text size={200} style={{ whiteSpace: 'nowrap' }}>{value}</Text>}
           </div>
         </Tooltip>
-        {!isRequired && value && (
+        {value && (
           <Button
             className={styles.removeBtn}
             appearance="transparent"
@@ -407,7 +392,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
     return (
       <div
         key={key}
-        className={`${styles.labelBadge} ${isDummyValue(key, value) ? styles.labelDummy : styles.labelNormal}`}
+        className={`${styles.labelBadge} ${styles.labelNormal}`}
         style={{ flexShrink: 0 }}
         onClick={e => { if (e.target === e.currentTarget) handleStartEdit(key) }}
       >
@@ -438,7 +423,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
 
   const renderLabelsList = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {labelEntries.map(([key, value]) => renderPopoverEntry(key, value))}
+      {headerEntries.map(([key, value]) => renderPopoverEntry(key, value))}
     </div>
   )
 
@@ -553,7 +538,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
           <span
             key={key}
             data-label-idx={idx}
-            className={`${styles.labelBadge} ${isDummyValue(key, value) ? styles.labelDummy : styles.labelNormal}`}
+            className={`${styles.labelBadge} ${styles.labelNormal}`}
           >
             <Text size={200} weight="semibold">{key}:</Text>
             <Text size={200} style={{ whiteSpace: 'nowrap' }}>{value}</Text>
@@ -572,7 +557,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
           <Tooltip
             content={
               <div className={styles.iconTooltipBody}>
-                {`${labelEntries.length} label${labelEntries.length === 1 ? '' : 's'} — click to view or add`}
+                {`${headerEntries.length} label${headerEntries.length === 1 ? '' : 's'} — click to view or add`}
               </div>
             }
             relationship="label"
@@ -581,11 +566,11 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
               appearance="subtle"
               size="small"
               icon={<TagRegular />}
-              aria-label={`Labels (${labelEntries.length})`}
+              aria-label={`Labels (${headerEntries.length})`}
               data-testid="labels-icon-btn"
               className={styles.iconButton}
             >
-              <Badge appearance="filled" size="small">{labelEntries.length}</Badge>
+              <Badge appearance="filled" size="small">{headerEntries.length}</Badge>
             </Button>
           </Tooltip>
         </PopoverTrigger>
@@ -605,33 +590,37 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
           <div className={styles.metadataField}>
             <Text size={200} weight="semibold">Operator:</Text>
             <div className={styles.operatorEditor}>
-              <Input size="small" className={styles.operatorInput}
-                value={editingLabel === 'operator' ? editValue : labels.operator ?? ''}
-                readOnly={operatorReadOnly} aria-label={operatorReadOnly ? 'Signed-in operator' : 'Operator'}
-                data-testid="edit-label-operator"
-                onFocus={() => { if (!operatorReadOnly) handleStartEdit('operator') }}
-                onChange={(_, data) => {
-                  if (operatorReadOnly) return
-                  if (editingLabel !== 'operator') handleStartEdit('operator')
-                  setEditValue(data.value.toLowerCase())
-                  setError('')
-                }}
-                onKeyDown={event => {
-                  if (!operatorReadOnly && editingLabel === 'operator') {
-                    if (event.key === 'Enter' || event.key === 'Escape') cancelPendingSave(editSession.current)
-                    handleEditKeyDown(event, 'operator', editSession.current)
-                  }
-                }}
-                onBlur={() => {
-                  if (operatorReadOnly || editingLabel !== 'operator') return
-                  const session = editSession.current
-                  cancelPendingSave(session)
-                  pendingSaves.current.set(session, setTimeout(() => {
-                    pendingSaves.current.delete(session)
-                    saveEdit('operator', session)
-                  }, 150))
-                }}
-              />
+              <Tooltip content={operatorTip ?? ''} relationship="description"
+                {...(operatorTip ? {} : { visible: false })}>
+                <Input size="small" className={mergeClasses(styles.operatorInput,
+                  isDummyValue('operator', labels.operator ?? '') ? styles.metadataPlaceholder : undefined)}
+                  value={editingLabel === 'operator' ? editValue : labels.operator ?? ''}
+                  readOnly={operatorReadOnly} aria-label={operatorReadOnly ? 'Signed-in operator' : 'Operator'}
+                  data-testid="edit-label-operator"
+                  onFocus={() => { if (!operatorReadOnly) handleStartEdit('operator') }}
+                  onChange={(_, data) => {
+                    if (operatorReadOnly) return
+                    if (editingLabel !== 'operator') handleStartEdit('operator')
+                    setEditValue(data.value.toLowerCase())
+                    setError('')
+                  }}
+                  onKeyDown={event => {
+                    if (!operatorReadOnly && editingLabel === 'operator') {
+                      if (event.key === 'Enter' || event.key === 'Escape') cancelPendingSave(editSession.current)
+                      handleEditKeyDown(event, 'operator', editSession.current)
+                    }
+                  }}
+                  onBlur={() => {
+                    if (operatorReadOnly || editingLabel !== 'operator') return
+                    const session = editSession.current
+                    cancelPendingSave(session)
+                    pendingSaves.current.set(session, setTimeout(() => {
+                      pendingSaves.current.delete(session)
+                      saveEdit('operator', session)
+                    }, 150))
+                  }}
+                />
+              </Tooltip>
               {editingLabel === 'operator' && error && <Text size={200} className={styles.errorText}>{error}</Text>}
               {editingLabel === 'operator' && (existingLabels.operator ?? [])
                 .filter(value => value !== labels.operator && value.includes(editValue)).slice(0, 8).length > 0 && (
@@ -657,11 +646,7 @@ export default function LabelsBar({ labels, onLabelsChange, operatorReadOnly = f
             }
           }}>
             <Text size={200} weight="semibold">Operation:</Text>
-            <OperationPicker currentValue={labels.operation ?? ''} onSelect={handleSelectOperation}
-              onMissing={() => handleRemoveLabel('operation')} />
-            {labels.operation && <Button appearance="transparent" size="small" className={styles.removeBtn}
-              icon={<DismissRegular fontSize={12} />} aria-label="Remove operation label"
-              data-testid="remove-label-operation" onClick={() => handleRemoveLabel('operation')} />}
+            <OperationPicker selection={operation} onSelect={onOperationChange} onRetry={onRetryOperation} />
           </div>
         </div>
         {headerEntries

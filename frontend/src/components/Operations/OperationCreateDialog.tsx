@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle, DialogTrigger,
-  Field, Input, MessageBar, MessageBarBody,
+  Field, Input, MessageBar, MessageBarBody, Textarea,
 } from '@fluentui/react-components'
 
 import { operationsApi } from '@/services/api'
@@ -17,16 +17,19 @@ interface OperationCreateDialogProps {
   returnFocusRef?: React.RefObject<HTMLInputElement | null>
   onCreated: (operation: Operation) => void
   onUseExisting?: (operation: Operation) => void
+  /** Prefills the name, for example when registering a name that was used before it was saved. */
+  initialName?: string
 }
 
 export default function OperationCreateDialog({
-  trigger, open: controlledOpen, onOpenChange, returnFocusRef, onCreated, onUseExisting,
+  trigger, open: controlledOpen, onOpenChange, returnFocusRef, onCreated, onUseExisting, initialName = '',
 }: OperationCreateDialogProps) {
   const styles = useOperationsStyles()
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
   const setOpen = (value: boolean): void => { setInternalOpen(value); onOpenChange?.(value) }
-  const [name, setName] = useState('')
+  const [name, setName] = useState(initialName)
+  const [description, setDescription] = useState('')
   const [error, setError] = useState('')
   const [existing, setExisting] = useState<Operation | null>(null)
   const [saving, setSaving] = useState(false)
@@ -40,7 +43,7 @@ export default function OperationCreateDialog({
     wasOpen.current = open
   }, [open, returnFocusRef])
 
-  const resetDraft = (): void => { setName(''); setError(''); setExisting(null) }
+  const resetDraft = (): void => { setName(''); setDescription(''); setError(''); setExisting(null) }
   const finish = (operation: Operation, callback: (operation: Operation) => void): void => {
     setOpen(false)
     resetDraft()
@@ -53,7 +56,7 @@ export default function OperationCreateDialog({
     setError('')
     setExisting(null)
     try {
-      const operation = await operationsApi.create({ name })
+      const operation = await operationsApi.create({ name, description })
       finish(operation, onCreated)
     } catch (cause: unknown) {
       const conflict = conflictingOperation(cause)
@@ -94,6 +97,10 @@ export default function OperationCreateDialog({
                 <Input className={styles.input} value={name} disabled={saving} maxLength={128}
                   name="operation-name" autoComplete="off"
                   onChange={(_, data) => { setName(data.value); setExisting(null) }} />
+              </Field>
+              <Field label="Description" hint="Optional. The engagement's purpose and scope.">
+                <Textarea value={description} disabled={saving} resize="vertical" name="operation-description"
+                  autoComplete="off" onChange={(_, data) => { setDescription(data.value) }} />
               </Field>
               <div className={styles.actions}>
                 <DialogTrigger disableButtonEnhancement>

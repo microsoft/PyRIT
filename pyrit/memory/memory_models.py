@@ -16,6 +16,7 @@ from sqlalchemy import (
     INTEGER,
     JSON,
     Boolean,
+    CheckConstraint,
     Computed,
     DateTime,
     Float,
@@ -83,6 +84,7 @@ from pyrit.models import (
     TargetIdentifier,
     scorable_from_dict,
 )
+from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import operation_name_key
 from pyrit.models.results.attack_result import normalize_legacy_attack_attribution
 
@@ -244,8 +246,12 @@ class OperationEntry(Base):
     id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
     name: Mapped[str] = mapped_column(Unicode(128), nullable=False)
     # Case folding can expand a 128-unit name up to three times, for example "ΐ".
-    name_key: Mapped[str] = mapped_column(Unicode(384), nullable=False)
+    # Binary collation keeps SQL Server from folding the key further than operation_name_key does.
+    name_key: Mapped[str] = mapped_column(
+        Unicode(384).with_variant(Unicode(384, collation="Latin1_General_100_BIN2"), "mssql"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    description: Mapped[str] = mapped_column(Unicode, nullable=False)
 
     def __init__(self, operation: Operation) -> None:
         """Store a validated operation and its identity key."""
@@ -254,6 +260,7 @@ class OperationEntry(Base):
         self.name = validated.name
         self.name_key = operation_name_key(validated.name)
         self.created_at = validated.created_at.astimezone(UTC)
+        self.description = validated.description
 
     def get_operation(self) -> Operation:
         """
@@ -262,14 +269,31 @@ class OperationEntry(Base):
         Returns:
             Operation: The stored operation.
         """
-        return Operation(id=self.id, name=self.name, created_at=self.created_at)
+        return Operation(id=self.id, name=self.name, created_at=self.created_at, description=self.description)
 
 
 class FindingEntry(Base):
     """A saved finding, kept separate from scores and attack results."""
 
     __tablename__ = "FindingEntries"
-    __table_args__ = (Index("ix_FindingEntries_operation_id", "operation_id"),)
+    # Harm types are deliberately unconstrained: HarmCategory changes over time, so reads map unknown values instead.
+    __table_args__ = (
+        Index("ix_FindingEntries_operation_id", "operation_id"),
+        CheckConstraint(
+            "severity IN ('critical', 'important', 'moderate', 'low', 'informational', 'other')",
+            name="ck_findings_severity",
+        ),
+        CheckConstraint(
+            "(severity = 'other' AND severity_other IS NOT NULL AND LTRIM(RTRIM(severity_other)) <> '') "
+            "OR (severity <> 'other' AND severity_other IS NULL)",
+            name="ck_findings_severity_other",
+        ),
+        CheckConstraint(
+            "(harm_type = 'Other' AND harm_type_other IS NOT NULL AND LTRIM(RTRIM(harm_type_other)) <> '') "
+            "OR ((harm_type IS NULL OR harm_type <> 'Other') AND harm_type_other IS NULL)",
+            name="ck_findings_harm_type_other",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
     operation_id: Mapped[uuid.UUID] = mapped_column(
@@ -300,9 +324,17 @@ class FindingEntry(Base):
         """
         Rebuild the finding model.
 
+        A stored harm type that is no longer a ``HarmCategory`` maps through its aliases, or to
+        Other with the stored text, rather than making the finding unreadable.
+
         Returns:
             Finding: The stored finding.
         """
+        harm_type, harm_type_other = self.harm_type, self.harm_type_other
+        if harm_type is not None and harm_type not in set(HarmCategory):
+            # parse() logs a warning when it falls back to Other.
+            parsed = HarmCategory.parse(harm_type)
+            harm_type, harm_type_other = parsed, harm_type if parsed == HarmCategory.OTHER else None
         return Finding(
             id=self.id,
             operation_id=self.operation_id,
@@ -310,8 +342,8 @@ class FindingEntry(Base):
             description=self.description,
             severity=self.severity,
             severity_other=self.severity_other,
-            harm_type=self.harm_type,
-            harm_type_other=self.harm_type_other,
+            harm_type=harm_type,
+            harm_type_other=harm_type_other,
             created_at=self.created_at,
         )
 
@@ -2053,6 +2085,9 @@ class AttackResultEntry(Base):
     attack_metadata: Mapped[dict[str, str | int | float | bool] | None] = mapped_column(JSON, nullable=True)
     operator: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
     operation: Mapped[str | None] = mapped_column(Unicode(128), nullable=True)
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("OperationEntries.id", name="fk_attack_results_operation"), nullable=True, index=True
+    )
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     targeted_harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     pruned_conversation_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -2138,6 +2173,7 @@ class AttackResultEntry(Base):
         )
         self.operator = operator
         self.operation = operation
+        self.operation_id = entry.operation_id
         self.labels = remaining_labels
         self.targeted_harm_categories = entry.targeted_harm_categories or None
 
@@ -2322,6 +2358,7 @@ class AttackResultEntry(Base):
             timestamp=self.timestamp or datetime.now(tz=UTC),
             operator=self.operator,
             operation=self.operation,
+            operation_id=self.operation_id,
             labels=self.labels or {},
             targeted_harm_categories=self.targeted_harm_categories or [],
             error_message=self.error_message,
@@ -2403,6 +2440,9 @@ class ScenarioResultEntry(Base):
     display_group_map_json: Mapped[str | None] = mapped_column(Unicode, nullable=True)
     labels: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     number_tries: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
+    operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("OperationEntries.id", name="fk_scenario_results_operation"), nullable=True, index=True
+    )
     completion_time = mapped_column(UTCDateTime, nullable=False)
     timestamp = mapped_column(UTCDateTime, nullable=False)
 
@@ -2463,6 +2503,7 @@ class ScenarioResultEntry(Base):
         self.objective_scorer_identifier = scorer_identifier.model_dump() if scorer_identifier else None
         self.scenario_run_state = entry.scenario_run_state.value
         self.labels = entry.labels
+        self.operation_id = entry.operation_id
         self.number_tries = entry.number_tries
         self.completion_time = entry.completion_time
 
@@ -2516,6 +2557,7 @@ class ScenarioResultEntry(Base):
             scenario_run_state=ScenarioRunState(self.scenario_run_state),
             labels=self.labels or {},
             creation_time=self.timestamp,
+            operation_id=self.operation_id,
             number_tries=self.number_tries,
             completion_time=self.completion_time,
             display_group_map=display_group_map or {},

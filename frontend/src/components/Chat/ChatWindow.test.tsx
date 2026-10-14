@@ -31,11 +31,10 @@ import * as messageMapper from "../../utils/messageMapper";
 
 jest.mock("./FindingEvidenceDialog", () => ({
   __esModule: true,
-  default: ({ attackResultId, conversationId, disabled }: {
-    attackResultId: string; conversationId: string; disabled: boolean;
-  }) => attackResultId && conversationId ? <button disabled={disabled} data-attack={attackResultId} data-conversation={conversationId}>
-    Link to finding
-  </button> : null,
+  default: ({ attackResultId, conversationId, disabled, open }: {
+    attackResultId: string; conversationId: string; disabled: boolean; open: boolean;
+  }) => <div data-testid="finding-evidence-dialog" data-attack={attackResultId} data-conversation={conversationId}
+    data-disabled={String(disabled)} data-open={String(open)} />,
 }));
 
 const buildCapabilities = (
@@ -429,36 +428,34 @@ describe("ChatWindow Integration", () => {
     await user.keyboard("{Escape}");
   }
 
-  it("provides the persisted viewed identity to the attachment action, not the toolbar Operation", async () => {
+  it("opens the finding dialog for the viewed conversation from Attack Result Details", async () => {
+    const user = userEvent.setup();
     mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
-      activeConversationId="related" labels={{ operation: "Different toolbar Operation" }} /></TestWrapper>);
-    const action = await screen.findByRole("button", { name: "Link to finding" });
-    await waitFor(() => { expect(action).toBeEnabled(); });
-    expect(action).toHaveAttribute("data-attack", "owner");
-    expect(action).toHaveAttribute("data-conversation", "related");
-    const conversationActions = screen.getByRole("group", { name: "Conversation actions" });
-    expect(within(conversationActions).getByRole("button", { name: "Link to finding" })).toBe(action);
-    expect(within(conversationActions).getByRole("button", { name: "Export conversation" })).toBeInTheDocument();
-    expect(within(conversationActions).getByRole("button", { name: "Toggle conversations panel" })).toBeInTheDocument();
-    expect(within(conversationActions).queryByRole("switch")).not.toBeInTheDocument();
-    expect(within(conversationActions).queryByRole("button", { name: "New Attack" })).not.toBeInTheDocument();
+      activeConversationId="related" outcome="undetermined" labels={{ operation: "Different toolbar Operation" }} /></TestWrapper>);
+    const dialog = screen.getByTestId("finding-evidence-dialog");
+    await waitFor(() => { expect(dialog).toHaveAttribute("data-disabled", "false"); });
+    expect(dialog).toHaveAttribute("data-attack", "owner");
+    expect(dialog).toHaveAttribute("data-conversation", "related");
+    expect(dialog).toHaveAttribute("data-open", "false");
+    expect(screen.queryByRole("button", { name: "Link to finding" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" }));
+    await user.click(await screen.findByRole("button", { name: "Add as finding" }));
+    expect(dialog).toHaveAttribute("data-open", "true");
+    await waitFor(() => { expect(screen.queryByText("Attack Result Details")).not.toBeInTheDocument(); });
   });
 
-  it("keeps the attachment workflow mounted across viewed conversation changes so pending creation can recover", async () => {
+  it("keeps the attachment workflow mounted across viewed conversation changes", async () => {
     mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Saved").messages);
     mockedMapper.backendMessagesToFrontend.mockReturnValue([{ role: "user", content: "Saved", timestamp: "" }]);
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
       activeConversationId="related" /></TestWrapper>);
-    const action = await screen.findByRole("button", { name: "Link to finding" });
-    await waitFor(() => { expect(action).toBeEnabled(); });
+    const dialog = screen.getByTestId("finding-evidence-dialog");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
       activeConversationId="another" /></TestWrapper>);
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Link to finding" })).toHaveAttribute("data-conversation", "another");
-    });
-    expect(screen.getByRole("button", { name: "Link to finding" })).toBe(action);
+    await waitFor(() => { expect(dialog).toHaveAttribute("data-conversation", "another"); });
+    expect(screen.getByTestId("finding-evidence-dialog")).toBe(dialog);
   });
 
   it.each([404, 503])("distinguishes evidence-origin message load status %s", async (status: number) => {
@@ -479,7 +476,8 @@ describe("ChatWindow Integration", () => {
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="owner" conversationId="main"
       activeConversationId="main" findingEvidenceId="123e4567-e89b-12d3-a456-426614174000" /></TestWrapper>);
     expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Link to finding" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-attack", "");
+    expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
     expect(screen.getByRole("textbox")).toBeDisabled();
   });
 
@@ -1817,6 +1815,8 @@ describe("ChatWindow Integration", () => {
           onConversationCreated={onConversationCreated}
           onAttackChange={onAttackChange}
           conversationId={null}
+          labels={{ operator: 'testuser' }}
+          operationId="operation-1"
         />
       </TestWrapper>
     );
@@ -1828,7 +1828,8 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith({
         target_registry_name: "openai_chat_1",
-        labels: { operator: 'testuser', operation: 'test_op' },
+        labels: { operator: 'testuser' },
+        operation_id: "operation-1",
         system_prompt: undefined,
       });
       expect(onConversationCreated).toHaveBeenCalledWith("ar-conv-1", "conv-1", undefined);

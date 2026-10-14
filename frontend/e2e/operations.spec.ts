@@ -2,10 +2,85 @@ import { test, expect } from '@playwright/test'
 
 import type { Finding, Operation } from '../src/types'
 
+for (const width of [1280, 390]) {
+  test(`wraps long finding text in detail and evidence picker at ${width}px @seeded`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height: 844 })
+    const version = await (await request.get('/api/version')).json()
+    const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+    const operationResponse = await request.post('/api/operations', {
+      headers, data: { name: `Wrapping ${width} ${Date.now()}` },
+    })
+    expect(operationResponse.status()).toBe(201)
+    const operation: Operation = await operationResponse.json()
+    const title = `Long finding ${'unbroken'.repeat(35)}`
+    const severity = `Custom severity ${'classification'.repeat(16)}`
+    const harmType = `Custom harm ${'unbroken'.repeat(25)}`
+    const findingResponse = await request.post(`/api/operations/${operation.id}/findings`, {
+      headers, data: { title, severity: 'other', severity_other: severity, harm_type: 'Other', harm_type_other: harmType },
+    })
+    expect(findingResponse.status()).toBe(201)
+
+    await page.goto(`/operations/${operation.id}`)
+    const heading = page.getByRole('heading', { name: title, exact: true })
+    await expect(heading).toBeVisible()
+    const finding = page.getByRole('listitem').filter({ has: heading })
+    const badge = finding.getByText(severity, { exact: true })
+    await expect(badge).toBeVisible()
+    expect(await finding.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    expect(await badge.evaluate(element =>
+      element.scrollHeight <= element.clientHeight && element.scrollWidth <= element.clientWidth,
+    )).toBeTruthy()
+    const badgeBox = await badge.boundingBox()
+    const timeBox = await finding.locator('time').boundingBox()
+    if (!badgeBox || !timeBox) throw new Error('Expected visible finding metadata.')
+    expect(badgeBox.x + badgeBox.width <= timeBox.x || badgeBox.y + badgeBox.height <= timeBox.y).toBeTruthy()
+    await expect(finding.getByText(`Harm-type: ${harmType}`, { exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+
+    const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
+    expect(targetResponse.ok()).toBeTruthy()
+    const target = await targetResponse.json()
+    const attackResponse = await request.post('/api/attacks', {
+      headers, data: {
+        target_registry_name: target.target_registry_name,
+        operation_id: operation.id,
+        prepended_conversation: [{ role: 'user', pieces: [{ original_value: 'Saved offline evidence.' }] }],
+      },
+    })
+    expect(attackResponse.ok()).toBeTruthy()
+    const attack = await attackResponse.json()
+    await page.goto(`/attacks/${attack.attack_result_id}/conversations/${attack.conversation_id}`)
+    await page.getByTestId('objective-outcome-button').click()
+    await page.getByRole('button', { name: 'Add as finding' }).click()
+    const dialog = page.getByRole('dialog')
+    const radio = dialog.getByRole('radio', { name: new RegExp('Long finding') })
+    await expect(radio).toBeVisible()
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    const pickerBadge = dialog.getByText(severity, { exact: true })
+    expect(await pickerBadge.evaluate(element =>
+      element.scrollHeight <= element.clientHeight && element.scrollWidth <= element.clientWidth,
+    )).toBeTruthy()
+    const label = dialog.locator('label').filter({ hasText: title })
+    expect(await label.evaluate(element => element.scrollWidth <= element.clientWidth)).toBeTruthy()
+    const pickerBadgeBox = await pickerBadge.boundingBox()
+    const harmBox = await dialog.getByText(`Harm-type: ${harmType}`, { exact: true }).boundingBox()
+    if (!pickerBadgeBox || !harmBox) throw new Error('Expected visible picker classifications.')
+    expect(pickerBadgeBox.y + pickerBadgeBox.height).toBeLessThanOrEqual(harmBox.y)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy()
+    await radio.focus()
+    await page.keyboard.press('Space')
+    await expect(radio).toBeChecked()
+    await expect(dialog.getByRole('button', { name: 'Attach conversation' })).toBeEnabled()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+  })
+}
+
 test('creates a unique operation and records findings within it @seeded', async ({ page, request }, testInfo) => {
   test.setTimeout(90_000)
   const name = `Red team / α% ${Date.now()}`
-  const title = 'Human assessment without an attack'
+  const title = `Human assessment ${'with a long title '.repeat(10)}`
+  const description = 'Long supporting details '.repeat(18)
   await page.goto('/findings')
   await expect(page).toHaveURL(/\/operations$/)
   await expect(page.getByRole('heading', { name: 'Operations', exact: true })).toBeVisible()
@@ -39,6 +114,7 @@ test('creates a unique operation and records findings within it @seeded', async 
   await expect(dialog.getByRole('combobox', { name: 'Operation' })).toHaveCount(0)
   await dialog.getByRole('textbox', { name: 'Title' }).fill(title)
   await dialog.getByRole('combobox', { name: 'Severity' }).selectOption('informational')
+  await dialog.getByRole('textbox', { name: 'Description' }).fill(description)
   const savedResponse = page.waitForResponse(response =>
     response.url().endsWith(`/api/operations/${operation.id}/findings`) && response.request().method() === 'POST')
   await dialog.getByRole('button', { name: 'Save finding' }).click()
@@ -48,6 +124,15 @@ test('creates a unique operation and records findings within it @seeded', async 
   expect(finding.operation_id).toBe(operation.id)
   await expect(page.getByRole('heading', { level: 2, name: title })).toBeVisible()
   await expect(page.getByRole('button', { name: 'New finding' })).toBeFocused()
+  await page.setViewportSize({ width: 390, height: 300 })
+  const confirmation = page.locator('[aria-live="polite"]').filter({ hasText: 'Finding saved:' })
+  const confirmationBox = await confirmation.boundingBox()
+  const findingBox = await page.getByRole('heading', { level: 2, name: title }).boundingBox()
+  expect(confirmationBox).not.toBeNull()
+  expect(findingBox).not.toBeNull()
+  expect(await confirmation.evaluate(element => element.scrollHeight <= element.clientHeight)).toBeTruthy()
+  expect(confirmationBox!.y + confirmationBox!.height).toBeLessThanOrEqual(findingBox!.y)
+  await page.setViewportSize({ width: 1280, height: 720 })
   await page.reload()
   await expect(page.getByRole('heading', { level: 2, name: title })).toBeVisible()
 
@@ -89,7 +174,7 @@ test('creates a unique operation and records findings within it @seeded', async 
   await expect(page.getByRole('button', { name: 'New finding' })).toBeFocused()
 })
 
-test('selects saved operations inline and revisits exact-name attack history @seeded', async ({ page, request }) => {
+test('selects saved operations inline and revisits ID-scoped attack history @seeded', async ({ page, request }) => {
   test.setTimeout(90_000)
   const name = `Engagement / α% & ${Date.now()}`
   await page.goto('/')
@@ -109,7 +194,7 @@ test('selects saved operations inline and revisits exact-name attack history @se
   await page.reload()
   await expect(bar.getByRole('combobox', { name: 'Operation' })).toHaveValue(name)
 
-  await bar.getByRole('button', { name: 'Remove operation label' }).click()
+  await bar.getByRole('button', { name: 'Clear operation', exact: true }).click()
   await bar.getByRole('combobox', { name: 'Operation', exact: true }).click()
   await page.getByTestId('edit-label-operation').fill('not saved anywhere')
   await expect(page.getByRole('option', { name: 'not saved anywhere', exact: true })).toHaveCount(0)
@@ -129,39 +214,75 @@ test('selects saved operations inline and revisits exact-name attack history @se
   const targetResponse = await request.post('/api/targets', { headers, data: { type: 'TextTarget', params: {} } })
   expect(targetResponse.ok()).toBeTruthy()
   const target = await targetResponse.json()
+  let sourceAttack: { attack_result_id: string; conversation_id: string } | null = null
   for (let index = 0; index < 7; index++) {
     const response = await request.post('/api/attacks', {
-      headers, data: { target_registry_name: target.target_registry_name, operation: name },
+      headers, data: {
+        target_registry_name: target.target_registry_name,
+        operation_id: operation.id,
+        ...(index === 0 ? {
+          prepended_conversation: [{ role: 'user', pieces: [{ original_value: 'Saved offline evidence.' }] }],
+        } : {}),
+      },
     })
     expect(response.ok()).toBeTruthy()
     const attack = await response.json()
+    if (index === 0) sourceAttack = attack
     const updated = await request.patch(`/api/attacks/${attack.attack_result_id}`, {
       headers, data: { objective: `Offline saved history ${index}` },
     })
     expect(updated.ok()).toBeTruthy()
   }
-  const other = await request.post('/api/attacks', {
-    headers, data: { target_registry_name: target.target_registry_name, operation: name.toUpperCase() },
+  const otherOperationResponse = await request.post('/api/operations', {
+    headers, data: { name: `Other ${name}` },
   })
-  expect(other.ok()).toBeTruthy()
+  expect(otherOperationResponse.status()).toBe(201)
+  const otherOperation: Operation = await otherOperationResponse.json()
+  for (const operationId of [otherOperation.id, null]) {
+    const other = await request.post('/api/attacks', {
+      headers, data: { target_registry_name: target.target_registry_name, operation_id: operationId },
+    })
+    expect(other.ok()).toBeTruthy()
+  }
   const finding = await request.post(`/api/operations/${operation.id}/findings`, {
     headers, data: { title: 'Independent human finding', description: '', severity: 'low' },
   })
   expect(finding.status()).toBe(201)
+  if (!sourceAttack) throw new Error('Expected a saved attack for the evidence test.')
+  await page.route(/\/api\/operations\/[^/]+\/findings\/[^/]+\/evidence$/, async route => {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await route.fulfill({
+      status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'Attach failed' }),
+    })
+  })
+  await page.goto(`/attacks/${sourceAttack.attack_result_id}/conversations/${sourceAttack.conversation_id}`)
+  await page.getByTestId('objective-outcome-button').click()
+  await page.getByRole('button', { name: 'Add as finding' }).click()
+  await page.getByRole('radio', { name: /Independent human finding/ }).click()
+  await page.getByRole('button', { name: 'Attach conversation' }).click()
+  const busyAttach = page.getByRole('button', { name: 'Attaching...' })
+  await expect(busyAttach).toBeFocused()
+  const attachError = page.getByText('Could not attach: Attach failed')
+  await expect(attachError).toBeVisible()
+  await expect(page.locator('[aria-live="polite"]').filter({ hasText: 'Could not attach: Attach failed' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Attach conversation' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.unroute(/\/api\/operations\/[^/]+\/findings\/[^/]+\/evidence$/)
   await page.goto(`/operations/${operation.id}`)
   await expect(page.getByRole('heading', { name: 'Independent human finding', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Recent attacks', exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Recent scanner runs', exact: true })).toHaveCount(0)
-  const historyLink = page.getByRole('link', { name: 'View execution history', exact: true })
+  const historyLink = page.getByRole('link', { name: 'All execution history', exact: true })
   const href = await historyLink.getAttribute('href')
-  expect(new URL(href!, 'http://localhost').searchParams.get('operation')).toBe(name)
+  expect(new URL(href!, 'http://localhost').searchParams.getAll('operation_id')).toEqual([operation.id])
   await historyLink.click()
   await expect(page).toHaveURL(/\/history\/attacks\?/)
   await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
   await expect(page.getByRole('combobox', { name: 'All operations' })).toHaveValue(name)
   await page.getByRole('tab', { name: 'Scanner', exact: true }).click()
   await expect(page).toHaveURL(/\/history\/scanner\?/)
-  expect(new URL(page.url()).searchParams.get('operation')).toBe(name)
+  expect(new URL(page.url()).searchParams.getAll('operation_id')).toEqual([operation.id])
   const returnedAttacks = page.waitForResponse(response =>
     new URL(response.url()).pathname === '/api/attacks' && response.request().method() === 'GET')
   await page.getByRole('tab', { name: 'Attacks', exact: true }).click()

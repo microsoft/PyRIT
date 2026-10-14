@@ -35,6 +35,20 @@ export const useLabelsBarStyles = makeStyles({
   },
   metadata: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalM, minWidth: 0 },
   metadataField: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, minWidth: 0 },
+  metadataPlaceholder: {
+    backgroundColor: tokens.colorPaletteYellowBackground2,
+    border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
+  },
+  srOnly: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: '0',
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0,0,0,0)',
+    whiteSpace: 'nowrap',
+  },
   operatorEditor: { position: 'relative', display: 'flex', flexDirection: 'column' },
   operatorInput: { width: '100px', ...mobileTouchTargetHeight },
   measureRow: {
@@ -62,10 +76,6 @@ export const useLabelsBarStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground3,
     border: `1px solid ${tokens.colorNeutralStroke1}`,
   },
-  labelDummy: {
-    backgroundColor: tokens.colorPaletteYellowBackground2,
-    border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
-  },
   labelEdit: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -90,6 +100,7 @@ export const useLabelsBarStyles = makeStyles({
   },
   actionButton: { flexShrink: 0, ...mobileTouchTargetHeight },
   operationEditor: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, minWidth: 0 },
+  operationStatus: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS },
   popover: {
     [NARROW_VIEWPORT_QUERY]: {
       boxSizing: 'border-box',

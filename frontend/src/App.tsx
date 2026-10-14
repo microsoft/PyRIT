@@ -31,6 +31,7 @@ import { useAttackTargetResolution } from './hooks/useAttackTargetResolution'
 import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
+import { useOperationSelection } from './hooks/useOperationSelection'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
@@ -40,7 +41,10 @@ import {
 } from './components/History/scenarioHistoryFilters'
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
-import type { AttackOutcome, AttackSummary, BackendScore, TargetInfo, TargetInstance, TargetPreferences, TargetReference, UserPreferences } from './types'
+import type {
+  AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetPreferences, TargetReference,
+  UserPreferences,
+} from './types'
 import {
   resolveTargetReference,
   targetReference,
@@ -147,6 +151,8 @@ interface ServerDefaults {
   generation: string
   revision: number
   labels: Record<string, string>
+  /** A configured Operation name to propose; it is never resolved to a saved Operation automatically. */
+  operation: string | null
   error: string | null
 }
 
@@ -241,6 +247,21 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }).filter((entry): entry is [string, string] => entry[1] !== null),
   ), [defaultLabels, preferences.labels, operatorAlias])
 
+  const operationSelection = preferences.operation !== undefined ? preferences.operation
+    : defaultsCurrent && serverDefaults?.operation ? { name: serverDefaults.operation } : null
+  const operation = useOperationSelection(operationSelection, generation)
+  const operationReady = operation.state.status === 'empty' || operation.state.status === 'resolved'
+  const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
+  const newActivityReady = defaultsReady && operationReady
+  const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
+    ? 'Choose a saved Operation, register, or clear this one to start new attacks and scans.'
+    : undefined
+  const { remember: rememberOperation } = operation
+  const handleOperationChange = useCallback((selected: Operation | null) => {
+    if (selected) rememberOperation(selected)
+    updatePreferences((current: UserPreferences) => ({ ...current, operation: selected ? { id: selected.id } : null }))
+  }, [rememberOperation, updatePreferences])
+
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
     const changedKeys = Object.keys({ ...globalLabels, ...labels })
       .filter((key: string) => !(operatorAlias && key === 'operator') && labels[key] !== globalLabels[key])
@@ -297,9 +318,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     const path = tab === 'attacks' ? HISTORY_ATTACKS_PATH : HISTORY_SCANNER_PATH
     const search = tab === 'attacks' ? lastHistorySearch.current : lastScenarioHistorySearch.current
     const params = new URLSearchParams(search)
-    params.delete('operation')
-    for (const operation of searchParams.getAll('operation')) {
-      params.append('operation', operation)
+    params.delete('operation_id')
+    for (const operationId of searchParams.getAll('operation_id')) {
+      params.append('operation_id', operationId)
     }
     const query = params.toString()
     navigate(path + (query ? `?${query}` : ''))
@@ -332,6 +353,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           generation,
           revision: defaultsRevision,
           labels: { ...DEFAULT_GLOBAL_LABELS, ...data.default_labels },
+          operation: data.default_operation ?? null,
           error: null,
         })
         if (data.display || data.version) {
@@ -343,6 +365,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           generation,
           revision: defaultsRevision,
           labels: previous?.labels ?? DEFAULT_GLOBAL_LABELS,
+          operation: previous?.operation ?? null,
           error: toApiError(error).detail,
         }))
       }
@@ -638,7 +661,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onHumanScoreChange={handleHumanScoreChange}
       onAttackChange={handleAttackChange}
       labels={globalLabels}
-      defaultsReady={defaultsReady}
+      operationId={operationId}
+      defaultsReady={newActivityReady}
+      newActivityBlockedReason={operationBlockedReason}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
       attackTarget={readyAttack ? readyAttack.target : null}
@@ -680,6 +705,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
             onStartTour={startTour}
             labels={globalLabels}
             onLabelsChange={handleGlobalLabelsChange}
+            operation={operation.state}
+            onOperationChange={handleOperationChange}
+            onRetryOperation={operation.retry}
             operatorReadOnly={Boolean(operatorAlias)}
             toolbarRef={setChatToolbarContainer}
           >
@@ -696,6 +724,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     </Button>
                   )}
                 </MessageBarBody>
+              </MessageBar>
+            )}
+            {operationBlockedReason && (
+              <MessageBar intent="warning">
+                <MessageBarBody>{operationBlockedReason}</MessageBarBody>
               </MessageBar>
             )}
             {preferenceError && (
@@ -775,7 +808,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
                     defaultAdversarialTarget={targetDefaults.adversarialTarget}
                     labels={globalLabels}
-                    defaultsReady={defaultsReady}
+                    operationId={operationId}
+                    defaultsReady={newActivityReady}
                     onNavigate={handleNavigate}
                   />
                 }

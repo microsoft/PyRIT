@@ -8,16 +8,18 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from pyrit.backend.models.operations import (
+    FindingCreateRequest,
     FindingEvidenceAttachResponse,
     FindingEvidenceCreateRequest,
     FindingEvidenceListResponse,
     FindingListResponse,
     FindingOptionsResponse,
     OperationListResponse,
+    OperationUpdateRequest,
 )
 from pyrit.backend.services.operation_service import (
     DuplicateOperationError,
-    FindingEvidenceAttributionError,
+    FindingConflictError,
     FindingEvidenceNotFoundError,
     FindingNotFoundError,
     OperationNotFoundError,
@@ -84,17 +86,36 @@ async def get_operation_async(operation_id: UUID) -> Operation:
     return await _require_operation_async(OperationService().get_async(operation_id))
 
 
-@router.post("/{operation_id}/findings", response_model=Finding, status_code=status.HTTP_201_CREATED)
-async def create_operation_finding_async(*, operation_id: UUID, request: FindingCreate) -> Finding:
+@router.patch("/{operation_id}", response_model=Operation)
+async def update_operation_async(*, operation_id: UUID, request: OperationUpdateRequest) -> Operation:
     """
-    Record a finding within an operation.
+    Replace an operation's description. The last save wins.
+
+    Returns:
+        Operation: The updated operation.
+    """
+    return await _require_operation_async(OperationService().update_async(operation_id=operation_id, request=request))
+
+
+@router.post("/{operation_id}/findings", response_model=Finding, status_code=status.HTTP_201_CREATED)
+async def create_operation_finding_async(*, operation_id: UUID, request: FindingCreateRequest) -> Finding:
+    """
+    Record a finding within an operation, optionally with one saved conversation as evidence.
+
+    Retrying with the same ID and content returns the saved finding.
 
     Returns:
         Finding: The saved finding.
+
+    Raises:
+        HTTPException: 409 when the ID already belongs to a different finding.
     """
-    return await _require_operation_async(
-        OperationService().create_finding_async(operation_id=operation_id, request=request)
-    )
+    try:
+        return await _require_operation_async(
+            OperationService().create_finding_async(operation_id=operation_id, request=request)
+        )
+    except FindingConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get("/{operation_id}/findings", response_model=FindingListResponse)
@@ -204,5 +225,3 @@ async def _require_operation_async(pending: Awaitable[T]) -> T:
         return await pending
     except (OperationNotFoundError, FindingNotFoundError, FindingEvidenceNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except FindingEvidenceAttributionError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

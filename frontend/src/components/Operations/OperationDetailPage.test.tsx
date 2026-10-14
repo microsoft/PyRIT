@@ -9,7 +9,7 @@ import OperationDetailPage from './OperationDetailPage'
 
 jest.mock('@/services/api', () => ({
   operationsApi: {
-    get: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
+    get: jest.fn(), update: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
     updateFinding: jest.fn(), deleteFinding: jest.fn(),
     listFindingEvidence: jest.fn(), detachFindingEvidence: jest.fn(),
     getFindingOptions: jest.fn(),
@@ -52,6 +52,27 @@ beforeEach(() => {
   jest.mocked(scenariosApi.listRuns).mockResolvedValue({ items: [], pagination: { limit: 5, has_more: false } })
 })
 
+it('adds and edits the operation description, keeping the draft after a failed save', async () => {
+  const user = userEvent.setup()
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: 'Add description' }))
+  let dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Web app only')
+  jest.mocked(operationsApi.update).mockRejectedValueOnce(new Error('Storage unavailable'))
+  await user.click(within(dialog).getByRole('button', { name: 'Save description' }))
+  expect(await within(dialog).findByText(/Could not save description: Storage unavailable/)).toBeInTheDocument()
+  jest.mocked(operationsApi.update).mockResolvedValueOnce({ ...OPERATION, description: 'Web app only' })
+  await user.click(within(dialog).getByRole('button', { name: 'Save description' }))
+  expect(await screen.findByText('Web app only')).toBeInTheDocument()
+  expect(screen.getByText('Operation description saved.')).toBeInTheDocument()
+  expect(operationsApi.update).toHaveBeenLastCalledWith('op-1', { description: 'Web app only' })
+
+  await user.click(await screen.findByRole('button', { name: 'Edit description' }))
+  dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('Web app only')
+})
+
 it('refreshes evidence counts without collapsing the expanded list after detachment', async () => {
   const user = userEvent.setup()
   const evidence = {
@@ -73,14 +94,17 @@ it('refreshes evidence counts without collapsing the expanded list after detachm
   expect(await screen.findByText('No evidence attached.')).toBeInTheDocument()
 })
 
-it('links to exact-name execution history without fetching or duplicating activity', async () => {
+it('puts all execution history after the findings without fetching or duplicating activity', async () => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   renderPage()
-  expect(await screen.findByRole('heading', { name: FINDING.title })).toBeInTheDocument()
-  const link = screen.getByRole('link', { name: 'View execution history' })
+  const finding = await screen.findByRole('heading', { name: FINDING.title })
+  const link = screen.getByRole('link', { name: 'All execution history' })
   const url = new URL(link.getAttribute('href') ?? '', 'http://localhost')
   expect(url.pathname).toBe('/history/attacks')
-  expect(url.searchParams.get('operation')).toBe(OPERATION.name)
+  expect(url.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
+  expect(url.searchParams.has('operation')).toBe(false)
+  expect(finding.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.queryByText('Human assessments, separate from attack outcomes and scores.')).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Recent attacks' })).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Recent scanner runs' })).not.toBeInTheDocument()
   expect(attacksApi.listAttacks).not.toHaveBeenCalled()
@@ -103,9 +127,27 @@ it('shows the operation and records a finding within it', async () => {
   expect(await screen.findByRole('heading', { level: 2, name: FINDING.title })).toBeInTheDocument()
   expect(screen.getByText('Informational')).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', {
-    title: FINDING.title, severity: 'informational', description: '',
+    id: expect.any(String), title: FINDING.title, severity: 'informational', description: '',
     severity_other: null, harm_type: null, harm_type_other: null,
   })
+})
+
+it('links an optional evidence conversation when the finding is created, but not when editing', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ items: [FINDING], has_more: false, next_offset: null })
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: 'New finding' }))
+  const dialog = screen.getByRole('dialog')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'With evidence')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Evidence conversation ID' }), 'conversation-1')
+  await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+  await waitFor(() => expect(operationsApi.createFinding).toHaveBeenCalledWith('op-1', expect.objectContaining({
+    title: 'With evidence', conversation_id: 'conversation-1',
+  })))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await user.click(await screen.findByRole('button', { name: `Edit finding: ${FINDING.title}` }))
+  expect(within(screen.getByRole('dialog')).queryByRole('textbox', { name: 'Evidence conversation ID' }))
+    .not.toBeInTheDocument()
 })
 
 it('reports a missing operation with a way back', async () => {

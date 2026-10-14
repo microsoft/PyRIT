@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
-    from pyrit.models import ScenarioResult
+    from pyrit.models import Operation, ScenarioResult
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
@@ -51,6 +51,16 @@ def _cprint(text: str, *, color: str | None = None, bold: bool = False) -> None:
 
 def _header(text: str) -> None:
     _cprint(f"\n  {text}", color="cyan", bold=True)
+
+
+def print_operation_list(*, items: list[Operation]) -> None:
+    """Print readable directory names alongside the IDs accepted by --operation-id."""
+    if not items:
+        print("No Operations found.")
+        return
+    _header("Operations")
+    for item in items:
+        print(f"  {item.name}  {item.id}")
 
 
 def _truncate_text(text: str, max_length: int) -> str:

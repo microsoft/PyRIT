@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import {
-  Badge, Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  MessageBar, MessageBarBody, mergeClasses, Spinner, Text,
+  Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  MessageBar, MessageBarBody, Spinner, Text,
 } from '@fluentui/react-components'
 import { ArrowLeftRegular } from '@fluentui/react-icons'
 
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import { findingSeverityLabel, findingSeverityColor } from '@/utils/findingSeverity'
 import type { Finding, FindingCreate, FindingListItem, FindingListResponse, Operation } from '@/types'
-import FindingDialog from './FindingDialog'
+import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
 import FindingEvidenceList from './FindingEvidenceList'
+import FindingSeverityBadge from './FindingSeverityBadge'
+import OperationDescriptionDialog from './OperationDescriptionDialog'
 import { useOperationsStyles } from './Operations.styles'
 
 const PAGE_SIZE = 20
@@ -88,10 +89,12 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
     setParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
   }
 
-  const save = async (draft: FindingCreate): Promise<void> => {
+  const save = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
     const saved = editing
       ? await operationsApi.updateFinding(operationId, editing.id, draft)
-      : await operationsApi.createFinding(operationId, draft)
+      : await operationsApi.createFinding(operationId, {
+        ...draft, id: attempt.id, ...(attempt.conversationId ? { conversation_id: attempt.conversationId } : {}),
+      })
     setNotice(`Finding ${editing ? 'updated' : 'saved'}: ${saved.title}`)
     setOpen(false)
     setEditing(null)
@@ -151,27 +154,24 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
     <li key={finding.id} className={styles.item}>
       <h2 className={styles.title}>{finding.title}</h2>
       <div className={styles.metadata}>
-        <Badge appearance="tint" color={findingSeverityColor(finding.severity)}>
-          {findingSeverityLabel(finding)}
-        </Badge>
+        <FindingSeverityBadge finding={finding} />
         <time dateTime={finding.created_at}>{new Date(finding.created_at).toLocaleString()}</time>
       </div>
       {finding.harm_type && <Text>Harm-type: {finding.harm_type === 'Other' ? finding.harm_type_other : finding.harm_type}</Text>}
       {finding.description && <p className={styles.description}>{finding.description}</p>}
       <FindingEvidenceList operationId={operationId} findingId={finding.id} count={finding.evidence_count}
-        onDetached={() => { setEvidenceRevision(value => value + 1) }} />
-      <div className={mergeClasses(styles.actions, styles.findingActions)}>
-        <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`} onClick={event => {
-          returnFocusRef.current = event.currentTarget
-          setEditing(finding)
-          setOpen(true)
-        }}>Edit</Button>
-        <Button className={styles.button} aria-label={`Delete finding: ${finding.title}`} onClick={event => {
-          returnFocusRef.current = event.currentTarget
-          setDeleteError('')
-          setDeleting(finding)
-        }}>Delete</Button>
-      </div>
+        onDetached={() => { setEvidenceRevision(value => value + 1) }} actions={<>
+          <Button className={styles.button} aria-label={`Edit finding: ${finding.title}`} onClick={event => {
+            returnFocusRef.current = event.currentTarget
+            setEditing(finding)
+            setOpen(true)
+          }}>Edit</Button>
+          <Button className={styles.button} aria-label={`Delete finding: ${finding.title}`} onClick={event => {
+            returnFocusRef.current = event.currentTarget
+            setDeleteError('')
+            setDeleting(finding)
+          }}>Delete</Button>
+        </>} />
     </li>
   )
 
@@ -182,12 +182,18 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
         <Text as="h1" size={600} weight="semibold" className={styles.heading} translate="no">
           {current.operation.name}
         </Text>
-        <Button ref={newFindingRef} appearance="primary" className={styles.button} onClick={event => {
-          returnFocusRef.current = event.currentTarget
-          setEditing(null)
-          setOpen(true)
-        }}>New finding</Button>
-        {open && <FindingDialog editing={editing !== null}
+        <div className={styles.headerActions}>
+          <OperationDescriptionDialog operation={current.operation} onSaved={operation => {
+            setOperationState({ key: operationKey, status: 'loaded', operation })
+            setNotice('Operation description saved.')
+          }} />
+          <Button ref={newFindingRef} appearance="primary" className={styles.button} onClick={event => {
+            returnFocusRef.current = event.currentTarget
+            setEditing(null)
+            setOpen(true)
+          }}>New finding</Button>
+        </div>
+        {open && <FindingDialog editing={editing !== null} evidenceField={editing === null}
           initialValues={editing ? {
             title: editing.title, description: editing.description, severity: editing.severity,
             severity_other: editing.severity_other ?? null, harm_type: editing.harm_type ?? null,
@@ -195,6 +201,7 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
           } : undefined}
           onSave={save} onClose={() => { setOpen(false); setEditing(null) }} />}
       </header>
+      {current.operation.description && <p className={styles.description}>{current.operation.description}</p>}
       <Dialog open={deleting !== null} onOpenChange={(_, data) => {
         if (!removing && !data.open) { setDeleting(null); setDeleteError('') }
       }}>
@@ -216,11 +223,9 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <Link className={styles.link} to={`/history/attacks?${filtersToSearchParams({
-        ...DEFAULT_HISTORY_FILTERS, operation: [current.operation.name],
-      })}`}>View execution history</Link>
-      <Text>Human assessments, separate from attack outcomes and scores.</Text>
-      {notice && <MessageBar intent="success" aria-live="polite"><MessageBarBody>{notice}</MessageBarBody></MessageBar>}
+      {notice && <MessageBar className={styles.notice} intent="success" aria-live="polite">
+        <MessageBarBody>{notice}</MessageBarBody>
+      </MessageBar>}
       {settledKey !== requestKey ? <Spinner label="Loading findings…" /> : error ? (
         <MessageBar intent="error"><MessageBarBody>
           Could not load findings: {error}{' '}
@@ -238,6 +243,9 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
           </div>
         </>
       )}
+      <Link className={styles.link} to={`/history/attacks?${filtersToSearchParams({
+        ...DEFAULT_HISTORY_FILTERS, operationId: [current.operation.id],
+      })}`}>All execution history</Link>
     </section>
   )
 }

@@ -247,7 +247,7 @@ async function activateMockTarget(page: Page) {
 
 /** Send a message and wait for the response. */
 async function sendAndWait(page: Page, text: string, responseText: string) {
-  const input = page.getByRole("textbox");
+  const input = page.getByTestId("chat-input");
   await input.fill(text);
   await page.getByRole("button", { name: /send/i }).click();
   await expect(page.getByText(responseText)).toBeVisible({ timeout: 10000 });
@@ -339,7 +339,7 @@ test.describe("Error: accepted send with target processing failure", () => {
     await activateMockTarget(page);
     await sendAndWait(page, "Setup message", "Reply to: Setup message");
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Preserve this draft");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -412,7 +412,7 @@ test.describe("Error: backend 500 on send message", () => {
     await sendAndWait(page, "Setup message", "Reply to: Setup message");
 
     // Second send should fail
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("This should fail");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -439,7 +439,7 @@ test.describe("Error: backend 500 on send message", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("First send fails");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -484,7 +484,7 @@ test.describe("Error: network error on send message", () => {
     await sendAndWait(page, "Setup message", "Reply to: Setup message");
 
     // Second send should fail with network error
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Network fail test");
     await page.getByRole("button", { name: /send/i }).click();
 
@@ -636,7 +636,7 @@ test.describe("Error: create attack fails", () => {
     await page.goto("/");
     await activateMockTarget(page);
 
-    const input = page.getByRole("textbox");
+    const input = page.getByTestId("chat-input");
     await input.fill("Should fail to create");
     await page.getByRole("button", { name: /send/i }).click();
 

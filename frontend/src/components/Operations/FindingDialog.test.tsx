@@ -7,6 +7,8 @@ import { operationsApi } from '@/services/api'
 
 jest.mock('@/services/api', () => ({ operationsApi: { getFindingOptions: jest.fn() } }))
 
+const ATTEMPT = { id: expect.any(String), conversationId: '' }
+
 beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Hate Speech', 'Malware', 'Other'] })
@@ -28,7 +30,7 @@ describe('FindingDialog', () => {
     await waitFor(() => { expect(onSave).toHaveBeenCalledWith({
       title: 'Human assessment', severity: 'critical', description: 'Notes',
       severity_other: null, harm_type: null, harm_type_other: null,
-    }) })
+    }, ATTEMPT) })
   })
 
   it('retains an edited draft on error and permits a corrected retry', async () => {
@@ -66,7 +68,7 @@ describe('FindingDialog', () => {
     expect(onSave).toHaveBeenCalledWith({
       title: 'Custom', description: '', severity: 'other', severity_other: '  Team severity  ',
       harm_type: 'Other', harm_type_other: '  Team harm  ',
-    })
+    }, ATTEMPT)
     await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'low')
     await user.click(screen.getByRole('combobox', { name: 'Harm-type' }))
     await user.click(await screen.findByRole('option', { name: 'Not set', exact: true }))
@@ -75,7 +77,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
     expect(onSave).toHaveBeenLastCalledWith({
       title: 'Custom', description: '', severity: 'low', severity_other: null, harm_type: null, harm_type_other: null,
-    })
+    }, ATTEMPT)
   })
 
   it('searches canonical harm choices without treating typed search text as a custom category', async () => {
@@ -89,7 +91,19 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('option', { name: 'Malware' }))
     expect(screen.getByRole('combobox', { name: 'Harm-type' })).toHaveValue('Malware')
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ harm_type: 'Malware', harm_type_other: null }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ harm_type: 'Malware', harm_type_other: null }), ATTEMPT)
+  })
+
+  it('keeps Other selectable when a category search has no match', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}><FindingDialog onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    const picker = screen.getByRole('combobox', { name: 'Harm-type' })
+    await waitFor(() => expect(picker).toBeEnabled())
+    await user.type(picker, 'organization-specific-risk')
+    const listbox = await screen.findByRole('listbox')
+    expect(within(listbox).getByRole('option', { name: 'Other', exact: true })).toBeEnabled()
+    await user.click(within(listbox).getByRole('option', { name: 'Other', exact: true }))
+    expect(screen.getByRole('textbox', { name: 'Other harm-type' })).toBeInTheDocument()
   })
 
   it('reports category loading failures, retains an edit draft, and retries without clearing fields', async () => {
@@ -107,7 +121,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Retry harm categories' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ harm_type_other: 'Team harm', severity_other: 'Team severity' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ harm_type_other: 'Team harm', severity_other: 'Team severity' }), ATTEMPT)
   })
 
   it('preserves custom harm text when the current Other option is selected again', async () => {
@@ -133,13 +147,32 @@ describe('FindingDialog', () => {
     expect(onSave).not.toHaveBeenCalled()
   })
 
-  it('does not require taxonomy loading to retry an already-created finding attachment', async () => {
+  it('keeps one finding ID while a retry sends the same input, and starts a new one after an edit', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValue(new Error('Response lost'))
+    render(<FluentProvider theme={webLightTheme}><FindingDialog onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Once')
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    await user.click(await screen.findByRole('button', { name: 'Save finding' }))
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), ' edited')
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(3))
+    const [first, retry, edited] = onSave.mock.calls.map(([, attempt]) => attempt.id)
+    expect(retry).toBe(first)
+    expect(edited).not.toBe(first)
+  })
+
+  it('offers an optional evidence conversation only when asked and sends it trimmed', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn().mockResolvedValue(undefined)
-    render(<FluentProvider theme={webLightTheme}><FindingDialog recovery={<p>Saved finding recovery</p>}
-      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
-    expect(operationsApi.getFindingOptions).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Retry attachment' }))
-    expect(onSave).toHaveBeenCalledTimes(1)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField onSave={onSave} onClose={jest.fn()} />
+    </FluentProvider>)
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'With evidence')
+    await user.type(screen.getByRole('textbox', { name: 'Evidence conversation ID' }), '  conversation-1 ')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'With evidence' }), {
+      id: expect.any(String), conversationId: 'conversation-1',
+    })
   })
 })

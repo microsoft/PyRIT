@@ -81,9 +81,10 @@ it('creates an operation and opens it', async () => {
   const dialog = screen.getByRole('dialog')
   expect(within(dialog).getByRole('button', { name: 'Create operation' })).toBeDisabled()
   await user.type(within(dialog).getByRole('textbox', { name: 'Name' }), ' Case ')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Web app only')
   await user.click(within(dialog).getByRole('button', { name: 'Create operation' }))
   expect(await screen.findByTestId('location')).toHaveTextContent('/operations/op-2')
-  expect(operationsApi.create).toHaveBeenCalledWith({ name: ' Case ' })
+  expect(operationsApi.create).toHaveBeenCalledWith({ name: ' Case ', description: 'Web app only' })
 })
 
 it('links to the existing operation when the name is taken', async () => {

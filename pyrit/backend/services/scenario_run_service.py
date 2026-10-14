@@ -357,6 +357,7 @@ class ScenarioRunService:
                 "techniques": request.techniques if request.techniques is not None else identifier.techniques,
                 "dataset_names": request.dataset_names if request.dataset_names is not None else identifier.datasets,
                 "labels": dict(stored.labels),
+                "operation_id": stored.operation_id,
             },
             deep=True,
         )
@@ -381,6 +382,7 @@ class ScenarioRunService:
         """
         if self._stopping:
             raise RuntimeError("Scenario run scheduling is stopping.")
+        request = await self._validate_run_operation_async(request=request)
         resumed_from_cancelled = await self._is_run_cancelled_async(scenario_result_id=request.scenario_result_id)
         if request.scenario_result_id:
             self._preparing_run_ids.add(request.scenario_result_id)
@@ -612,6 +614,34 @@ class ScenarioRunService:
                 if not task.cancelled() and task.exception() is not None:
                     logger.debug(f"A scenario initialization task failed during teardown: {task.exception()}")
 
+    async def _validate_run_operation_async(self, *, request: RunScenarioRequest) -> RunScenarioRequest:
+        """
+        Check the saved reference before initializers or provider-backed preparation.
+
+        A fresh run's explicit ID wins over a deprecated ``labels.operation`` name, which is then removed.
+        Otherwise the name stays for the scenario to resolve.
+
+        Returns:
+            The request carrying its stored run attribution when resuming, or its checked ID.
+
+        Raises:
+            LookupError: If a supplied Operation ID does not exist.
+            ValueError: If continuation attempts to change attribution.
+        """
+        if request.scenario_result_id:
+            stored = await self._memory.get_scenario_result_header_async(scenario_result_id=request.scenario_result_id)
+            if stored is None:
+                raise ScenarioRunNotFoundError(f"Scenario run '{request.scenario_result_id}' not found.")
+            if request.operation_id is not None and request.operation_id != stored.operation_id:
+                raise ValueError("Operation attribution is immutable on continuation")
+            return request.model_copy(update={"operation_id": stored.operation_id})
+        if request.operation_id is None:
+            return request
+        await self._memory.require_operation_async(operation_id=request.operation_id)
+        # TODO(PyRIT 1.4): Remove with Operation name attribution, which the scenario resolves until then.
+        labels = {key: value for key, value in (request.labels or {}).items() if key != "operation"}
+        return request.model_copy(update={"labels": labels if request.labels is not None else None})
+
     async def _prepare_run_async(self, *, request: RunScenarioRequest) -> _PreparedRun:
         """
         Resolve and initialize the scenario for a run request.
@@ -651,6 +681,7 @@ class ScenarioRunService:
                 max_retries=request.max_retries,
                 memory_labels=request.labels,
             )
+            init_kwargs["operation_id"] = request.operation_id
             scenario = await self._initialize_scenario_async(request=request, init_kwargs=init_kwargs)
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
@@ -705,6 +736,7 @@ class ScenarioRunService:
         scenario_names: Sequence[str] | None = None,
         statuses: Sequence[ScenarioRunState | str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
+        operation_ids: Sequence[uuid.UUID] | None = None,
         limit: int = 100,
         cursor: str | None = None,
     ) -> ScenarioRunListResponse:
@@ -715,6 +747,8 @@ class ScenarioRunService:
             scenario_names: Registered or persisted scenario names to match.
             statuses: Run states to match.
             labels: Labels with OR-within-key and AND-across-key semantics.
+            operation_ids: Saved Operation IDs to match. Legacy runs that only carry an
+                operation label never match.
             limit: Maximum number of runs to return.
             cursor: Opaque cursor from the previous page.
 
@@ -730,13 +764,14 @@ class ScenarioRunService:
             }
         )
         normalized_labels = normalize_label_filters(labels=labels)
-        fingerprint = fingerprint_filters(
-            filters={
-                "scenario_names": normalized_names,
-                "statuses": normalized_statuses,
-                "labels": normalized_labels,
-            }
-        )
+        fingerprint_values: dict[str, Any] = {
+            "scenario_names": normalized_names,
+            "statuses": normalized_statuses,
+            "labels": normalized_labels,
+        }
+        if operation_ids:
+            fingerprint_values["operation_ids"] = [str(operation_id) for operation_id in operation_ids]
+        fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
         after = (
             ScenarioHistoryKeysetCursor(
@@ -750,6 +785,7 @@ class ScenarioRunService:
             scenario_names=normalized_names,
             statuses=normalized_statuses,
             labels=normalized_labels,
+            operation_ids=operation_ids,
             cursor=after,
             limit=limit,
         )
@@ -767,12 +803,24 @@ class ScenarioRunService:
                 **(await self._memory.get_scenario_history_aggregates_async(scenario_result_ids=unusable_plan_ids)),
             }
         aggregates = await self._recount_with_sdk_statistics_async(aggregates=aggregates, plans=plans)
+        linked_ids = {record.operation_id for record in records if record.operation_id is not None}
+        operation_names = (
+            {
+                operation.id: operation.name
+                for operation in await self._memory.get_operations_async(operation_ids=list(linked_ids))
+            }
+            if linked_ids
+            else {}
+        )
         items = [
             self._build_history_summary(
                 record=record,
                 atomic_groups=plans[record.scenario_result_id],
                 aggregate=aggregates.get(record.scenario_result_id)
                 or ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
+                operation_name=operation_names.get(record.operation_id)
+                if record.operation_id is not None
+                else record.labels.get("operation"),
             )
             for record in records
         ]
@@ -1626,6 +1674,7 @@ class ScenarioRunService:
         record: ScenarioHistoryRunRecord,
         atomic_groups: list[ScenarioRunPlanAtomicGroup] | None,
         aggregate: ScenarioHistoryAggregate,
+        operation_name: str | None = None,
     ) -> ScenarioRunListItem:
         """
         Map lightweight persisted history projections to the public summary DTO.
@@ -1704,6 +1753,8 @@ class ScenarioRunService:
             objective_achieved_rate=int((successful / completed) * 100) if completed else 0,
             total_retries=aggregate.total_retries,
             labels=record.labels,
+            operation_id=record.operation_id,
+            operation_name=operation_name,
             completed_at=record.completed_at if terminal else None,
             pyrit_version=record.pyrit_version,
             target=target,

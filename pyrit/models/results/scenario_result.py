@@ -82,6 +82,7 @@ class ScenarioResult(BaseModel):
     scenario_run_state: ScenarioRunState = ScenarioRunState.CREATED
     #: Optional labels.
     labels: dict[str, str] = Field(default_factory=dict)
+    operation_id: uuid.UUID | None = None
     #: When the scenario result was created.
     creation_time: datetime = Field(default_factory=lambda: datetime.now(UTC))
     #: Optional completion timestamp.

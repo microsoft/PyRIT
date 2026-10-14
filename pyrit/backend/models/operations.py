@@ -2,11 +2,13 @@
 # Licensed under the MIT license.
 
 from enum import Enum
+from typing import Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.models import Finding, FindingEvidence, FindingSeverity, Operation
+from pyrit.backend.models.attacks import ScoreView
+from pyrit.models import Finding, FindingCreate, FindingEvidence, FindingSeverity, Operation
 from pyrit.models.harm_category import HarmCategory
 
 
@@ -28,6 +30,14 @@ class OperationListResponse(BaseModel):
     items: list[OperationListItem]
 
 
+class OperationUpdateRequest(BaseModel):
+    """The editable fields of an operation. The name cannot be changed here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str
+
+
 class FindingListItem(Finding):
     """A finding with its evidence count."""
 
@@ -40,6 +50,33 @@ class FindingListResponse(BaseModel):
     items: list[FindingListItem]
     has_more: bool
     next_offset: int | None
+
+
+class FindingCreateRequest(FindingCreate):
+    """
+    A finding to record, optionally with one saved conversation as evidence.
+
+    Sending the same ``id`` and content again returns the saved finding, so a client can retry safely.
+    """
+
+    id: UUID | None = None
+    conversation_id: str | None = Field(None, min_length=1, max_length=128)
+    attack_result_id: UUID | None = Field(None, description="The conversation's attack; looked up when omitted")
+
+    @model_validator(mode="after")
+    def _require_conversation_for_attack(self) -> Self:
+        """
+        Reject an attack reference that names no conversation.
+
+        Returns:
+            Self: The validated request.
+
+        Raises:
+            ValueError: If an attack is given without a conversation.
+        """
+        if self.attack_result_id is not None and self.conversation_id is None:
+            raise ValueError("attack_result_id requires conversation_id.")
+        return self
 
 
 class FindingEvidenceCreateRequest(BaseModel):
@@ -68,13 +105,24 @@ class EvidenceAvailability(str, Enum):
 
 
 class FindingEvidenceItem(BaseModel):
-    """Linked evidence with its conversation's current availability and scanner run, if any."""
+    """Linked evidence with its conversation's availability, attack context, score, and source Operation."""
 
     model_config = ConfigDict(extra="forbid")
 
     item: FindingEvidence
     availability: EvidenceAvailability
     scenario_result_id: UUID | None
+    source_operation_id: UUID | None = Field(
+        None, description="The attack's own saved Operation, which may differ from the finding's"
+    )
+    source_operation_name: str | None = Field(
+        None, description="Current name of the attack's Operation, or the historical name for legacy activity"
+    )
+    objective: str | None = Field(None, description="The owning attack's objective")
+    is_main_conversation: bool | None = Field(
+        None, description="Whether the conversation is its attack's main conversation rather than a branch"
+    )
+    score: ScoreView | None = Field(None, description="This conversation's own score; never an auxiliary score")
 
 
 class FindingEvidenceListResponse(BaseModel):

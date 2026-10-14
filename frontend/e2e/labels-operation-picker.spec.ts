@@ -19,17 +19,40 @@ function operations(count: number): string[] {
   );
 }
 
+function operationId(index: number): string {
+  return `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+async function rememberOperation(page: Page, id: string): Promise<void> {
+  await page.addInitScript((operationId: string) => {
+    window.localStorage.setItem("pyrit.userPreferences.v1.local", JSON.stringify({
+      targets: { objective: null, adversarial: null },
+      hiddenTargetRegistryNames: [],
+      labels: {},
+      theme: "system",
+      chatMarkdown: false,
+      operation: { id: operationId },
+    }));
+  }, id);
+}
+
 async function setupMocks(
   page: Page,
   operationLabels: string[],
   options: {
     versionDelayMs?: number;
     defaultLabels?: Record<string, string>;
+    defaultOperation?: string;
     operatorLabels?: string[];
     savedOperations?: string[];
   } = {},
 ): Promise<void> {
   let versionRequests = 0;
+  const savedOperations = (options.savedOperations ?? operationLabels).map((name, index) => ({
+    id: operationId(index),
+    name,
+    created_at: "2026-01-01T00:00:00Z",
+  }));
   // Everything the app calls while booting, so the run does not depend on a
   // dev-server proxy with no backend behind it.
   await page.route(/\/api\//, async (route) => {
@@ -53,6 +76,7 @@ async function setupMocks(
         version: "picker-test",
         display: "picker-test",
         ...(options.defaultLabels ? { default_labels: options.defaultLabels } : {}),
+        default_operation: options.defaultOperation ?? null,
       })));
     }
     if (path === "/labels") {
@@ -65,13 +89,13 @@ async function setupMocks(
       }));
     }
     if (path === "/operations") {
-      return route.fulfill(json({
-        items: (options.savedOperations ?? operationLabels).map((name, index) => ({
-          id: `saved-operation-${index}`,
-          name,
-          created_at: "2026-01-01T00:00:00Z",
-        })),
-      }));
+      return route.fulfill(json({ items: savedOperations }));
+    }
+    if (path.startsWith("/operations/")) {
+      const operation = savedOperations.find(item => path === `/operations/${item.id}`);
+      return route.fulfill(operation ? json(operation) : {
+        ...json({ detail: "Operation not found" }), status: 404,
+      });
     }
     if (path === "/attacks") {
       return route.fulfill(json({ items: [], total: 0, limit: 5, offset: 0 }));
@@ -101,6 +125,34 @@ async function openOperationPicker(page: Page) {
 }
 
 test.describe("operation picker placement", () => {
+  test("highlights the placeholder operator and requires resolving a proposed operation", async ({ page }) => {
+    await setupMocks(page, [], {
+      defaultLabels: { operator: "roakey" },
+      defaultOperation: "op_trash_panda",
+      savedOperations: ["op_trash_panda", "op_real"],
+    });
+    await page.goto("/");
+
+    const operator = page.getByTestId("edit-label-operator").locator("..");
+    const operation = page.getByTestId("edit-label-operation").locator("..");
+    await expect(operator).toHaveCSS("background-color", "rgb(254, 247, 178)");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_trash_panda");
+    await expect(operation).toHaveCSS("background-color", "rgb(254, 247, 178)");
+    await expect(page.getByTestId("edit-label-operation")).toHaveAccessibleDescription("Not registered");
+    await expect(page.getByRole("button", { name: "Register", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choose existing", exact: true })).toHaveCount(0);
+
+    await page.getByTestId("edit-label-operator").fill("alice");
+    await page.getByTestId("edit-label-operator").press("Enter");
+    await expect(operator).not.toHaveCSS("background-color", "rgb(254, 247, 178)");
+
+    await page.getByTestId("edit-label-operation").click();
+    await page.getByRole("option", { name: "op_real", exact: true }).click();
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_real");
+    await expect(page.getByText("Not registered", { exact: true })).toHaveCount(0);
+    await expect(operation).not.toHaveCSS("background-color", "rgb(254, 247, 178)");
+  });
+
   test("keeps metadata editable in a narrow bar without duplicating it in Default Labels", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 800 });
     await setupMocks(page, ["op_alpha", "op_beta"]);
@@ -246,16 +298,9 @@ test.describe("operation picker placement", () => {
   test("keeps the operation in use on the list, wherever it was chosen", async ({
     page,
   }) => {
-    // The labels API only knows names that attacks have been stored under, so
-    // one chosen in the other labels bar — or before a refresh — is missing
-    // from this response.
+    // A saved Operation need not appear among historical name labels.
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.addInitScript(() => {
-      window.localStorage.setItem(
-        "pyrit.globalLabels",
-        JSON.stringify({ operator: "roakey", operation: "op_chosen_elsewhere" }),
-      );
-    });
+    await rememberOperation(page, operationId(2));
     await setupMocks(page, ["op_alpha", "op_beta"], {
       savedOperations: ["op_alpha", "op_beta", "op_chosen_elsewhere"],
     });
@@ -292,10 +337,7 @@ test.describe("operation picker placement", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
-  test("keeps a legacy operation removable without offering it as a saved choice", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
+  test("retains an unsaved legacy operation until explicitly cleared, including after reload", async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem(
         "pyrit.globalLabels",
@@ -303,19 +345,17 @@ test.describe("operation picker placement", () => {
       );
     });
     await setupMocks(page, operations(600));
-    await openOperationPicker(page);
+    await page.goto("/");
 
-    const inUse = page.getByRole("option", {
-      name: "op_chosen_elsewhere",
-      exact: true,
-    });
-    await expect(inUse).toHaveCount(0);
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("edit-label-operation")).toHaveValue(
-      "op_chosen_elsewhere",
-    );
-    await page.getByRole("button", { name: "Remove operation label" }).click();
-    await expect(page.getByRole("combobox", { name: "Operation" })).toBeVisible();
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("op_chosen_elsewhere");
+    await expect(page.getByTestId("edit-label-operation")).toHaveAccessibleDescription("Not registered");
+    await expect(page.getByRole("button", { name: "Register", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choose existing", exact: true })).toHaveCount(0);
+    await page.getByRole("region", { name: "Default Labels" }).getByRole("button", { name: "Clear", exact: true }).click();
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("");
+    await page.reload();
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue("");
+    await expect(page.getByText("Not registered", { exact: true })).toHaveCount(0);
   });
 
   test("keeps an operation the saved list already holds past the cap", async ({
@@ -325,13 +365,10 @@ test.describe("operation picker placement", () => {
     // the front of it.
     const inUseName = "op_2026_08_run_400";
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.addInitScript((name) => {
-      window.localStorage.setItem(
-        "pyrit.globalLabels",
-        JSON.stringify({ operator: "roakey", operation: name }),
-      );
-    }, inUseName);
+    await rememberOperation(page, operationId(400));
     await setupMocks(page, operations(600));
+    await page.goto("/");
+    await expect(page.getByTestId("edit-label-operation")).toHaveValue(inUseName);
     await openOperationPicker(page);
 
     await expect(
@@ -395,7 +432,7 @@ test.describe("operation picker persistence", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await setupMocks(page, ["op_alpha", "op_picked_early"], {
       versionDelayMs: 4000,
-      defaultLabels: { operation: "op_configured" },
+      defaultOperation: "op_configured",
     });
     await openOperationPicker(page);
 
@@ -411,11 +448,14 @@ test.describe("operation picker persistence", () => {
       "op_picked_early",
     );
     // What is on screen is also what a refresh would restore.
-    expect(
+    const savedPreferences =
       await page.evaluate(() =>
         window.localStorage.getItem("pyrit.userPreferences.v1.local"),
-      ),
-    ).toContain("op_picked_early");
+      );
+    expect(savedPreferences).not.toBeNull();
+    expect(JSON.parse(savedPreferences ?? "null")).toMatchObject({
+      operation: { id: "00000000-0000-4000-8000-000000000001" },
+    });
   });
 
   test("lets the backend still name the operator after you pick an operation", async ({

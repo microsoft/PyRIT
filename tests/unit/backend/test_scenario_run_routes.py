@@ -8,6 +8,7 @@ Tests for scenario run API routes.
 from datetime import UTC, datetime
 from threading import get_ident
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import status
@@ -36,6 +37,8 @@ from pyrit.models import (
 )
 from pyrit.models.catalog.scenario import ScenarioRunListItem, ScenarioRunSummary
 from unit.mocks import make_scenario_result
+
+OPERATION_ID = UUID(int=7)
 
 
 @pytest.fixture
@@ -71,6 +74,21 @@ def _mock_run_response(
 
 class TestStartScenarioRunRoute:
     """Tests for POST /api/scenarios/runs."""
+
+    def test_missing_operation_returns_404_problem_detail(self, client: TestClient) -> None:
+        service = MagicMock(start_run_async=AsyncMock(side_effect=LookupError("Operation missing")))
+        with patch("pyrit.backend.routes.scenarios.get_scenario_run_service", return_value=service):
+            response = client.post(
+                "/api/scenarios/runs",
+                json={
+                    "scenario_name": "foundry.red_team_agent",
+                    "target_name": "target",
+                    "operation_id": "00000000-0000-0000-0000-000000000001",
+                },
+            )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Operation missing"
+        assert response.json()["status"] == 404
 
     def test_start_run_returns_202(self, client: TestClient) -> None:
         """Test that a valid request returns 202 Accepted."""
@@ -314,7 +332,7 @@ class TestListScenarioRunsRoute:
                 "?scenario_names=first&scenario_names=second"
                 "&run_statuses=IN_PROGRESS&run_statuses=FAILED"
                 "&label=operator%3Aalice&label=operator%3Abob&label=team%3Asafety"
-                "&limit=10&cursor=opaque"
+                f"&operation_id={OPERATION_ID}&limit=10&cursor=opaque"
             )
 
         assert response.status_code == status.HTTP_200_OK
@@ -322,6 +340,7 @@ class TestListScenarioRunsRoute:
             scenario_names=["first", "second"],
             statuses=[ScenarioRunState.IN_PROGRESS, ScenarioRunState.FAILED],
             labels={"operator": ["alice", "bob"], "team": ["safety"]},
+            operation_ids=[OPERATION_ID],
             limit=10,
             cursor="opaque",
         )

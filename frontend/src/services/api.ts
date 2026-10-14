@@ -55,6 +55,7 @@ import type {
   SaveConversationRequest,
   Finding,
   FindingCreate,
+  FindingCreateRequest,
   FindingListResponse,
   FindingOptionsResponse,
   FindingEvidenceCreateRequest,
@@ -63,6 +64,7 @@ import type {
   Operation,
   OperationCreate,
   OperationListResponse,
+  OperationUpdate,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -82,12 +84,15 @@ export const operationsApi = {
   create: async (request: OperationCreate): Promise<Operation> => {
     return (await apiClient.post('/operations', request)).data
   },
+  update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
+    return (await apiClient.patch(operationPath(operationId), request)).data
+  },
   listFindings: async (
-    operationId: string, params: { limit: number; offset: number },
+    operationId: string, params: { limit: number; offset: number; title?: string },
   ): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
-  createFinding: async (operationId: string, request: FindingCreate): Promise<Finding> => {
+  createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
     return (await apiClient.post(`${operationPath(operationId)}/findings`, request)).data
   },
   updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
@@ -95,11 +100,6 @@ export const operationsApi = {
   },
   deleteFinding: async (operationId: string, findingId: string): Promise<void> => {
     await apiClient.delete(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`)
-  },
-  searchFindings: async (
-    operationId: string, params: { limit: number; offset: number; title: string },
-  ): Promise<FindingListResponse> => {
-    return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
   attachFindingEvidence: async (
     operationId: string, findingId: string, request: FindingEvidenceCreateRequest,
@@ -477,6 +477,7 @@ export const attacksApi = {
     outcome?: string
     operator?: string[]
     operation?: string[]
+    operation_id?: string[]
     label?: string[]
     min_turns?: number
     max_turns?: number
@@ -583,6 +584,7 @@ export const scenariosApi = {
     scenario_names?: string[]
     run_statuses?: ScenarioRunState[]
     label?: string[]
+    operation_id?: string[]
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,

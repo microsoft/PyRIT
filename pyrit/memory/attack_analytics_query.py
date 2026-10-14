@@ -62,6 +62,7 @@ from pyrit.memory.memory_models import (
     AttackTechniqueIdentifierEntry,
     ConverterIdentifierEntry,
     CustomUUID,
+    OperationEntry,
     ScenarioResultEntry,
     TargetIdentifierEntry,
 )
@@ -166,6 +167,7 @@ class AttackAnalyticsQueryCompiler:
         self._label_columns = label_columns or {}
         self._from: FromClause = self.root
         self._sources: dict[str, _Source] = {}
+        self._operation_name: ColumnElement[Any] | None = None
         self._identifiers_ready = False
         self.atomic = AtomicAttackIdentifierEntry.__table__.alias("analytics_atomic")
         self.technique = AttackTechniqueIdentifierEntry.__table__.alias("analytics_technique")
@@ -555,6 +557,7 @@ class AttackAnalyticsQueryCompiler:
         target_content_hash = func.coalesce(self.target.c.hash, self._target_property(path="hash"))
         request = self._converter_source(direction=AttackAnalyticsConverterDirection.REQUEST)
         response = self._converter_source(direction=AttackAnalyticsConverterDirection.RESPONSE)
+        operation = self._operation_value()
         conditions = self._conditions()
         if after is not None:
             timestamp = after.timestamp.astimezone(UTC).replace(tzinfo=None)
@@ -572,7 +575,7 @@ class AttackAnalyticsQueryCompiler:
                 else func.substring(self.root.c.objective, 1, 200).label("objective_preview"),
                 self.root.c.outcome,
                 self.root.c.timestamp.label("updated_at"),
-                self.root.c.operation,
+                operation.label("operation"),
                 self.root.c.operator,
                 attack.label.label("attack_type"),
                 model.label.label("target_model"),
@@ -621,7 +624,10 @@ class AttackAnalyticsQueryCompiler:
                 ``_from``, but never executes SQL or loads a component instance.
         """
         name = dimension.name
-        if name in {AttackAnalyticsDimensionName.OPERATION, AttackAnalyticsDimensionName.OPERATOR}:
+        if name is AttackAnalyticsDimensionName.OPERATION:
+            value = self._operation_value()
+            return _Source(value=value, label=value)
+        if name is AttackAnalyticsDimensionName.OPERATOR:
             value = self.root.c[name.value]
             return _Source(value=value, label=value)
         if name is AttackAnalyticsDimensionName.LABEL:
@@ -663,6 +669,25 @@ class AttackAnalyticsQueryCompiler:
             self._target_property(path="params.underlying_model_name", embedded=embedded),
         )
         return _Source(value=value, label=value)
+
+    def _operation_value(self) -> ColumnElement[Any]:
+        """
+        Resolve a result's Operation as its saved Operation's current name, else its stored name.
+
+        History lists activity the same way, so results attributed by ID and by a matching name group
+        together. The saved Operation is joined once per compiler. Compacted facts already carry the
+        resolved name.
+
+        Returns:
+            ColumnElement[Any]: The Operation name, or NULL for unassigned activity.
+        """
+        if "operation_id" not in self.root.c:
+            return self.root.c.operation
+        if self._operation_name is None:
+            saved = OperationEntry.__table__.alias("analytics_operation")
+            self._from = self._from.outerjoin(saved, saved.c.id == self.root.c.operation_id)
+            self._operation_name = func.coalesce(saved.c.name, self.root.c.operation)
+        return self._operation_name
 
     def _ensure_identifiers(self) -> None:
         """
@@ -1146,11 +1171,10 @@ class AttackAnalyticsQueryCompiler:
         }
         label_columns: dict[str, str] = {}
         for index, dimension in enumerate(dimensions):
-            if dimension.name in {
-                AttackAnalyticsDimensionName.OPERATION,
-                AttackAnalyticsDimensionName.OPERATOR,
-            }:
-                values[dimension.name.value] = base.root.c[dimension.name.value]
+            if dimension.name is AttackAnalyticsDimensionName.OPERATION:
+                values["operation"] = base._operation_value()
+            elif dimension.name is AttackAnalyticsDimensionName.OPERATOR:
+                values["operator"] = base.root.c.operator
             elif dimension.name is AttackAnalyticsDimensionName.TARGETED_HARM_CATEGORY:
                 values["targeted_harm_categories"] = base.root.c.targeted_harm_categories
             elif dimension.name is AttackAnalyticsDimensionName.OBJECTIVE_TARGET:

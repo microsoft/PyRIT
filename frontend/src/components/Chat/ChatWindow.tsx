@@ -275,8 +275,12 @@ interface ChatWindowProps {
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
   labels?: Record<string, string>
-  /** False while the current generation's server defaults are still loading; launching is gated. */
+  /** The saved Operation that new attacks join, or null for none. */
+  operationId?: string | null
+  /** False while the current generation's server defaults or Operation selection are not ready; launching is gated. */
   defaultsReady?: boolean
+  /** Why new attacks are unavailable when the defaults have loaded but the Operation selection is not ready. */
+  newActivityBlockedReason?: string
   onNavigate?: (view: ViewName) => void
   /** Operator from the loaded attack (for operator locking). Null for new attacks. */
   attackOperator?: string | null
@@ -321,7 +325,9 @@ export default function ChatWindow({
   onHumanScoreChange,
   onAttackChange,
   labels,
+  operationId = null,
   defaultsReady = false,
+  newActivityBlockedReason,
   onNavigate,
   attackOperator,
   attackTarget,
@@ -344,10 +350,14 @@ export default function ChatWindow({
   const [conversationLoadIssue, setConversationLoadIssue] = useState<{
     conversationId: string; unavailable: boolean; detail: string;
   } | null>(null)
+  const [isFindingDialogOpen, setIsFindingDialogOpen] = useState(false)
+  const outcomeButtonRef = useRef<HTMLButtonElement>(null)
   const [pendingObjective, setPendingObjective] = useState('')
   const currentObjective = attackResultId ? objective : pendingObjective
   const runtime = useRuntime()
-  const newAttackContext: NewAttackContext = { generation: runtime.generation, ready: runtime.ready && defaultsReady, labels }
+  const newAttackContext: NewAttackContext = {
+    generation: runtime.generation, ready: runtime.ready && defaultsReady, labels, operationId,
+  }
   const editor = useConversationDraft(newAttackContext)
   const { draft: editDraft, discard: discardEditor, changeObjective: setEditorObjective } = editor
   const editorTarget = editDraft?.target ?? null
@@ -680,6 +690,8 @@ export default function ChatWindow({
   )
   const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
     || awaitingConversationLoad || isEvidenceUnavailable
+  const isFindingActionDisabled = Boolean(editDraft !== null || !attackResultId || !activeConversationId
+    || isEvidenceUnavailable || isLoadingAttack || isLoadingMessages || awaitingConversationLoad)
 
   // Handle conversation selection from the panel
   // For a different ID the useEffect handles loading; for same ID force a refresh
@@ -1105,6 +1117,7 @@ export default function ChatWindow({
           // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
           // The create-attack API normalizes these aliases through _AttackAttributionInput.
           labels,
+          operation_id: operationId ?? undefined,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
         }
         const createResponse = await attacksApi.createAttack(createRequest)
@@ -1565,7 +1578,7 @@ export default function ChatWindow({
     : isTargetResolutionLocked ? 'The source target cannot be safely resolved. Choose New attack.'
     : undefined
   const newAttackDisabledReason = !runtime.ready || !defaultsReady
-    ? 'Default labels are not ready. Retry after default labels finish loading.'
+    ? newActivityBlockedReason ?? 'Default labels are not ready. Retry after default labels finish loading.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
 
@@ -1653,57 +1666,51 @@ export default function ChatWindow({
             data-testid="global-markdown-toggle"
           />
         </Tooltip>
-        <div role="group" aria-label="Conversation actions" className={styles.conversationActions}>
-          <FindingEvidenceDialog
-            attackResultId={isEvidenceUnavailable ? '' : attackResultId ?? ''} conversationId={activeConversationId ?? ''}
-            disabled={Boolean(editDraft !== null || !attackResultId || !activeConversationId || isEvidenceUnavailable
-              || isLoadingAttack || isLoadingMessages || awaitingConversationLoad)} />
-          <Menu>
-            <MenuTrigger disableButtonEnhancement>
-              <Tooltip content="Export conversation" relationship="label">
-                <Button
-                  appearance="subtle"
-                  className={styles.ribbonAction}
-                  icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
-                  disabled={!canExportConversation}
-                  aria-label="Export conversation"
-                  data-testid="export-conversation-btn"
-                />
-              </Tooltip>
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>
-                <MenuItem
-                  onClick={() => handleExport('markdown')}
-                  disabled={isExporting}
-                  data-testid="export-markdown-item"
-                >
-                  Export as Markdown (.md)
-                </MenuItem>
-                <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
-                  Export as JSON (.json)
-                </MenuItem>
-                <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
-                  Export as HTML (.html)
-                </MenuItem>
-              </MenuList>
-            </MenuPopover>
-          </Menu>
-          <Tooltip content="Toggle conversations panel" relationship="label">
-            <Button
-              {...restoreFocusTargetAttributes}
-              appearance="subtle"
-              className={styles.ribbonAction}
-              icon={<PanelRightRegular />}
-              onClick={() => setIsPanelOpen((open) => !open)}
-              disabled={!attackResultId}
-              data-testid="toggle-panel-btn"
-              aria-label="Toggle conversations panel"
-              aria-expanded={isPanelOpen}
-              aria-controls="conversation-panel"
-            />
-          </Tooltip>
-        </div>
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Tooltip content="Export conversation" relationship="label">
+              <Button
+                appearance="subtle"
+                className={styles.ribbonAction}
+                icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
+                disabled={!canExportConversation}
+                aria-label="Export conversation"
+                data-testid="export-conversation-btn"
+              />
+            </Tooltip>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem
+                onClick={() => handleExport('markdown')}
+                disabled={isExporting}
+                data-testid="export-markdown-item"
+              >
+                Export as Markdown (.md)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('json')} disabled={isExporting} data-testid="export-json-item">
+                Export as JSON (.json)
+              </MenuItem>
+              <MenuItem onClick={() => handleExport('html')} disabled={isExporting} data-testid="export-html-item">
+                Export as HTML (.html)
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+        <Tooltip content="Toggle conversations panel" relationship="label">
+          <Button
+            {...restoreFocusTargetAttributes}
+            appearance="subtle"
+            className={styles.ribbonAction}
+            icon={<PanelRightRegular />}
+            onClick={() => setIsPanelOpen((open) => !open)}
+            disabled={!attackResultId}
+            data-testid="toggle-panel-btn"
+            aria-label="Toggle conversations panel"
+            aria-expanded={isPanelOpen}
+            aria-controls="conversation-panel"
+          />
+        </Tooltip>
         <Tooltip content={editDraft !== null ? 'Save to new attack' : 'New Attack'} relationship="label">
           <Button
             appearance="primary"
@@ -1790,7 +1797,14 @@ export default function ChatWindow({
             && (editDraft !== null || !isOperatorLocked)
           }
           onAdd={handleAddObjective}
+          onAddFinding={() => setIsFindingDialogOpen(true)}
+          canAddFinding={!isFindingActionDisabled}
+          outcomeButtonRef={outcomeButtonRef}
         />
+        <FindingEvidenceDialog
+          attackResultId={isEvidenceUnavailable ? '' : attackResultId ?? ''} conversationId={activeConversationId ?? ''}
+          defaultOperationId={operationId} disabled={isFindingActionDisabled}
+          open={isFindingDialogOpen} onOpenChange={setIsFindingDialogOpen} returnFocusRef={outcomeButtonRef} />
         {editorError && <MessageBar intent="error"><MessageBarBody>{editorError}</MessageBarBody></MessageBar>}
         {editorNotice && <MessageBar intent="success"><MessageBarBody>{editorNotice}</MessageBarBody></MessageBar>}
         {editDraft !== null && <ConversationEditor

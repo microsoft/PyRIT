@@ -39,7 +39,7 @@ describe("api service", () => {
     it("encodes evidence scope, searches literally, and preserves duplicate feedback", async () => {
       const page = { items: [], has_more: false, next_offset: null };
       (apiClient.get as jest.Mock).mockResolvedValue({ data: page });
-      expect(await operationsApi.searchFindings("a/b", { limit: 20, offset: 0, title: "%_" })).toEqual(page);
+      expect(await operationsApi.listFindings("a/b", { limit: 20, offset: 0, title: "%_" })).toEqual(page);
       expect(apiClient.get).toHaveBeenCalledWith("/operations/a%2Fb/findings", {
         params: { limit: 20, offset: 0, title: "%_" },
       });

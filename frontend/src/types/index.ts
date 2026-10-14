@@ -235,10 +235,15 @@ export interface TargetPreferences {
   readonly adversarial: TargetReference | null
 }
 
+/** A saved Operation, or a name kept from before Operations were saved records. */
+export type OperationSelection = { readonly id: string } | { readonly name: string }
+
 export interface UserPreferences {
   readonly targets: TargetPreferences
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
+  /** Omitted to use the server default; null when the user cleared the selection. */
+  readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
 }
@@ -477,6 +482,9 @@ export interface AttackSummary {
   related_conversation_ids: string[]
   operator?: string | null
   operation?: string | null
+  operation_id?: string | null
+  /** The saved Operation's current name, or the historical name of legacy activity. */
+  operation_name?: string | null
   related_conversations?: Array<{
     conversation_id: string
     conversation_type: 'adversarial' | 'preparation' | 'pruned' | 'score' | 'converter'
@@ -491,7 +499,7 @@ export interface CreateAttackRequest {
   target_registry_name?: string
   name?: string
   operator?: string
-  operation?: string
+  operation_id?: string
   labels?: Record<string, string>
   source_conversation_id?: string
   cutoff_index?: number
@@ -528,6 +536,7 @@ export interface NewAttackContext {
   generation: string
   ready: boolean
   labels?: Record<string, string>
+  operationId?: string | null
 }
 
 export interface ConvertedFileChip {
@@ -552,7 +561,7 @@ export interface SaveConversationRequest {
   objective?: string
   target_registry_name?: string
   operator?: string
-  operation?: string
+  operation_id?: string
   labels?: Record<string, string>
   messages: MessageRequest[]
 }
@@ -814,6 +823,7 @@ export interface RunScenarioRequest {
   max_retries?: number
   include_baseline?: boolean | null
   labels?: Record<string, string> | null
+  operation_id?: string | null
   scenario_params?: Record<string, unknown> | null
   initializer_args?: Record<string, Record<string, unknown>> | null
   scenario_result_id?: string | null
@@ -1049,6 +1059,9 @@ export interface ScenarioRunListItem {
   objective_achieved_rate: number
   total_retries: number
   labels: Record<string, string>
+  operation_id?: string | null
+  /** The saved Operation's current name, or the historical name of a legacy run. */
+  operation_name?: string | null
   completed_at?: string | null
   pyrit_version?: string | null
   target?: ScenarioTargetSummary | null
@@ -1271,6 +1284,12 @@ export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'i
 
 export interface OperationCreate {
   name: string
+  description?: string
+}
+
+/** The editable fields of a saved Operation; renaming is not supported yet. */
+export interface OperationUpdate {
+  description: string
 }
 
 export interface Operation extends OperationCreate {
@@ -1293,6 +1312,15 @@ export interface FindingCreate {
   severity_other?: string | null
   harm_type?: string | null
   harm_type_other?: string | null
+}
+
+/** Resending the same id and content returns the finding an earlier, unanswered request saved. */
+export interface FindingCreateRequest extends FindingCreate {
+  id?: string
+  /** A saved conversation to link as evidence in the same request. */
+  conversation_id?: string
+  /** The conversation's attack; the server finds it when omitted. */
+  attack_result_id?: string
 }
 
 export interface FindingOptionsResponse {
@@ -1337,6 +1365,13 @@ export interface FindingEvidenceItem {
   item: FindingEvidence
   availability: 'available' | 'unavailable'
   scenario_result_id: string | null
+  /** The attack's own Operation, which may differ from the finding's. */
+  source_operation_id?: string | null
+  source_operation_name?: string | null
+  objective?: string | null
+  is_main_conversation?: boolean | null
+  /** This conversation's own score; never an auxiliary score. */
+  score?: BackendScore | null
 }
 
 export interface FindingEvidenceListResponse {

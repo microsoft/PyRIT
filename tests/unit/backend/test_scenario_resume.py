@@ -4,6 +4,7 @@
 """Offline resume coverage using real scenario persistence and harmless mocked targets."""
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
@@ -25,6 +26,7 @@ from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     Message,
+    Operation,
     Parameter,
     ScenarioResult,
     ScenarioRunState,
@@ -43,7 +45,8 @@ _TARGET_NAME = "offline-target"
 _DATASET_NAME = "offline-resume-objectives"
 _FIRST_OBJECTIVE = "Say hello"
 _SECOND_OBJECTIVE = "Say goodbye"
-_LABELS = {"operator": "offline-tester", "operation": "resume-fixture"}
+_LABELS = {"operator": "offline-tester"}
+_OPERATION_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 class _OfflineTechnique(ScenarioTechnique):
@@ -96,6 +99,7 @@ async def resume_environment(
     patch_central_database: object,
 ) -> AsyncIterator[tuple[ScenarioRunService, MockPromptTarget]]:
     memory = CentralMemory.get_memory_instance()
+    await memory.add_operation_async(Operation(id=_OPERATION_ID, name="resume-fixture"))
     await memory.add_seeds_to_memory_async(
         seeds=[
             SeedObjective(value=_FIRST_OBJECTIVE, dataset_name=_DATASET_NAME),
@@ -136,6 +140,7 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
         max_concurrency=1,
         max_retries=0,
         memory_labels=_LABELS,
+        operation_id=_OPERATION_ID,
         dataset_config=DatasetAttackConfiguration(dataset_names=[_DATASET_NAME], max_dataset_size=2, auto_fetch=False),
         initial_metadata={}
         if legacy
@@ -145,8 +150,10 @@ async def _create_failed_run_async(*, target: MockPromptTarget, legacy: bool) ->
                 target_name=_TARGET_NAME,
                 max_concurrency=1,
                 include_baseline=False,
+                operation_id=_OPERATION_ID,
             ).model_dump(
-                exclude={"initializers", "initializer_args", "scenario_params", "scenario_result_id", "labels"}
+                mode="json",
+                exclude={"initializers", "initializer_args", "scenario_params", "scenario_result_id", "labels"},
             )
         },
     )
@@ -211,9 +218,7 @@ async def test_resume_preserves_completed_objectives_and_original_id_async(
     assert after.metadata[SCENARIO_RUN_PLAN_METADATA_KEY] == original_plan
     assert {result.attack_result_id for result in results}.issuperset(result.attack_result_id for result in before)
     assert all(result.attribution_parent_id == run_id for result in results)
-    assert all(
-        result.operator == _LABELS["operator"] and result.operation == _LABELS["operation"] for result in results
-    )
+    assert all(result.operator == _LABELS["operator"] and result.operation_id == _OPERATION_ID for result in results)
     assert sum(result.objective == _FIRST_OBJECTIVE for result in results) == 1
     assert len(await CentralMemory.get_memory_instance().get_scenario_results_async()) == 1
     detail = await service.get_run_async(scenario_result_id=run_id)
@@ -476,6 +481,17 @@ async def test_resume_older_launch_record_without_adversarial_selection_async(
     assert request.adversarial_target_name is None
 
 
+async def test_resume_takes_operation_id_from_the_run_header_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    request = service._restore_launch_request(stored=stored)
+    assert request.operation_id == _OPERATION_ID
+    stored.operation_id = None
+    assert service._restore_launch_request(stored=stored).operation_id is None
+
+
 async def test_resume_restores_selected_adversarial_target_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
 ) -> None:
@@ -570,7 +586,7 @@ async def test_restore_launch_request_keeps_saved_settings_and_canonical_params_
     request = service._restore_launch_request(stored=stored)
 
     assert {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS} == {
-        name: saved[name] for name in _LAUNCH_REQUEST_FIELDS
+        name: saved[name] if name != "operation_id" else _OPERATION_ID for name in _LAUNCH_REQUEST_FIELDS
     }
     assert request.scenario_result_id == str(stored.id)
     assert request.scenario_params == {"marker": "original"}

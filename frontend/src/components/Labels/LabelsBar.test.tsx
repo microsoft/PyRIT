@@ -6,8 +6,9 @@ import LabelsBar from './LabelsBar'
 import { DEFAULT_GLOBAL_LABELS as FRESH_GLOBAL_LABELS } from './labelDefaults'
 import { labelsApi, operationsApi } from '@/services/api'
 
-// These regressions also exercise preferences saved before operations were persistent records.
+// Labels saved before operations were persistent records may still carry an ignored operation key.
 const DEFAULT_GLOBAL_LABELS = { ...FRESH_GLOBAL_LABELS, operation: 'op_trash_panda' }
+const SAVED_OPERATION = { id: 'operation-saved', name: 'op_saved', created_at: '2026-10-07T16:00:00Z' }
 
 jest.mock('../../services/api', () => ({
   labelsApi: {
@@ -29,11 +30,12 @@ describe('LabelsBar', () => {
     jest.mocked(operationsApi.list).mockImplementation(() => new Promise(() => {}))
   })
 
-  it('should render legacy default labels', () => {
+  it('should render the operator and the selected operation', () => {
     const onChange = jest.fn()
     render(
       <TestWrapper>
-        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange} />
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={onChange}
+          operation={{ status: 'resolved', operation: SAVED_OPERATION }} />
       </TestWrapper>
     )
 
@@ -42,7 +44,7 @@ describe('LabelsBar', () => {
     // purely to compute available width — query by data-testid so we
     // don't accidentally match the hidden mirror.
     expect(screen.getByTestId('edit-label-operator')).toHaveValue('roakey')
-    expect(screen.getByTestId('edit-label-operation')).toHaveValue('op_trash_panda')
+    expect(screen.getByTestId('edit-label-operation')).toHaveValue('op_saved')
   })
 
   it('should show warning icon for dummy values', () => {
@@ -53,6 +55,34 @@ describe('LabelsBar', () => {
     )
 
     expect(screen.getByTestId('labels-warning')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['a placeholder', { operator: 'roakey' }, false, 'Placeholder value — type to change'],
+    ['the signed-in account', { operator: 'alice' }, true, 'Derived from your signed-in account'],
+  ])('explains an operator from %s on hover', async (
+    _source: string, labels: Record<string, string>, operatorReadOnly: boolean, tip: string,
+  ) => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={labels} onLabelsChange={jest.fn()} operatorReadOnly={operatorReadOnly} />
+      </TestWrapper>
+    )
+    await user.hover(screen.getByTestId('edit-label-operator'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(tip)
+  })
+
+  it('shows no operator tooltip for a value the user set', async () => {
+    const user = userEvent.setup()
+    render(
+      <TestWrapper>
+        <LabelsBar labels={{ operator: 'alice' }} onLabelsChange={jest.fn()} />
+      </TestWrapper>
+    )
+    await user.hover(screen.getByTestId('edit-label-operator'))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
   it('should keep the signed-in operator read-only in the ribbon and absent from the popover', async () => {
@@ -88,14 +118,6 @@ describe('LabelsBar', () => {
   it.each([
     {
       labels: { ...DEFAULT_GLOBAL_LABELS },
-      message: 'Set operator and operation in the bar. The current values are placeholders.',
-    },
-    {
-      labels: { ...DEFAULT_GLOBAL_LABELS, operator: 'alice' },
-      message: 'Set operation in the bar. The current value is a placeholder.',
-    },
-    {
-      labels: { ...DEFAULT_GLOBAL_LABELS, operation: 'my_test' },
       message: 'Set operator in the bar. The current value is a placeholder.',
     },
   ])('should explain the warning: $message', async ({ labels, message }: {
@@ -135,10 +157,11 @@ describe('LabelsBar', () => {
     expect(warning).toHaveFocus()
   })
 
-  it('should allow removing the operation but not the operator', () => {
+  it('should allow clearing the operation but not removing the operator', () => {
     render(
       <TestWrapper>
-        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={jest.fn()} />
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS }} onLabelsChange={jest.fn()}
+          operation={{ status: 'resolved', operation: SAVED_OPERATION }} />
       </TestWrapper>
     )
 
@@ -935,7 +958,8 @@ describe('LabelsBar', () => {
     const onChange = jest.fn()
     render(
       <TestWrapper>
-        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'red' }} onLabelsChange={onChange} />
+        <LabelsBar labels={{ ...DEFAULT_GLOBAL_LABELS, team: 'red' }} onLabelsChange={onChange}
+          operation={{ status: 'resolved', operation: SAVED_OPERATION }} />
       </TestWrapper>
     )
 
@@ -1093,9 +1117,9 @@ describe('LabelsBar', () => {
     const OPERATIONS = ['op_2026_07_grok_45', 'op_2026_08_probe', 'validate-button-test']
 
     function renderWithOperations(onChange: jest.Mock, operations: string[] = OPERATIONS, operation?: string) {
-      jest.mocked(operationsApi.list).mockResolvedValue({
-        items: operations.map((name, index) => ({ id: `operation-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
-      })
+      const saved = operations.map((name, index) => ({ id: `operation-${index}`, name, created_at: '2026-10-07T16:00:00Z' }))
+      const current = saved.find(item => item.name === operation)
+      jest.mocked(operationsApi.list).mockResolvedValue({ items: saved })
       mockedLabelsApi.getLabels.mockResolvedValue({
         source: 'attacks',
         operators: ['alice'],
@@ -1104,7 +1128,8 @@ describe('LabelsBar', () => {
       })
       render(
         <TestWrapper>
-          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS, ...(operation ? { operation } : {}) }} onLabelsChange={onChange} />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={jest.fn()} onOperationChange={onChange}
+            operation={current ? { status: 'resolved', operation: current } : { status: 'empty' }} />
         </TestWrapper>
       )
     }
@@ -1131,10 +1156,7 @@ describe('LabelsBar', () => {
       fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.click(await screen.findByRole('option', { name: 'op_2026_08_probe' }))
 
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'op_2026_08_probe',
-      })
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: 'op_2026_08_probe' }))
     })
 
     it('should select an existing operation that predates the value rules', async () => {
@@ -1145,10 +1167,7 @@ describe('LabelsBar', () => {
       fireEvent.click(screen.getByTestId('edit-label-operation'))
       fireEvent.click(await screen.findByRole('option', { name: 'validate-button-test' }))
 
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'validate-button-test',
-      })
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: 'validate-button-test' }))
     })
 
     it('should filter the options by typed text', async () => {
@@ -1222,10 +1241,7 @@ describe('LabelsBar', () => {
       fireEvent.keyDown(input, { key: 'ArrowDown' })
       fireEvent.keyDown(input, { key: 'Enter' })
 
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'op_2026_07_grok_45',
-      })
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: 'op_2026_07_grok_45' }))
     })
 
     it('should dismiss the picker on Escape without committing', async () => {
@@ -1459,24 +1475,18 @@ describe('LabelsBar', () => {
       expect(screen.queryByRole('option', { name: 'Create "op_2026_09_fresh"' })).not.toBeInTheDocument()
     })
 
-    it('should allow removing a legacy selected operation', async () => {
+    it('should allow clearing an unregistered operation name', async () => {
       const onChange = jest.fn()
-      mockedLabelsApi.getLabels.mockResolvedValue({
-        source: 'attacks',
-        labels: { operation: OPERATIONS, operator: ['alice'] },
-      })
       render(
         <TestWrapper>
-          <LabelsBar
-            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'legacy-op-name.2024' }}
-            onLabelsChange={onChange}
-          />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={jest.fn()} onOperationChange={onChange}
+            operation={{ status: 'unregistered', name: 'legacy-op-name.2024' }} />
         </TestWrapper>
       )
-      await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
 
-      fireEvent.click(screen.getByTestId('remove-label-operation'))
-      expect(onChange).toHaveBeenCalledWith({ operator: FRESH_GLOBAL_LABELS.operator })
+      expect(screen.getByTestId('edit-label-operation')).toHaveValue('legacy-op-name.2024')
+      fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+      expect(onChange).toHaveBeenCalledWith(null)
       expect(screen.queryByText(/Only lowercase letters/)).not.toBeInTheDocument()
     })
 
@@ -1541,12 +1551,11 @@ describe('LabelsBar', () => {
       jest.mocked(operationsApi.list).mockResolvedValue({
         items: many.map((name, index) => ({ id: `op-${index}`, name, created_at: '2026-10-07T16:00:00Z' })),
       })
+      const inUse = { id: 'op-240', name: 'op_2026_08_run_0240', created_at: '2026-10-07T16:00:00Z' }
       render(
         <TestWrapper>
-          <LabelsBar
-            labels={{ ...DEFAULT_GLOBAL_LABELS, operation: 'op_2026_08_run_0240' }}
-            onLabelsChange={onChange}
-          />
+          <LabelsBar labels={{ ...FRESH_GLOBAL_LABELS }} onLabelsChange={jest.fn()} onOperationChange={onChange}
+            operation={{ status: 'resolved', operation: inUse }} />
         </TestWrapper>
       )
       await waitFor(() => expect(mockedLabelsApi.getLabels).toHaveBeenCalled())
@@ -1577,10 +1586,7 @@ describe('LabelsBar', () => {
       expect(screen.queryByRole('option', { name: 'Create "run_042"' })).not.toBeInTheDocument()
 
       fireEvent.click(exact)
-      expect(onChange).toHaveBeenCalledWith({
-        ...DEFAULT_GLOBAL_LABELS,
-        operation: 'run_042',
-      })
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ name: 'run_042' }))
     })
 
     it('should show only the first page of a long list and say so', async () => {

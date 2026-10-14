@@ -65,12 +65,11 @@ CoPyRIT stores these six preferences in one account-scoped browser record:
 | --- | --- |
 | Default objective target | Initial target for new chats and scanner runs |
 | Default adversarial target | Shared adversarial target for supported scanner scenarios |
-| Operation name (`operation`) | Label for new attacks and scanner runs |
+| Selected Operation | Groups new attacks and scanner runs by its saved ID |
 | Custom run labels | Additional labels for new attacks and scanner runs |
 | Theme | System, Light, Dark, or a named preset |
 | Chat display mode | Raw text or rendered Markdown |
 
-The GUI uses `operation` and `operator` as its label names, not `op_name` and `username`.
 For signed-in users, `operator` is the lowercase username before `@`. It is derived
 from the account, cannot be edited, and is not saved as a user preference. With
 authentication disabled, the local profile can save an operator label.
@@ -78,8 +77,8 @@ authentication disabled, the local profile can save an operator label.
 All six preferences use `pyrit.userPreferences.v1.<tenant>:<homeAccountId>` in
 browser local storage. Authentication-disabled use has a separate `local` profile.
 These settings do not follow you to another browser or device. Changes to labels
-apply to future runs, not stored attacks. Backend label defaults still apply when
-there is no user override. Removing a custom default label is also saved.
+apply to future runs, not stored attacks. Backend configuration supplies initial
+defaults. Removing a custom default label is also saved.
 Open tabs synchronize preferences for the same account. Each edit is merged with
 the latest saved values. On HTTPS and localhost, browser locks also serialize
 concurrent saves so edits to different defaults do not overwrite each other.
@@ -375,7 +374,14 @@ In Chat, the active target, Markdown toggle, export menu, conversations panel to
 
 Open the **Operation** dropdown to choose a saved operation. **New operation…** stays first, including while searching, and opens the creation dialog. Typing alone never selects an unsaved name. Very long lists show up to 200 saved choices and say how many match, so type to narrow them. The compact metadata controls wrap on narrow screens; custom labels that do not fit remain available through the labels icon.
 
-Your choices persist in this browser across navigation and refreshes. Backend configuration supplies defaults for labels you have not chosen, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels from this bar.
+A configured or remembered name that isn't saved yet is highlighted in yellow,
+like a placeholder operator, and screen readers announce it as not registered.
+Choose **Register** to save it, pick a saved Operation from the **Operation**
+dropdown, or choose **Clear** to run without one. New attacks and scans stay
+blocked until the selection is resolved or cleared. Startup does not create
+Operations.
+
+Your choices persist in this browser across navigation and refreshes. Backend configuration supplies initial defaults, and the signed-in account alias takes precedence over the default or remembered operator during initialization. Scanner launches receive the active labels and selected Operation ID from this bar.
 
 Changing these labels does not relabel existing attacks or scenario runs. History attribution and the **Run configuration** shown for a scenario run still describe that saved run. Operator and target restrictions on existing attacks remain in effect.
 
@@ -404,7 +410,7 @@ Filter attacks by:
 - **Outcome:** Success, failure, or undetermined
 - **Converter:** Which converters were applied
 - **Operator:** Who ran the attack
-- **Operation:** The operation label
+- **Operation:** Saved Operation
 - **Custom labels:** Free-form key:value label filtering with auto-complete
 
 Click "Reset" to clear all filters.
@@ -419,7 +425,7 @@ The table displays:
 | Attack Type | The attack class name |
 | Target | Target type and model name |
 | Operator | Who ran the attack |
-| Operation | Operation label |
+| Operation | Operation name |
 | Msgs | Total message count |
 | Convs | Number of conversations |
 | Converters | Converter badges (truncated with tooltip) |
@@ -466,10 +472,13 @@ human assessments, whether or not an attack produced them.
 
 Open **Operations** in the sidebar and choose **New operation**. Names are unique,
 ignoring case and surrounding spaces; if the name is taken, the dialog offers the
-existing operation. The **Operation** dropdown in the labels bar applies the
+existing operation. An optional description records the engagement's purpose and
+scope. The **Operation** dropdown in the labels bar applies the
 selected operation to new attacks and scanner runs, and **New operation…** at the
 top of that list creates one without leaving the page.
 
+On an operation's page, **Add description** or **Edit description** changes the
+description. Saving replaces it, so if two people edit at once, the last save wins.
 Operations can't be renamed or deleted from the GUI.
 
 #### Findings
@@ -482,42 +491,51 @@ Open an operation and choose **New finding**.
 | Severity | Yes | Critical, Important, Moderate, Low, Informational, or Other (your own text). Defaults to Moderate. |
 | Harm-type | No | A PyRIT harm category, Other (your own text), or Not set |
 | Description | No | Free text |
+| Evidence conversation ID | No | A saved conversation to attach in the same save |
 
 Findings are sorted by severity in the order above, newest first within each
 level, 20 per page. **Edit** changes any field; the operation and creation time
 stay fixed. **Delete** asks for confirmation and can't be undone.
 
-**View execution history** opens History filtered to the operation's exact name,
-and the filter stays when you switch between the Attacks and Scanner tabs. Runs
-labeled with a different capitalization or spacing of the name don't match.
+**All execution history** opens History filtered by the Operation's ID. The
+filter stays when you switch between Attacks and Scanner.
 
 #### Conversation evidence
 
-To attach a saved conversation to a finding, open it in Chat and choose **Link to
-finding**, the link icon next to Export. The picker lists findings from the
-operation the attack was labeled with. Search by title, select one, and choose
-**Attach**. If the attack's operation label doesn't exactly match a saved
-operation, the button is unavailable. The current toolbar selection doesn't
-change this.
+To attach a saved conversation, open it in Chat, select the outcome badge to open
+**Attack Result Details**, and choose **Add as finding**. Choose the finding's
+Operation, search by title, select a finding, and choose **Attach**. The
+conversation can come from any Operation or none.
 
-**New finding** in the picker opens the same form and attaches the conversation
-once the finding is saved. If the finding saves but the attachment fails, the
-finding is kept and the viewer offers **Retry attachment**, which won't create a
-second finding. Retry works only from the original conversation.
+**New finding** in that dialog opens the same form and saves the finding and its
+evidence together, so neither is saved if the conversation can't be attached.
+Saving again after a lost response returns the finding that was already saved
+rather than creating a second one.
 
 Evidence points to the live conversation, not a copy, so later messages show up
 too. Attaching the same conversation again reports **Already attached**.
 
-On the operation page, **Evidence (n)** under a finding lists its conversations.
-**Open conversation** reopens one in Chat. If a conversation no longer exists,
+On the operation page, **Evidence (n)** under a finding opens a table of its
+conversations. Each row shows the attack's objective, whether the conversation
+is the attack's **Main** conversation or a **Branch**, and that conversation's
+own score: the attack's headline score if it sits there, otherwise its latest
+human score, otherwise its latest score from the attack's objective scorer.
+Auxiliary scores never appear; a conversation without one reads **Not scored**.
+True and false scores use the same **success** and **failure** badges as Chat.
+Chat's badge is the attack's single outcome, so when branches are scored
+differently, the table shows each conversation's own result.
+Evidence from another Operation shows its source; unassigned activity shows
+**Not in an operation**. **Open conversation** reopens one in Chat. If a conversation no longer exists,
 its entry stays, shows its ID and attachment time, and reads **Evidence
 unavailable**. **Remove link** removes only the link, never the conversation.
 Deleting a finding removes its links the same way.
 
 #### Upgrading an existing database
 
-One migration adds the operation, finding, and evidence tables and leaves
-existing data alone. The backend applies it automatically when it starts, so
+One migration adds Operations, findings, evidence, and optional Operation IDs on
+attacks and scanner runs. It registers legacy names without changing historical
+attribution. Legacy activity remains in general history but does not appear in
+Operation-ID filters. The backend applies it automatically when it starts, so
 restart a running backend after upgrading. If you start memory with
 `skip_schema_migration=True`, run the migration yourself. Downgrading refuses to
 drop the tables while any operation exists.

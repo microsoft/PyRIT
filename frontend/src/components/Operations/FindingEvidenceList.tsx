@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 
 import {
-  Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  MessageBar, MessageBarBody, Spinner, Text,
+  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  MessageBar, MessageBarBody, Spinner, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text,
 } from '@fluentui/react-components'
-import { ChevronLeftRegular, ChevronRightRegular, DeleteRegular } from '@fluentui/react-icons'
+import { ChevronDownRegular, ChevronLeftRegular, ChevronRightRegular, DeleteRegular } from '@fluentui/react-icons'
 import { Link } from 'react-router'
 
+import OutcomeBadge from '@/components/OutcomeBadge'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { FindingEvidence, FindingEvidenceListResponse } from '@/types'
+import type { AttackOutcome, BackendScore, FindingEvidence, FindingEvidenceListResponse } from '@/types'
 import { attackConversationRoutePath } from '@/utils/routeParams'
 
 import { useFindingEvidenceListStyles } from './FindingEvidenceList.styles'
@@ -21,9 +22,32 @@ interface FindingEvidenceListProps {
   findingId: string
   count: number
   onDetached: () => void
+  /** Finding-level actions, shown at the far end of the Evidence toggle's row. */
+  actions?: React.ReactNode
 }
 
-export default function FindingEvidenceList({ operationId, findingId, count, onDetached }: FindingEvidenceListProps) {
+function scoreOutcome(score: BackendScore): AttackOutcome | null {
+  if (score.score_value === null || score.score_value === undefined) return 'undetermined'
+  if (score.score_type !== 'true_false') return null
+  return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
+}
+
+function EvidenceScore({ score }: { score: BackendScore }) {
+  const styles = useFindingEvidenceListStyles()
+  const outcome = scoreOutcome(score)
+  return (
+    <div className={styles.stack}>
+      {outcome ? <OutcomeBadge outcome={outcome} appearance="tint" size="small" />
+        : <Badge appearance="tint" color="brand" size="small">{score.score_value}</Badge>}
+      <Text size={200}>{score.scorer_type}</Text>
+      {score.score_rationale && <Text size={200}>{score.score_rationale}</Text>}
+    </div>
+  )
+}
+
+export default function FindingEvidenceList({
+  operationId, findingId, count, onDetached, actions,
+}: FindingEvidenceListProps) {
   const styles = useFindingEvidenceListStyles()
   const [expanded, setExpanded] = useState(false)
   const [offset, setOffset] = useState(0)
@@ -82,30 +106,62 @@ export default function FindingEvidenceList({ operationId, findingId, count, onD
 
   return (
     <div className={styles.root}>
-      <Button ref={triggerRef} className={styles.button} aria-expanded={expanded}
-        onClick={() => { setExpanded(value => !value) }}>Evidence ({count})</Button>
+      <div className={styles.header}>
+        <Button ref={triggerRef} className={styles.button} aria-expanded={expanded}
+          icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+          onClick={() => { setExpanded(value => !value) }}>Evidence ({count})</Button>
+        {actions && <div className={styles.headerActions}>{actions}</div>}
+      </div>
       {expanded && <div role="region" aria-label="Finding evidence" className={styles.region}>
         {settledKey !== requestKey ? <Spinner label="Loading evidence" /> : error ? (
           <MessageBar intent="error"><MessageBarBody>Could not load evidence: {error}{' '}
             <Button onClick={() => { setRevision(value => value + 1) }}>Retry evidence</Button>
           </MessageBarBody></MessageBar>
         ) : page?.items.length === 0 ? <Text>No evidence attached.</Text> : (
-          <ul className={styles.list}>{page?.items.map(({ item, availability, scenario_result_id: scenarioResultId }) => (
-            <li key={item.id} className={styles.item}>
-              <Text>{item.conversation_id}</Text>
-              <time dateTime={item.attached_at}>{new Date(item.attached_at).toLocaleString()}</time>
-              <div className={styles.actions}>
-                {availability === 'available' ? (
-                  <Link to={attackConversationRoutePath(item.attack_result_id, item.conversation_id, scenarioResultId, item.id)}>
-                    Open conversation
-                  </Link>
-                ) : <Text>Evidence unavailable</Text>}
-                <Button className={styles.button} icon={<DeleteRegular />} title="Remove link"
-                  aria-label={`Remove link: ${item.conversation_id}`}
-                  onClick={() => { setRemoving(item); setRemoveError('') }} />
-              </div>
-            </li>
-          ))}</ul>
+          <div className={styles.tableScroll}>
+            <Table aria-label="Evidence conversations" className={styles.table}>
+              <TableHeader><TableRow>
+                <TableHeaderCell className={styles.textColumn}>Conversation</TableHeaderCell>
+                <TableHeaderCell className={styles.textColumn}>Objective</TableHeaderCell>
+                <TableHeaderCell className={styles.textColumn}>Score</TableHeaderCell>
+                <TableHeaderCell>Attached</TableHeaderCell>
+                <TableHeaderCell>Actions</TableHeaderCell>
+              </TableRow></TableHeader>
+              <TableBody>{page?.items.map(({
+                item, availability, scenario_result_id: scenarioResultId, source_operation_id: sourceOperationId,
+                source_operation_name: sourceOperationName, objective, is_main_conversation: isMain, score,
+              }) => (
+                <TableRow key={item.id}>
+                  <TableCell className={styles.cell}><div className={styles.stack}>
+                    <Text>{item.conversation_id}</Text>
+                    {typeof isMain === 'boolean' && (
+                      <Badge appearance="outline" size="small">{isMain ? 'Main' : 'Branch'}</Badge>
+                    )}
+                    {sourceOperationId !== operationId && (
+                      <Text size={200}>{sourceOperationName ? `From operation: ${sourceOperationName}` : 'Not in an operation'}</Text>
+                    )}
+                  </div></TableCell>
+                  <TableCell className={styles.cell}>{objective?.trim() || 'No objective'}</TableCell>
+                  <TableCell className={styles.cell}>
+                    {score ? <EvidenceScore score={score} /> : availability === 'available' && 'Not scored'}
+                  </TableCell>
+                  <TableCell className={styles.cell}>
+                    <time dateTime={item.attached_at}>{new Date(item.attached_at).toLocaleString()}</time>
+                  </TableCell>
+                  <TableCell className={styles.cell}><div className={styles.rowActions}>
+                    {availability === 'available' ? (
+                      <Link to={attackConversationRoutePath(item.attack_result_id, item.conversation_id, scenarioResultId, item.id)}>
+                        Open conversation
+                      </Link>
+                    ) : <Text>Evidence unavailable</Text>}
+                    <Button className={styles.button} icon={<DeleteRegular />} title="Remove link"
+                      aria-label={`Remove link: ${item.conversation_id}`}
+                      onClick={() => { setRemoving(item); setRemoveError('') }} />
+                  </div></TableCell>
+                </TableRow>
+              ))}</TableBody>
+            </Table>
+          </div>
         )}
         <div className={styles.actions}>
           <Button className={styles.button} icon={<ChevronLeftRegular />} title="Previous evidence"

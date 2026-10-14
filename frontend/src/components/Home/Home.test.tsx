@@ -24,7 +24,7 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
-  return {
+  const attack: AttackSummary = {
     attack_result_id: "ar-1",
     conversation_id: "conv-1",
     attack_type: "TestAttack",
@@ -41,6 +41,8 @@ function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
     updated_at: new Date().toISOString(),
     ...overrides,
   };
+  // Like the API, name legacy activity by its stored operation text unless a current name is given.
+  return { operation_name: attack.operation, ...attack };
 }
 
 const defaultProps = {
@@ -246,6 +248,20 @@ describe("Home", () => {
     expect(within(card).getByText(/\+1 more in history/)).toBeInTheDocument();
     // f2 has no preview, so its row shows the attack type instead.
     expect(within(card).getByText("TestAttack")).toBeInTheDocument();
+  });
+
+  it("groups ID-linked attacks under their saved Operation's current name", async () => {
+    mockListAttacks.mockResolvedValue({
+      items: [
+        makeAttack({ attack_result_id: "ar-1", operation: null, operation_id: "id-1", operation_name: "Renamed" }),
+        makeAttack({ attack_result_id: "ar-2", operation: null, operation_id: "id-1", operation_name: "Renamed" }),
+      ],
+      pagination: { has_more: false, next_cursor: null },
+    });
+
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
+    expect(await screen.findByTestId("home-operation-Renamed")).toHaveTextContent(/2 attacks/i);
+    expect(screen.queryByTestId("home-operation-unlabeled")).not.toBeInTheDocument();
   });
 
   it("groups attacks with no operation label under '(no operation)'", async () => {

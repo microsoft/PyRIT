@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select
 from sqlalchemy.dialects import mssql
 from sqlalchemy.engine import ScalarResult
 from sqlalchemy.exc import IntegrityError
@@ -21,6 +21,7 @@ from pyrit.memory.memory_models import (
     ScoreEntry,
 )
 from pyrit.models import Finding, FindingCreate, FindingEvidence, FindingSeverity, Operation
+from pyrit.models.harm_category import HarmCategory
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -31,7 +32,63 @@ async def test_operations_are_unique_by_trimmed_case_folded_name(sqlite_instance
     assert await sqlite_instance.add_operation_async(Operation(name="operation a")) == saved
     assert [operation.name for operation in await sqlite_instance.get_operations_async()] == ["Beta", "Operation A"]
     assert await sqlite_instance.get_operations_async(name="  OPERATION a ") == [saved]
-    assert await sqlite_instance.get_operations_async(operation_id=saved.id) == [saved]
+    assert await sqlite_instance.require_operation_async(operation_id=saved.id) == saved
+
+
+async def test_update_operation_replaces_only_the_description(sqlite_instance: SQLiteMemory) -> None:
+    saved = await sqlite_instance.add_operation_async(Operation(name="Scoped", description="First draft"))
+    updated = await sqlite_instance.update_operation_async(operation_id=saved.id, description="Final scope")
+    assert updated == saved.model_copy(update={"description": "Final scope"})
+    assert await sqlite_instance.require_operation_async(operation_id=saved.id) == updated
+    with pytest.raises(LookupError):
+        await sqlite_instance.update_operation_async(operation_id=uuid4(), description="Missing")
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "same"),
+    [
+        ("Café", "Cafe", False),
+        ("ＡＢＣ", "abc", False),
+        ("STRASSE", "straße", True),
+        (" Ǆemal ", "ǆemal", True),
+    ],
+)
+async def test_operation_identity_follows_casefold_not_database_collation(
+    sqlite_instance: SQLiteMemory, first: str, second: str, same: bool
+) -> None:
+    saved = await sqlite_instance.add_operation_async(Operation(name=first))
+    assert (await sqlite_instance.add_operation_async(Operation(name=second)) == saved) is same
+    assert len(await sqlite_instance.get_operations_async()) == (1 if same else 2)
+
+
+@pytest.mark.parametrize(
+    ("stored", "harm_type", "harm_type_other"),
+    [("Malwar", HarmCategory.OTHER, "Malwar"), ("malware", HarmCategory.MALWARE, None)],
+)
+async def test_unknown_stored_harm_type_stays_readable(
+    sqlite_instance: SQLiteMemory,
+    caplog: pytest.LogCaptureFixture,
+    stored: str,
+    harm_type: HarmCategory,
+    harm_type_other: str | None,
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Written elsewhere"))
+    with sqlite_instance.engine.begin() as connection:
+        connection.execute(
+            insert(FindingEntry).values(
+                id=uuid4(),
+                operation_id=operation.id,
+                title="Stored outside PyRIT",
+                description="",
+                severity="low",
+                harm_type=stored,
+                created_at=datetime.now(UTC),
+            )
+        )
+    with caplog.at_level("WARNING"):
+        [finding] = await sqlite_instance.get_findings_async(operation_id=operation.id)
+    assert (finding.harm_type, finding.harm_type_other) == (harm_type, harm_type_other)
+    assert ("Unknown harm category 'Malwar'" in caplog.text) is (harm_type_other is not None)
 
 
 async def test_findings_paginate_within_one_operation(sqlite_instance: SQLiteMemory) -> None:
@@ -40,11 +97,11 @@ async def test_findings_paginate_within_one_operation(sqlite_instance: SQLiteMem
     stamp = datetime(2026, 10, 6, tzinfo=UTC)
     for number, severity in [(1, "low"), (2, "critical"), (3, "critical"), (4, "informational")]:
         await sqlite_instance.add_finding_async(
-            Finding(
+            finding=Finding(
                 id=UUID(int=number), created_at=stamp, operation_id=operation.id, title=str(number), severity=severity
             )
         )
-    await sqlite_instance.add_finding_async(Finding(operation_id=other.id, title="Other", severity="critical"))
+    await sqlite_instance.add_finding_async(finding=Finding(operation_id=other.id, title="Other", severity="critical"))
     first = await sqlite_instance.get_findings_async(operation_id=operation.id, limit=2)
     second = await sqlite_instance.get_findings_async(operation_id=operation.id, limit=2, offset=2)
     assert [finding.title for finding in first + second] == ["3", "2", "1", "4"]
@@ -53,23 +110,42 @@ async def test_findings_paginate_within_one_operation(sqlite_instance: SQLiteMem
             assert await session.scalar(select(func.count()).select_from(table)) == 0
 
 
-async def test_duplicate_id_rolls_back_without_losing_saved_finding(sqlite_instance: SQLiteMemory) -> None:
+async def test_duplicate_id_returns_the_saved_finding_unchanged(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
     finding = Finding(operation_id=operation.id, title="Original", severity="low")
-    assert await sqlite_instance.add_finding_async(finding) == finding
-    with pytest.raises(IntegrityError):
-        await sqlite_instance.add_finding_async(finding.model_copy(update={"title": "Duplicate"}))
+    assert await sqlite_instance.add_finding_async(finding=finding) == finding
+    assert await sqlite_instance.add_finding_async(finding=finding.model_copy(update={"title": "Duplicate"})) == finding
     assert [f.title for f in await sqlite_instance.get_findings_async()] == ["Original"]
     async with await sqlite_instance.get_session_async() as session:
         assert await session.scalar(select(func.count()).select_from(FindingEntry)) == 1
 
 
+async def test_finding_and_evidence_save_together_or_not_at_all(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
+    finding = Finding(operation_id=operation.id, title="With evidence", severity="low")
+    evidence = FindingEvidence(finding_id=finding.id, conversation_id="conversation", attack_result_id=uuid4())
+    assert await sqlite_instance.add_finding_async(finding=finding, evidence=evidence) == finding
+    assert (
+        await sqlite_instance.get_finding_evidence_by_source_async(
+            finding_id=finding.id, conversation_id="conversation"
+        )
+        == evidence
+    )
+    rejected = Finding(operation_id=operation.id, title="Evidence clash", severity="low")
+    clash = evidence.model_copy(update={"finding_id": rejected.id})
+    with pytest.raises(IntegrityError):
+        await sqlite_instance.add_finding_async(finding=rejected, evidence=clash)
+    assert [f.title for f in await sqlite_instance.get_findings_async()] == ["With evidence"]
+
+
 async def test_update_finding_preserves_identity_and_reorders_severity(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
     original = await sqlite_instance.add_finding_async(
-        Finding(operation_id=operation.id, title="Original", severity="low")
+        finding=Finding(operation_id=operation.id, title="Original", severity="low")
     )
-    await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="Other", severity="moderate"))
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="Other", severity="moderate")
+    )
     updated = await sqlite_instance.update_finding_async(
         operation_id=operation.id,
         finding_id=original.id,
@@ -95,7 +171,7 @@ async def test_finding_classifications_persist_and_clear_without_losing_evidence
             "harm_type_other": "  Team harm  ",
         }
     )
-    saved = await sqlite_instance.add_finding_async(original)
+    saved = await sqlite_instance.add_finding_async(finding=original)
     assert saved == original
     evidence = FindingEvidence(finding_id=saved.id, conversation_id="preserved", attack_result_id=uuid4())
     await sqlite_instance.add_finding_evidence_async(evidence=evidence)
@@ -123,7 +199,7 @@ async def test_custom_severity_sorts_after_every_preset(sqlite_instance: SQLiteM
     stamp = datetime(2026, 10, 9, tzinfo=UTC)
     for number, severity in enumerate(["other", "informational", "low", "moderate", "important", "critical"], start=1):
         await sqlite_instance.add_finding_async(
-            Finding.model_validate(
+            finding=Finding.model_validate(
                 {
                     "id": UUID(int=number),
                     "created_at": stamp,
@@ -148,7 +224,7 @@ async def test_finding_mutations_are_scoped_and_delete_only_the_finding(sqlite_i
     operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
     other = await sqlite_instance.add_operation_async(Operation(name="Other"))
     original = await sqlite_instance.add_finding_async(
-        Finding(operation_id=operation.id, title="Original", severity="low")
+        finding=Finding(operation_id=operation.id, title="Original", severity="low")
     )
     with pytest.raises(LookupError, match="not found"):
         await sqlite_instance.update_finding_async(
@@ -169,7 +245,7 @@ async def test_finding_mutations_are_scoped_and_delete_only_the_finding(sqlite_i
 async def test_update_finding_validates_before_mutation(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Case"))
     original = await sqlite_instance.add_finding_async(
-        Finding(operation_id=operation.id, title="Original", severity="low")
+        finding=Finding(operation_id=operation.id, title="Original", severity="low")
     )
     invalid = FindingCreate(title="Valid", severity="low").model_copy(update={"title": " "})
     with pytest.raises(ValueError):
@@ -179,7 +255,9 @@ async def test_update_finding_validates_before_mutation(sqlite_instance: SQLiteM
 
 async def test_add_finding_evidence_and_get_page(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
-    finding = await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="A", severity="low"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="A", severity="low")
+    )
     stamp = datetime(2026, 10, 8, tzinfo=UTC)
     items = [
         FindingEvidence(
@@ -227,7 +305,9 @@ async def test_finding_evidence_foreign_key_failure_is_lookup_error(sqlite_insta
 
 async def test_finding_evidence_unique_per_finding_conversation(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
-    finding = await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="A", severity="low"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="A", severity="low")
+    )
     evidence = FindingEvidence(finding_id=finding.id, conversation_id="source", attack_result_id=uuid4())
     await sqlite_instance.add_finding_evidence_async(evidence=evidence)
     duplicate = evidence.model_copy(update={"id": uuid4()})
@@ -237,7 +317,9 @@ async def test_finding_evidence_unique_per_finding_conversation(sqlite_instance:
 
 async def test_unrelated_integrity_failures_propagate(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
-    finding = await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="A", severity="low"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="A", severity="low")
+    )
     evidence = FindingEvidence(finding_id=finding.id, conversation_id="source", attack_result_id=uuid4())
     await sqlite_instance.add_finding_evidence_async(evidence=evidence)
     with pytest.raises(IntegrityError):
@@ -249,7 +331,7 @@ async def test_unrelated_integrity_failures_propagate(sqlite_instance: SQLiteMem
 async def test_one_conversation_can_support_multiple_findings_and_counts(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
     findings = [
-        await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title=title, severity="low"))
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=operation.id, title=title, severity="low"))
         for title in ["A", "B", "C"]
     ]
     for finding in findings[:2]:
@@ -268,8 +350,10 @@ async def test_finding_severity_counts_group_by_operation(sqlite_instance: SQLit
     other = await sqlite_instance.add_operation_async(Operation(name="Other"))
     await sqlite_instance.add_operation_async(Operation(name="Empty"))
     for severity in ["critical", "critical", "low"]:
-        await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="A", severity=severity))
-    await sqlite_instance.add_finding_async(Finding(operation_id=other.id, title="B", severity="informational"))
+        await sqlite_instance.add_finding_async(
+            finding=Finding(operation_id=operation.id, title="A", severity=severity)
+        )
+    await sqlite_instance.add_finding_async(finding=Finding(operation_id=other.id, title="B", severity="informational"))
     assert await sqlite_instance.get_finding_severity_counts_async() == {
         operation.id: {FindingSeverity.CRITICAL: 2, FindingSeverity.LOW: 1},
         other.id: {FindingSeverity.INFORMATIONAL: 1},
@@ -280,7 +364,9 @@ async def test_delete_finding_removes_evidence_without_deleting_source(sqlite_in
     from pyrit.models import Message, MessagePiece
 
     operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
-    finding = await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="A", severity="low"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="A", severity="low")
+    )
     await sqlite_instance.add_message_to_memory_async(
         request=Message(
             message_pieces=[MessagePiece(role="user", original_value="Retain me", conversation_id="source")]
@@ -323,6 +409,6 @@ async def test_finding_search_treats_wildcards_and_escape_characters_literally(
 ) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Literal search"))
     for title in ["[Proof]", "100%_", "a/b", "a//b", "Proof", "100XX", "ab"]:
-        await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title=title, severity="low"))
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=operation.id, title=title, severity="low"))
     findings = await sqlite_instance.get_findings_async(operation_id=operation.id, title_query=query)
     assert [finding.title for finding in findings] == [query]

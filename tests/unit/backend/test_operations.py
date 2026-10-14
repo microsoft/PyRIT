@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
@@ -12,12 +13,14 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from pyrit.backend.main import app
-from pyrit.backend.models.operations import FindingEvidenceCreateRequest
+from pyrit.backend.models.operations import FindingCreateRequest, FindingEvidenceCreateRequest
 from pyrit.backend.services.operation_service import FindingNotFoundError, OperationService
 from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, Base, PromptMemoryEntry
+from pyrit.memory.memory_models import AttackResultEntry, Base, ConversationEntry, PromptMemoryEntry
 from pyrit.models import (
     AttackResult,
+    ComponentIdentifier,
+    Conversation,
     ConversationReference,
     ConversationType,
     Finding,
@@ -25,6 +28,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     Operation,
+    Score,
 )
 from pyrit.models.harm_category import HarmCategory
 
@@ -44,6 +48,24 @@ def test_operations_create_list_and_get(compatibility_headers: dict[str, str]) -
     assert all(item["finding_counts"] == {} for item in client.get("/api/operations").json()["items"])
     assert client.get(f"/api/operations/{operation['id']}").json() == operation
     assert client.get(f"/api/operations/{MISSING_ID}").status_code == 404
+
+
+def test_operation_description_is_set_on_create_and_edited_without_renaming(
+    compatibility_headers: dict[str, str],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Scoped", "description": "Web app only"}).json()
+    assert operation["description"] == "Web app only"
+    path = f"/api/operations/{operation['id']}"
+    updated = client.patch(path, json={"description": "Web app and API\nNo social engineering"})
+    assert updated.status_code == 200
+    assert updated.json() == {**operation, "description": "Web app and API\nNo social engineering"}
+    assert client.get(path).json() == updated.json()
+    assert client.patch(path, json={"description": ""}).json()["description"] == ""
+    assert client.patch(path, json={"description": "x", "name": "Renamed"}).status_code == 422
+    assert client.patch(f"/api/operations/{MISSING_ID}", json={"description": "x"}).status_code == 404
+    assert TestClient(app).patch(path, json={"description": "x"}).status_code != 200
+    assert client.get("/api/operations").json()["items"][0]["description"] == ""
 
 
 def test_duplicate_operation_conflicts_with_existing_record(compatibility_headers: dict[str, str]) -> None:
@@ -122,6 +144,71 @@ def test_findings_require_an_existing_operation(compatibility_headers: dict[str,
     body = {"title": "Assessment", "severity": "low"}
     assert client.post(f"/api/operations/{MISSING_ID}/findings", json=body).status_code == 404
     assert client.get(f"/api/operations/{MISSING_ID}/findings").status_code == 404
+
+
+def test_finding_create_retried_with_the_same_id_returns_the_saved_finding(
+    compatibility_headers: dict[str, str],
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation_id = client.post("/api/operations", json={"name": "Case"}).json()["id"]
+    path = f"/api/operations/{operation_id}/findings"
+    body = {"id": str(uuid4()), "title": "Assessment", "severity": "low"}
+    first = client.post(path, json=body)
+    retried = client.post(path, json=body)
+    assert first.status_code == retried.status_code == 201
+    assert retried.json() == first.json()
+    assert first.json()["id"] == body["id"]
+    assert client.post(path, json={**body, "title": "Edited"}).status_code == 409
+    other_id = client.post("/api/operations", json={"name": "Other"}).json()["id"]
+    assert client.post(f"/api/operations/{other_id}/findings", json=body).status_code == 409
+    assert [item["title"] for item in client.get(path).json()["items"]] == ["Assessment"]
+
+
+@pytest.mark.parametrize("names_attack", [True, False])
+def test_finding_create_links_conversation_evidence_in_the_same_request(
+    compatibility_headers: dict[str, str],
+    evidence_source_async: tuple[Operation, Finding, AttackResult],
+    names_attack: bool,
+) -> None:
+    operation, _, attack = evidence_source_async
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{operation.id}/findings"
+    body = {"id": str(uuid4()), "title": "With evidence", "severity": "low", "conversation_id": "main"}
+    if names_attack:
+        body["attack_result_id"] = attack.attack_result_id
+    created = client.post(path, json=body)
+    assert created.status_code == 201
+    assert client.post(path, json=body).json() == created.json()
+    evidence = client.get(f"{path}/{body['id']}/evidence").json()["items"]
+    assert [(item["item"]["conversation_id"], item["item"]["attack_result_id"]) for item in evidence] == [
+        ("main", attack.attack_result_id)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "status_code"),
+    [
+        ({"conversation_id": "unknown"}, 404),
+        ({"conversation_id": "other", "attack": True}, 404),
+        ({"attack": True}, 422),
+    ],
+)
+def test_finding_create_saves_nothing_when_its_evidence_cannot_be_linked(
+    compatibility_headers: dict[str, str],
+    evidence_source_async: tuple[Operation, Finding, AttackResult],
+    source: dict[str, object],
+    status_code: int,
+) -> None:
+    operation, finding, attack = evidence_source_async
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{operation.id}/findings"
+    body: dict[str, object] = {"title": "Unlinked", "severity": "low"}
+    if "conversation_id" in source:
+        body["conversation_id"] = source["conversation_id"]
+    if source.get("attack"):
+        body["attack_result_id"] = attack.attack_result_id
+    assert client.post(path, json=body).status_code == status_code
+    assert [item["id"] for item in client.get(path).json()["items"]] == [str(finding.id)]
 
 
 @pytest.mark.parametrize(
@@ -209,9 +296,9 @@ async def evidence_source_async(sqlite_instance: SQLiteMemory) -> tuple[Operatio
 async def _store_evidence_source_async(sqlite_instance: SQLiteMemory) -> tuple[Operation, Finding, AttackResult]:
     operation = await sqlite_instance.add_operation_async(Operation(name="Exact Operation"))
     finding = await sqlite_instance.add_finding_async(
-        Finding(operation_id=operation.id, title="100%_Proof", severity="low")
+        finding=Finding(operation_id=operation.id, title="100%_Proof", severity="low")
     )
-    attack = AttackResult(conversation_id="main", objective="Evidence", operation=operation.name)
+    attack = AttackResult(conversation_id="main", objective="Evidence", operation_id=operation.id)
     await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
     await sqlite_instance.add_message_to_memory_async(
         request=Message(message_pieces=[MessagePiece(role="user", original_value="Evidence", conversation_id="main")])
@@ -233,30 +320,57 @@ def test_finding_evidence_attach_returns_created_then_already_attached(
     assert created.json()["created"] is True and repeated.json()["created"] is False
     assert created.json()["item"] == repeated.json()["item"]
     page = client.get(path, params={"limit": 1}).json()
-    assert page["items"][0] == {"item": created.json()["item"], "availability": "available", "scenario_result_id": None}
+    assert page["items"][0] == {
+        "item": created.json()["item"],
+        "availability": "available",
+        "scenario_result_id": None,
+        "source_operation_id": str(operation.id),
+        "source_operation_name": operation.name,
+        "objective": "Evidence",
+        "is_main_conversation": True,
+        "score": None,
+    }
     assert client.get(f"/api/operations/{operation.id}/findings").json()["items"][0]["evidence_count"] == 1
     evidence_id = created.json()["item"]["id"]
     assert client.delete(f"{path}/{evidence_id}").status_code == 204
     assert client.delete(f"{path}/{evidence_id}").status_code == 404
 
 
-@pytest.mark.parametrize("attribution", [None, "Other", "exact Operation", "Exact Operation "])
-async def test_finding_evidence_rejects_attribution_async(
+@pytest.mark.parametrize(
+    ("attribution", "source_name"),
+    [("unassigned", None), ("other_operation", "Other"), ("legacy_exact_name", "Exact Operation")],
+)
+async def test_finding_evidence_accepts_any_saved_attack_without_changing_it_async(
     sqlite_instance: SQLiteMemory,
     compatibility_headers: dict[str, str],
     evidence_source_async: tuple[Operation, Finding, AttackResult],
-    attribution: str | None,
+    attribution: str,
+    source_name: str | None,
 ) -> None:
-    operation, finding, attack = evidence_source_async
-    await sqlite_instance.update_attack_result_by_id_async(
-        attack_result_id=attack.attack_result_id, update_fields={"operation": attribution}
+    operation, finding, _ = evidence_source_async
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    attack = AttackResult(
+        conversation_id="source",
+        objective="Evidence",
+        operation_id=other.id if attribution == "other_operation" else None,
+        operation=operation.name if attribution == "legacy_exact_name" else None,
     )
-    response = TestClient(app, headers=compatibility_headers).post(
-        f"/api/operations/{operation.id}/findings/{finding.id}/evidence",
-        json={"attack_result_id": attack.attack_result_id, "conversation_id": "main"},
+    # Legacy name-only rows predate Operation IDs and can no longer be written through the memory API.
+    with sqlite_instance._get_session() as session:
+        session.add(AttackResultEntry(entry=attack))
+        session.commit()
+    await sqlite_instance.add_message_to_memory_async(
+        request=Message(message_pieces=[MessagePiece(role="user", original_value="x", conversation_id="source")])
     )
-    assert response.status_code == 409
-    assert await sqlite_instance.get_finding_evidence_counts_async(finding_ids=[finding.id]) == {}
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{operation.id}/findings/{finding.id}/evidence"
+    response = client.post(path, json={"attack_result_id": attack.attack_result_id, "conversation_id": "source"})
+    assert response.status_code == 201
+    listed = client.get(path).json()["items"][0]
+    assert listed["source_operation_id"] == (str(other.id) if attribution == "other_operation" else None)
+    assert listed["source_operation_name"] == source_name
+    stored = (await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id]))[0]
+    assert (stored.operation_id, stored.operation) == (attack.operation_id, attack.operation)
 
 
 @pytest.mark.parametrize("missing", ["operation", "finding", "attack", "conversation"])
@@ -275,6 +389,33 @@ def test_finding_evidence_rejects_missing_sources(
         },
     )
     assert response.status_code == 404
+
+
+async def test_finding_create_finds_the_attack_of_a_branch_conversation_async(
+    sqlite_instance: SQLiteMemory, evidence_source_async: tuple[Operation, Finding, AttackResult]
+) -> None:
+    operation, _, attack = evidence_source_async
+    await sqlite_instance.update_attack_result_by_id_async(
+        attack_result_id=attack.attack_result_id, update_fields={"pruned_conversation_ids": ["branch"]}
+    )
+    await sqlite_instance.add_message_to_memory_async(
+        request=Message(message_pieces=[MessagePiece(role="user", original_value="Branch", conversation_id="branch")])
+    )
+    with sqlite_instance._get_session() as session:
+        session.merge(
+            ConversationEntry(
+                conversation=Conversation(conversation_id="branch", attack_result_id=attack.attack_result_id)
+            )
+        )
+        session.commit()
+    finding = await OperationService().create_finding_async(
+        operation_id=operation.id,
+        request=FindingCreateRequest(title="Branch", severity="low", conversation_id="branch"),
+    )
+    evidence = await sqlite_instance.get_finding_evidence_by_source_async(
+        finding_id=finding.id, conversation_id="branch"
+    )
+    assert evidence is not None and evidence.attack_result_id == UUID(attack.attack_result_id)
 
 
 async def test_finding_evidence_related_membership_and_unavailability_async(
@@ -313,10 +454,93 @@ async def test_finding_evidence_related_membership_and_unavailability_async(
             )
 
 
+async def test_finding_evidence_shows_each_conversations_own_score_async(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Scores"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="Scored", severity="low")
+    )
+    objective_scorer = ComponentIdentifier(class_name="SelfAskTrueFalseScorer", class_module="pyrit.score")
+    auxiliary_scorer = ComponentIdentifier(class_name="SelfAskRefusalScorer", class_module="pyrit.score")
+    human_scorer = ComponentIdentifier(class_name="ManualScorer", class_module="pyrit.score")
+    branches = ["objective", "human", "auxiliary", "unscored"]
+    pieces = {
+        conversation_id: MessagePiece(role="assistant", original_value=conversation_id, conversation_id=conversation_id)
+        for conversation_id in ["main", *branches]
+    }
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=list(pieces.values()))
+    start = datetime.now(UTC)
+
+    def make_score(conversation_id: str, scorer: ComponentIdentifier, minute: int) -> Score:
+        return Score(
+            score_value="true",
+            score_type="true_false",
+            score_rationale=f"{scorer.class_name} on {conversation_id} at {minute}",
+            scorer_class_identifier=scorer,
+            message_piece_id=pieces[conversation_id].id,
+            timestamp=start + timedelta(minutes=minute),
+        )
+
+    headline = make_score("main", objective_scorer, 0)
+    await sqlite_instance.add_scores_to_memory_async(
+        scores=[
+            headline,
+            # A later human score that is not the headline, as left behind when a human score is removed.
+            make_score("main", human_scorer, 1),
+            make_score("objective", objective_scorer, 0),
+            make_score("objective", objective_scorer, 1),
+            make_score("objective", auxiliary_scorer, 2),
+            make_score("human", objective_scorer, 2),
+            make_score("human", human_scorer, 1),
+            make_score("auxiliary", auxiliary_scorer, 0),
+        ]
+    )
+    attack = AttackResult(
+        conversation_id="main",
+        objective="Scored objective",
+        operation_id=operation.id,
+        automated_score=headline,
+        related_conversations={
+            ConversationReference(conversation_id=conversation_id, conversation_type=ConversationType.PRUNED)
+            for conversation_id in branches
+        },
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+    service = OperationService()
+    for conversation_id in ["main", *branches]:
+        await service.attach_finding_evidence_async(
+            operation_id=operation.id,
+            finding_id=finding.id,
+            request=FindingEvidenceCreateRequest(
+                attack_result_id=attack.attack_result_id, conversation_id=conversation_id
+            ),
+        )
+
+    page = await service.list_finding_evidence_async(
+        operation_id=operation.id, finding_id=finding.id, limit=20, offset=0
+    )
+
+    shown = {
+        evidence.item.conversation_id: (
+            evidence.is_main_conversation,
+            evidence.score.score_rationale if evidence.score else None,
+            evidence.score.is_objective_score if evidence.score else None,
+        )
+        for evidence in page.items
+    }
+    assert shown == {
+        "main": (True, "SelfAskTrueFalseScorer on main at 0", True),
+        "objective": (False, "SelfAskTrueFalseScorer on objective at 1", False),
+        "human": (False, "ManualScorer on human at 1", False),
+        "auxiliary": (False, None, None),
+        "unscored": (False, None, None),
+    }
+    assert {evidence.objective for evidence in page.items} == {"Scored objective"}
+
+
 async def test_finding_search_is_literal_case_insensitive_async(sqlite_instance: SQLiteMemory) -> None:
     operation = await sqlite_instance.add_operation_async(Operation(name="Search"))
     for title in ["100%_Proof", "100XXProof", "other"]:
-        await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title=title, severity="low"))
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=operation.id, title=title, severity="low"))
     page = await OperationService().list_findings_async(
         operation_id=operation.id, limit=20, offset=0, title_query="%_pROOF"
     )
@@ -424,7 +648,9 @@ async def test_evidence_detach_is_scoped_and_does_not_mutate_source_async(
             "conversation_id": "main",
         },
     ).json()["item"]
-    other = await sqlite_instance.add_finding_async(Finding(operation_id=operation.id, title="Other", severity="low"))
+    other = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="Other", severity="low")
+    )
     assert (
         client.delete(f"/api/operations/{operation.id}/findings/{other.id}/evidence/{saved['id']}").status_code == 404
     )

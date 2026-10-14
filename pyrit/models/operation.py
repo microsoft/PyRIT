@@ -23,6 +23,7 @@ class OperationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    description: str = ""
 
     @field_validator("name")
     @classmethod

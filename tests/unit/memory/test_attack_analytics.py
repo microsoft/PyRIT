@@ -51,8 +51,10 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ConverterIdentifier,
+    Operation,
     TargetIdentifier,
 )
+from unit.mocks import add_legacy_attack_results_async
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -112,8 +114,8 @@ def predicate(*, name: str, values: list[str | None], **options: Any) -> dict[st
 
 
 async def test_report_counts_result_ids_not_conversations(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[make_result(), make_result(index=2, outcome=AttackOutcome.FAILURE)]
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(), make_result(index=2, outcome=AttackOutcome.FAILURE)]
     )
     result = await AttackAnalyticsReader(memory=sqlite_instance).report_async(
         query=AttackAnalyticsQuery(), control=control()
@@ -126,11 +128,12 @@ async def test_report_counts_result_ids_not_conversations(sqlite_instance: SQLit
 
 
 async def test_multivalued_groups_and_cells_do_not_multiply_results(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(categories=["privacy", "privacy", "safety"], converters=["Alpha", "Alpha", "Beta"]),
             make_result(index=2, outcome=AttackOutcome.FAILURE, categories=["privacy"], converters=["Alpha"]),
-        ]
+        ],
     )
     query = AttackAnalyticsQuery(
         group_by=AttackAnalyticsDimension(name="targeted_harm_category"),
@@ -146,8 +149,8 @@ async def test_multivalued_groups_and_cells_do_not_multiply_results(sqlite_insta
 
 
 async def test_case_variants_within_one_result_have_one_membership(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[make_result(categories=["Privacy", "privacy"], converters=["Alpha", "ALPHA"])]
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(categories=["Privacy", "privacy"], converters=["Alpha", "ALPHA"])]
     )
     report = await AttackAnalyticsReader(memory=sqlite_instance).report_async(
         query=AttackAnalyticsQuery(
@@ -163,11 +166,12 @@ async def test_case_variants_within_one_result_have_one_membership(sqlite_instan
 
 
 async def test_non_ascii_case_variants_share_group_filter_and_facet_keys(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(categories=["\u00c9COLE"], converters=["\u00d6mega"], attack_class_name="\u00c9cho"),
             make_result(index=2, categories=["\u00e9cole"], converters=["\u00f6mega"], attack_class_name="\u00e9cho"),
-        ]
+        ],
     )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     category = AttackAnalyticsDimension(name="targeted_harm_category")
@@ -209,7 +213,7 @@ async def test_non_ascii_case_variants_share_group_filter_and_facet_keys(sqlite_
 
 
 async def test_whitespace_empty_category_array_matches_missing_filter(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result()])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result()])
     async with sqlite_instance._get_async_engine().begin() as connection:
         await connection.execute(text("UPDATE AttackResultEntries SET targeted_harm_categories = '[   ]'"))
     reader = AttackAnalyticsReader(memory=sqlite_instance)
@@ -225,12 +229,13 @@ async def test_whitespace_empty_category_array_matches_missing_filter(sqlite_ins
 
 
 async def test_additional_converter_predicate_keeps_existing_any_constraint(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(converters=["Alpha", "Gamma"]),
             make_result(index=2, converters=["Gamma"]),
             make_result(index=3, converters=["Beta"]),
-        ]
+        ],
     )
     filters = AttackAnalyticsFilters.model_validate(
         {
@@ -248,11 +253,12 @@ async def test_additional_converter_predicate_keeps_existing_any_constraint(sqli
 
 
 async def test_response_converter_direction_and_all_matching(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(converters=["Alpha"], response_converters=["Beta", "Gamma"]),
             make_result(index=2, response_converters=["Beta"]),
-        ]
+        ],
     )
     filters = AttackAnalyticsFilters.model_validate(
         {
@@ -275,8 +281,8 @@ async def test_response_converter_direction_and_all_matching(sqlite_instance: SQ
 
 
 async def test_missing_values_do_not_collide_with_literal_labels(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[make_result(operation=None), make_result(index=2, operation="Not recorded")]
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(operation=None), make_result(index=2, operation="Not recorded")]
     )
     report = await AttackAnalyticsReader(memory=sqlite_instance).report_async(
         query=AttackAnalyticsQuery(), control=control()
@@ -290,7 +296,7 @@ async def test_missing_values_do_not_collide_with_literal_labels(sqlite_instance
 async def test_known_empty_converters_differ_from_missing_identifier(sqlite_instance: SQLiteMemory) -> None:
     missing = make_result(index=2)
     missing.atomic_attack_identifier = None
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result(), missing])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result(), missing])
     report = await AttackAnalyticsReader(memory=sqlite_instance).report_async(
         query=AttackAnalyticsQuery(group_by=AttackAnalyticsDimension(name="converter_type")), control=control()
     )
@@ -298,12 +304,13 @@ async def test_known_empty_converters_differ_from_missing_identifier(sqlite_inst
 
 
 async def test_literal_label_paths_and_facet_search(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(labels={"a.b": "50%_done"}),
             make_result(index=2, labels={"a.b": "50xxdone"}),
             make_result(index=3, operation="operation-b", labels={"a.b": "different"}),
-        ]
+        ],
     )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     filters = AttackAnalyticsFilters.model_validate(
@@ -322,12 +329,13 @@ async def test_literal_label_paths_and_facet_search(sqlite_instance: SQLiteMemor
 
 
 async def test_facet_excludes_its_own_filters_but_keeps_other_dimensions(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(operation="one", converters=["Alpha"]),
             make_result(index=2, operation="two", converters=["Alpha"]),
             make_result(index=3, operation="three", converters=["Beta"]),
-        ]
+        ],
     )
     filters = AttackAnalyticsFilters.model_validate(
         {
@@ -344,9 +352,67 @@ async def test_facet_excludes_its_own_filters_but_keeps_other_dimensions(sqlite_
     assert [item.key.value for item in values.items] == ["one", "two"]
 
 
+async def test_operation_resolves_saved_operation_names_like_history(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    by_id = make_result(operation=None)
+    by_id.operation_id = operation.id
+    # A deprecated name that resolved to the saved Operation is stored with both.
+    linked_name = make_result(index=2, operation=" ENGAGEMENT", outcome=AttackOutcome.FAILURE)
+    linked_name.operation_id = operation.id
+    by_name = make_result(index=3, operation="Engagement")
+    unassigned = make_result(index=4, operation=None)
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[by_id, linked_name, by_name, unassigned])
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(), control=control())
+    assert {(group.option.key.kind.value, group.option.key.value): group.counts for group in report.groups} == {
+        ("value", "Engagement"): {"success": 2, "failure": 1},
+        ("missing", None): {"success": 1},
+    }
+    assert sorted(item.operation or "" for item in report.results.items) == [
+        "",
+        "Engagement",
+        "Engagement",
+        "Engagement",
+    ]
+
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=["Engagement"])]}
+    )
+    filtered = await reader.report_async(query=AttackAnalyticsQuery(filters=filters), control=control())
+    assert filtered.counts == {"success": 2, "failure": 1}
+    facet = await reader.facets_async(
+        query=AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name="operation")), control=control()
+    )
+    assert [(item.key.kind.value, item.key.value) for item in facet.items] == [
+        ("missing", None),
+        ("value", "Engagement"),
+    ]
+
+    matrix = await reader.report_async(
+        query=AttackAnalyticsQuery(compare_by=AttackAnalyticsDimension(name="attack_type")), control=control()
+    )
+    assert {cell.option.key.value: cell.counts for cell in matrix.cells} == {
+        "Engagement": {"success": 2, "failure": 1},
+        None: {"success": 1},
+    }
+
+
+@pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect(deprecate_large_types=True)])
+def test_operation_joins_saved_operations_once_per_statement(dialect: Dialect) -> None:
+    filters = AttackAnalyticsFilters.model_validate(
+        {"dimensions": [predicate(name="operation", values=["Engagement"])]}
+    )
+    query = AttackAnalyticsQuery(group_by=AttackAnalyticsDimension(name="operation"), filters=filters)
+    grouped = AttackAnalyticsQueryCompiler(dialect=dialect.name, filters=filters).groups(query)
+    page = AttackAnalyticsQueryCompiler(dialect=dialect.name, filters=filters).results(limit=10)
+    for statement in (grouped, page):
+        assert str(statement.compile(dialect=dialect)).count("AS analytics_operation") == 1
+
+
 async def test_results_pagination_never_queries_aggregates_or_scores(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[make_result(index=index) for index in range(1, 6)]
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(index=index) for index in range(1, 6)]
     )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     statements: list[str] = []
@@ -378,7 +444,7 @@ async def test_results_pagination_never_queries_aggregates_or_scores(sqlite_inst
 
 
 async def test_changed_filters_reject_stale_result_cursor(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result(), make_result(index=2)])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result(), make_result(index=2)])
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     page = await reader.results_async(query=AttackAnalyticsResultsQuery(limit=1), control=control())
     with pytest.raises(ValueError, match="stale"):
@@ -391,11 +457,12 @@ async def test_changed_filters_reject_stale_result_cursor(sqlite_instance: SQLit
 
 
 async def test_report_snapshots_mutable_filters_and_axes(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(index=1, operation="selected"),
             make_result(index=2, outcome=AttackOutcome.FAILURE, operation="excluded"),
-        ]
+        ],
     )
     query = AttackAnalyticsQuery(
         filters=AttackAnalyticsFilters(
@@ -436,12 +503,13 @@ async def test_report_snapshots_mutable_filters_and_axes(sqlite_instance: SQLite
 async def test_results_request_snapshots_filters_and_page_limit_before_session_acquisition(
     sqlite_instance: SQLiteMemory,
 ) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(index=1),
             make_result(index=2),
             make_result(index=3, outcome=AttackOutcome.FAILURE),
-        ]
+        ],
     )
     query = AttackAnalyticsResultsQuery(filters=AttackAnalyticsFilters(outcomes=[AttackOutcome.SUCCESS]), limit=1)
     get_session_async = sqlite_instance.get_session_async
@@ -460,12 +528,13 @@ async def test_results_request_snapshots_filters_and_page_limit_before_session_a
 async def test_facet_request_snapshots_filters_dimension_and_limit_before_session_acquisition(
     sqlite_instance: SQLiteMemory,
 ) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(index=1, operation="a"),
             make_result(index=2, operation="b"),
             make_result(index=3, outcome=AttackOutcome.FAILURE, operation="z"),
-        ]
+        ],
     )
     query = AttackAnalyticsFacetQuery(
         filters=AttackAnalyticsFilters(outcomes=[AttackOutcome.SUCCESS]),
@@ -646,7 +715,7 @@ async def test_database_error_is_not_returned_as_an_empty_report(sqlite_instance
 
 
 async def test_compacted_identifiers_retain_incomplete_projection_fallback(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result()])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result()])
     async with sqlite_instance._get_async_engine().begin() as connection:
         await connection.execute(update(AttackIdentifierEntry).values(class_name=None))
         await connection.execute(update(TargetIdentifierEntry).values(model_name=None, underlying_model_name=None))
@@ -660,12 +729,13 @@ async def test_compacted_identifiers_retain_incomplete_projection_fallback(sqlit
 
 
 async def test_label_and_converter_matrix_preserves_only_the_selected_label(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(labels={"team": "one", "case": "unique-a"}, converters=["Alpha"]),
             make_result(index=2, labels={"team": "one", "case": "unique-b"}, converters=["Alpha"]),
             make_result(index=3, labels={"team": "two"}, converters=["Beta"]),
-        ]
+        ],
     )
     report = await AttackAnalyticsReader(memory=sqlite_instance).report_async(
         query=AttackAnalyticsQuery(
@@ -932,11 +1002,12 @@ def test_mssql_absence_filters_stay_below_2100_positional_parameters(absence_kin
 async def test_profile_caps_fall_back_without_returning_partial_counts(
     *, sqlite_instance: SQLiteMemory, cap: str
 ) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(categories=["privacy"], converters=["Alpha"]),
             make_result(index=2, outcome=AttackOutcome.FAILURE, categories=["safety"], converters=["Beta"]),
-        ]
+        ],
     )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     query = AttackAnalyticsQuery(
@@ -967,7 +1038,7 @@ async def test_empty_profiles_are_success_not_a_fallback_signal(sqlite_instance:
 
 
 async def test_compact_profiles_keep_typed_raw_sources_and_reject_invalid_values(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result(categories=["privacy"])])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result(categories=["privacy"])])
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     report = await reader.report_async(
         query=AttackAnalyticsQuery(group_by=AttackAnalyticsDimension(name="targeted_harm_category")),
@@ -1045,8 +1116,8 @@ def test_query_cancellation_is_request_local() -> None:
 
 
 async def test_timestamp_filters_use_half_open_utc_bounds(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[make_result(index=index) for index in range(1, 4)]
+    await add_legacy_attack_results_async(
+        sqlite_instance, attack_results=[make_result(index=index) for index in range(1, 4)]
     )
     filters = AttackAnalyticsFilters(
         updated_after=datetime(2026, 1, 1, 8, 0, 2, tzinfo=timezone(timedelta(hours=8))),
@@ -1060,12 +1131,13 @@ async def test_timestamp_filters_use_half_open_utc_bounds(sqlite_instance: SQLit
 
 
 async def test_facet_self_exclusion_keeps_other_label_keys(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(labels={"team": "one", "run": "a"}),
             make_result(index=2, labels={"team": "two", "run": "a"}),
             make_result(index=3, labels={"team": "three", "run": "b"}),
-        ]
+        ],
     )
     filters = AttackAnalyticsFilters.model_validate(
         {
@@ -1085,11 +1157,12 @@ async def test_facet_self_exclusion_keeps_other_label_keys(sqlite_instance: SQLi
 
 
 async def test_literal_brackets_in_facet_search_match_only_literal_text(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(categories=["[a-z]%_\\"]),
             make_result(index=2, categories=["alphabet"]),
-        ]
+        ],
     )
     facet = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(
         query=AttackAnalyticsFacetQuery(
@@ -1266,8 +1339,9 @@ async def test_sqlite_wide_labels_keep_filter_group_and_facet_semantics(
     *, sqlite_instance: SQLiteMemory, length: int
 ) -> None:
     value = "\u9577" * length
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[make_result(labels={"a.b": value}), make_result(index=2, labels={"a.b": "short"})]
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[make_result(labels={"a.b": value}), make_result(index=2, labels={"a.b": "short"})],
     )
     dimension = AttackAnalyticsDimension(name="label", label_key="a.b")
     filters = AttackAnalyticsFilters.model_validate(
@@ -1290,7 +1364,7 @@ async def test_oversized_saved_label_is_explicitly_outside_group_and_facet_contr
     sqlite_instance: SQLiteMemory,
 ) -> None:
     long_label = "x" * (AttackAnalyticsValue.MAX_VALUE_LENGTH + 1)
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result(labels={"team": long_label})])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result(labels={"team": long_label})])
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     other_axis = await reader.report_async(query=AttackAnalyticsQuery(), control=control())
     assert other_axis.counts == {"success": 1}
@@ -1305,7 +1379,7 @@ async def test_oversized_saved_label_is_explicitly_outside_group_and_facet_contr
 
 async def test_canonical_and_legacy_identifiers_preserve_the_complete_cohort(sqlite_instance: SQLiteMemory) -> None:
     canonical = make_result(converters=["Alpha"])
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[canonical])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[canonical])
     legacy_attack = {
         "class_name": "LegacyAttack",
         "children": {
@@ -1380,7 +1454,7 @@ async def test_canonical_and_legacy_identifiers_preserve_the_complete_cohort(sql
 
 
 async def test_computed_identifier_prefers_canonical_reference(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result()])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result()])
     async with sqlite_instance._get_async_engine().begin() as connection:
         canonical_hash = (
             await connection.execute(select(AttackResultEntry.atomic_attack_identifier_hash))
@@ -1398,12 +1472,13 @@ async def test_computed_identifier_prefers_canonical_reference(sqlite_instance: 
 
 
 async def test_blank_and_missing_label_keys_have_exact_membership(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(),
             make_result(index=2, labels={"team": ""}),
             make_result(index=3, labels={"team": "missing"}),
-        ]
+        ],
     )
     dimension = AttackAnalyticsDimension(name="label", label_key="team")
     reader = AttackAnalyticsReader(memory=sqlite_instance)
@@ -1426,12 +1501,13 @@ async def test_blank_and_missing_label_keys_have_exact_membership(sqlite_instanc
 async def test_complete_raw_profiles_at_each_cap_and_full_sql_fallback_beyond_it(
     *, sqlite_instance: SQLiteMemory, cap: str
 ) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(categories=["privacy"], converters=["Alpha"]),
             make_result(index=2, categories=["privacy"], converters=["Alpha"]),
             make_result(index=3, outcome=AttackOutcome.FAILURE, categories=["safety"], converters=["Beta"]),
-        ]
+        ],
     )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     query = AttackAnalyticsQuery(
@@ -1475,7 +1551,7 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(*, tmp_path
         async with engine.connect() as connection:
             assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
             await connection.run_sync(Base.metadata.create_all)
-        await memory.add_attack_results_to_memory_async(attack_results=[make_result(), make_result(index=2)])
+        await add_legacy_attack_results_async(memory, attack_results=[make_result(), make_result(index=2)])
         inserted = False
 
         async def insert_after_totals_async() -> None:
@@ -1547,7 +1623,7 @@ async def test_query_bounds_keep_daylight_saving_fold_instants(sqlite_instance: 
     results = [make_result(index=index) for index in range(1, 5)]
     for result, (hour, minute) in zip(results, [(5, 44), (5, 45), (6, 0), (6, 15)], strict=True):
         result.timestamp = datetime(2026, 11, 1, hour, minute, tzinfo=UTC)
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=results)
     filters = AttackAnalyticsFilters(
         updated_after=datetime(2026, 11, 1, 1, 45, tzinfo=zone, fold=0),
         updated_before=datetime(2026, 11, 1, 1, 15, tzinfo=zone, fold=1),
@@ -1591,11 +1667,12 @@ def test_mssql_compaction_keeps_ungrouped_null_as_a_constant() -> None:
 
 
 async def test_group_matrix_and_facet_limits_keep_complete_counts(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(index=index + 1, operation=f"op-{index % 3}", converters=[f"Converter{index % 2}"])
             for index in range(6)
-        ]
+        ],
     )
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     dimension = AttackAnalyticsDimension(name="operation")
@@ -1634,12 +1711,13 @@ async def test_group_matrix_and_facet_limits_keep_complete_counts(sqlite_instanc
 
 
 async def test_response_converter_facet_keeps_request_converter_filter(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(
+    await add_legacy_attack_results_async(
+        sqlite_instance,
         attack_results=[
             make_result(converters=["Alpha"], response_converters=["Beta"]),
             make_result(index=2, converters=["Alpha"], response_converters=["Gamma"]),
             make_result(index=3, converters=["Other"], response_converters=["Delta"]),
-        ]
+        ],
     )
     filters = AttackAnalyticsFilters.model_validate(
         {
@@ -1664,7 +1742,7 @@ async def test_response_converter_facet_keeps_request_converter_filter(sqlite_in
 
 
 async def test_sqlite_group_query_uses_the_computed_identifier_index(sqlite_instance: SQLiteMemory) -> None:
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[make_result(converters=["Alpha"])])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[make_result(converters=["Alpha"])])
     query = AttackAnalyticsQuery(group_by=AttackAnalyticsDimension(name="converter_type"))
     statement = AttackAnalyticsQueryCompiler(dialect="sqlite", filters=query.filters).groups(query)
     sql = str(statement.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))

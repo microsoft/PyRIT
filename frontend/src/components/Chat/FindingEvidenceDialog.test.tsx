@@ -11,7 +11,7 @@ import FindingEvidenceDialog from './FindingEvidenceDialog'
 jest.mock('@/services/api', () => ({
   attacksApi: { getAttack: jest.fn() },
   operationsApi: {
-    list: jest.fn(), searchFindings: jest.fn(), attachFindingEvidence: jest.fn(), createFinding: jest.fn(),
+    get: jest.fn(), list: jest.fn(), listFindings: jest.fn(), attachFindingEvidence: jest.fn(), createFinding: jest.fn(),
     getFindingOptions: jest.fn(),
   },
 }))
@@ -21,10 +21,25 @@ const FINDING: FindingListItem = {
   created_at: '2026-10-08T12:00:00Z', evidence_count: 0,
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
+const SAVED = { id: 'saved', name: 'Exact', created_at: '2026-10-08T12:00:00Z' }
+const OTHER = { id: 'other', name: 'Other engagement', created_at: '2026-10-08T12:00:00Z' }
 
-function renderDialog(): void {
+/** Stands in for the Attack Result Details action: it opens the dialog and gets focus back when it closes. */
+function Harness({ disabled, ...props }: {
+  attackResultId: string; conversationId: string; disabled: boolean; defaultOperationId?: string | null
+}) {
+  const [open, setOpen] = React.useState(false)
+  const opener = React.useRef<HTMLButtonElement>(null)
+  return <>
+    <button ref={opener} disabled={disabled} onClick={() => { setOpen(true) }}>Link to finding</button>
+    <FindingEvidenceDialog {...props} disabled={disabled} open={open} onOpenChange={setOpen} returnFocusRef={opener} />
+  </>
+}
+
+function renderDialog(defaultOperationId: string | null = null): void {
   render(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="viewed" conversationId="related" disabled={false} />
+    <Harness attackResultId="viewed" conversationId="related" disabled={false}
+      defaultOperationId={defaultOperationId} />
   </MemoryRouter></FluentProvider>)
 }
 
@@ -32,17 +47,16 @@ beforeEach(() => {
   jest.clearAllMocks()
   for (const method of Object.values(operationsApi)) jest.mocked(method).mockReset()
   jest.mocked(attacksApi.getAttack).mockReset()
-  ;(attacksApi.getAttack as jest.Mock).mockResolvedValue({ operation: 'Exact' })
-  ;(operationsApi.list as jest.Mock).mockResolvedValue({
-    items: [{ id: 'saved', name: 'Exact' }],
-  })
-  ;(operationsApi.searchFindings as jest.Mock).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  ;(attacksApi.getAttack as jest.Mock).mockResolvedValue({ operation_id: 'saved', operation_name: 'Exact' })
+  ;(operationsApi.get as jest.Mock).mockImplementation(async (id: string) => [SAVED, OTHER].find(item => item.id === id))
+  jest.mocked(operationsApi.list).mockResolvedValue({ items: [{ ...SAVED, finding_counts: {} }, { ...OTHER, finding_counts: {} }] })
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   ;(operationsApi.attachFindingEvidence as jest.Mock).mockResolvedValue({ item: { id: 'stable' }, created: true })
   jest.mocked(operationsApi.createFinding).mockResolvedValue(FINDING)
   jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Malware', 'Other'] })
 })
 
-it('resolves only persisted exact attribution and attaches the viewed related conversation', async () => {
+it('defaults to the attack\'s own Operation and attaches the viewed related conversation', async () => {
   const user = userEvent.setup()
   renderDialog()
   const action = await screen.findByRole('button', { name: 'Link to finding' })
@@ -54,25 +68,54 @@ it('resolves only persisted exact attribution and attaches the viewed related co
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
   await waitFor(() => { expect(action).toHaveFocus() })
   expect(attacksApi.getAttack).toHaveBeenCalledWith('viewed')
+  expect(operationsApi.get).toHaveBeenCalledWith('saved')
   expect(operationsApi.attachFindingEvidence).toHaveBeenCalledWith('saved', 'finding', {
     attack_result_id: 'viewed', conversation_id: 'related',
   })
 })
 
-it.each([null, 'exact', 'Exact '])('explains ineligibility for attribution %s', async (operation: string | null) => {
-  ;(attacksApi.getAttack as jest.Mock).mockResolvedValue({ operation })
-  renderDialog()
-  expect(await screen.findByText(/no saved Operation|does not match a saved Operation/)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Link to finding' })).toBeDisabled()
+it.each([null, 'Exact'])('links an attack without an Operation ID (legacy name %s) using the selected Operation', async (
+  operation: string | null,
+) => {
+  const user = userEvent.setup()
+  ;(attacksApi.getAttack as jest.Mock).mockResolvedValue({ operation, operation_id: null, operation_name: operation })
+  renderDialog('saved')
+  const action = screen.getByRole('button', { name: 'Link to finding' })
+  expect(action).toBeEnabled()
+  expect(screen.queryByText(/does not belong to a saved Operation/)).not.toBeInTheDocument()
+  await user.click(action)
+  await user.click(await screen.findByRole('radio', { name: /Proof/ }))
+  await user.click(screen.getByRole('button', { name: 'Attach conversation' }))
+  await waitFor(() => expect(operationsApi.attachFindingEvidence).toHaveBeenCalledWith('saved', 'finding', {
+    attack_result_id: 'viewed', conversation_id: 'related',
+  }))
 })
 
-it('distinguishes lookup failure from ineligibility and retries', async () => {
+it('lets the user link to a finding in a different Operation', async () => {
+  const user = userEvent.setup()
+  renderDialog()
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  await user.click(screen.getByRole('combobox', { name: 'Operation' }))
+  await user.click(await screen.findByRole('option', { name: OTHER.name }))
+  await waitFor(() => expect(operationsApi.listFindings).toHaveBeenLastCalledWith('other', expect.anything()))
+  await user.click(await screen.findByRole('radio', { name: /Proof/ }))
+  await user.click(screen.getByRole('button', { name: 'Attach conversation' }))
+  await waitFor(() => expect(operationsApi.attachFindingEvidence).toHaveBeenCalledWith('other', 'finding', {
+    attack_result_id: 'viewed', conversation_id: 'related',
+  }))
+})
+
+it('asks for an Operation when no default can be resolved instead of blocking the link', async () => {
   const user = userEvent.setup()
   ;(attacksApi.getAttack as jest.Mock).mockRejectedValueOnce(new Error('offline'))
   renderDialog()
-  expect(await screen.findByText(/Could not resolve Operation/)).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Retry Operation lookup' }))
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  expect(await screen.findByText('Choose an operation to see its findings.')).toBeInTheDocument()
+  expect(operationsApi.listFindings).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('combobox', { name: 'Operation' }))
+  await user.click(await screen.findByRole('option', { name: SAVED.name }))
+  expect(await screen.findByRole('radio', { name: /Proof/ })).toBeInTheDocument()
 })
 
 it('searches literally, resets pagination, and ignores superseded results', async () => {
@@ -82,7 +125,7 @@ it('searches literally, resets pagination, and ignores superseded results', asyn
   await user.click(screen.getByRole('button', { name: 'Link to finding' }))
   await screen.findByRole('radio', { name: /Proof/ })
   let resolveOld: (value: typeof EMPTY) => void = () => {}
-  ;(operationsApi.searchFindings as jest.Mock).mockImplementationOnce(
+  ;(operationsApi.listFindings as jest.Mock).mockImplementationOnce(
     () => new Promise<typeof EMPTY>(resolve => { resolveOld = resolve }),
   )
   await user.type(screen.getByRole('textbox', { name: 'Search findings by title' }), '%')
@@ -90,7 +133,7 @@ it('searches literally, resets pagination, and ignores superseded results', asyn
   await screen.findByRole('radio', { name: /Proof/ })
   await act(async () => { resolveOld(EMPTY) })
   expect(screen.getByRole('radio', { name: /Proof/ })).toBeInTheDocument()
-  expect(operationsApi.searchFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
+  expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
 })
 
 it('preserves search and selection on failure, reports already attached, and restores focus on cancel', async () => {
@@ -116,7 +159,7 @@ it('preserves search and selection on failure, reports already attached, and res
 
 it('offers creation inside the empty picker and retains the Operation link', async () => {
   const user = userEvent.setup()
-  ;(operationsApi.searchFindings as jest.Mock).mockResolvedValue(EMPTY)
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValue(EMPTY)
   renderDialog()
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
   await user.click(screen.getByRole('button', { name: 'Link to finding' }))
@@ -132,7 +175,7 @@ async function openCreation(user: ReturnType<typeof userEvent.setup>): Promise<v
   await screen.findByRole('heading', { name: 'New finding' })
 }
 
-it('creates in the owning Operation then attaches the viewed entire conversation and closes both dialogs', async () => {
+it('creates the finding with the viewed conversation as evidence in one request and closes both dialogs', async () => {
   const user = userEvent.setup()
   renderDialog()
   await openCreation(user)
@@ -143,23 +186,22 @@ it('creates in the owning Operation then attaches the viewed entire conversation
   await user.type(screen.getByRole('textbox', { name: 'Title' }), 'New assessment')
   await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'important')
   await user.type(screen.getByRole('textbox', { name: 'Description' }), 'Optional notes')
+  expect(screen.queryByRole('textbox', { name: 'Evidence conversation ID' })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   expect(await screen.findByText(/Finding created and conversation attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
-    title: '  New assessment', severity: 'important', description: 'Optional notes',
+    id: expect.any(String), title: '  New assessment', severity: 'important', description: 'Optional notes',
     severity_other: null, harm_type: null, harm_type_other: null,
+    conversation_id: 'related', attack_result_id: 'viewed',
   })
-
-  expect(operationsApi.attachFindingEvidence).toHaveBeenCalledWith('saved', 'finding', {
-    attack_result_id: 'viewed', conversation_id: 'related',
-  })
+  expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toHaveFocus() })
 })
 
 it('creates and attaches custom classifications from the same shared form and shows them in the picker', async () => {
   const user = userEvent.setup()
-  jest.mocked(operationsApi.searchFindings).mockResolvedValue({ ...EMPTY, items: [{
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [{
     ...FINDING, severity: 'other', severity_other: 'Team severity', harm_type: 'Other', harm_type_other: 'Team harm',
   }] })
   renderDialog()
@@ -177,11 +219,8 @@ it('creates and attaches custom classifications from the same shared form and sh
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   expect(await screen.findByText(/Finding created and conversation attached/)).toBeInTheDocument()
   expect(operationsApi.createFinding).toHaveBeenCalledWith('saved', {
-    title: 'Custom', description: '', severity: 'other', severity_other: 'Team severity',
-    harm_type: 'Other', harm_type_other: 'Team harm',
-  })
-  expect(operationsApi.attachFindingEvidence).toHaveBeenCalledWith('saved', 'finding', {
-    attack_result_id: 'viewed', conversation_id: 'related',
+    id: expect.any(String), title: 'Custom', description: '', severity: 'other', severity_other: 'Team severity',
+    harm_type: 'Other', harm_type_other: 'Team harm', conversation_id: 'related', attack_result_id: 'viewed',
   })
 })
 
@@ -200,7 +239,7 @@ it.each(['Cancel', 'Escape'])('discards new drafts with %s and restores picker f
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
 })
 
-it('retains the draft after creation fails without attempting attachment', async () => {
+it('retains the draft when creation fails, and a retry reuses the same finding ID', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.createFinding).mockRejectedValueOnce(new Error('Create failed'))
   renderDialog()
@@ -209,28 +248,11 @@ it('retains the draft after creation fails without attempting attachment', async
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
   expect(await screen.findByText('Create failed')).toBeInTheDocument()
   expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Retain draft')
-  expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
-})
-
-it('exposes the saved finding after attachment fails and retries attachment only even after dismissal', async () => {
-  const user = userEvent.setup()
-  jest.mocked(operationsApi.attachFindingEvidence).mockRejectedValueOnce(new Error('Attach failed'))
-  renderDialog()
-  await openCreation(user)
-  await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Created once')
   await user.click(screen.getByRole('button', { name: 'Save finding' }))
-  expect(await screen.findByText(/Finding created, but conversation attachment failed/)).toHaveTextContent('Attach failed')
-  expect(screen.getByText(/Finding ID: finding/)).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: 'Open saved finding Operation' })).toHaveAttribute('href', '/operations/saved')
-  expect(screen.queryByRole('button', { name: 'Save finding' })).not.toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Cancel' }))
-  expect(await screen.findByText(/Finding created, but conversation attachment failed/)).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: 'Retry attachment' }))
-  await user.click(await screen.findByRole('button', { name: 'Retry attachment' }))
   expect(await screen.findByText(/Finding created and conversation attached/)).toBeInTheDocument()
-  expect(operationsApi.createFinding).toHaveBeenCalledTimes(1)
-  expect(operationsApi.attachFindingEvidence).toHaveBeenCalledTimes(2)
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toHaveFocus() })
+  const [first, retry] = jest.mocked(operationsApi.createFinding).mock.calls
+  expect(retry[1].id).toBe(first[1].id)
+  expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
 })
 
 it('guards duplicate saves and cancellation while creating', async () => {
@@ -250,36 +272,15 @@ it('guards duplicate saves and cancellation while creating', async () => {
   expect(await screen.findByText(/Finding created and conversation attached/)).toBeInTheDocument()
 })
 
-it('does not attach after viewed identity changes while creation is pending and exposes the saved ID', async () => {
-  const user = userEvent.setup()
-  let finish: (value: typeof FINDING) => void = () => {}
-  jest.mocked(operationsApi.createFinding).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-  const { rerender } = render(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="viewed" conversationId="related" disabled={false} />
-  </MemoryRouter></FluentProvider>)
-  await openCreation(user)
-  await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Captured identity')
-  await user.click(screen.getByRole('button', { name: 'Save finding' }))
-  rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="different" conversationId="another" disabled={false} />
-  </MemoryRouter></FluentProvider>)
-  await act(async () => { finish(FINDING) })
-  expect(await screen.findByText(/Finding created, but conversation attachment failed/)).toHaveTextContent(/viewed conversation changed/i)
-  expect(screen.getByText(/Finding ID: finding/)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Retry attachment' })).toBeDisabled()
-  expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
-  expect(operationsApi.createFinding).toHaveBeenCalledTimes(1)
-})
-
 it('does not retarget an unsaved creation draft when the viewed conversation changes', async () => {
   const user = userEvent.setup()
   const { rerender } = render(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="viewed" conversationId="related" disabled={false} />
+    <Harness attackResultId="viewed" conversationId="related" disabled={false} />
   </MemoryRouter></FluentProvider>)
   await openCreation(user)
   await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Original source')
   rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="different" conversationId="another" disabled={false} />
+    <Harness attackResultId="different" conversationId="another" disabled={false} />
   </MemoryRouter></FluentProvider>)
   expect(await screen.findByText(/viewed conversation changed/i)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Save finding' })).toBeDisabled()
@@ -287,24 +288,9 @@ it('does not retarget an unsaved creation draft when the viewed conversation cha
   expect(operationsApi.createFinding).not.toHaveBeenCalled()
 })
 
-it('does not announce attachment failure while the attachment is still pending', async () => {
-  const user = userEvent.setup()
-  let finish: (value: { item: { id: string }; created: boolean }) => void = () => {}
-  ;(operationsApi.attachFindingEvidence as jest.Mock).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-  renderDialog()
-  await openCreation(user)
-  await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Wait for attachment')
-  await user.click(screen.getByRole('button', { name: 'Save finding' }))
-  await waitFor(() => { expect(operationsApi.attachFindingEvidence).toHaveBeenCalledTimes(1) })
-  expect(screen.queryByText(/Finding created, but conversation attachment failed/)).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Saving…' })).toHaveAttribute('aria-disabled', 'true')
-  await act(async () => { finish({ item: { id: 'stable' }, created: true }) })
-  expect(await screen.findByText(/Finding created and conversation attached/)).toBeInTheDocument()
-})
-
 it('paginates existing findings and resets to the first page on a literal search', async () => {
   const user = userEvent.setup()
-  ;(operationsApi.searchFindings as jest.Mock).mockResolvedValueOnce({
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValueOnce({
     items: [FINDING], has_more: true, next_offset: 20,
   })
   renderDialog()
@@ -313,12 +299,12 @@ it('paginates existing findings and resets to the first page on a literal search
   await screen.findByRole('radio')
   await user.click(screen.getByRole('button', { name: 'Next findings' }))
   await waitFor(() => {
-    expect(operationsApi.searchFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
   })
   await screen.findByRole('radio')
   await user.type(screen.getByRole('textbox'), '%_')
   await waitFor(() => {
-    expect(operationsApi.searchFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
   })
 })
 
@@ -342,6 +328,29 @@ it('blocks duplicate submission and changes to the selected identity while attac
   expect(await screen.findByText('Attached')).toBeInTheDocument()
 })
 
+it('keeps focus in the dialog and announces an attachment failure', async () => {
+  const user = userEvent.setup()
+  let fail: (reason: Error) => void = () => {}
+  jest.mocked(operationsApi.attachFindingEvidence).mockImplementationOnce(
+    () => new Promise((_, reject) => { fail = reject }),
+  )
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await user.click(await screen.findByRole('radio'))
+  await user.click(screen.getByRole('button', { name: 'Attach conversation' }))
+  const busyAction = screen.getByRole('button', { name: 'Attaching...' })
+  expect(busyAction).toHaveFocus()
+  expect(busyAction).not.toHaveAttribute('disabled')
+  expect(busyAction).toHaveAttribute('aria-disabled', 'true')
+  await act(async () => { fail(new Error('Attach failed')) })
+  const error = await screen.findByText('Could not attach: Attach failed')
+  expect(error.closest('[aria-live="polite"]')).not.toBeNull()
+  expect(screen.getByRole('button', { name: 'Attach conversation' })).toHaveFocus()
+  await user.keyboard('{Escape}')
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+})
+
 it('does not keep a cancelled selection when the picker reopens', async () => {
   const user = userEvent.setup()
   renderDialog()
@@ -359,14 +368,14 @@ it('does not keep a cancelled selection when the picker reopens', async () => {
 it('drops the selection when the viewed conversation changes while the picker is open', async () => {
   const user = userEvent.setup()
   const { rerender } = render(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="viewed" conversationId="related" disabled={false} />
+    <Harness attackResultId="viewed" conversationId="related" disabled={false} />
   </MemoryRouter></FluentProvider>)
   const action = screen.getByRole('button', { name: 'Link to finding' })
   await waitFor(() => { expect(action).toBeEnabled() })
   await user.click(action)
   await user.click(await screen.findByRole('radio', { name: /Proof/ }))
   rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
-    <FindingEvidenceDialog attackResultId="viewed" conversationId="another" disabled={false} />
+    <Harness attackResultId="viewed" conversationId="another" disabled={false} />
   </MemoryRouter></FluentProvider>)
   expect(await screen.findByRole('radio', { name: /Proof/ })).not.toBeChecked()
   expect(screen.getByRole('button', { name: 'Attach conversation' })).toBeDisabled()
@@ -385,16 +394,10 @@ it('cancel makes no attachment request and returns keyboard focus', async () => 
   expect(operationsApi.attachFindingEvidence).not.toHaveBeenCalled()
 })
 
-it('uses an accessible icon trigger and a compact single-page picker', async () => {
+it('uses a compact single-page picker', async () => {
   const user = userEvent.setup()
   renderDialog()
-  const action = screen.getByRole('button', { name: 'Link to finding' })
-  await waitFor(() => { expect(action).toBeEnabled() })
-  expect(action.textContent).toBe('')
-  expect(action.querySelector('svg')).not.toBeNull()
-  await user.hover(action)
-  expect(await screen.findByRole('tooltip')).toHaveTextContent('Link to finding')
-  await user.click(action)
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
   await screen.findByRole('radio', { name: /Proof/ })
   expect(screen.getByRole('heading', { name: 'Attach to finding' })).toBeInTheDocument()
   expect(screen.queryByText(/Conversation: related/)).not.toBeInTheDocument()
