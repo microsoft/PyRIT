@@ -8,8 +8,9 @@ Provides endpoints for managing target instances.
 Target types are set at app startup via initializers - you cannot add new types at runtime.
 """
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
@@ -72,10 +73,15 @@ async def list_target_types() -> TargetTypeResponse:  # pyrit-async-suffix-exemp
             "model": ProblemDetail,
             "description": "Invalid target type or parameters",
         },
+        403: {
+            "model": ProblemDetail,
+            "description": "Administrator access is required to run model repository code",
+        },
     },
 )
 async def create_target(
-    request: CreateTargetRequest,
+    body: CreateTargetRequest,
+    request: Request,
 ) -> TargetInstance:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
@@ -91,7 +97,12 @@ async def create_target(
     service = get_target_service()
 
     try:
-        return await service.create_target_async(request=request)
+        return await service.create_target_async(request=body, is_admin=has_admin_access(request))
+    except PermissionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

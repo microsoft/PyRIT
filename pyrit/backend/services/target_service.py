@@ -220,7 +220,7 @@ class TargetService:
         ]
         return TargetTypeResponse(items=items)
 
-    async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
+    async def create_target_async(self, *, request: CreateTargetRequest, is_admin: bool = False) -> TargetInstance:
         """
         Create a new target instance from API request.
 
@@ -232,12 +232,14 @@ class TargetService:
         supports it and omits the api_key plus any registry-flagged
         identity-conflicting parameters so the target validates its own
         endpoint and authenticates itself. GitHub Copilot requires an explicit
-        or environment token rather than SDK login discovery in CoPyRIT.
-        The response is built before the
-        target is registered, so a failed request leaves no registered target.
+        or environment token rather than SDK login discovery in CoPyRIT. A target
+        whose construction runs model repository code is built only for an
+        administrator. The response is built before the target is registered, so
+        a failed request leaves no registered target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
+            is_admin: Whether the caller may create a target that runs model repository code.
 
         Returns:
             TargetInstance with the new target's details.
@@ -247,6 +249,7 @@ class TargetService:
                 requested but unsupported by the target type. Construction errors
                 (unknown params, incompatible inner targets, unrecognized identity
                 endpoints) are raised by the registry / target classes.
+            PermissionError: If a non-administrator enables a target's model code execution.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -283,6 +286,8 @@ class TargetService:
                     "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
                 )
 
+        await self._enforce_code_execution_permission_async(target_type=request.type, params=params, is_admin=is_admin)
+
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
@@ -291,6 +296,50 @@ class TargetService:
         target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
         self._registry.instances.register(target_obj, name=target_registry_name)
         return target
+
+    async def _enforce_code_execution_permission_async(
+        self, *, target_type: str, params: dict[str, Any], is_admin: bool
+    ) -> None:
+        """
+        Require administrator access when a target's model-code-execution parameter resolves true.
+
+        A target names the boolean parameter that runs model repository code through
+        ``code_execution_parameter``. The supplied value is coerced through the registry (so the
+        textual boolean forms the catalog accepts are honored) and written back, so the permission
+        check and the constructor agree and a value the registry cannot interpret as a boolean is
+        rejected before construction rather than reaching the loader as a truthy non-boolean.
+
+        Args:
+            target_type (str): Registered target class name.
+            params (dict[str, Any]): Constructor parameters, updated in place with the coerced value.
+            is_admin (bool): Whether the caller may enable model code execution.
+
+        Raises:
+            ValueError: If the parameter value cannot be coerced to a boolean, or the target names a
+                model-code-execution parameter that the registry does not expose (so the check would
+                otherwise be skipped silently).
+            PermissionError: If the parameter resolves true and the caller is not an administrator.
+        """
+        parameter_name = self._registry.get_class(target_type).code_execution_parameter
+        if parameter_name is None:
+            return
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, target_type)
+        parameter = next((p for p in (metadata.parameters if metadata else ()) if p.name == parameter_name), None)
+        if parameter is None:
+            raise ValueError(
+                f"Target type '{target_type}' names '{parameter_name}' as its model-code-execution parameter, "
+                "but the registry does not expose it, so the administrator requirement cannot be enforced."
+            )
+        if parameter_name in params:
+            params[parameter_name] = parameter.coerce_value(params[parameter_name])
+            enabled = bool(params[parameter_name])
+        else:
+            enabled = bool(parameter.default)
+        if enabled and not is_admin:
+            raise PermissionError(
+                f"Creating '{target_type}' with '{parameter_name}' enabled runs model repository code and "
+                "requires administrator access."
+            )
 
 
 @lru_cache(maxsize=1)

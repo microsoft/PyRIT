@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -621,6 +622,92 @@ class TestConnectAndSend:
                     copilot_conversation_id="conv_456",
                     is_start_of_session=True,
                 )
+
+    async def test_connect_and_send_overall_timeout_during_stream(
+        self, mock_authenticator, sample_text_pieces, mock_websocket
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=1)
+        receive_count = 0
+
+        async def receive_message():
+            nonlocal receive_count
+            receive_count += 1
+            if receive_count == 1:
+                return '{"type":6}\x1e'  # Handshake PING
+
+            await asyncio.sleep(0.05)
+            return '{"type":1}\x1e'  # Non-terminating partial response
+
+        mock_websocket.recv = AsyncMock(side_effect=receive_message)
+
+        with patch("websockets.connect", return_value=mock_websocket):
+            with pytest.raises(TimeoutError, match="Timed out waiting for Copilot response after 1 seconds"):
+                await asyncio.wait_for(
+                    target._connect_and_send_async(
+                        message_pieces=sample_text_pieces,
+                        session_id="session_123",
+                        copilot_conversation_id="conv_456",
+                        is_start_of_session=True,
+                    ),
+                    timeout=3,
+                )
+
+        assert receive_count > 2
+        mock_websocket.__aexit__.assert_awaited_once()
+
+    async def test_connect_and_send_preserves_unrelated_timeout_error(
+        self, mock_authenticator, sample_text_pieces, mock_websocket
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=5)
+        mock_websocket.recv = AsyncMock(return_value='{"type":6}\x1e')
+
+        with (
+            patch("websockets.connect", return_value=mock_websocket),
+            patch.object(target, "_parse_raw_message", side_effect=TimeoutError("Message parsing timed out")),
+            pytest.raises(TimeoutError, match="Message parsing timed out"),
+        ):
+            await target._connect_and_send_async(
+                message_pieces=sample_text_pieces,
+                session_id="session_123",
+                copilot_conversation_id="conv_456",
+                is_start_of_session=True,
+            )
+
+        mock_websocket.__aexit__.assert_awaited_once()
+
+    async def test_connect_and_send_cancellation_closes_websocket(
+        self, mock_authenticator, sample_text_pieces, mock_websocket
+    ):
+        target = WebSocketCopilotTarget(authenticator=mock_authenticator, response_timeout_seconds=5)
+        receive_started = asyncio.Event()
+        receive_count = 0
+
+        async def receive_message():
+            nonlocal receive_count
+            receive_count += 1
+            if receive_count == 1:
+                return '{"type":6}\x1e'  # Handshake PING
+
+            receive_started.set()
+            return await asyncio.Future()
+
+        mock_websocket.recv = AsyncMock(side_effect=receive_message)
+
+        with patch("websockets.connect", return_value=mock_websocket):
+            task = asyncio.create_task(
+                target._connect_and_send_async(
+                    message_pieces=sample_text_pieces,
+                    session_id="session_123",
+                    copilot_conversation_id="conv_456",
+                    is_start_of_session=True,
+                )
+            )
+            await receive_started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        mock_websocket.__aexit__.assert_awaited_once()
 
     async def test_connect_and_send_none_response(self, mock_authenticator, sample_text_pieces, mock_websocket):
         target = WebSocketCopilotTarget(authenticator=mock_authenticator)
