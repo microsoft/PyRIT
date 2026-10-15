@@ -30,7 +30,7 @@ from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.parameter import Parameter
-from pyrit.prompt_target import GitHubCopilotTarget
+from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,8 @@ class TargetService:
         Environment-backed values remain optional in Python constructors so targets
         can resolve them from dotenv configuration. The GUI must still collect them
         explicitly, so the API marks those values required without changing the
-        target constructor signatures.
+        target constructor signatures. The upload folder of a target that uploads
+        local files is set by the server, so it is left out.
 
         Args:
             target_type (str): Registered target class name.
@@ -186,9 +187,10 @@ class TargetService:
         return [
             parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
             for parameter in parameters
+            if parameter.name != target_cls.upload_directory_parameter
         ]
 
-    async def list_target_types_async(self) -> TargetTypeResponse:
+    async def list_target_types_async(self, *, upload_directory: str | None = None) -> TargetTypeResponse:
         """
         List all available target types from the target class registry.
 
@@ -196,9 +198,14 @@ class TargetService:
         constructor parameters they may supply, each described in the form callers
         send it, and the auth modes it supports, all projected from the registry's
         ``TargetMetadata``; targets that need a Python object for a required
-        parameter are left out. Deciding which entries to surface to a
+        parameter are left out, and so are targets that upload local files when the
+        server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
+
+        Args:
+            upload_directory (str | None): Folder the server lets API-created targets upload files
+                from, or None when the server configures none.
 
         Returns:
             TargetTypeResponse containing all available target classes.
@@ -220,40 +227,99 @@ class TargetService:
             )
             for metadata in metadata_items
             if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+            and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
         ]
         return TargetTypeResponse(items=items)
 
-    async def create_target_async(self, *, request: CreateTargetRequest) -> TargetInstance:
+    def _has_upload_directory(self, *, target_type: str, upload_directory: str | None) -> bool:
+        """
+        Return whether a target type uploads no local files or the server gives it an upload folder.
+
+        Args:
+            target_type (str): Registered target class name.
+            upload_directory (str | None): Folder the server configured for uploads, if any.
+
+        Returns:
+            bool: False when the type uploads local files and the server configures no folder.
+        """
+        return upload_directory is not None or self._registry.get_class(target_type).upload_directory_parameter is None
+
+    @staticmethod
+    def _apply_upload_directory(
+        *,
+        target_type: str,
+        target_cls: type[PromptTarget],
+        params: dict[str, Any],
+        upload_directory: str | None,
+    ) -> None:
+        """
+        Give a target that uploads local files the server's upload folder.
+
+        Args:
+            target_type (str): Registered target class name.
+            target_cls (type[PromptTarget]): Target class being created.
+            params (dict[str, Any]): Constructor parameters, updated in place.
+            upload_directory (str | None): Folder the server configured for uploads, if any.
+
+        Raises:
+            ValueError: If the caller supplied the upload folder, or the server configures none.
+        """
+        parameter_name = target_cls.upload_directory_parameter
+        if parameter_name is None:
+            return
+        if parameter_name in params:
+            raise ValueError(
+                f"Parameter '{parameter_name}' of '{target_type}' is set by the server and cannot be supplied."
+            )
+        if upload_directory is None:
+            raise ValueError(
+                f"Target type '{target_type}' uploads files from the server. Set target_upload_directory in the "
+                "server configuration to create it through the API, or register it in Python or with an initializer."
+            )
+        params[parameter_name] = upload_directory
+
+    async def create_target_async(
+        self, *, request: CreateTargetRequest, upload_directory: str | None = None, is_admin: bool = False
+    ) -> TargetInstance:
         """
         Create a new target instance from API request.
 
         Class discovery, strict parameter validation, scalar coercion, registry
         reference resolution, and construction are owned by the
         ``TargetRegistry``. Endpoint trust and identity token minting are owned
-        by the target classes themselves. This service only enforces the
-        request-level auth contract: it rejects an ``auth_mode`` smuggled through
+        by the target classes themselves. This service enforces the
+        request-level contract: it rejects an ``auth_mode`` smuggled through
         ``params``, and for ``identity`` it confirms the target supports it and
         omits the api_key plus any registry-flagged identity-conflicting
         parameters so the target validates its own endpoint and authenticates
         itself. The request-level ``auth_mode`` is authoritative and is forwarded
         via ``get_auth_mode_parameters`` to targets that accept it, so the choice
-        is explicit rather than inferred from a missing key. GitHub Copilot
-        requires an explicit or environment token rather than SDK login discovery
-        in CoPyRIT. The response is built before the target is registered, so a
-        failed request leaves no registered target.
+        is explicit rather than inferred from a missing key. A target that uploads
+        local files gets the server's upload folder, which callers cannot choose.
+        GitHub Copilot requires an explicit or environment token rather than SDK
+        login discovery in CoPyRIT. A target whose construction runs model
+        repository code is built only for an administrator. The response is built
+        before the target is registered, so a failed request leaves no registered
+        target.
 
         Args:
             request: The create target request with type, params, and auth_mode.
+            upload_directory: Folder the server lets API-created targets upload files from,
+                or None when the server configures none.
+            is_admin: Whether the caller may create a target that runs model repository code.
 
         Returns:
             TargetInstance with the new target's details.
 
         Raises:
             ValueError: If the target type is not registered, ``params`` carries an
-                ``auth_mode`` that conflicts with the request-level choice, or identity
-                auth is requested but unsupported by the target type. Construction errors
-                (unknown params, incompatible inner targets, unrecognized identity
-                endpoints) are raised by the registry / target classes.
+                ``auth_mode`` that conflicts with the request-level choice, identity
+                auth is requested but unsupported by the target type, or a target that
+                uploads local files is requested with its upload folder or while
+                the server configures none. Construction errors (unknown params,
+                incompatible inner targets, unrecognized identity endpoints) are
+                raised by the registry / target classes.
+            PermissionError: If a non-administrator enables a target's model code execution.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -288,6 +354,9 @@ class TargetService:
                         params.pop(parameter.name, None)
 
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
+        self._apply_upload_directory(
+            target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
+        )
 
         if issubclass(target_cls, GitHubCopilotTarget):
             github_token = params.get("github_token")
@@ -301,6 +370,8 @@ class TargetService:
                     "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
                 )
 
+        await self._enforce_code_execution_permission_async(target_type=request.type, params=params, is_admin=is_admin)
+
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
@@ -309,6 +380,50 @@ class TargetService:
         target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
         self._registry.instances.register(target_obj, name=target_registry_name)
         return target
+
+    async def _enforce_code_execution_permission_async(
+        self, *, target_type: str, params: dict[str, Any], is_admin: bool
+    ) -> None:
+        """
+        Require administrator access when a target's model-code-execution parameter resolves true.
+
+        A target names the boolean parameter that runs model repository code through
+        ``code_execution_parameter``. The supplied value is coerced through the registry (so the
+        textual boolean forms the catalog accepts are honored) and written back, so the permission
+        check and the constructor agree and a value the registry cannot interpret as a boolean is
+        rejected before construction rather than reaching the loader as a truthy non-boolean.
+
+        Args:
+            target_type (str): Registered target class name.
+            params (dict[str, Any]): Constructor parameters, updated in place with the coerced value.
+            is_admin (bool): Whether the caller may enable model code execution.
+
+        Raises:
+            ValueError: If the parameter value cannot be coerced to a boolean, or the target names a
+                model-code-execution parameter that the registry does not expose (so the check would
+                otherwise be skipped silently).
+            PermissionError: If the parameter resolves true and the caller is not an administrator.
+        """
+        parameter_name = self._registry.get_class(target_type).code_execution_parameter
+        if parameter_name is None:
+            return
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, target_type)
+        parameter = next((p for p in (metadata.parameters if metadata else ()) if p.name == parameter_name), None)
+        if parameter is None:
+            raise ValueError(
+                f"Target type '{target_type}' names '{parameter_name}' as its model-code-execution parameter, "
+                "but the registry does not expose it, so the administrator requirement cannot be enforced."
+            )
+        if parameter_name in params:
+            params[parameter_name] = parameter.coerce_value(params[parameter_name])
+            enabled = bool(params[parameter_name])
+        else:
+            enabled = bool(parameter.default)
+        if enabled and not is_admin:
+            raise PermissionError(
+                f"Creating '{target_type}' with '{parameter_name}' enabled runs model repository code and "
+                "requires administrator access."
+            )
 
 
 @lru_cache(maxsize=1)

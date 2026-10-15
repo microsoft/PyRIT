@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
-    from pyrit.models import ComponentIdentifier
+    from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.score import TrueFalseScorer
 
@@ -112,6 +112,9 @@ class SequentialChildAttack:
             executor for inner attacks that need an objective scorer.
         memory_labels (Mapping[str, str]): Per-entry labels merged on top
             of the compound's ``context.memory_labels`` for this call.
+        atomic_attack_identifier (AtomicAttackIdentifier | None): Caller-prepared source
+            identity, passed unchanged to the existing result-recording path.
+        result_metadata (Mapping[str, Any]): Caller-prepared result metadata.
         technique_identifier (ComponentIdentifier | None): Optional packaged technique
             identity used for the compound configuration and persisted child results.
         identity_seed_group (AttackSeedGroup | None): Source seeds before technique merging.
@@ -123,6 +126,8 @@ class SequentialChildAttack:
     adversarial_chat: PromptTarget | None = None
     objective_scorer: TrueFalseScorer | None = None
     memory_labels: Mapping[str, str] = field(default_factory=dict)
+    atomic_attack_identifier: AtomicAttackIdentifier | None = None
+    result_metadata: Mapping[str, Any] = field(default_factory=dict)
     technique_identifier: ComponentIdentifier | None = None
     identity_seed_group: AttackSeedGroup | None = None
 
@@ -263,7 +268,13 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         """
         # Keep existing run identities stable unless the caller supplies packaged techniques.
         if not any(child.technique_identifier is not None for child in self._child_attacks):
-            return super()._build_identifier()
+            child_hashes = [
+                child.atomic_attack_identifier.eval_hash if child.atomic_attack_identifier is not None else None
+                for child in self._child_attacks
+            ]
+            return self._create_identifier(
+                params={"child_technique_eval_hashes": child_hashes} if any(child_hashes) else None
+            )
         return self._create_identifier(
             params={"completion_policy": self._completion_policy.value},
             children={
@@ -393,6 +404,11 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 result nor an incomplete objective (defensive guard).
         """
         expectation_override = {"expectation": expectation} if expectation is not None else {}
+        result_fields: dict[str, Any] = {}
+        if child_attack.atomic_attack_identifier is not None:
+            result_fields["atomic_attack_identifiers"] = [child_attack.atomic_attack_identifier]
+        if child_attack.result_metadata:
+            result_fields["result_metadata"] = [child_attack.result_metadata]
         executor_result = await self._executor.execute_attack_from_seed_groups_async(
             attack=child_attack.strategy,
             seed_groups=[child_attack.seed_group],
@@ -402,6 +418,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             return_partial_on_failure=True,
             attribution=attribution,
             **expectation_override,
+            **result_fields,
         )
         if executor_result.completed_results:
             return executor_result.completed_results[0]
