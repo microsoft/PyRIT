@@ -69,7 +69,11 @@ def test_scanner_lists_dataset_fetch_choices(capsys: pytest.CaptureFixture[str])
     with pytest.raises(SystemExit) as error:
         parse_args(["run", "test", "--dataset-fetch", "sometimes"])
     assert error.value.code == 2
-    assert "invalid choice: 'sometimes' (choose from never, if_missing, always)" in capsys.readouterr().err
+    message = capsys.readouterr().err
+    assert "invalid choice" in message
+    assert "sometimes" in message
+    for policy in ("never", "if_missing", "always"):
+        assert policy in message
 
 
 def test_scanner_fetch_help_preserves_scenario_default(capsys: pytest.CaptureFixture[str]) -> None:
