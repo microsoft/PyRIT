@@ -53,6 +53,8 @@ if TYPE_CHECKING:
     from pyrit.converter.codechameleon_converter import CodeChameleonConverter
     from pyrit.converter.colloquial_wordswap_converter import ColloquialWordswapConverter
     from pyrit.converter.converter import Converter, ConverterResult, get_converter_modalities
+    from pyrit.converter.decision_option_order_converter import DecisionOptionOrderConverter
+    from pyrit.converter.decision_state_converter import DecisionStateConverter
     from pyrit.converter.decomposition_converter import DecompositionConverter
     from pyrit.converter.denylist_converter import DenylistConverter
     from pyrit.converter.diacritic_converter import DiacriticConverter
@@ -177,6 +179,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ColloquialWordswapConverter": "pyrit.converter.colloquial_wordswap_converter",
     "ContentWordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "ConverterResult": "pyrit.converter.converter",
+    "DecisionOptionOrderConverter": "pyrit.converter.decision_option_order_converter",
+    "DecisionStateConverter": "pyrit.converter.decision_state_converter",
     "DecompositionConverter": "pyrit.converter.decomposition_converter",
     "DenylistConverter": "pyrit.converter.denylist_converter",
     "DiacriticConverter": "pyrit.converter.diacritic_converter",
