@@ -26,7 +26,8 @@ class OpenAIVideoTarget(OpenAITarget):
     """
     OpenAI Video Target using the OpenAI SDK for video generation.
 
-    Supports Sora-2 and Sora-2-Pro models via the OpenAI videos API.
+    Retains the videos API for compatible providers. OpenAI deprecated its Sora API;
+    availability on Azure and other providers is determined by the endpoint.
 
     Supports three modes:
     - Text-to-video: Generate video from a text prompt
@@ -91,8 +92,9 @@ class OpenAIVideoTarget(OpenAITarget):
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
             **kwargs: Additional keyword arguments passed to the parent OpenAITarget class.
-            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the ``httpx.AsyncClient()``
-                constructor. For example, to specify a 3 minute timeout: ``httpx_client_kwargs={"timeout": 180}``
+            httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options.
+                For example, ``{"timeout": 180}`` sets a three-minute timeout. Custom ``http_client``
+                instances use HTTPX on SDK 2, or HTTPX2 / legacy HTTPX on SDK 3.
 
             Remix workflow:
             To remix an existing video, set ``prompt_metadata={"video_id": "<id>"}`` on the text
@@ -261,7 +263,8 @@ class OpenAIVideoTarget(OpenAITarget):
         logger.info("Text+Image-to-video mode: Using image as first frame")
         input_file = await self._prepare_image_input_async(image_piece=image_piece)
         return await self._handle_openai_request_async(
-            api_call=lambda: self._client.videos.create_and_poll(
+            # SDK 3 deprecates Sora, but compatible endpoints may still implement this API.
+            api_call=lambda: self._client.videos.create_and_poll(  # type: ignore[ty:deprecated]
                 model=self._model_name,
                 prompt=prompt,
                 size=self._size,
@@ -283,7 +286,7 @@ class OpenAIVideoTarget(OpenAITarget):
             The response Message with the generated video path.
         """
         return await self._handle_openai_request_async(
-            api_call=lambda: self._client.videos.create_and_poll(
+            api_call=lambda: self._client.videos.create_and_poll(  # type: ignore[ty:deprecated]
                 model=self._model_name,
                 prompt=prompt,
                 size=self._size,
@@ -337,11 +340,11 @@ class OpenAIVideoTarget(OpenAITarget):
         Returns:
             The completed Video object from the OpenAI SDK.
         """
-        video = await self._client.videos.remix(video_id, prompt=prompt)
+        video = await self._client.videos.remix(video_id, prompt=prompt)  # type: ignore[ty:deprecated]
 
         # Poll until completion if not already done
         if video.status not in ["completed", "failed"]:
-            video = await self._client.videos.poll(video.id)
+            video = await self._client.videos.poll(video.id)  # type: ignore[ty:deprecated]
 
         return video
 
@@ -391,7 +394,7 @@ class OpenAIVideoTarget(OpenAITarget):
                 logger.info(f"Video was remixed from: {video.remixed_from_video_id}")
 
             # Download video content using SDK
-            video_response = await self._client.videos.download_content(video.id)
+            video_response = await self._client.videos.download_content(video.id)  # type: ignore[ty:deprecated]
             # Extract bytes from HttpxBinaryResponseContent
             video_content = video_response.content
 

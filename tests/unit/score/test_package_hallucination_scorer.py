@@ -8,7 +8,7 @@ from time import perf_counter
 import pytest
 
 from pyrit.memory import SQLiteMemory
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, ScorerEvaluationIdentifier
 from pyrit.score import PackageEcosystem, PackageHallucinationScorer
 
 
@@ -380,6 +380,19 @@ class TestPackageHallucinationScorerInit:
         scorer = PackageHallucinationScorer(known_packages={"a", "b"}, ecosystem=PackageEcosystem.RUST)
         identifier = scorer.get_identifier()
         assert identifier.params["ecosystem"] == "rust"
+
+    def test_identifier_follows_the_known_package_set(self) -> None:
+        def identity(known: set[str]) -> tuple[str, str]:
+            identifier = PackageHallucinationScorer(
+                known_packages=known, ecosystem=PackageEcosystem.RUST
+            ).get_identifier()
+            return identifier.hash, ScorerEvaluationIdentifier(identifier).eval_hash
+
+        requests, evil = identity({"requests"}), identity({"evilpkg"})
+
+        assert requests[0] != evil[0]
+        assert requests[1] != evil[1]
+        assert identity({"a", "b"}) == identity({"b", "a"})
 
 
 @pytest.mark.usefixtures("patch_central_database")

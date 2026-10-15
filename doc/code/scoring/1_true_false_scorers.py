@@ -224,9 +224,10 @@ print(f"[package] real imports only  -> {clean.get_value()}")
 #
 # ### DecodingScorer
 #
-# `DecodingScorer` checks whether the request text (its `original_value`, `converted_value`, or
-# decoded metadata) appears in the response — the fast, deterministic way to tell whether a target
-# decoded an encoded prompt. It backs the Garak encoding scenario.
+# `DecodingScorer` checks whether the plaintext of the request (its `original_value` or decoded
+# metadata) appears in the response — the fast, deterministic way to tell whether a target
+# decoded an encoded prompt. A response that only repeats the encoded `converted_value` does not
+# count. It backs the Garak encoding scenario.
 #
 # ### GarakExploitationScorer
 #

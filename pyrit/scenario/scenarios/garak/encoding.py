@@ -168,7 +168,7 @@ class Encoding(Scenario):
     By default, this uses the same dataset as Garak: slur terms and web XSS payloads.
     """
 
-    VERSION: int = 2
+    VERSION: int = 3
     DATASET_OPTIONS = ScenarioDatasetOptions(
         mode=DatasetSelectionMode.FIXED, per_dataset_limit=False, source_settings=False
     )

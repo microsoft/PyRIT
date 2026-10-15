@@ -287,6 +287,34 @@ async def test_send_prompt_async_rejects_upload_outside_allowed_directory(
 
 
 @patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_rejects_symlink_escaping_allowed_directory(
+    mock_request, patch_central_database, tmp_path
+):
+    allowed_directory = tmp_path / "allowed"
+    allowed_directory.mkdir()
+    outside_file = tmp_path / "secret.pdf"
+    outside_file.write_bytes(b"content")
+    link = allowed_directory / "link.pdf"
+    try:
+        link.symlink_to(outside_file)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Cannot create symlink in this environment: {exc}")
+    message_piece = MessagePiece(role="user", original_value="prompt", converted_value="prompt")
+    message = Message(message_pieces=[message_piece])
+    target = HTTPXAPITarget(
+        http_url="http://example.com/upload/",
+        method="POST",
+        file_path=str(link),
+        allowed_upload_directory=allowed_directory,
+    )
+
+    with pytest.raises(ValueError, match="outside the allowed upload directory"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_called()
+
+
+@patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_validates_path_before_file_exists(mock_request, patch_central_database, tmp_path):
     allowed_directory = tmp_path / "allowed"
     allowed_directory.mkdir()
