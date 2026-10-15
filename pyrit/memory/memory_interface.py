@@ -26,6 +26,7 @@ from sqlalchemy import (
     Unicode,
     and_,
     case,
+    column,
     exists,
     false,
     func,
@@ -47,7 +48,7 @@ from sqlalchemy.orm.session import Session
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonScalar
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonContainer, JsonScalar
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -3037,7 +3038,12 @@ class MemoryInterface(abc.ABC):
             self._execute_get_conversation_messages,
             conversation_id=response.conversation_id,
         )
-        return conversation[response.sequence - 1]
+        preceding_messages = [msg for msg in conversation if msg.sequence < response.sequence]
+        if not preceding_messages:
+            raise ValueError(
+                f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
+            )
+        return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
         self, *, identifier_filters: Sequence[IdentifierFilter]
@@ -3620,7 +3626,7 @@ class MemoryInterface(abc.ABC):
                 require full-string equality instead. If None, all values are returned.
             exact (bool): When True, ``value`` is matched by full-string equality rather than substring,
                 and ``harm_categories``, ``authors``, ``groups`` and ``parameters`` must match whole list
-                elements (case-insensitive) rather than substrings of the stored list. Defaults to False
+                elements (case-insensitive) rather than substrings within decoded list elements. Defaults to False
                 (substring matching).
             value_sha256 (Sequence[str] | None): A list of SHA256 hashes of values to match.
                 If None, all values are returned.
@@ -3711,7 +3717,7 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> Sequence[Seed[Any]]:
         """
         Retrieve a list of seed prompts based on the specified filters.
 
@@ -4038,9 +4044,13 @@ class MemoryInterface(abc.ABC):
                 )
             )
         else:
-            conditions.extend(field.contains(value) for value in values)
+            items = JsonArrayItems(JsonContainer(field, "$")).table_valued(column("value", Unicode))
+            conditions.extend(
+                select(1).select_from(items).where(items.c.value.contains(value)).correlate_except(items).exists()
+                for value in values
+            )
 
-    async def _serialize_seed_value_async(self, prompt: Seed) -> str:
+    async def _serialize_seed_value_async(self, prompt: Seed[Any]) -> str:
         """
         Serialize the value of a seed prompt based on its data type.
 
@@ -4073,7 +4083,7 @@ class MemoryInterface(abc.ABC):
         return serialized_prompt_value or ""
 
     async def _prepare_seed_for_storage_async(
-        self, *, prompt: Seed, added_by: str | None, current_time: datetime
+        self, *, prompt: Seed[Any], added_by: str | None, current_time: datetime
     ) -> None:
         """
         Prepare a seed in place for persistence.
@@ -4110,7 +4120,7 @@ class MemoryInterface(abc.ABC):
 
         await set_seed_sha256_async(prompt)
 
-    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: str | None = None) -> None:
+    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
 
@@ -4134,7 +4144,7 @@ class MemoryInterface(abc.ABC):
 
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
-    def _insert_prepared_seeds(self, *, seeds: Sequence[Seed]) -> None:
+    def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
         new_condition_group_ids = self._get_new_condition_group_ids(
@@ -4153,7 +4163,7 @@ class MemoryInterface(abc.ABC):
         )
 
         entries: MutableSequence[SeedEntry] = []
-        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
+        copied_seed_ids: list[tuple[Seed[Any], uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
@@ -4181,7 +4191,7 @@ class MemoryInterface(abc.ABC):
             prompt.id = new_id
 
     @staticmethod
-    def _seed_conditions_key(seed: Seed) -> str:
+    def _seed_conditions_key(seed: Seed[Any]) -> str:
         """
         Serialize criteria canonically, preserving condition order.
 
@@ -4196,7 +4206,7 @@ class MemoryInterface(abc.ABC):
     def _get_new_condition_group_ids(
         self,
         *,
-        seeds: Sequence[Seed],
+        seeds: Sequence[Seed[Any]],
         existing_pairs: set[tuple[str, str, str]],
         existing_hashes: set[tuple[str, str]],
     ) -> set[uuid.UUID]:
@@ -4228,7 +4238,7 @@ class MemoryInterface(abc.ABC):
         return group_ids
 
     def _get_existing_seed_keys(
-        self, *, seeds: Sequence[Seed]
+        self, *, seeds: Sequence[Seed[Any]]
     ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
         """
         Look up which value hashes and canonical conditions are already stored.
@@ -4333,6 +4343,7 @@ class MemoryInterface(abc.ABC):
                     SeedEntry.dataset_name.label("dataset_name"),
                     SeedEntry.data_type,
                     SeedEntry.harm_categories,
+                    SeedEntry.origin,
                 )
                 .where(named_condition)
                 .distinct()
@@ -4345,6 +4356,7 @@ class MemoryInterface(abc.ABC):
                 named_aggregate.c.objectives,
                 named_metadata.c.data_type,
                 named_metadata.c.harm_categories,
+                named_metadata.c.origin,
             ).join(
                 named_metadata,
                 named_aggregate.c.dataset_name == named_metadata.c.dataset_name,
@@ -4361,7 +4373,10 @@ class MemoryInterface(abc.ABC):
                 .subquery()
             )
             unnamed_metadata = (
-                select(SeedEntry.data_type, SeedEntry.harm_categories).where(unnamed_condition).distinct().subquery()
+                select(SeedEntry.data_type, SeedEntry.harm_categories, SeedEntry.origin)
+                .where(unnamed_condition)
+                .distinct()
+                .subquery()
             )
             unnamed_statement = select(
                 unnamed_aggregate.c.dataset_name,
@@ -4370,6 +4385,7 @@ class MemoryInterface(abc.ABC):
                 unnamed_aggregate.c.objectives,
                 unnamed_metadata.c.data_type,
                 unnamed_metadata.c.harm_categories,
+                unnamed_metadata.c.origin,
             ).select_from(unnamed_aggregate.join(unnamed_metadata, literal(True)))
 
             combined_statement = named_statement.union_all(unnamed_statement)
@@ -4389,9 +4405,12 @@ class MemoryInterface(abc.ABC):
                         "modalities": set(),
                         "harm_categories": set(),
                         "has_unlabeled_harm_categories": False,
+                        "origins": set(),
                     }
                     dataset_order.append(dataset_name)
                 summary = summaries_by_dataset[dataset_name]
+                if row["origin"]:
+                    summary["origins"].add(row["origin"])
                 if row["data_type"]:
                     summary["modalities"].add(row["data_type"])
                 categories = row["harm_categories"] or []
@@ -4409,6 +4428,7 @@ class MemoryInterface(abc.ABC):
                     modalities=tuple(sorted(summaries_by_dataset[dataset_name]["modalities"])),
                     harm_categories=tuple(sorted(summaries_by_dataset[dataset_name]["harm_categories"])),
                     has_unlabeled_harm_categories=summaries_by_dataset[dataset_name]["has_unlabeled_harm_categories"],
+                    origins=tuple(sorted(summaries_by_dataset[dataset_name]["origins"])),
                 )
                 for dataset_name in dataset_order
             ]
@@ -4599,7 +4619,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     async def replace_seeds_for_dataset_async(
-        self, *, dataset_name: str, seeds: Sequence[Seed], added_by: str | None = None
+        self, *, dataset_name: str, seeds: Sequence[Seed[Any]], added_by: str | None = None
     ) -> int:
         """
         Atomically replace all stored seeds for a dataset with a new set.
@@ -4705,7 +4725,7 @@ class MemoryInterface(abc.ABC):
             raise ValueError("At least one prompt group must be provided.")
         # Validates the prompt group IDs and sets them if possible before leveraging
         # the add_seeds_to_memory_async method.
-        all_seeds: MutableSequence[Seed] = []
+        all_seeds: MutableSequence[Seed[Any]] = []
         for prompt_group in prompt_groups:
             if not prompt_group.seeds:
                 raise ValueError("Seed group must have at least one seed.")
@@ -8452,7 +8472,7 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> Sequence[Seed[Any]]:
         """
         Use ``get_seeds_async``.
 
@@ -8501,9 +8521,12 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> Sequence[Seed[Any]]:
         """
         Retrieve a list of seed prompts based on the specified filters.
+
+        List filters match substrings within decoded elements, not their JSON representation.
+        Substring matching retains the backend's LIKE case and wildcard semantics.
 
         Args:
             origin (SeedOrigin | None): Match the recorded ingestion origin.

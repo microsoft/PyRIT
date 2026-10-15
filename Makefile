@@ -17,7 +17,7 @@ pre-commit:
 	pre-commit run --all-files
 
 ty:
-	$(CMD) ty check $(PYMODULE) $(UNIT_TESTS)
+	uv run --frozen --extra all --link-mode=copy -m ty check $(PYMODULE) $(UNIT_TESTS)
 
 # Build strict HTML and the RSS feed after generating the API reference.
 # --all would also select the configured PDF export and require LaTeX.

@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_progress_read_model import ScenarioProgressReadModel
 from pyrit.executor.attack import PromptSendingAttack
@@ -56,7 +57,6 @@ from pyrit.scenario.scenarios.garak.system_prompt_extraction import (
 from pyrit.scenario.scenarios.garak.web_injection import WebInjection, WebInjectionTechnique
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
-from tests.unit.mocks import MockPromptTarget
 
 
 class _TwoTechniqueDefault(ScenarioTechnique):
@@ -535,7 +535,7 @@ async def test_web_injection_estimate_does_not_load_or_synthesize_populations_as
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("baseline", [False, True])
-@pytest.mark.parametrize("dataset_limit", [1, None])
+@pytest.mark.parametrize("dataset_limit", [4, None])
 async def test_web_injection_capped_techniques_use_generation_limits_async(
     *, baseline: bool, dataset_limit: int | None
 ) -> None:
@@ -563,6 +563,8 @@ async def test_web_injection_capped_techniques_use_generation_limits_async(
     )
     estimate = await scenario.get_run_size_estimate_async()
     budget = len(scenario.STRING_ASSEMBLY_SEEDS) + 3 * 7
+    if dataset_limit is not None:
+        budget = min(budget, dataset_limit)
     assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
     assert estimate.estimated_attack_count == budget * (2 if baseline else 1)
     assert estimate.dataset_size == scenario_dataset_size_from_limit(budget)
@@ -572,7 +574,7 @@ async def test_web_injection_capped_techniques_use_generation_limits_async(
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("prompt_cap", [None, 3])
 @pytest.mark.parametrize("technique", [PackageHallucinationTechnique.DEFAULT, PackageHallucinationTechnique.ALL])
-@pytest.mark.parametrize("dataset_limit", [1, None])
+@pytest.mark.parametrize("dataset_limit", [7, None])
 async def test_package_hallucination_uses_per_language_generation_cap_async(
     *, prompt_cap: int | None, technique: PackageHallucinationTechnique, dataset_limit: int | None
 ) -> None:
@@ -588,9 +590,12 @@ async def test_package_hallucination_uses_per_language_generation_cap_async(
     estimate = await scenario.get_run_size_estimate_async()
     cap = 12 if prompt_cap is None else prompt_cap
     language_count = len(PackageHallucinationTechnique.expand({technique}))
+    expected = cap * language_count
+    if dataset_limit is not None:
+        expected = min(expected, dataset_limit)
     assert estimate.status is ScenarioRunSizeEstimateStatus.Approximate
-    assert estimate.estimated_attack_count == cap * language_count
-    assert estimate.dataset_size == scenario_dataset_size_from_limit(cap * language_count)
+    assert estimate.estimated_attack_count == expected
+    assert estimate.dataset_size == scenario_dataset_size_from_limit(expected)
     assert estimate.effective_parameters == {"max_prompts_per_language": cap}
 
 
@@ -607,13 +612,13 @@ async def test_system_prompt_extraction_uses_one_shared_generation_cap_async(
     scenario.set_params_from_args(
         args={
             "scenario_techniques": [technique],
-            "dataset_config": DatasetAttackConfiguration(
-                dataset_names=["missing"], max_per_dataset="all", max_total=dataset_limit
-            ),
+            "dataset_overrides": {"max_total": dataset_limit},
         }
     )
     estimate = await scenario.get_run_size_estimate_async()
-    expected = 256 if prompt_cap in (None, "", "default") else prompt_cap
+    expected = (
+        dataset_limit if dataset_limit is not None else (256 if prompt_cap in (None, "", "default") else prompt_cap)
+    )
     assert estimate.estimated_attack_count == (None if expected == "all" else expected)
     assert estimate.dataset_size == scenario_dataset_size_from_limit(expected)
     if expected == "all":

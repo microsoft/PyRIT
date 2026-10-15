@@ -374,7 +374,8 @@ class ChunkedRequestAttack(MultiTurnAttackStrategy[ChunkedRequestAttackContext, 
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
         if not score:
-            return AttackOutcome.FAILURE, "No score returned from scorer"
+            # The scorer ran but produced nothing, so nothing was measured
+            return AttackOutcome.UNDETERMINED, "Objective scorer returned no score"
 
         outcome = attack_outcome_from_score(score)
         outcome_reason = score.score_rationale if score.score_rationale else None

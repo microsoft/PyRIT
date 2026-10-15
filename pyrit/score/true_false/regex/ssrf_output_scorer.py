@@ -18,7 +18,7 @@ class SSRFOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         # Cloud instance-metadata endpoints (AWS/GCP/Azure 169.254.169.254, GCP alias).
         "Cloud Metadata Endpoint": r"(?i)\b169\.254\.169\.254\b|\bmetadata\.google\.internal\b",
         # Loopback target inside a URL (http/https/ftp/gopher).

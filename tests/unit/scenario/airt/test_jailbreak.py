@@ -22,6 +22,7 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.scenario import IncompatibleTechniqueError
 from pyrit.scenario.core import BaselineAttackPolicy, DatasetAttackConfiguration
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.scenarios.airt.jailbreak import (
@@ -88,7 +89,7 @@ def mock_memory_seed_groups() -> list[AttackSeedGroup]:
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     """Create a mock objective target that cannot carry native system-prompt delivery.
 
     ``configuration.includes(...)`` returns ``False`` so the default technique set degrades to the
@@ -101,7 +102,7 @@ def mock_objective_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_capable_target() -> PromptTarget:
+def mock_capable_target() -> MagicMock:
     """Create a mock objective target that natively supports editable history + system prompts."""
     mock = MagicMock(spec=PromptTarget)
     mock.get_identifier.return_value = ComponentIdentifier(class_name="MockCapableTarget", class_module="test")
@@ -110,7 +111,7 @@ def mock_capable_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_objective_scorer() -> TrueFalseInverterScorer:
+def mock_objective_scorer() -> MagicMock:
     """Create a mock scorer for testing."""
     mock = MagicMock(spec=TrueFalseInverterScorer)
     mock.get_identifier.return_value = ComponentIdentifier(class_name="MockObjectiveScorer", class_module="test")
@@ -580,6 +581,25 @@ class TestJailbreakAttackGeneration:
 
 @pytest.mark.usefixtures(*FIXTURES)
 class TestJailbreakSystemPromptDelivery:
+    async def test_strict_policy_raises_even_with_compatible_delivery_async(
+        self,
+        *,
+        mock_objective_target: PromptTarget,
+        mock_objective_scorer: MagicMock,
+        mock_memory_seed_groups: list[AttackSeedGroup],
+    ) -> None:
+        with _patch_seed_groups(mock_memory_seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_objective_target,
+                    incompatible_technique_policy="raise",
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            with pytest.raises(IncompatibleTechniqueError, match="jailbreak_system_prompt.*incompatible"):
+                await scenario.initialize_async()
+
     """Tests for the ``jailbreak_system_prompt`` native system-prompt delivery (J5)."""
 
     async def test_capable_target_builds_both_deliveries(
@@ -672,7 +692,7 @@ class TestJailbreakSystemPromptDelivery:
                     jailbreak_names=["aim.yaml"],
                 )
             )
-            with pytest.raises(ValueError, match="natively supports"):
+            with pytest.raises(ValueError, match="no usable selected techniques"):
                 await scenario.initialize_async()
 
     async def test_system_delivery_end_to_end_keeps_objective_live(self, mock_memory_seed_groups):
@@ -683,9 +703,10 @@ class TestJailbreakSystemPromptDelivery:
         system-role framing seed leaves the seed group with no ``next_message``, so ``PromptSendingAttack``
         must fall back to sending the objective itself as the user turn.
         """
+        from unit.mocks import MockPromptTarget
+
         from pyrit.memory import CentralMemory
         from pyrit.score import SubStringScorer
-        from tests.unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()  # capable: native editable history + system prompt
         technique_class = _build_jailbreak_technique()
@@ -720,9 +741,10 @@ class TestJailbreakSystemPromptDelivery:
         The framing technique declares prepend placement so this merge does not depend on the
         caller's sequence values.
         """
+        from unit.mocks import MockPromptTarget
+
         from pyrit.memory import CentralMemory
         from pyrit.score import SubStringScorer
-        from tests.unit.mocks import MockPromptTarget
 
         target = MockPromptTarget()  # capable: native editable history + system prompt
         technique_class = _build_jailbreak_technique()

@@ -115,6 +115,11 @@ class AnalyticsExecution:
         """Whether shutdown has drained all started operations, not just their callers."""
         return self._closed
 
+    @property
+    def has_active_work(self) -> bool:
+        """Whether admission, operations, or shutdown cleanup still occupy this lifetime."""
+        return (self._closing and not self._closed) or any(lane.active or lane.queued for lane in self._lanes.values())
+
     async def run_async(self, *, report: bool, task: Callable[[QueryControl], Awaitable[T]]) -> T:
         """
         Admit one operation and await its response without blocking the owning loop.

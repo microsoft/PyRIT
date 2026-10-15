@@ -27,14 +27,12 @@ generator_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.generator",
     reason="GCG optional dependencies (torch, transformers, etc.) not installed",
 )
-GCGGenerator = generator_mod.GCGGenerator
-GCGContext = generator_mod.GCGContext
-GCGResult = generator_mod.GCGResult
-
 from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
     TrajectoryPromptManager,
     TrajectoryWorker,
 )
+
+from pyrit.executor.promptgen.gcg.generator import GCGContext, GCGGenerator, GCGResult  # noqa: E402
 
 _LLAMA_2 = "meta-llama/Llama-2-7b-chat-hf"
 

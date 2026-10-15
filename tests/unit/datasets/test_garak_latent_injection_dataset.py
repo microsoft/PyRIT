@@ -7,6 +7,7 @@ import hashlib
 import itertools
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -112,13 +113,13 @@ def test_separate_templates_and_triggers_preserve_expanded_payloads() -> None:
 
 
 @pytest.fixture
-def ingredient_seeds() -> dict[str, list[Seed]]:
+def ingredient_seeds() -> dict[str, list[Seed[Any]]]:
     return {name: list(_load(name).seeds) for name in _FILES}
 
 
 @pytest.mark.usefixtures("patch_central_database")
 async def test_payload_split_preserves_complete_prompt_population_async(
-    ingredient_seeds: dict[str, list[Seed]],
+    ingredient_seeds: dict[str, list[Seed[Any]]],
 ) -> None:
     config = LatentInjectionDatasetConfiguration(
         sources=[DatasetSource(name=name) for name in _FILES],

@@ -66,6 +66,20 @@ class TestConfigurationLoader:
         with pytest.raises(ValueError, match="custom_initializers_source"):
             ConfigurationLoader(custom_initializers_source=invalid_value)  # type: ignore[arg-type]
 
+    def test_target_upload_directory_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("target_upload_directory: /srv/uploads\n", encoding="utf-8")
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.target_upload_directory == "/srv/uploads"
+        assert ConfigurationLoader().target_upload_directory is None
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42, ["/srv/uploads"]])
+    def test_target_upload_directory_rejects_invalid_value(self, invalid_value: object) -> None:
+        with pytest.raises(ValueError, match="target_upload_directory must be a non-empty local directory"):
+            ConfigurationLoader(target_upload_directory=invalid_value)  # type: ignore[arg-type]
+
     @pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
     def test_rejects_non_boolean_env_akv_strict(self, invalid_value):
         with pytest.raises(TypeError, match=r"env_akv_strict must be a bool"):

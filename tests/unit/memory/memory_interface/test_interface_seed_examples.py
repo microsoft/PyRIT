@@ -23,7 +23,7 @@ DATASET = "browse"
 T0 = datetime(2024, 1, 1, tzinfo=UTC)
 
 
-async def _add(memory: MemoryInterface, *seeds: Seed) -> None:
+async def _add(memory: MemoryInterface, *seeds: Seed[Any]) -> None:
     await memory.add_seeds_to_memory_async(seeds=list(seeds), added_by="test")
 
 
@@ -146,6 +146,19 @@ async def test_get_seed_examples_filters_match_across_members(sqlite_instance: M
     assert set(await _ids(sqlite_instance, harm_categories=["missing", "VIOLENCE"])) == {both, harm_only}
     assert await _ids(sqlite_instance, harm_categories=["violence"], value_search="HELLO") == [both]
     assert await _ids(sqlite_instance, seed_types=["objective"], data_types=["image_path"]) == []
+
+
+async def test_get_seed_examples_harm_filter_folds_non_ascii_case(sqlite_instance: MemoryInterface):
+    ethics, surveillance = uuid4(), uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="a", dataset_name=DATASET, prompt_group_id=ethics, harm_categories=["ÉTHIQUE"]),
+        SeedPrompt(value="b", dataset_name=DATASET, prompt_group_id=surveillance, harm_categories=["überwachung"]),
+    )
+
+    assert await _ids(sqlite_instance, harm_categories=["ÉTHIQUE"]) == [ethics]
+    assert await _ids(sqlite_instance, harm_categories=["éthique"]) == [ethics]
+    assert await _ids(sqlite_instance, harm_categories=["Überwachung"]) == [surveillance]
 
 
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):

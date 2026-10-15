@@ -1541,7 +1541,7 @@ class SeedEntry(Base):
     )
     conditions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
-    def __init__(self, *, entry: Seed) -> None:
+    def __init__(self, *, entry: Seed[Any]) -> None:
         """
         Initialize a SeedEntry from a Seed object.
 
@@ -1590,7 +1590,7 @@ class SeedEntry(Base):
             self.role = None
 
     @staticmethod
-    def _pack_seed_metadata(entry: Seed) -> dict[str, str | int] | None:
+    def _pack_seed_metadata(entry: Seed[Any]) -> dict[str, str | int] | None:
         """
         Build the persisted ``prompt_metadata`` for ``entry``.
 

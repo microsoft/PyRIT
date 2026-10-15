@@ -27,7 +27,7 @@ def _mock_target_id(name: str = "MockTarget") -> ComponentIdentifier:
 
 
 @pytest.fixture
-def mock_objective_target() -> PromptTarget:
+def mock_objective_target() -> MagicMock:
     """Create a mock objective target for testing."""
     mock_target = MagicMock(spec=PromptTarget)
     mock_target.set_system_prompt_async = AsyncMock()
@@ -36,7 +36,7 @@ def mock_objective_target() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_processing_model() -> PromptTarget:
+def mock_processing_model() -> MagicMock:
     """Create a mock processing model for testing."""
     mock_model = MagicMock(spec=PromptTarget)
     mock_model.set_system_prompt_async = AsyncMock()
@@ -45,7 +45,7 @@ def mock_processing_model() -> PromptTarget:
 
 
 @pytest.fixture
-def mock_prompt_normalizer() -> PromptNormalizer:
+def mock_prompt_normalizer() -> MagicMock:
     """Create a mock prompt normalizer for testing."""
     mock_normalizer = get_mock_prompt_normalizer()
     mock_normalizer.send_prompt_async = AsyncMock()
@@ -74,7 +74,7 @@ def sample_context(sample_evaluation_data) -> AnecdoctorContext:
 
 
 @pytest.fixture
-def mock_response() -> Message:
+def mock_response() -> MagicMock:
     """Create a mock response for testing."""
     mock_response = MagicMock(spec=Message)
     mock_response.get_piece.return_value = "Generated misinformation content"
