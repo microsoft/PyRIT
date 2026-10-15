@@ -12,6 +12,7 @@ import App from "./App";
 import { attacksApi, targetsApi } from "./services/api";
 import { makeTarget } from "./test-utils/targetFixtures";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
+import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
 
 const mockGetActiveAccount = jest.fn();
 let mockCreatedAttackRender: Promise<void> | null = null;
@@ -157,6 +158,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("history")} data-testid="nav-history">
           History
         </button>
+        <button onClick={() => onNavigate("analytics")}>Analytics</button>
         <button onClick={() => onNavigate("scenarios")} data-testid="nav-scenarios">
           Scenarios
         </button>
@@ -301,6 +303,21 @@ jest.mock("./components/Configuration/Configuration", () => ({
   __esModule: true,
   default: () => <div data-testid="configuration">Configuration</div>,
 }));
+
+jest.mock("./components/Analytics/AnalyticsPage", () => {
+  const { useLocation } = jest.requireActual<typeof import("react-router")>("react-router");
+  function MockAnalyticsPage({ onOpenAttack }: { onOpenAttack: (id: string) => void }) {
+    const location = useLocation();
+    return <section aria-label="Analytics explorer">
+      <output aria-label="Analytics URL">{location.pathname}{location.search}{location.hash}</output>
+      <button onClick={() => onOpenAttack("analytics-result")}>Open analytics result</button>
+    </section>;
+  }
+  return {
+    __esModule: true,
+    default: MockAnalyticsPage,
+  };
+});
 
 jest.mock("./components/History/AttackHistory", () => {
   const MockAttackHistory = ({
@@ -512,6 +529,26 @@ describe("App", () => {
     });
     mockGetTarget.mockRejectedValue({ isAxiosError: true, response: { status: 404 } });
     window.localStorage.clear();
+  });
+
+  it("opens Analytics and restores its fragment after inspecting a saved attack", async () => {
+    const user = userEvent.setup();
+    const originalPath = `/analytics${analyticsViewToHash({
+      ...DEFAULT_ANALYTICS_VIEW,
+      filters: { ...DEFAULT_ANALYTICS_VIEW.filters, outcomes: ["failure"] },
+    })}`;
+    mockGetAttack.mockResolvedValue({
+      attack_result_id: "analytics-result", conversation_id: "synthetic-conversation",
+      objective: "Safe saved check", outcome: "failure", labels: {}, related_conversation_ids: [],
+    });
+    renderApp(originalPath);
+    expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "analytics");
+    expect(screen.getByLabelText("Analytics URL")).toHaveTextContent(originalPath);
+    await user.click(screen.getByRole("button", { name: "Open analytics result" }));
+    await screen.findByTestId("chat-window");
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("analytics-result"));
+    await user.click(screen.getByRole("button", { name: "Analytics", exact: true }));
+    expect(screen.getByLabelText("Analytics URL")).toHaveTextContent(originalPath);
   });
 
   it("renders with FluentProvider and MainLayout", () => {

@@ -186,7 +186,7 @@ class MessagePieceView(MessagePiece):
         return cls.model_construct(**data)
 
 
-class MessageView(Message):
+class MessageView(Message[MessagePieceView]):
     """
     API view of a ``pyrit.models.Message``.
 
@@ -215,7 +215,7 @@ class MessageView(Message):
         return self.message_pieces[0].timestamp if self.message_pieces else datetime.now(UTC)
 
 
-class AttackSummary(AttackResult):
+class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
     """
     API view of a ``pyrit.models.AttackResult``.
 

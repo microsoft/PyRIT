@@ -144,6 +144,7 @@ describe("Navigation", () => {
       "Home",
       "Technique.execute",
       "History",
+      "Analytics",
       "Operations",
       "Scanner",
       "Datasets",
@@ -180,6 +181,16 @@ describe("Navigation", () => {
     expect(button).toHaveAttribute("aria-current", "page");
     await user.click(button);
     expect(onNavigate).toHaveBeenCalledWith("history");
+  });
+
+  it("marks Analytics current and opens the explorer", async () => {
+    const user = userEvent.setup();
+    const onNavigate = jest.fn();
+    renderWithProvider(<Navigation {...defaultProps} currentView="analytics" onNavigate={onNavigate} />);
+    const button = screen.getByRole("button", { name: "Analytics" });
+    expect(button).toHaveAttribute("aria-current", "page");
+    await user.click(button);
+    expect(onNavigate).toHaveBeenCalledWith("analytics");
   });
 
   it("calls onNavigate with 'scenarios' when the scenarios button is clicked", async () => {

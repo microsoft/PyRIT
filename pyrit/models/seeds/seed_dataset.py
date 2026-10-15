@@ -299,7 +299,7 @@ class SeedDataset(BaseModel):
                 prompt["prompt_group_id"] = uuid.uuid4()
 
     @staticmethod
-    def group_seed_prompts_by_prompt_group_id(seeds: Sequence[Seed]) -> Sequence[SeedGroup]:
+    def group_seed_prompts_by_prompt_group_id(seeds: Sequence[Seed[Any]]) -> Sequence[SeedGroup]:
         """
         Group the given list of seeds by prompt_group_id and create
         SeedGroup or AttackSeedGroup instances.
