@@ -146,6 +146,16 @@ allow_custom_initializers: false
 # otherwise DefaultAzureCredential is used. Defaults to ~/.pyrit/scenario_presets.
 # scenario_presets_source: https://account.blob.core.windows.net/container/scenario_presets
 
+# Upload Folder for API-Created Targets
+# -------------------------------------
+# Folder that targets created through the REST API may upload local files from
+# (HTTPXAPITarget). The server passes it to the target; API callers cannot choose it.
+# When unset, those targets cannot be created through the API; register them in
+# Python or with an initializer instead.
+#
+# Default: unset
+# target_upload_directory: /path/to/upload/files
+
 # Local Backend Server
 # --------------------
 # Client settings used by pyrit_scan when connecting to or launching a backend.

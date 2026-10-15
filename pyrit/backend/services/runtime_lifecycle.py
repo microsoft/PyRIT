@@ -103,6 +103,7 @@ class RuntimeLifecycle:
             read_only_file_sources=read_only,
         )
         self.app.state.allow_custom_initializers = config.allow_custom_initializers
+        self.app.state.target_upload_directory = config.target_upload_directory
         registry = await asyncio.to_thread(InitializerRegistry.get_registry_singleton)
         registry.configure_custom_scripts_source(config.custom_initializers_source)
         preset_registry = ScenarioPresetRegistry.get_registry_singleton()
@@ -126,6 +127,7 @@ class RuntimeLifecycle:
     async def startup_async(self) -> None:
         """Keep management alive even when parsing or initialization fails."""
         self.app.state.allow_custom_initializers = False
+        self.app.state.target_upload_directory = None
         self.app.state.environment_file_service = None
         self.app.state.configured_initializers = []
         self.app.state.default_labels = {}

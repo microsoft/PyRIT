@@ -168,6 +168,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 
 - A scenario takes user input and uses it to package datasets with attack techniques
 - A scenario orchestrates resiliency and parallelism from a high level
+- A scenario chooses whether to skip or raise for incompatible techniques.
 - No result should depend on previous results (that is an attack's job)
 - **Does not own**: the per-objective conversation logic. Branching, turn-by-turn adaptation, and scoring-based decisions belong to the attack; a scenario selects and packages existing attack techniques rather than defining new attack algorithms or datasets.
 
@@ -187,6 +188,7 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Tags describe a technique (behavioral tags like `single_turn`/`multi_turn`, owner tags like `airt`); they don't decide what a scenario runs. There is deliberately **no global `default` tag** — a default is scenario-relative, declared per scenario via `build_technique_class_from_factories` (the `factories` list is the pool, catalog tags become named aggregate presets, and `default_tags` / `default_names` set what runs when nothing is chosen).
 - Generated technique enums follow their factory pool's lifecycle. Registry-derived enums and their lazy exports are discarded on setup registry reset so new scenarios see the replacement catalog. Enums built exclusively from fixed scenario-owned factories, such as `DoctorTechnique` and `JailbreakTechnique`, retain their identity across registry resets, so previously imported members remain valid for new scenario instances.
 - Factories opt into additive request-converter composition with `supports_additional_request_converters=True`. This is a semantic capability, not just constructor-signature detection; the factory validates that opted-in attacks accept `attack_converter_config`.
+- A technique declares target and dataset requirements and permitted adaptation; targets own capabilities and adapters.
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:

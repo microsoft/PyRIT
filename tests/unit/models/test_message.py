@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from datetime import UTC
+from typing import assert_type
 
 import pytest
 
@@ -388,3 +389,30 @@ class TestMessageModuleLayout:
             "construct_response_from_request",
         ):
             assert getattr(conversations, name) is getattr(messages, name)
+
+
+def test_message_factories_preserve_subclass_type() -> None:
+    """Verify that Message classmethod factories preserve concrete subclass type."""
+
+    class CustomMessage(Message):
+        custom_field: str = "default"
+
+    single = CustomMessage.from_prompt(prompt="Hello", role="user")
+    system = CustomMessage.from_system_prompt("System instruction")
+    system_list = CustomMessage.from_system_prompts("Prompt 1", "Prompt 2")
+
+    assert_type(single, CustomMessage)
+    assert_type(system, CustomMessage)
+    assert_type(system_list, list[CustomMessage])
+
+    assert type(single) is CustomMessage
+    assert type(system) is CustomMessage
+    assert single.custom_field == "default"
+    assert single.get_value() == "Hello"
+    assert system.get_value() == "System instruction"
+
+    assert len(system_list) == 2
+    assert type(system_list[0]) is CustomMessage
+    assert type(system_list[1]) is CustomMessage
+    assert system_list[0].get_value() == "Prompt 1"
+    assert system_list[1].get_value() == "Prompt 2"
