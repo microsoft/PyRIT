@@ -89,7 +89,8 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         },
         403: {
             "model": ProblemDetail,
-            "description": "Administrator access is required to run model repository code",
+            "description": "Administrator access is required to run model repository code or to use the "
+            "server's stored credentials",
         },
     },
 )
