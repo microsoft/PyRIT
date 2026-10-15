@@ -7,7 +7,8 @@ const LEGACY_ATTACK_ID = '11111111-1111-4111-8111-111111111111'
 const PROPOSED_NAME = 'browser_proposed'
 
 test.use({
-  extraHTTPHeaders: compatibilityHeaders(),
+  // eslint-disable-next-line no-empty-pattern
+  extraHTTPHeaders: async ({}, runTest) => runTest(compatibilityHeaders()),
   storageState: async ({ baseURL }, runTest) => {
     if (!baseURL) throw new Error('Browser acceptance requires a frontend base URL.')
     await runTest({

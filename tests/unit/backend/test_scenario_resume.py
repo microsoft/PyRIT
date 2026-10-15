@@ -1009,8 +1009,9 @@ async def test_restore_launch_request_keeps_saved_settings_and_canonical_params_
     request = service._restore_launch_request(stored=stored)
 
     assert {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS} == {
-        name: saved[name] if name != "operation_id" else _OPERATION_ID for name in _LAUNCH_REQUEST_FIELDS
+        name: saved[name] for name in _LAUNCH_REQUEST_FIELDS
     }
+    assert request.operation_id == _OPERATION_ID
     assert request.scenario_result_id == str(stored.id)
     assert request.scenario_params == {"marker": "original"}
     assert request.labels == _LABELS
