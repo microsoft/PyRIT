@@ -123,13 +123,13 @@ This does not restore availability of OpenAI's retired Sora service. SDK 3's
 deprecation warnings remain visible; type-check exceptions are limited to the
 specific SDK calls in that adapter.
 
-```{warning}
-The optional `litellm` and `all` extras temporarily pin `litellm==1.107.0.dev1`,
-which includes upstream OpenAI SDK 2/3 compatibility. Before releasing PyRIT,
-replace this development build with the first stable LiteLLM release containing
-that compatibility work, regenerate `uv.lock`, and rerun the SDK compatibility
-tests. The default installation does not require LiteLLM.
-```
+The default installation does not require LiteLLM and can resolve to SDK 3.
+The optional `litellm` and `all` extras retain stable LiteLLM releases. A stable
+LiteLLM release that requires `openai<3` selects SDK 2, which PyRIT also supports;
+there is no need to install a development build to use these extras.
+The shared `uv.lock` therefore retains SDK 2 to satisfy all extras. CI tests
+SDK 2 and 3 without LiteLLM, and stable LiteLLM with SDK 2. Ordinary package
+installations resolve the selected extras independently of this development lock.
 
 ## A2A agents
 

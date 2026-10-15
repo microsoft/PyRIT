@@ -64,16 +64,20 @@ jobs:
           ]))
           '
       - name: Install LiteLLM compatibility extra
+        if: startsWith(matrix.openai, '2.')
         run: uv sync --frozen --extra litellm
       - name: Test LiteLLM with the selected OpenAI SDK
+        if: startsWith(matrix.openai, '2.')
         env:
           OPENAI_VERSION: ${{ matrix.openai }}
           LITELLM_LOCAL_MODEL_COST_MAP: "True"
           LITELLM_TELEMETRY: "False"
         run: |
           uv run --frozen --no-sync --with "openai==$OPENAI_VERSION" python -c '
-          import os, openai, pytest
+          import importlib.metadata, os, openai, pytest
+          from packaging.version import Version
           assert openai.__version__ == os.environ["OPENAI_VERSION"]
+          assert not Version(importlib.metadata.version("litellm")).is_prerelease
           raise SystemExit(pytest.main([
               "-q",
               "tests/unit/prompt_target/target/test_openai_sdk_compatibility.py",

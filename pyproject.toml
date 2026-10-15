@@ -139,8 +139,7 @@ speech = [
 ]
 
 litellm = [
-    # Replace this prerelease with a stable SDK 3-compatible release before releasing PyRIT.
-    "litellm==1.107.0.dev1",
+    "litellm>=1.84.0",
 ]
 
 github-copilot = [
@@ -160,7 +159,7 @@ all = [
     "github-copilot-sdk>=1.0.11",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm==1.107.0.dev1",
+    "litellm>=1.84.0",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
