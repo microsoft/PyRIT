@@ -1755,7 +1755,7 @@ async def test_normalizer_handles_sdk_turn_events_async(
         client.delete_session.assert_not_awaited()
     else:
         with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
-            await send
+            _ = await send
         assert isinstance(exc_info.value.__cause__, RuntimeError)
         assert expected_error in str(exc_info.value.__cause__).lower()
         client.delete_session.assert_awaited_once_with("sdk-session-id")
