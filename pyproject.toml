@@ -224,9 +224,6 @@ unused-type-ignore-comment = "ignore"
 # (typing.override is 3.12+), which adds a direct dep and ongoing import-path
 # friction. Suppressing the rule keeps the codebase consistent for now.
 missing-override-decorator = "ignore"
-# ty 0.0.85+ enables this opt-in rule through all = "error". Defer the
-# repository-wide migration without changing existing empty-value handling.
-truthiness-test-of-none-union = "ignore"
 
 [tool.ty.analysis]
 respect-type-ignore-comments = true
@@ -243,19 +240,6 @@ replace-imports-with-any = [
 
 [tool.ty.src]
 exclude = ["doc/code/"]
-
-# Preserve specialized Pydantic fields until their variance migration is addressed.
-[[tool.ty.overrides]]
-include = ["pyrit/backend/models/**", "pyrit/models/**"]
-[tool.ty.overrides.rules]
-invalid-attribute-override = "ignore"
-invalid-mutable-override = "ignore"
-
-# Regex scorers specialize the base class's optional pattern defaults.
-[[tool.ty.overrides]]
-include = ["pyrit/score/true_false/regex/**"]
-[tool.ty.overrides.rules]
-invalid-mutable-override = "ignore"
 
 # Relax type checking for HuggingFace module
 [[tool.ty.overrides]]
