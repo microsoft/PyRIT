@@ -38,7 +38,7 @@ def garak_dataset_names() -> list[str]:
 @pytest.fixture
 async def seeded_memory_async(patch_central_database: None) -> MemoryInterface:
     config = LatentInjectionDatasetConfiguration
-    seeds: list[Seed] = []
+    seeds: list[Seed[Any]] = []
     for family in ("whois", "resume", "latent_jailbreak"):
         seeds.extend(
             SeedPrompt(
@@ -403,7 +403,7 @@ class TestLatentAttacks:
         get_seeds = seeded_memory_async.get_seeds_async
         resumed = LatentInjection(scenario_result_id=original._scenario_result_id)
 
-        async def reversed_seeds_async(**kwargs: Any) -> list[Seed]:
+        async def reversed_seeds_async(**kwargs: Any) -> list[Seed[Any]]:
             return list(reversed(await get_seeds(**kwargs)))
 
         with patch.object(seeded_memory_async, "get_seeds_async", side_effect=reversed_seeds_async):

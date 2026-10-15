@@ -186,7 +186,7 @@ class ProPILEDatasetConfiguration(DatasetAttackConfiguration):
         )
 
     def _build_groups(
-        self, *, technique: ProPILETechnique, record: Seed, template: SeedPrompt
+        self, *, technique: ProPILETechnique, record: Seed[Any], template: SeedPrompt
     ) -> list[tuple[str, AttackSeedGroup]]:
         """
         Render one template for each withheld value the record can supply.
