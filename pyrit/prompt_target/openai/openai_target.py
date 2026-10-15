@@ -87,6 +87,7 @@ class OpenAITarget(PromptTarget):
         model_name: str | None = None,
         endpoint: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        auth_mode: AuthMode = "api_key",
         headers: str | None = None,
         max_requests_per_minute: int | None = None,
         httpx_client_kwargs: dict[str, Any] | None = None,
@@ -102,18 +103,22 @@ class OpenAITarget(PromptTarget):
             endpoint (str, Optional): The target URL for the OpenAI service.
             api_key (str | Callable[[], str | Awaitable[str]], Optional): The API key for accessing the
                 OpenAI service, or a callable that returns an access token (sync or async).
-                For recognized Azure OpenAI / AI Foundry endpoints, if no API key is provided
-                (via parameter or environment variable), Entra ID authentication is used automatically.
-                You can also explicitly pass a token provider from pyrit.auth
+                You can pass a token provider from pyrit.auth
                 (e.g., get_azure_openai_auth(endpoint) for async, or get_azure_token_provider(scope) for sync).
                 Synchronous token providers are automatically wrapped to work with async clients.
                 Defaults to the target-specific API key environment variable.
+            auth_mode (AuthMode, Optional): Explicitly selects how to authenticate. ``"identity"``
+                authenticates with a Microsoft Entra ID token minted for the endpoint; it ignores the
+                API key environment variable, rejects an explicit ``api_key``, and requires a
+                recognized Azure OpenAI / AI Foundry endpoint. Defaults to ``"api_key"``, which
+                resolves the key as described above.
             headers (str, Optional): Extra headers of the endpoint (JSON).
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
-            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
-                `httpx.AsyncClient()` constructor.
+            httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options,
+                such as ``timeout`` or ``http_client``. SDK 2 uses HTTPX by default; SDK 3 uses
+                HTTPX2. Existing HTTPX clients remain supported by SDK 3's compatibility layer.
             underlying_model (str, Optional): The underlying model name (e.g., "gpt-4o") used solely for
                 target identifier purposes. This is useful when the deployment name in Azure differs
                 from the actual model. If not provided, the identifier will use the model_name.
@@ -122,8 +127,9 @@ class OpenAITarget(PromptTarget):
                 this target instance. If None, uses the class-level defaults. Defaults to None.
 
         Raises:
-            ValueError: If no API key is provided (via parameter or environment variable) and the
-                endpoint is not a recognized Azure OpenAI / AI Foundry endpoint.
+            ValueError: If identity auth is requested for an endpoint that is not a recognized
+                Azure OpenAI / AI Foundry endpoint, or if ``"api_key"`` auth is requested and no
+                key is available via parameter or environment variable.
         """
         self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
@@ -157,9 +163,23 @@ class OpenAITarget(PromptTarget):
             endpoint=endpoint_value,
             api_key=api_key,
             api_key_environment_variable=self.api_key_environment_variable,
+            auth_mode=auth_mode,
         )
 
         self._initialize_openai_client()
+
+    @classmethod
+    def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:
+        """
+        Preserve explicit authentication intent through target construction.
+
+        Args:
+            auth_mode (AuthMode): Authentication mode selected by the caller.
+
+        Returns:
+            dict[str, object]: Constructor parameters that enforce the mode.
+        """
+        return {"auth_mode": auth_mode}
 
     @staticmethod
     def _parse_request_headers(value: object) -> dict[str, str]:

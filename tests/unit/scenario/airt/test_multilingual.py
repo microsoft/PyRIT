@@ -3,6 +3,7 @@
 
 """Tests for the Multilingual scenario."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -517,3 +518,38 @@ class TestMultilingual:
             ScenarioRunState.IN_PROGRESS,
             ScenarioRunState.COMPLETED,
         ]
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {},
+            {"num_languages": 3},
+            {"languages": ["French", "german", "French"]},
+            {"languages": ["French", "German"], "translation_strategies": [_TRANSLATION]},
+            {"languages": ["French", "German"], "translation_strategies": [_RANDOM_TRANSLATION]},
+            {"languages": ["French"], "include_baseline": False},
+            {"scenario_techniques": ["prompt_sending", "base64"]},
+        ],
+    )
+    async def test_run_size_estimate_matches_the_initialized_run_async(
+        self,
+        *,
+        params: dict[str, Any],
+        mock_objective_target: PromptTarget,
+        mock_adversarial_chat: PromptTarget,
+        mock_objective_scorer: TrueFalseScorer,
+    ) -> None:
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=f"objective {index}")]) for index in range(5)]
+        technique_class = _build_multilingual_technique()
+        if "scenario_techniques" in params:
+            params = {
+                **params,
+                "scenario_techniques": [technique_class(name) for name in params["scenario_techniques"]],
+            }
+        with _patch_seed_groups(seed_groups):
+            scenario = Multilingual(adversarial_chat=mock_adversarial_chat, objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(args={"objective_target": mock_objective_target, **params})
+            estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+            await scenario.initialize_async()
+
+        assert estimate.estimated_attack_count == sum(len(attack.seed_groups) for attack in scenario._atomic_attacks)

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -24,7 +25,7 @@ class TestSeedOrigin:
     @pytest.mark.parametrize("origin", list(SeedOrigin))
     @pytest.mark.parametrize("seed_type", [SeedPrompt, SeedObjective, SeedSimulatedConversation])
     async def test_roundtrip_async(
-        self, sqlite_instance: MemoryInterface, origin: SeedOrigin, seed_type: type[Seed]
+        self, sqlite_instance: MemoryInterface, origin: SeedOrigin, seed_type: type[Seed[Any]]
     ) -> None:
         if seed_type is SeedSimulatedConversation:
             seed = SeedSimulatedConversation(

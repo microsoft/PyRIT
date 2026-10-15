@@ -4,13 +4,26 @@
 import re
 from typing import cast
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, config_hash
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
 )
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
+
+
+def _patterns_digest(patterns: dict[str, str]) -> str:
+    """
+    Digest named regex patterns so different pattern sets get different identities.
+
+    Args:
+        patterns (dict[str, str]): Pattern names mapped to regex strings.
+
+    Returns:
+        str: A SHA-256 hex digest over canonical JSON that preserves name and pattern boundaries.
+    """
+    return config_hash(patterns)
 
 
 class RegexScorer(MessageTrueFalseScorer):
@@ -81,10 +94,12 @@ class RegexScorer(MessageTrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
+        params: dict[str, object] = {"pattern_count": len(self._patterns)}
+        # Default pattern sets keep their existing identity; anything else is told apart by content.
+        if self._patterns != type(self)._DEFAULT_PATTERNS:
+            params["patterns_digest"] = _patterns_digest(self._patterns)
         return self._create_identifier(
-            params={
-                "pattern_count": len(self._patterns),
-            },
+            params=params,
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 

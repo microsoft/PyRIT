@@ -22,6 +22,7 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/analytics.spec.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

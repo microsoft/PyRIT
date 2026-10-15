@@ -43,7 +43,7 @@ class ScenarioIdentifier(ComponentIdentifier):
     resolves by name from the target / scorer registries when building a scenario.
     """
 
-    component_type: ClassVar[ComponentType] = ComponentType.SCENARIO
+    component_type: ClassVar[ComponentType | None] = ComponentType.SCENARIO
 
     #: Scenario definition version. Behavioral identity (a v1 and a v2 of the same
     #: scenario are different identities); not a constructor input.

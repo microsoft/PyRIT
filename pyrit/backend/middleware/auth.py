@@ -60,19 +60,32 @@ def get_authentication_policy(request: Request) -> AuthenticationPolicy:
     return policy
 
 
-def require_admin(request: Request) -> None:
-    """Require an administrator when authentication is enabled."""
+def has_admin_access(request: Request) -> bool:
+    """
+    Return whether the caller is an administrator.
+
+    Local mode grants anonymous administrator access only when the immutable
+    process-start policy explicitly enables it.
+
+    Returns:
+        bool: Whether the caller has administrator access.
+    """
     user = getattr(request.state, "user", None)
-    if isinstance(user, AuthenticatedUser) and user.is_admin:
-        return
+    if isinstance(user, AuthenticatedUser):
+        return user.is_admin
     if user is None:
         policy = get_authentication_policy(request)
-        if policy.mode == "local" and policy.allow_unauthenticated_admin:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Administrator access is required",
-    )
+        return policy.mode == "local" and policy.allow_unauthenticated_admin
+    return False
+
+
+def require_admin(request: Request) -> None:
+    """Require an administrator when authentication is enabled."""
+    if not has_admin_access(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is required",
+        )
 
 
 class EntraAuthMiddleware(BaseHTTPMiddleware):

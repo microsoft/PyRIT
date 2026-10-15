@@ -14,7 +14,7 @@ composite identifier has this shape::
       └── seed_identifiers      (list of ALL seed ComponentIdentifiers, for traceability)
 """
 
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import Field
 
@@ -56,7 +56,7 @@ class AtomicAttackIdentifier(ComponentIdentifier):
         technique_identifier: ComponentIdentifier | None = None,
         attack_identifier: ComponentIdentifier | None = None,
         seed_group: "SeedGroup | None" = None,
-    ) -> "AtomicAttackIdentifier":
+    ) -> Self:
         """
         Build a composite AtomicAttackIdentifier for an atomic attack.
 

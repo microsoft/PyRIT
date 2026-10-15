@@ -10,5 +10,13 @@ memory_db_type: in_memory
 # before the first catalog request. Per-scenario run initializers
 # (target, load_default_datasets) are still passed via the CLI invocation in
 # test_scenarios.py.
+#
+# The local jailbreak template collection is preloaded so the seeded browser
+# test can open the example table against this backend. The files ship with
+# PyRIT, so startup does not download a remote dataset or call a model provider.
 initializers:
   - technique
+  - name: load_default_datasets
+    args:
+      dataset_names:
+        - jailbreak_templates

@@ -29,13 +29,10 @@ import {
 } from '@fluentui/react-icons'
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
 
-import type {
-  DisplayScore,
-  Message,
-  MessageAttachment,
-  MessageDisplayPiece,
-} from '../../types'
+import type { DisplayScore, Message, MessageAttachment } from '@/types'
+
 import { useMessageListStyles } from './MessageList.styles'
+import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
 
 interface MessageListProps {
   messages: Message[]
@@ -478,69 +475,6 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  * responses (e.g. PromptShield verdicts) as readable JSON instead of a single
  * line of compact text.
  */
-function tryFormatJson(text: string): string | null {
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  const first = trimmed[0]
-  const last = trimmed[trimmed.length - 1]
-  // Cheap pre-check: only attempt parsing for object- or array-shaped content
-  // so things like "1" or "true" (which are valid JSON) are still rendered as
-  // plain text.
-  if (!((first === '{' && last === '}') || (first === '[' && last === ']'))) {
-    return null
-  }
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
-  } catch {
-    return null
-  }
-}
-
-interface RenderMessagePiece {
-  piece: MessageDisplayPiece
-  groupId: string | number
-  markdownTestId: string
-}
-
-function getRenderMessagePieces(message: Message, messageIndex: number): RenderMessagePiece[] {
-  if (message.displayPieces) {
-    const hasMultiplePieces = message.displayPieces.length > 1
-    return message.displayPieces.map((piece) => ({
-      piece,
-      groupId: hasMultiplePieces ? `${messageIndex}-piece-${piece.pieceIndex}` : messageIndex,
-      markdownTestId: `message-markdown-${messageIndex}-${piece.pieceIndex}`,
-    }))
-  }
-
-  const pieces: RenderMessagePiece[] = []
-  if (message.content || message.scores?.length) {
-    pieces.push({
-      piece: {
-        type: 'text',
-        pieceId: `message-${messageIndex}-text`,
-        pieceIndex: 0,
-        content: message.content,
-        scores: message.scores,
-      },
-      groupId: messageIndex,
-      markdownTestId: `message-markdown-${messageIndex}`,
-    })
-  }
-  message.attachments?.forEach((attachment, attachmentIndex) => {
-    pieces.push({
-      piece: {
-        type: 'media',
-        pieceId: attachment.pieceId ?? `message-${messageIndex}-attachment-${attachmentIndex}`,
-        pieceIndex: attachmentIndex,
-        attachment,
-      },
-      groupId: `${messageIndex}-att-${attachmentIndex}`,
-      markdownTestId: `message-markdown-${messageIndex}-att-${attachmentIndex}`,
-    })
-  })
-  return pieces
-}
-
 export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, copyConversationDisabled = false,
   newConversationDisabledReason, isLoading, globalMarkdown = false,
@@ -679,7 +613,7 @@ export default function MessageList({
                   {renderPieces.map(({ piece, groupId, markdownTestId }) => {
                     if (piece.type === 'text') {
                       const formatted = !message.isLoading && !globalMarkdown && !isUser
-                        ? tryFormatJson(piece.content)
+                        ? formatStructuredMessage(piece.content)
                         : null
                       return (
                         <div

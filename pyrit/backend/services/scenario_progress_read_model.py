@@ -135,7 +135,7 @@ class ScenarioProgressReadModel:
         async with self._cache_lock:
             entry = self._get_cache_entry(scenario_result_id=scenario_result_id, plan=plan, terminal=terminal)
             first_new_index = len(entry.results)
-            await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
+            deltas_updated = await self._hydrate_new_deltas_async(scenario_result_id=scenario_result_id, entry=entry)
             return self._build_snapshot(
                 entry=entry,
                 first_new_index=first_new_index,
@@ -144,6 +144,7 @@ class ScenarioProgressReadModel:
                 active_group_ids=active_group_ids,
                 terminal=terminal,
                 objective_scorer_identifier=objective_scorer_identifier,
+                deltas_updated=deltas_updated,
             )
 
     def _get_cache_entry(
@@ -178,6 +179,7 @@ class ScenarioProgressReadModel:
         active_group_ids: Sequence[str],
         terminal: bool,
         objective_scorer_identifier: ComponentIdentifier | None,
+        deltas_updated: bool = False,
     ) -> ScenarioProgressSnapshot:
         summary_plan = plan or self._synthesize_legacy_plan(deltas=entry.deltas)
         if len(entry.results) < len(entry.deltas):
@@ -192,7 +194,12 @@ class ScenarioProgressReadModel:
             terminal=terminal,
             plan_complete=plan_complete,
         )
-        if entry.summary is None or first_new_index < len(entry.deltas) or entry.summary_state != summary_state:
+        if (
+            entry.summary is None
+            or deltas_updated
+            or first_new_index < len(entry.deltas)
+            or entry.summary_state != summary_state
+        ):
             technique_details_by_group = self._build_technique_details_by_group(
                 deltas=entry.deltas,
                 results=entry.results,
@@ -215,13 +222,40 @@ class ScenarioProgressReadModel:
             plan=summary_plan,
         )
 
-    async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> None:
-        """Hydrate every persisted delta after the cached keyset cursor."""
+    async def _hydrate_new_deltas_async(self, *, scenario_result_id: str, entry: _ProgressCacheEntry) -> bool:
+        """
+        Hydrate persisted deltas while preserving their timestamp/ID keyset order.
+
+        Returns:
+            bool: Whether any delta was appended or replaced, so the summary rebuilds.
+        """
+        changed = False
         while True:
             page, has_more = await self._memory.get_scenario_attack_result_deltas_async(
                 scenario_result_id=scenario_result_id, cursor=entry.cursor, limit=self._STORAGE_PAGE_SIZE
             )
-            entry.deltas.extend(page)
+            # The keyset is ordered by (timestamp, id), so an edited row whose timestamp
+            # moved forward is emitted again after the cursor. Such a re-emission is an
+            # update of an attempt already cached, never a second attempt (#3183).
+            positions = {delta.attack_result_id: index for index, delta in enumerate(entry.deltas)}
+            replaced_from: int | None = None
+            for delta in page:
+                position = positions.get(delta.attack_result_id)
+                if position is None:
+                    positions[delta.attack_result_id] = len(entry.deltas)
+                    entry.deltas.append(delta)
+                    changed = True
+                else:
+                    entry.deltas[position] = delta
+                    changed = True
+                    replaced_from = position if replaced_from is None else min(replaced_from, position)
+            if replaced_from is not None:
+                # Timestamp bumps move attempts forward; paging and latest-attempt
+                # selection need the affected suffix in keyset order.
+                entry.deltas[replaced_from:] = sorted(
+                    entry.deltas[replaced_from:], key=lambda delta: (delta.timestamp, delta.attack_result_id)
+                )
+                del entry.results[replaced_from:]
             if page:
                 last = page[-1]
                 entry.cursor = AttackResultKeysetCursor(
@@ -229,7 +263,7 @@ class ScenarioProgressReadModel:
                     attack_result_id=last.attack_result_id,
                 )
             if not has_more:
-                return
+                return changed
             if not page:
                 raise RuntimeError("Scenario progress storage returned an empty page with has_more=True.")
 
