@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from pathlib import Path
+
 import pytest
 
 from pyrit.common.path import SCORER_EVALS_PATH
@@ -11,6 +13,35 @@ from pyrit.score import (
     MetricsType,
     ObjectiveHumanLabeledEntry,
 )
+
+
+@pytest.mark.parametrize("value", ["00123", "1e3", "1.2300", "True"])
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
+@pytest.mark.parametrize("metrics_type", [MetricsType.OBJECTIVE, MetricsType.HARM])
+def test_from_csv_preserves_numeric_and_boolean_text(
+    tmp_path: Path, value: str, encoding: str, metrics_type: MetricsType
+) -> None:
+    column = "objective" if metrics_type == MetricsType.OBJECTIVE else "harm_category"
+    label = "1" if metrics_type == MetricsType.OBJECTIVE else "0.5"
+    csv_path = tmp_path / "text.csv"
+    csv_path.write_text(
+        f"assistant_response,{column},human_score,notes\n{value},00456,{label},café\n",
+        encoding=encoding,
+    )
+
+    dataset = HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=metrics_type, version="1.0")
+    entry = dataset.entries[0]
+    piece = entry.conversation[0].message_pieces[0]
+
+    assert piece.original_value == value
+    assert piece.converted_value == value
+    if isinstance(entry, ObjectiveHumanLabeledEntry):
+        assert entry.objective == "00456"
+        assert entry.human_scores == [True]
+    else:
+        assert isinstance(entry, HarmHumanLabeledEntry)
+        assert entry.harm_category == "00456"
+        assert entry.human_scores == [0.5]
 
 
 @pytest.fixture
@@ -630,3 +661,79 @@ def test_scorer_eval_csv_loads_with_human_labeled_dataset(csv_file, metrics_type
     # - Invalid data formats
     dataset = HumanLabeledDataset.from_csv(csv_path=csv_file, metrics_type=metrics_type)
     assert len(dataset.entries) > 0, f"Dataset {csv_file.name} has no entries"
+
+
+def test_from_csv_preserves_hash_characters_in_cells(tmp_path):
+    """A literal '#' inside an unquoted cell must not truncate the row (#2974)."""
+    csv_file = tmp_path / "hash_cells.csv"
+    csv_file.write_text(
+        "# dataset_version=1.0\n"
+        "assistant_response,human_score,objective\n"
+        "# Heading,1,respond to the prompt\n"
+        "ordinary response,0,mentions C#\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert len(dataset.entries) == 2
+    assert dataset.entries[0].objective == "respond to the prompt"
+    assert dataset.entries[1].objective == "mentions C#"
+
+
+def test_from_csv_reads_metadata_comment_after_byte_order_mark(tmp_path):
+    """A UTF-8 BOM (what Excel writes) must not hide the metadata comment line."""
+    csv_file = tmp_path / "bom_cells.csv"
+    csv_file.write_text(
+        "# dataset_version=1.0\nassistant_response,human_score,objective\nordinary response,0,mentions C#\n",
+        encoding="utf-8-sig",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].objective == "mentions C#"
+
+
+def test_from_csv_skips_blank_line_before_metadata_comment(tmp_path):
+    """A blank line before the metadata comment must not hide it from the scan."""
+    csv_file = tmp_path / "blank_first.csv"
+    csv_file.write_text(
+        "\n"
+        "# dataset_version=1.0\n"
+        "assistant_response,human_score,objective\n"
+        "ordinary response,0,respond to the prompt\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert dataset.version == "1.0"
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].objective == "respond to the prompt"
+
+
+def test_from_csv_reads_metadata_comment_after_leading_comment_line(tmp_path):
+    """Metadata must be found on any leading comment line, not just the first."""
+    csv_file = tmp_path / "note_first.csv"
+    csv_file.write_text(
+        "# notes on how this dataset was collected\n"
+        "# dataset_version=2.5\n"
+        "assistant_response,human_score,objective\n"
+        "ordinary response,0,mentions C#\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert dataset.version == "2.5"
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].objective == "mentions C#"

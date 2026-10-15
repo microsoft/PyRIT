@@ -123,6 +123,17 @@ def print_scenario_list(*, items: list[RegisteredScenario]) -> None:
         if sc.default_datasets:
             print(f"    Default Datasets ({len(sc.default_datasets)}):")
             print(_wrap(text=", ".join(sc.default_datasets), indent="      "))
+        options = sc.dataset_options
+        print(f"    Dataset selection: {options.mode.value}; overrides: {options.supports_overrides}")
+        if options.allowed_names:
+            print(_wrap(text="Options: " + ", ".join(options.allowed_names), indent="      "))
+        defaults = sc.dataset_defaults
+        print(
+            f"    Dataset defaults: per-source={defaults.max_per_dataset}, "
+            f"total={defaults.max_total}, fetch={defaults.fetch.value}"
+        )
+        for source in defaults.sources:
+            print(f"      {source.name}: limit={source.max_size}, fetch={source.fetch.value}")
         if sc.supported_parameters:
             print("    Supported Parameters:")
             for p in sc.supported_parameters:
@@ -164,7 +175,7 @@ def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
         if init.supported_parameters:
             print("    Supported Parameters:")
             for p in init.supported_parameters:
-                default_str = f" [default: {p.default}]" if p.default else ""
+                default_str = f" [default: {p.default}]" if p.default is not None else ""
                 print(f"      - {p.name}{default_str}: {p.description}")
         if init.description:
             print("    Description:")

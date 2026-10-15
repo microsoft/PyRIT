@@ -1004,6 +1004,7 @@ export interface DatasetInfo {
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
   objectives: number | null
@@ -1017,7 +1018,156 @@ export interface DatasetListResponse {
   items: DatasetInfo[]
 }
 
+/** Stored seed kinds accepted by the dataset seed browser. */
+export type SeedType = 'prompt' | 'objective' | 'simulated_conversation'
+
+/** Stored prompt data types. Media path values are not played by the browser. */
+export type PromptDataType =
+  | 'text'
+  | 'image_path'
+  | 'audio_path'
+  | 'video_path'
+  | 'binary_path'
+  | 'url'
+  | 'reasoning'
+  | 'error'
+  | 'function_call'
+  | 'tool_call'
+  | 'function_call_output'
+
+export type ChatMessageRole =
+  | 'system'
+  | 'user'
+  | 'assistant'
+  | 'simulated_assistant'
+  | 'tool'
+  | 'simulated_tool'
+  | 'developer'
+
+/** How a seed entered memory. Unknown stays unknown; it is not inferred. */
+export type SeedOrigin = 'local' | 'remote' | 'generated' | 'user' | 'unknown'
+
+/** One typed objective condition. Extra fields stay on the object for inspection. */
+export interface SeedCondition {
+  condition_type: string
+  [key: string]: unknown
+}
+
+/**
+ * Wire shape of `SeedRecord` from the seed-example detail endpoint.
+ * This is stored inspection data, not an executable seed.
+ */
+export interface SeedRecord {
+  id: string
+  seed_type: SeedType
+  value: string
+  value_sha256: string | null
+  data_type: PromptDataType
+  name: string | null
+  dataset_name: string | null
+  origin: SeedOrigin
+  harm_categories: string[] | null
+  description: string | null
+  authors: string[] | null
+  groups: string[] | null
+  source: string | null
+  date_added: string
+  added_by: string
+  metadata: Record<string, unknown> | null
+  prompt_group_id: string | null
+  sequence: number | null
+  role: ChatMessageRole | null
+  parameters: string[] | null
+  conditions: SeedCondition[] | null
+  response_json_schema: Record<string, unknown> | null
+}
+
+/** Wire shape of one logical example from `GET /api/datasets/seeds`. */
+export interface SeedExampleSummary {
+  example_id: string
+  name: string | null
+  preview: string
+  preview_truncated: boolean
+  modalities: string[]
+  seed_types: string[]
+  piece_count: number
+  objective_count: number
+  harm_categories: string[]
+  has_unlabeled_harm: boolean
+}
+
+/** Wire shape of `SeedExampleListResponse`. `total` counts matching examples. */
+export interface SeedExampleListResponse {
+  items: SeedExampleSummary[]
+  pagination: PaginationInfo
+  total: number
+}
+
+/** Wire shape of `SeedExampleDetailResponse`, including stored members in server order. */
+export interface SeedExampleDetailResponse extends SeedExampleSummary {
+  members: SeedRecord[]
+}
+
+/** Query for `GET /api/datasets/seeds`. Facet arrays are repeated singular parameters. */
+export interface SeedExampleListParams {
+  selection_key: string
+  limit?: number
+  cursor?: string
+  search?: string
+  modality?: readonly string[]
+  seed_type?: readonly SeedType[]
+  harm_category?: readonly string[]
+}
+
 // --- Scenarios ---
+
+export type ScenarioDatasetLimit = number | 'all' | 'default'
+export type DatasetFetchPolicy = 'never' | 'if_missing'
+
+export interface ScenarioDatasetSourceInput {
+  name: string
+  max_size?: ScenarioDatasetLimit | null
+  fetch?: DatasetFetchPolicy | 'default' | null
+}
+
+export interface ScenarioDatasetRequest {
+  sources?: ScenarioDatasetSourceInput[] | null
+  max_per_dataset?: ScenarioDatasetLimit | null
+  max_total?: ScenarioDatasetLimit | null
+  fetch?: DatasetFetchPolicy | 'default' | null
+  filters?: Record<string, string[]> | null
+}
+
+export interface ScenarioDatasetOptions {
+  mode: 'any' | 'subset' | 'fixed'
+  allowed_names: string[]
+  max_selected?: number | null
+  per_dataset_limit: boolean
+  total_limit: boolean
+  supports_overrides: boolean
+  filters: boolean
+  source_settings?: boolean
+}
+
+export interface ScenarioDatasetSourceSettings {
+  name: string
+  max_size: number | 'all'
+  fetch: DatasetFetchPolicy
+  configured_provider: boolean
+}
+
+export interface ScenarioDatasetSettings {
+  sources: ScenarioDatasetSourceSettings[]
+  max_per_dataset: number | 'all'
+  max_total: number | 'all'
+  fetch: DatasetFetchPolicy
+  filters: Record<string, string[]>
+}
+
+export interface ScenarioDatasetLoadResponse {
+  settings: ScenarioDatasetSettings
+  items: DatasetInfo[]
+}
 
 export interface RegisteredScenario {
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
@@ -1034,6 +1184,8 @@ export interface RegisteredScenario {
   all_techniques: string[]
   technique_summaries: ScenarioTechniqueSummary[]
   default_datasets: string[]
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
   baseline_policy: 'enabled' | 'disabled' | 'forbidden'
   include_baseline_by_default: boolean
   uses_default_adversarial_target: boolean
@@ -1063,6 +1215,7 @@ export interface RunScenarioRequest {
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
   max_concurrency?: number
   max_retries?: number
   include_baseline?: boolean | null
@@ -1108,6 +1261,9 @@ export interface ScenarioRunSizeEstimateResponse {
   status?: 'exact' | 'approximate' | 'conditional' | 'unavailable'
   dataset_size: ScenarioDatasetSizeEstimate
   dataset_limit: DatasetLimitInput
+  dataset_options?: ScenarioDatasetOptions
+  dataset_defaults?: ScenarioDatasetSettings
+  effective_datasets?: ScenarioDatasetSettings
   estimated_attack_count: number | null
   minimum_attack_count?: number | null
   maximum_attack_count?: number | null
@@ -1124,6 +1280,7 @@ export interface ScenarioRunSizeEstimateRequest {
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
+  datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
 }

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -110,11 +110,11 @@ class TestMMSafetyBenchDataset:
 
     def test_init_invalid_variant_raises(self):
         with pytest.raises(ValueError, match="MMSafetyBenchVariant"):
-            _MMSafetyBenchDataset(variant=cast("MMSafetyBenchVariant", "SD_TYPO"))
+            _MMSafetyBenchDataset(variant="SD_TYPO")
 
     def test_init_invalid_category_raises(self):
         with pytest.raises(ValueError, match="MMSafetyBenchCategory"):
-            _MMSafetyBenchDataset(categories=cast("list[MMSafetyBenchCategory]", ["Illegal_Activitiy"]))
+            _MMSafetyBenchDataset(categories=["Illegal_Activitiy"])
 
     def test_init_empty_categories_raises(self):
         with pytest.raises(ValueError, match="`categories` must be a non-empty list"):

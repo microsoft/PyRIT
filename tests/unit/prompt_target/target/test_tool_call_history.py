@@ -345,7 +345,10 @@ def test_responses_preflight_and_serializer_reject_invalid_tool_fields(payload: 
 def test_responses_preflight_retains_provider_extensions_and_uses_converted_values() -> None:
     target = _target(OpenAIResponseTarget)
     assert isinstance(target, OpenAIResponseTarget)
-    payload = '{"type":"web_search_call","call_id":"web-1","query":"edited","extension":{"key":"value"}}'
+    payload = (
+        '{"type":"web_search_call","id":"ws-1","status":"completed",'
+        '"action":{"type":"search","query":"edited"},"extension":{"key":"value"}}'
+    )
     piece = MessagePiece(
         role="simulated_assistant",
         original_value_data_type="tool_call",
@@ -354,7 +357,12 @@ def test_responses_preflight_retains_provider_extensions_and_uses_converted_valu
     )
     target.validate_tool_history([piece.to_message()])
     assert piece.converted_value == payload
-    assert target._serialize_tool_call(piece) == {"type": "web_search_call", "call_id": "web-1", "query": "edited"}
+    assert target._serialize_tool_call(piece) == {
+        "id": "ws-1",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {"type": "search", "query": "edited"},
+    }
 
 
 @pytest.mark.parametrize("target_type", [OpenAIChatTarget, LiteLLMChatTarget])

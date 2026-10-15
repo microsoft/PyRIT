@@ -100,7 +100,9 @@ class _StubCandidateFilter:
         tokenizer: Any,
         current_control: str,
     ) -> list[str]:
-        return ["stub"] * candidate_tokens.shape[0]
+        count = candidate_tokens.shape[0]
+        assert isinstance(count, int)
+        return ["stub"] * count
 
 
 class _StubSuffixInitializer:

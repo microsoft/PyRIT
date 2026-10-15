@@ -101,6 +101,23 @@ describe('useLoadedDatasets', () => {
     expect((mockListDatasets.mock.calls[1][1] as AbortSignal).aborted).toBe(false)
   })
 
+  it('refreshes catalog metadata without hiding data that is already shown', async () => {
+    mockListDatasets
+      .mockResolvedValueOnce({ items: [FIRST] })
+      .mockResolvedValueOnce({ items: [] })
+
+    const { result } = renderHook(() => useLoadedDatasets())
+    await waitFor(() => expect(result.current.datasets).toEqual([FIRST]))
+
+    act(() => { result.current.refresh() })
+
+    expect(result.current.loading).toBe(false)
+    expect(result.current.datasets).toEqual([FIRST])
+    await waitFor(() => expect(result.current.datasets).toEqual([]))
+    expect(result.current.loading).toBe(false)
+    expect(mockListDatasets).toHaveBeenCalledTimes(2)
+  })
+
   it('aborts the catalog request when the subscriber unmounts', async () => {
     let signal: AbortSignal | undefined
     mockListDatasets.mockImplementation((_query: unknown, nextSignal: AbortSignal) => new Promise((_resolve, reject) => {

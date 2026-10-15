@@ -9,6 +9,7 @@ from typing import Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter
@@ -18,6 +19,7 @@ from pyrit.models import (
     DivergesFromRepetition,
     Message,
     MessagePiece,
+    ScenarioDatasetRequest,
     Seed,
     SeedDataset,
     SeedObjective,
@@ -28,7 +30,6 @@ from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.scenarios.garak import Divergence, DivergenceDatasetConfiguration, DivergenceTechnique
 from pyrit.score import DivergenceScorer, SubStringScorer, TrueFalseInverterScorer
-from tests.unit.mocks import MockPromptTarget
 
 
 @pytest.fixture
@@ -154,7 +155,7 @@ class TestDivergence:
             scenario_name="garak.divergence",
             scenario_class=Divergence,
             objective_target=MockPromptTarget(),
-            max_dataset_size=size,
+            datasets=ScenarioDatasetRequest(max_total=size),
         )
         scenario.set_params_from_args(args=args)
         with patch.object(

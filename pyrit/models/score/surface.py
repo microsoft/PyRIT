@@ -63,3 +63,52 @@ class SurfaceCoverage(BaseModel):
 
     complete: bool = False
     reasons: tuple[str, ...] = ()
+
+
+class SurfaceBaseline(BaseModel):
+    """
+    What the named locations held when an attempt started.
+
+    A baseline lets a later snapshot show differences in observed content, not who wrote it
+    or whether writes occurred between snapshots. Entries keep bounded evidence so a criterion
+    can compare what was there before with what is there now. A location the baseline did not
+    cover cannot establish that a later location is new.
+
+    ``concurrent`` is set when another attempt observed the same locations while this one ran.
+    The comparison cannot associate a change with this attempt's window.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    captured_at: AwareDatetime
+    entries: tuple[SurfaceEntry, ...] = ()
+    coverage: SurfaceCoverage = Field(default_factory=SurfaceCoverage)
+    concurrent: bool = False
+
+    @model_validator(mode="after")
+    def _validate_entries(self) -> SurfaceBaseline:
+        """
+        Keep baseline entries unique.
+
+        Returns:
+            SurfaceBaseline: The validated baseline.
+
+        Raises:
+            ValueError: If an entry repeats.
+        """
+        uris = [entry.uri for entry in self.entries]
+        if len(set(uris)) != len(uris):
+            raise ValueError("Baseline entries must name each location once.")
+        return self
+
+    def entry_for(self, uri: str) -> SurfaceEntry | None:
+        """
+        Return the baseline entry for one location.
+
+        Args:
+            uri (str): The location.
+
+        Returns:
+            SurfaceEntry | None: The entry, or None when the baseline holds none.
+        """
+        return next((entry for entry in self.entries if entry.uri == uri), None)

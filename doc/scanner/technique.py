@@ -142,7 +142,14 @@ await output_scenario_async(demo_result)  # type: ignore
 # await output_scenario_async(result)
 # ```
 #
-# The scenario copies the source history. It keeps roles, message order, data types,
+# The selected technique must accept the target and source history. An objective-only
+# technique rejects history unless it declares `try_adapt=True`. With that permission,
+# each attempt uses an objective-only copy, then adds the technique's own seeds.
+# The original history is not changed. Without permission, `raise` reports the reason
+# directly; `skip` logs the reason. `Execute` still raises an error if its one selected
+# technique cannot run, even when a baseline is enabled.
+#
+# When history is accepted, the scenario copies it. It keeps roles, message order, data types,
 # converted values, and message metadata. Each attempt gets a new conversation ID.
 # The source conversation is not changed. Prepended assistant and tool messages use
 # simulated roles, so they are not treated as new scoring evidence. Prior request trace

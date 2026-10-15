@@ -16,21 +16,18 @@ explicitly allowlisted media types render inline; every other type downloads as
 opaque bytes.
 """
 
+import asyncio
 import logging
 import mimetypes
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from pyrit.memory import CentralMemory
+from pyrit.backend.services.media_persistence import MediaAccessDeniedError, validate_local_media_path_async
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Only serve files from known media subdirectories under results_path.
-_ALLOWED_SUBDIRECTORIES = {"prompt-memory-entries", "seed-prompt-entries"}
 
 # Only these known-safe media types render inline. Every other extension is
 # served as an application/octet-stream attachment.
@@ -60,41 +57,6 @@ _INLINE_EXTENSIONS = {
 }
 
 
-def _validate_media_path(*, path: str, allowed_root: Path) -> Path:
-    """
-    Validate and sanitize a user-provided file path against an allowed root directory.
-
-    Uses ``Path.resolve()`` to resolve symlinks and ``..`` components, then
-    verifies the canonical path is under the allowed root. This is the standard
-    sanitization pattern recognized by static analysis tools (e.g. CodeQL
-    ``py/path-injection``).
-
-    Args:
-        path: The user-provided file path to validate.
-        allowed_root: The canonical (``resolve``-d) allowed root directory.
-
-    Returns:
-        The canonical, validated file path.
-
-    Raises:
-        HTTPException 403: If the path fails any validation check.
-    """
-    real_path = Path(path).resolve(strict=False)
-
-    try:
-        relative_parts = real_path.relative_to(allowed_root).parts
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=403, detail="Access denied: path is outside the allowed results directory."
-        ) from exc
-
-    # Restrict to known media subdirectories (e.g. prompt-memory-entries/)
-    if not relative_parts or relative_parts[0] not in _ALLOWED_SUBDIRECTORIES:
-        raise HTTPException(status_code=403, detail="Access denied: path is not in a media subdirectory.")
-
-    return real_path
-
-
 @router.get("/media")
 async def serve_media_async(
     path: str = Query(..., description="Absolute path to the local media file to serve."),
@@ -120,19 +82,16 @@ async def serve_media_async(
     Raises:
         HTTPException 403: If the path is outside the allowed directory.
         HTTPException 404: If the file does not exist.
-        HTTPException 500: If memory is not initialized.
+        HTTPException 500: If memory or its results path is not configured.
     """
     try:
-        memory = CentralMemory.get_memory_instance()
-        if not memory.results_path:
-            raise HTTPException(status_code=500, detail="Memory results_path is not configured.")
-        allowed_root = Path(memory.results_path).resolve(strict=False)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail="Memory not initialized; cannot determine results path.") from exc
+        validated_path = await validate_local_media_path_async(path=path)
+    except MediaAccessDeniedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    validated_path = _validate_media_path(path=path, allowed_root=allowed_root)
-
-    if not validated_path.is_file():
+    if not await asyncio.to_thread(validated_path.is_file):
         raise HTTPException(status_code=404, detail="File not found.")
 
     extension = validated_path.suffix.lower()

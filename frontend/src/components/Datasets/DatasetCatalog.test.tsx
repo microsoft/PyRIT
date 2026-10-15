@@ -14,17 +14,41 @@ import DatasetSelection from './DatasetSelection'
 
 let mockGet: jest.SpyInstance
 
+const EMPTY_SEED_PAGE = {
+  items: [],
+  pagination: { limit: 20, has_more: false, next_cursor: null, prev_cursor: null },
+  total: 0,
+}
+
 function mockCatalog(items: DatasetInfo[]): void {
-  mockGet.mockResolvedValue({ data: { items } })
+  mockGet.mockImplementation((url: string) => {
+    if (url === '/datasets/seeds' || url.startsWith('/datasets/seeds/')) {
+      return Promise.resolve({ data: EMPTY_SEED_PAGE })
+    }
+    if (url === '/datasets') return Promise.resolve({ data: { items } })
+    return Promise.reject(new Error(`Unexpected GET ${url}`))
+  })
 }
 
 function expectOnlyLoadedDatasetGets(): void {
-  expect(mockGet.mock.calls.length).toBeGreaterThan(0)
-  for (const call of mockGet.mock.calls) {
-    expect(call[0]).toBe('/datasets')
+  const catalogCalls = mockGet.mock.calls.filter((call) => call[0] === '/datasets')
+  expect(catalogCalls.length).toBeGreaterThan(0)
+  for (const call of catalogCalls) {
     expect(call[1]).toEqual(expect.objectContaining({
       params: { loaded_only: true },
     }))
+  }
+  for (const call of mockGet.mock.calls) {
+    const url = String(call[0])
+    if (url === '/datasets') continue
+    expect(url === '/datasets/seeds' || url.startsWith('/datasets/seeds/')).toBe(true)
+    const params = (call[1] as { params?: { selection_key?: unknown } } | undefined)?.params
+    expect(typeof params?.selection_key).toBe('string')
+    expect(params?.selection_key).not.toBe('')
+    expect(params).not.toHaveProperty('q')
+    expect(params).not.toHaveProperty('sort')
+    expect(params).not.toHaveProperty('unlabeled')
+    expect(params).not.toHaveProperty('loaded_only')
   }
 }
 
@@ -143,7 +167,7 @@ describe('DatasetCatalog', () => {
       datasetDetailPath('dataset:named:harmbench'),
     )
     expect(within(loaded).getByRole('link', { name: 'harmbench' })).toHaveAccessibleDescription(
-      'Opens this dataset. Individual examples are not yet listed in this view. We are still building this experience.',
+      'Opens this dataset and lists its stored examples.',
     )
     expect(within(loaded).queryByText('Loaded')).not.toBeInTheDocument()
     expect(within(loaded).queryByText('Not loaded')).not.toBeInTheDocument()
@@ -157,6 +181,7 @@ describe('DatasetCatalog', () => {
     expect(within(loaded).getByText('Not labeled')).toBeInTheDocument()
     expect(within(loaded).queryByText('Safe')).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(mockGet.mock.calls.every((call) => call[0] === '/datasets')).toBe(true)
     expect(screen.queryByRole('button', { name: /download|load dataset/i })).not.toBeInTheDocument()
 
     const unnamed = screen.getByRole('article', { name: '(unnamed)' })
@@ -332,7 +357,8 @@ describe('DatasetCatalog', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'harmbench' })).toBeInTheDocument()
     expect(currentUrl().pathname).toBe(DATASET_DETAIL_PATH)
     expect(currentUrl().searchParams.get('selection_key')).toBe('dataset:named:harmbench')
-    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(await screen.findByText('No examples in this dataset')).toBeInTheDocument()
+    expect(screen.queryByText(/Individual examples are not yet listed/)).not.toBeInTheDocument()
   })
 
   it('ignores a catalog response that arrives after the page is left', async () => {
@@ -471,8 +497,8 @@ describe('Dataset selection keys', () => {
       expect(currentUrl().pathname).toBe(DATASET_DETAIL_PATH)
       expect(currentUrl().hash).toBe('')
       expect(currentUrl().searchParams.get('selection_key')).toBe(selectionKey)
-      expect(screen.queryByRole('table')).not.toBeInTheDocument()
-      expect(screen.getByText(/Individual examples are not yet listed in this view\.\s+We are still building this experience\./)).toBeInTheDocument()
+      expect(await screen.findByText('No examples in this dataset')).toBeInTheDocument()
+      expect(screen.queryByText(/Individual examples are not yet listed/)).not.toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: 'Refresh page' }))
       expect(await screen.findByRole('heading', { level: 1, name: displayName })).toBeInTheDocument()

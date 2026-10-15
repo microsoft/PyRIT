@@ -38,13 +38,14 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import store_message_async
+from unit.mocks import MockPromptTarget, store_message_async
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import (
     AttackScoringConfig,
+    AttackStrategy,
     RedTeamingAttack,
     RTASystemPromptPaths,
     TreeOfAttacksWithPruningAttack,
@@ -80,10 +81,13 @@ from pyrit.registry import TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
+    AttackTechnique,
     BaselineAttackPolicy,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetSource,
+    IncompatibleTechniqueError,
+    TechniqueRequirements,
 )
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario import Scenario
@@ -94,7 +98,6 @@ from pyrit.scenario.scenarios.benchmark.adversarial import (
 )
 from pyrit.score import MessageScorable, TrueFalseCompositeScorer, TrueFalseInverterScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
-from tests.unit.mocks import MockPromptTarget
 
 # ---------------------------------------------------------------------------
 # Module-level constants derived from the canonical factory catalog
@@ -188,7 +191,7 @@ def reset_technique_registry():
     _get_benchmark_adversarial_guidance.cache_clear()
 
 
-def _register_adversarial_target(*, name: str) -> PromptTarget:
+def _register_adversarial_target(*, name: str) -> MagicMock:
     """Register a mock adversarial target in TargetRegistry."""
     target = MagicMock(spec=PromptTarget)
     registry = TargetRegistry.get_registry_singleton()
@@ -204,12 +207,16 @@ def _register_mock_factory(*, name: str, tags: list[str] | None = None, seed_tec
     factory.adversarial_chat = None
     factory.technique_tags = tags if tags is not None else ["core", "light"]
     factory.seed_technique = seed_technique
-    technique_instance = MagicMock(name="AttackTechnique")
+    factory.requirements = TechniqueRequirements()
+    technique_instance = MagicMock(spec=AttackTechnique)
+    technique_instance.attack = MagicMock(spec=AttackStrategy)
+    technique_instance.seed_technique = seed_technique
+    technique_instance.requirements = factory.requirements
     technique_instance.get_identifier.return_value = ComponentIdentifier(
         class_name="MockTechnique", class_module="pyrit.test"
     )
     factory.create.return_value = technique_instance
-    factory.attack_class = MagicMock(__name__=name)
+    factory.attack_class = RedTeamingAttack
     # The benchmark derives a prefixed factory explicitly before building; returning
     # the same mock keeps existing `factory.create` assertions valid.
     factory.with_adversarial_system_prompt_prefix.return_value = factory
@@ -599,7 +606,7 @@ class TestAdversarialBenchmarkInit:
         assert "light" not in bench._technique_class.get_aggregate_tags()
         assert bench._default_technique.value == "all"
 
-    async def test_initialize_without_selection_resolves_exact_default(self):
+    async def test_initialize_without_selection_resolves_default_before_empty_build_failure_async(self) -> None:
         """Omitting ``scenario_techniques`` resolves exactly the approved benchmark defaults."""
         objective_target = MagicMock(spec=PromptTarget)
         objective_target.get_identifier.return_value = ComponentIdentifier(
@@ -622,7 +629,8 @@ class TestAdversarialBenchmarkInit:
             patch.object(bench, "_resolve_seed_groups_by_dataset_async", new_callable=AsyncMock, return_value={}),
             patch.object(bench, "_build_atomic_attacks_async", new_callable=AsyncMock, return_value=[]),
         ):
-            await bench.initialize_async()
+            with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
+                await bench.initialize_async()
 
         assert {technique.value for technique in bench._scenario_techniques} == _DEFAULT_BENCHMARK_TECHNIQUE_NAMES
 
@@ -1068,11 +1076,18 @@ class TestGetAtomicAttacksCrossProduct:
         )
         registered_factory.create.assert_called_once()
 
-    async def test_technique_args_override_factory_still_receives_guidance_prefix(self):
+    async def test_technique_args_override_factory_still_receives_guidance_prefix_async(self) -> None:
         """An overridden factory must still get the shared guidance, or its ASR is not comparable."""
         bench = self._make_bench_with_targets(target_names=["adv_a"])
         registered_factory = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()["red_teaming"]
-        override_factory = registered_factory.with_attack_kwargs.return_value
+        override_factory = MagicMock(
+            spec=AttackTechniqueFactory,
+            attack_class=registered_factory.attack_class,
+            requirements=registered_factory.requirements,
+            seed_technique=registered_factory.seed_technique,
+        )
+        override_factory.create.return_value = registered_factory.create.return_value
+        registered_factory.with_attack_kwargs.return_value = override_factory
         override_factory.with_adversarial_system_prompt_prefix.return_value = override_factory
         bench.params = {**bench.params, "technique_args": ["red_teaming.max_turns=2"]}
 
@@ -1530,11 +1545,12 @@ class TestSkipCachedFilter:
         first_objectives = [group.objective for group in first["dataset"]]
         second_objectives = [group.objective for group in second["dataset"]]
         assert all(objective is not None for objective in first_objectives)
-        assert Counter(
-            objective.harm_categories[0] for objective in first_objectives if objective is not None
-        ) == Counter(dict.fromkeys(categories, 3))
-        assert [objective.value for objective in first_objectives if objective is not None] == [
-            objective.value for objective in second_objectives if objective is not None
+        assert all(objective is not None for objective in second_objectives)
+        assert Counter(objective.harm_categories[0] for objective in first_objectives) == Counter(
+            dict.fromkeys(categories, 3)
+        )
+        assert [objective.value for objective in first_objectives] == [
+            objective.value for objective in second_objectives
         ]
 
     async def test_sampling_disabled_returns_all_groups(self):

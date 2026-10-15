@@ -9,6 +9,14 @@ from pyrit.models import ComponentIdentifier
 
 logger = logging.getLogger(__name__)
 
+# The England, Scotland and Wales flags are the three RGI emoji tag sequences: U+1F3F4, the subdivision id in tag
+# characters, then U+E007F. They are visible emoji, so the decoder must not read them as hidden text. Only these
+# exact sequences are skipped; any other tag text, including a look-alike flag, is still decoded.
+_SUBDIVISION_FLAG_SEQUENCES = tuple(
+    "\U0001f3f4" + "".join(chr(0xE0000 + ord(char)) for char in subdivision) + "\U000e007f"
+    for subdivision in ("gbeng", "gbsct", "gbwls")
+)
+
 
 class AsciiSmugglerConverter(SmugglerConverter):
     """
@@ -93,7 +101,7 @@ class AsciiSmugglerConverter(SmugglerConverter):
         Decode a message encoded with Unicode Tags.
 
         For each character in the Unicode Tags range, subtracts 0xE0000.
-        Skips control tags if present.
+        Skips control tags if present, and the England, Scotland and Wales flag emoji, which are written with tags.
 
         Args:
             message (str): The encoded message.
@@ -101,6 +109,10 @@ class AsciiSmugglerConverter(SmugglerConverter):
         Returns:
             str: The decoded message.
         """
+        # A space, not an empty string, so that removing one flag cannot join its neighbours into another flag.
+        for flag in _SUBDIVISION_FLAG_SEQUENCES:
+            message = message.replace(flag, " ")
+
         decoded_message = ""
         found_tag = False
         for char in message:

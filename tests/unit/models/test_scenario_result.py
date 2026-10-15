@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from unit.mocks import make_scenario_result
 
 from pyrit.models import (
     ComponentIdentifier,
@@ -14,7 +15,6 @@ from pyrit.models import (
 )
 from pyrit.models.results.attack_result import AttackOutcome, AttackResult
 from pyrit.models.retry_event import RetryEvent
-from tests.unit.mocks import make_scenario_result
 
 
 def _make_component_identifier_dict(class_name="TestTarget"):
