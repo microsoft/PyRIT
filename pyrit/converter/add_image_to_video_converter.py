@@ -132,8 +132,8 @@ class AddImageVideoConverter(Converter):
             bytes: The converted video data.
 
         Raises:
-            ValueError: If the input video format is unsupported or the overlay image cannot
-                be decoded.
+            ValueError: If the input video format is unsupported, the input video cannot be read,
+                the output video cannot be written, or the overlay image cannot be decoded.
         """
         import cv2
 
@@ -153,13 +153,13 @@ class AddImageVideoConverter(Converter):
         try:
             try:
                 cap = cv2.VideoCapture(str(input_path))
+                if not cap.isOpened():
+                    raise ValueError("Could not read the input video")
 
-                # Get video properties
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                # Get video properties; the frame rate can be fractional (29.97, 23.976)
+                fps = cap.get(cv2.CAP_PROP_FPS)
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                video_char_code = cv2.VideoWriter.fourcc(*video_encoding_map[file_extension])
-                output_video = cv2.VideoWriter(str(output_path), video_char_code, fps, (width, height))
 
                 # Load and resize the overlay image
 
@@ -167,12 +167,27 @@ class AddImageVideoConverter(Converter):
                 decoded = cv2.imdecode(image_np_arr, cv2.IMREAD_UNCHANGED)
                 if decoded is None:
                     raise ValueError("Failed to decode overlay image")
+                # Frames are 8-bit BGR: scale 16-bit images down, and give a grayscale image (no
+                # channel axis, or a single channel) three channels
+                if decoded.dtype == np.uint16:
+                    decoded = cv2.convertScaleAbs(decoded, alpha=255 / 65535)
+                if decoded.ndim == 2 or decoded.shape[2] == 1:
+                    decoded = cv2.cvtColor(decoded, cv2.COLOR_GRAY2BGR)
                 overlay = cv2.resize(decoded, self._img_resize_size)
+
+                video_char_code = cv2.VideoWriter.fourcc(*video_encoding_map[file_extension])
+                output_video = cv2.VideoWriter(str(output_path), video_char_code, fps, (width, height))
+                if not output_video.isOpened():
+                    raise ValueError(
+                        f"Could not open a video writer for '{file_extension}' "
+                        f"(codec {video_encoding_map[file_extension]}) at {fps} FPS, {width}x{height}"
+                    )
 
                 # Get overlay image dimensions
                 image_height, image_width, _ = overlay.shape
                 x, y = self._img_position  # Position where the overlay will be placed
 
+                frames_written = 0
                 while cap.isOpened():
                     ret, frame = cap.read()
                     if not ret:
@@ -197,6 +212,10 @@ class AddImageVideoConverter(Converter):
 
                     # Write the modified frame to the output video
                     output_video.write(frame)
+                    frames_written += 1
+
+                if frames_written == 0:
+                    raise ValueError("Could not read the input video: it has no frames")
             finally:
                 if cap is not None:
                     cap.release()
