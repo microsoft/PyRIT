@@ -126,18 +126,21 @@ stop_app() {
     fi
   done <<< "$revision_names"
   for ((attempt = 1; attempt <= ${PYRIT_STOP_POLL_ATTEMPTS:-60}; attempt++)); do
-    active_count=$(az containerapp revision list \
-      --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --all \
-      --query 'length([?properties.active])' -o tsv)
-    replica_count=0
-    while IFS= read -r revision; do
-      local count
-      count=$(az containerapp replica list \
-        --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" \
-        --revision "$revision" --query 'length(@)' -o tsv)
-      [[ "$count" =~ ^[0-9]+$ ]] || deployment_error "Could not confirm replica shutdown for $revision"
-      replica_count=$((replica_count + count))
-    done <<< "$revision_names"
+    if ! revisions=$(az containerapp revision list \
+      --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$PYRIT_APP_NAME" --all -o json); then
+      deployment_error "Could not read app revisions to confirm shutdown"
+    fi
+    local counts
+    if ! counts=$(jq -er '
+      if type == "array" and length > 0 and all(.[];
+        (.properties.active | type) == "boolean" and
+        (.properties.replicas | type) == "number" and
+        .properties.replicas >= 0 and (.properties.replicas | floor) == .properties.replicas)
+      then [([.[] | select(.properties.active)] | length), ([.[].properties.replicas] | add)] | @tsv
+      else error("Incomplete revision shutdown state") end' <<< "$revisions"); then
+      deployment_error "Could not confirm replica shutdown"
+    fi
+    read -r active_count replica_count <<< "$counts"
     [[ "$active_count" == "0" && "$replica_count" == "0" ]] && return 0
     echo "Waiting for app shutdown: $active_count active revisions, $replica_count replicas"
     sleep "${PYRIT_STOP_POLL_SECONDS:-5}"
@@ -178,26 +181,51 @@ prepare_database_migration() {
     --template-file "$migration_template" --mode Incremental --parameters "${migration_parameters[@]}" -o none
 }
 
-run_database_migration() {
+run_database_job() {
+  local mode="$1" action="migration"
+  local job_args=()
+  if [[ "$mode" == check ]]; then
+    action="schema check"
+    job_args=(--container-name pyrit-migrate --args=--check-only)
+  fi
   local job_name="$PYRIT_APP_NAME-migrate"
   local execution status="" attempt
-  execution=$(az containerapp job start \
-    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" --query name -o tsv)
-  [[ -n "$execution" ]] || deployment_error "Database migration job did not start"
+  if ! execution=$(az containerapp job start \
+    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" "${job_args[@]}" --query name -o tsv); then
+    deployment_error "Database $action job did not start"
+  fi
+  [[ -n "$execution" ]] || deployment_error "Database $action job did not start"
   for ((attempt = 1; attempt <= ${PYRIT_MIGRATION_POLL_ATTEMPTS:-90}; attempt++)); do
-    status=$(az containerapp job execution show \
+    if ! status=$(az containerapp job execution show \
       --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
-      --job-execution-name "$execution" --query properties.status -o tsv)
-    echo "Database migration $execution: $status"
+      --job-execution-name "$execution" --query properties.status -o tsv); then
+      deployment_error "Could not read database $action execution $execution"
+    fi
+    echo "Database $action $execution: $status"
     case "$status" in
       Succeeded) return 0 ;;
-      Failed | Stopped | Degraded)
+      Failed)
+        if [[ "$mode" == check ]]; then
+          echo "Schema check failed; migrating with the app stopped"
+          return 1
+        fi
         deployment_error "Database migration $execution ended with status $status; the app is stopped and was not deployed"
+        ;;
+      Stopped | Degraded)
+        deployment_error "Database $action $execution ended with status $status; deployment was not continued"
         ;;
     esac
     sleep "${PYRIT_MIGRATION_POLL_SECONDS:-20}"
   done
-  deployment_error "Database migration $execution did not finish in time; the app is stopped and was not deployed"
+  deployment_error "Database $action $execution did not finish in time; deployment was not continued"
+}
+
+schema_is_current() {
+  run_database_job check
+}
+
+run_database_migration() {
+  run_database_job migrate
 }
 
 warn_if_sql_public() {
@@ -218,8 +246,12 @@ main() {
   build_app_parameters
   preview_deployment app "$template_file" "${parameters[@]}"
   prepare_database_migration
-  stop_app
-  run_database_migration
+  if schema_is_current; then
+    echo "Schema is current; deploying without stopping the app"
+  else
+    stop_app
+    run_database_migration
+  fi
   az deployment group create \
     --name "$deployment_name" --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" \
     --template-file "$template_file" --mode Incremental --parameters "${parameters[@]}"

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Upgrade the configured Azure SQL memory schema without starting the backend."""
+"""Check or upgrade the configured Azure SQL memory schema without starting the backend."""
 
 import argparse
 import asyncio
@@ -26,7 +26,9 @@ def _validate_database_target(*, connection_string: str, expected_server: str, e
         raise ValueError("SQL connection target does not match the deployment server and database.")
 
 
-async def _migrate_async(*, config_file: str, expected_server: str, expected_database: str) -> None:
+async def _migrate_async(
+    *, config_file: str, expected_server: str, expected_database: str, check_only: bool = False
+) -> None:
     from pyrit.backend.services.configuration_file_service import ConfigurationFileService
     from pyrit.common import default_values
     from pyrit.memory import AzureSQLMemory
@@ -61,7 +63,8 @@ async def _migrate_async(*, config_file: str, expected_server: str, expected_dat
         engine = memory.engine
         if engine is None:
             raise RuntimeError("Azure SQL engine was not created.")
-        await asyncio.to_thread(run_schema_migrations, engine=engine, silent=True)
+        if not check_only:
+            await asyncio.to_thread(run_schema_migrations, engine=engine, silent=True)
         await asyncio.to_thread(check_schema_migrations, engine=engine, silent=True)
     finally:
         await memory.dispose_engine_async()
@@ -69,7 +72,7 @@ async def _migrate_async(*, config_file: str, expected_server: str, expected_dat
 
 def main(*, args: list[str] | None = None) -> int:
     """
-    Run the schema upgrade and check.
+    Run the schema check, with an optional upgrade first.
 
     Returns:
         int: 0 when the schema is current, otherwise 1.
@@ -78,6 +81,7 @@ def main(*, args: list[str] | None = None) -> int:
     parser.add_argument("--config-file", required=True)
     parser.add_argument("--expected-server", required=True)
     parser.add_argument("--expected-database", required=True)
+    parser.add_argument("--check-only", action="store_true", help="Check the schema without applying migrations.")
     parsed = parser.parse_args(args)
     try:
         asyncio.run(
@@ -85,10 +89,11 @@ def main(*, args: list[str] | None = None) -> int:
                 config_file=parsed.config_file,
                 expected_server=parsed.expected_server,
                 expected_database=parsed.expected_database,
+                check_only=parsed.check_only,
             )
         )
     except Exception:
-        logger.exception("Database migration failed.")
+        logger.exception("Database schema check failed." if parsed.check_only else "Database migration failed.")
         return 1
     print("Database schema is current.")
     return 0

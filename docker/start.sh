@@ -132,7 +132,7 @@ elif [ "$PYRIT_MODE" = "migrate" ]; then
     echo "Running PyRIT database migration..."
     prepare_deployment_config
     exec python -m pyrit.cli.pyrit_migrate --config-file "$CONFIG_FILE" \
-        --expected-server "$AZURE_SQL_SERVER" --expected-database "$AZURE_SQL_DATABASE"
+        --expected-server "$AZURE_SQL_SERVER" --expected-database "$AZURE_SQL_DATABASE" "$@"
 else
     echo "ERROR: Invalid PYRIT_MODE '$PYRIT_MODE'. Must be 'jupyter', 'gui', or 'migrate'"
     exit 1

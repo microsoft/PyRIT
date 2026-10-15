@@ -73,6 +73,8 @@ uv run --no-sync python -m pyrit.cli.pyrit_migrate \
 
 The command validates the database target, applies migrations, and checks the resulting schema. It can migrate production because the command is an explicit action. It does not run PyRIT initializers.
 
+Add `--check-only` to validate the target and check the schema without applying migrations. The command returns a nonzero exit code if the check fails. Internal deployments use this check to avoid stopping the app when the schema is already current.
+
 For non-production Azure SQL initialization, callers can instead explicitly pass `skip_schema_migration=False` to `AzureSQLMemory` or `initialize_pyrit_async`. The production connection guard and `PYRIT_REQUIRE_CURRENT_SCHEMA=true` still prevent initialization from migrating, even with this opt-in.
 
 When initialization runs a migration, the inherited `_run_schema_migration()` method on `MemoryInterface` runs:

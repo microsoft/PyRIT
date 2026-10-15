@@ -63,6 +63,27 @@ JQ = shutil.which("jq")
 
 @unittest.skipIf(BASH is None, "Native Bash is not installed")
 class TestLocalDockerBuild(unittest.TestCase):
+    def test_migration_entrypoint_forwards_check_only_argument(self) -> None:
+        assert BASH is not None
+        startup = (REPO_ROOT / "docker/start.sh").read_text(encoding="utf-8")
+        migration = startup.split('elif [ "$PYRIT_MODE" = "migrate" ]; then\n', 1)[1].split("\nelse\n", 1)[0]
+        result = subprocess.run(
+            [BASH, "--noprofile", "--norc", "-s", "--", "--check-only"],
+            input=(
+                "set -eu\nprepare_deployment_config() { CONFIG_FILE=runtime.yaml; }\n"
+                "python() { printf '<%s>\\n' \"$@\"; }\n"
+                "AZURE_SQL_SERVER=copyrit.database.windows.net AZURE_SQL_DATABASE=airtdev\n"
+                + migration.replace("exec python", "python")
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.splitlines()[-1] == "<--check-only>"
+        assert "<--expected-server>" in result.stdout and "<--expected-database>" in result.stdout
+
     def test_compose_setup_exports_source_provenance_and_fails_on_git_errors(self) -> None:
         assert BASH is not None
         commit = "a" * 40
@@ -330,7 +351,14 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
                 assert parameters["requireCurrentSchema"] == "true"
                 assert parameters["allowedCidr"] == parameters["pyritConfigFileUri"] == ""
 
-    def _run_migration(self, *, statuses: list[str], attempts: int = 3) -> subprocess.CompletedProcess[str]:
+    def _run_migration(
+        self, *, statuses: list[str], attempts: int = 3, check_only: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        command = (
+            "if schema_is_current; then echo current; else echo migration-needed; fi"
+            if check_only
+            else "run_database_migration"
+        )
         return self._run(
             script="deploy_app.sh",
             inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
@@ -346,13 +374,13 @@ sleep() {{ :; }}
 az() {{
   case "$1 $2 $3" in
     "deployment group create") echo "create $3 $5" ;;
-    "containerapp job start") echo execution-1 ;;
+    "containerapp job start") echo "start $*" >&2; echo execution-1 ;;
     "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
     *) echo "Unexpected az $*" >&2; exit 97 ;;
   esac
 }}
 prepare_database_migration
-run_database_migration
+{command}
 echo done
 """,
         )
@@ -378,35 +406,81 @@ echo done
         assert "did not finish in time" in result.stdout
         assert "done" not in result.stdout
 
-    def test_app_deployment_stops_and_migrates_before_deploy(self) -> None:
+    def test_schema_check_uses_execution_only_arguments(self) -> None:
+        for status in ("Succeeded", "Failed"):
+            with self.subTest(status=status):
+                result = self._run_migration(statuses=["Running", status], check_only=True)
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert "--container-name pyrit-migrate --args=--check-only" in result.stderr
+                assert ("migration-needed" in result.stdout) == (status == "Failed")
+                assert ("current" in result.stdout) == (status == "Succeeded")
+        result = self._run_migration(statuses=["Succeeded"])
+        assert "--args" not in result.stderr
+
+    def test_schema_check_timeout_or_interruption_aborts_deployment(self) -> None:
+        for status in ("Running", "Stopped", "Degraded"):
+            with self.subTest(status=status):
+                result = self._run_migration(statuses=[status], attempts=1, check_only=True)
+                assert result.returncode == 1
+                assert "deployment was not continued" in result.stdout
+                assert "migration-needed" not in result.stdout
+                assert "done" not in result.stdout
+
+    def test_schema_check_azure_errors_do_not_fall_through_to_migration(self) -> None:
+        for command in ("start", "execution"):
+            with self.subTest(command=command):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""
+az() {{ if [[ "$3" == {command} ]]; then return 1; else echo execution-1; fi; }}
+if schema_is_current; then echo current; else echo migration-needed; fi
+""",
+                )
+                assert result.returncode == 1
+                assert "migration-needed" not in result.stdout
+
+    def test_app_deployment_migrates_only_when_schema_check_fails(self) -> None:
+        for check_exit in (0, 1):
+            with self.subTest(check_exit=check_exit):
+                self._assert_app_deployment_order(check_exit=check_exit)
+
+    def _assert_app_deployment_order(self, *, check_exit: int) -> None:
         result = self._run(
             script="deploy_app.sh",
             inputs=APP_INPUTS,
-            command="""
+            command=f"""
 for step in validate_app_inputs initialize_deployment_scope read_existing_topology read_app_access_mode \
   build_app_parameters prepare_database_migration stop_app run_database_migration start_unchanged_revision \
   verify_readiness wait_for_runtime_readiness warn_if_sql_public; do
-  eval "$step() { echo $step; }"
+  eval "$step() {{ echo $step; }}"
 done
-preview_deployment() { echo "preview $1"; }
-az() { echo "az $1 $2 $3"; }
+schema_is_current() {{ echo schema-check; return {check_exit}; }}
+preview_deployment() {{ echo "preview $1"; }}
+az() {{ echo "az $1 $2 $3"; }}
 revision=r health_url=h egress_ip=e expected_public_access=Enabled immutable_image=i
 template_file=t deployment_name=d parameters=(appName=test)
 main
 """,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert result.stdout.splitlines()[4:14] == [
+        lines = result.stdout.splitlines()
+        assert lines[4:] == [
             "build_app_parameters",
             "preview app",
             "prepare_database_migration",
-            "stop_app",
-            "run_database_migration",
+            "schema-check",
+            *(
+                ["stop_app", "run_database_migration"]
+                if check_exit
+                else ["Schema is current; deploying without stopping the app"]
+            ),
             "az deployment group create",
             "start_unchanged_revision",
             "verify_readiness",
             "wait_for_runtime_readiness",
             "warn_if_sql_public",
+            "Deployment healthy: r; verified h; ACA public access: Enabled; egress IPv4: e",
         ]
 
     def test_stop_app_deactivates_active_revision_not_latest_and_waits_for_replicas(self) -> None:
@@ -415,29 +489,36 @@ main
             inputs=APP_INPUTS,
             command="""current_revision=app--failed
 poll_file=$(mktemp)
-trap 'rm -f "$poll_file"' EXIT
+list_file=$(mktemp)
+trap 'rm -f "$poll_file" "$list_file"' EXIT
 sleep() { echo poll >> "$poll_file"; }
 az() {
   case "$2 $3" in
     "revision list")
       [[ "$*" == *"--all"* ]] || exit 96
-      if [[ "$*" == *"--query"* ]]; then echo 0
-      else echo '[{"name":"app--old","properties":{"active":true}},
-        {"name":"app--failed","properties":{"active":false}}]'
+      echo list >> "$list_file"
+      if [[ $(wc -l < "$list_file") == 1 ]]; then
+        echo '[{"name":"app--old","properties":{"active":true,"replicas":1}},
+          {"name":"app--failed","properties":{"active":false,"replicas":1}}]'
+      elif [[ -s "$poll_file" ]]; then
+        echo '[{"name":"app--old","properties":{"active":false,"replicas":0}},
+          {"name":"app--failed","properties":{"active":false,"replicas":0}}]'
+      else echo '[{"name":"app--old","properties":{"active":false,"replicas":0}},
+        {"name":"app--failed","properties":{"active":false,"replicas":1}}]'
       fi ;;
     "revision deactivate") echo "az $*" ;;
-    "replica list") if [[ -s "$poll_file" ]]; then echo 0; else echo 1; fi ;;
     *) exit 97 ;;
   esac
 }
 stop_app
+echo "revision-lists $(wc -l < "$list_file")"
 echo stopped""",
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "az containerapp revision deactivate" in result.stdout
+        assert "Waiting for app shutdown: 0 active revisions, 1 replicas" in result.stdout
         assert "--revision app--old" in result.stdout
         assert "--revision app--failed" not in result.stdout
-        assert "Waiting for app shutdown" in result.stdout
+        assert "revision-lists 3" in result.stdout
         assert result.stdout.splitlines()[-1] == "stopped"
 
     def test_stop_app_rejects_missing_revisions(self) -> None:
@@ -453,9 +534,7 @@ echo stopped""",
 sleep() { :; }
 az() {
   case "$2 $3" in
-    "revision list") if [[ "$*" == *"--query"* ]]; then echo 0
-      else echo '[{"name":"app--old","properties":{"active":false}}]'; fi ;;
-    "replica list") echo 1 ;;
+    "revision list") echo '[{"name":"app--old","properties":{"active":false,"replicas":1}}]' ;;
     *) exit 97 ;;
   esac
 }
@@ -475,9 +554,7 @@ echo migration-started
 az() {
   case "$2 $3" in
     "revision list") [[ "$*" == *"--all"* ]] || exit 96
-      if [[ "$*" == *"--query"* ]]; then echo 0
-      else echo '[{"name":"app--old","properties":{"active":false}}]'; fi ;;
-    "replica list") echo 0 ;;
+      echo '[{"name":"app--old","properties":{"active":false,"replicas":0}}]' ;;
     *) exit 97 ;;
   esac
 }
@@ -487,6 +564,37 @@ echo stopped
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert result.stdout.strip() == "stopped"
+
+    def test_stop_app_rejects_incomplete_or_invalid_poll_state(self) -> None:
+        for state in (
+            "[]",
+            "null",
+            "not-json",
+            '[{"name":"r","properties":{"active":false}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":null}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":"0"}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":-1}}]',
+            '[{"name":"r","properties":{"active":false,"replicas":0.5}}]',
+            '[{"name":"r","properties":{"active":"false","replicas":0}}]',
+        ):
+            with self.subTest(state=state):
+                result = self._run(
+                    script="deploy_app.sh",
+                    inputs=APP_INPUTS,
+                    command=f"""
+list_file=$(mktemp)
+trap 'rm -f "$list_file"' EXIT
+az() {{
+  if [[ -s "$list_file" ]]; then printf '%s\\n' {shlex.quote(state)}
+  else echo list > "$list_file"; echo '[{{"name":"r","properties":{{"active":false,"replicas":0}}}}]'; fi
+}}
+stop_app
+echo migration-started
+""",
+                )
+                assert result.returncode == 1
+                assert "Could not confirm replica shutdown" in result.stdout
+                assert "migration-started" not in result.stdout
 
     def test_migration_job_name_is_checked_before_azure_calls(self) -> None:
         result = self._run(
@@ -825,6 +933,7 @@ build_app_parameters() {{
 }}
 preview_deployment() {{ :; }}
 prepare_database_migration() {{ :; }}
+schema_is_current() {{ return 0; }}
 stop_app() {{ :; }}
 run_database_migration() {{ :; }}
 start_unchanged_revision() {{ :; }}

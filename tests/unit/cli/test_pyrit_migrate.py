@@ -70,6 +70,18 @@ def test_main_disposes_engine_when_migration_fails(mocks: dict[str, MagicMock]) 
     mocks["memory"].dispose_engine_async.assert_awaited_once()
 
 
+@pytest.mark.parametrize("check_fails", [False, True])
+def test_main_check_only_never_upgrades(*, mocks: dict[str, MagicMock], check_fails: bool) -> None:
+    from alembic.util.exc import CommandError
+
+    if check_fails:
+        mocks["check"].side_effect = CommandError("Target database is not up to date.")
+    assert pyrit_migrate.main(args=[*ARGS, "--check-only"]) == (1 if check_fails else 0)
+    mocks["run"].assert_not_called()
+    mocks["check"].assert_called_once_with(engine="engine", silent=True)
+    mocks["memory"].dispose_engine_async.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     "connection_string",
     [
