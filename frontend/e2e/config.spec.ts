@@ -718,7 +718,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
     // Start in chat with the composer disabled until a target is selected.
     await page.goto("/");
     await page.getByTitle("Technique.execute").click();
-    await expect(page.getByRole("textbox")).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeDisabled();
 
     // Go to targets, set a target
     await page.getByTitle("Registry").click();
@@ -727,7 +727,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
 
     // Return to chat — send should be enabled when there's text
     await page.getByTitle("Technique.execute").click();
-    const input = page.getByRole("textbox");
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await input.fill("Hello");
     await expect(page.getByRole("button", { name: /send/i })).toBeEnabled();
   });
