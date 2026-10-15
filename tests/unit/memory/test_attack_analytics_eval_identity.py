@@ -9,6 +9,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
@@ -44,7 +45,17 @@ from pyrit.models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pyrit.memory import SQLiteMemory
+
+
+@pytest.fixture(autouse=True)
+def _freeze_query_clock() -> Iterator[None]:
+    started = time.monotonic()
+    with patch("pyrit.memory.query_control.time", spec=time) as clock:
+        clock.monotonic.return_value = started
+        yield
 
 
 def _target(*, deployment: str, endpoint: str, temperature: float = 0.3) -> TargetIdentifier:
@@ -78,6 +89,14 @@ def _result(*, index: int, target: TargetIdentifier, outcome: AttackOutcome, ope
 
 def _control() -> QueryControl:
     return QueryControl(deadline=time.monotonic() + 20)
+
+
+def test_identity_query_deadline_does_not_follow_runner_clock() -> None:
+    control = _control()
+    remaining = control.remaining
+    with patch.object(time, "monotonic", return_value=control.deadline + 1):
+        control.check()
+        assert control.remaining == remaining
 
 
 def test_target_evaluation_v1_is_frozen_to_the_current_marker_rules() -> None:
