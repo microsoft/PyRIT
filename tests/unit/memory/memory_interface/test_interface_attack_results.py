@@ -1145,21 +1145,34 @@ async def test_get_attack_results_by_labels_empty_sequence_value_skips_key(sqlit
 
 
 @pytest.mark.parametrize(
-    "bad_key",
+    "literal_key",
     [
-        "foo')=1 OR 1=1 --",  # SQL break-out attempt
+        "foo')=1 OR 1=1 --",  # SQL break-out attempt stays a plain string
         "key with spaces",
         'key"quoted',
+        "caf\u00e9",
         "",
     ],
 )
-async def test_get_attack_results_rejects_invalid_label_keys(sqlite_instance: MemoryInterface, bad_key: str):
-    """Label keys are interpolated into JSON path expressions by the per-backend
-    helpers, so keys outside the ``[A-Za-z0-9_.-]+`` allowlist must be rejected
-    before reaching the SQL layer (defense against JSON-path / SQL injection).
-    """
-    with pytest.raises(ValueError, match="Invalid label key"):
-        (await sqlite_instance.get_attack_results_async(labels={bad_key: "value"}))
+async def test_get_attack_results_matches_non_allowlisted_label_keys_literally_async(
+    *, sqlite_instance: MemoryInterface, literal_key: str
+) -> None:
+    """Keys outside the ``[A-Za-z0-9_.-]+`` allowlist never become JSON paths; they're compared as bound values."""
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            create_attack_result("conv_1", 1, labels={literal_key: "value", "phase": "initial"}),
+            create_attack_result("conv_2", 2, labels={literal_key: "other", "phase": "initial"}),
+            create_attack_result("conv_3", 3, labels={"team": "value", "phase": "initial"}),
+            create_attack_result("conv_4", 4, labels={literal_key: "value", "phase": "final"}),
+        ]
+    )
+
+    only_literal = await sqlite_instance.get_attack_results_async(labels={literal_key: "value"})
+    combined = await sqlite_instance.get_attack_results_async(labels={literal_key: ["value"], "phase": "initial"})
+
+    assert {result.conversation_id for result in only_literal} == {"conv_1", "conv_4"}
+    assert {result.conversation_id for result in combined} == {"conv_1"}
+    assert len(await sqlite_instance.get_attack_results_async()) == 4
 
 
 @pytest.mark.parametrize("key", ["team.name", "run-id"])

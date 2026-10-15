@@ -6,10 +6,20 @@ from collections.abc import MutableSequence
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.mocks import get_sample_conversations
+from unit.mocks import MockPromptTarget, get_sample_conversations
 
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
-from pyrit.models import AttackOutcome, AttackResult, AttackResultSelection, Message, MessagePiece
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    AttackResultSelection,
+    AttackSeedGroup,
+    Message,
+    MessagePiece,
+    SeedObjective,
+)
 from pyrit.score import BatchScorer, SubStringScorer
 
 
@@ -408,3 +418,98 @@ async def test_score_responses_by_labels_uses_the_labelled_attack_conversations_
     assert {piece.conversation_id for piece in scored} == expected
     replies = {piece.id for piece in scored if piece.api_role == "assistant"}
     assert all(score.get_value() for score in scores if score.message_piece_id in replies)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("child_overrides_label", [False, True])
+async def test_score_responses_by_labels_skips_results_without_a_conversation_async(
+    *, sqlite_instance: SQLiteMemory, child_overrides_label: bool
+) -> None:
+    """SequentialAttack saves an envelope with an empty conversation_id, which must not widen the lookup."""
+    target = MockPromptTarget()
+    child = SequentialChildAttack(
+        strategy=PromptSendingAttack(objective_target=target),
+        seed_group=AttackSeedGroup(seeds=[SeedObjective(value="labelled objective")]),
+        memory_labels={"operation": "child-only"} if child_overrides_label else {},
+    )
+    result = await SequentialAttack(objective_target=target, child_attacks=[child]).execute_async(
+        objective="labelled objective", memory_labels={"operation": "op-seq"}
+    )
+    await PromptSendingAttack(objective_target=target).execute_async(objective="unrelated objective")
+    batch_scorer = BatchScorer()
+    scorer = SubStringScorer(substring="never present", categories=["test"])
+
+    if child_overrides_label:
+        # Only the envelope carries op-seq, and it has no conversation of its own.
+        with pytest.raises(ValueError, match="No entries match"):
+            await batch_scorer.score_responses_by_filters_async(scorer=scorer, labels={"operation": "op-seq"})
+        return
+    scores = await batch_scorer.score_responses_by_filters_async(scorer=scorer, labels={"operation": "op-seq"})
+
+    scored = await sqlite_instance.get_message_pieces_async(prompt_ids=[score.message_piece_id for score in scores])
+    child_ids = set(result.metadata[SequentialAttack.CHILD_ATTACK_RESULT_IDS_KEY])
+    [child_result] = [
+        row
+        for row in await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        if row.attack_result_id in child_ids
+    ]
+    assert {piece.conversation_id for piece in scored} == {child_result.conversation_id}
+    assert len(scores) == len({score.message_piece_id for score in scores})
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("key", ["team name", "caf\u00e9", 'team"name', "team[0]"])
+async def test_score_responses_by_labels_accepts_literal_label_keys_async(
+    *, sqlite_instance: SQLiteMemory, key: str
+) -> None:
+    for conversation_id, value in (("conv-a", "review"), ("conv-b", "other")):
+        await sqlite_instance.add_message_pieces_to_memory_async(
+            message_pieces=[
+                MessagePiece(role="user", original_value="ask", conversation_id=conversation_id, sequence=0),
+                MessagePiece(role="assistant", original_value="reply", conversation_id=conversation_id, sequence=1),
+            ]
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(
+            attack_results=[
+                AttackResult(
+                    conversation_id=conversation_id,
+                    objective="objective",
+                    outcome=AttackOutcome.FAILURE,
+                    labels={key: value},
+                )
+            ]
+        )
+
+    scores = await BatchScorer().score_responses_by_filters_async(
+        scorer=SubStringScorer(substring="reply", categories=["test"]), labels={key: "review"}
+    )
+
+    scored = await sqlite_instance.get_message_pieces_async(prompt_ids=[score.message_piece_id for score in scores])
+    assert {piece.conversation_id for piece in scored} == {"conv-a"}
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("conversation_id", "expected"), [(None, {"attached", "independent"}), ("independent", {"independent"})]
+)
+async def test_score_responses_with_empty_labels_is_unfiltered_async(
+    *, sqlite_instance: SQLiteMemory, conversation_id: str | None, expected: set[str]
+) -> None:
+    for owner in ("attached", "independent"):
+        await sqlite_instance.add_message_pieces_to_memory_async(
+            message_pieces=[MessagePiece(role="assistant", original_value="reply", conversation_id=owner)]
+        )
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(
+                conversation_id="attached", objective="objective", outcome=AttackOutcome.FAILURE, labels={"op": "a"}
+            )
+        ]
+    )
+
+    scores = await BatchScorer().score_responses_by_filters_async(
+        scorer=SubStringScorer(substring="reply", categories=["test"]), labels={}, conversation_id=conversation_id
+    )
+
+    scored = await sqlite_instance.get_message_pieces_async(prompt_ids=[score.message_piece_id for score in scores])
+    assert {piece.conversation_id for piece in scored} == expected

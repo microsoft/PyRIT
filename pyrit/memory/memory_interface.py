@@ -2067,6 +2067,22 @@ class MemoryInterface(abc.ABC):
             Database-specific SQLAlchemy condition.
         """
 
+    @abc.abstractmethod
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Return a condition matching AttackResult label names literally.
+
+        Same semantics as ``_get_attack_result_label_condition``, but each key is compared to the
+        stored label names as a bound value instead of being turned into a JSON path, so any key
+        string is safe.
+
+        Args:
+            labels: Label-name-to-value(s) map.
+
+        Returns:
+            Database-specific SQLAlchemy condition.
+        """
+
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         Return sorted unique attack class names from all stored attack results.
@@ -5511,8 +5527,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             list[Any]: The backend-specific label condition, if labels are effective.
 
-        Raises:
-            ValueError: If a label key falls outside the safe allowlist.
+        Keys in the ``[A-Za-z0-9_.-]+`` allowlist use the JSON-path condition. Other keys, such as
+        ones with spaces, quotes or non-ASCII characters, are matched literally against the stored
+        label names with bound parameters, so they never become part of a JSON path or SQL text.
         """
         if not query.labels:
             return []
@@ -5521,14 +5538,14 @@ class MemoryInterface(abc.ABC):
             for key, value in query.labels.items()
             if not (isinstance(value, (list, tuple)) and len(value) == 0)
         }
-        invalid_keys = [key for key in effective_labels if not self._LABEL_KEY_PATTERN.match(key)]
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if not effective_labels:
-            return []
-        return [self._get_attack_result_label_condition(labels=effective_labels)]
+        path_labels = {key: value for key, value in effective_labels.items() if self._LABEL_KEY_PATTERN.match(key)}
+        literal_labels = {key: value for key, value in effective_labels.items() if key not in path_labels}
+        conditions: list[Any] = []
+        if path_labels:
+            conditions.append(self._get_attack_result_label_condition(labels=path_labels))
+        if literal_labels:
+            conditions.append(self._get_attack_result_literal_label_condition(labels=literal_labels))
+        return conditions
 
     def _build_attack_result_category_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """

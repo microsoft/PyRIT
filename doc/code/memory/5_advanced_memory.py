@@ -84,7 +84,9 @@ async def get_labeled_pieces_async(*, labels: dict[str, str], **filters):
     """Fetch the main conversation of every attack result carrying these labels."""
     pieces = []
     for result in await memory.get_attack_results_async(labels=labels):
-        pieces.extend(await memory.get_message_pieces_async(conversation_id=result.conversation_id, **filters))
+        # Envelope results (e.g. SequentialAttack) have no conversation of their own; an empty ID matches everything.
+        if result.conversation_id:
+            pieces.extend(await memory.get_message_pieces_async(conversation_id=result.conversation_id, **filters))
     return pieces
 
 

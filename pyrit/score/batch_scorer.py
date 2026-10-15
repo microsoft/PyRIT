@@ -89,12 +89,14 @@ class BatchScorer:
             ValueError: If no entries match the provided filters.
         """
         conversation_ids: list[str | uuid.UUID | None] = [conversation_id]
-        if labels is not None:
-            # Labels live on attack results, so pick their conversations before filtering messages.
+        if labels:
+            # Labels live on attack results, so pick their conversations before filtering messages. Envelope
+            # results such as SequentialAttack's have no conversation of their own, and an empty ID would mean
+            # "every conversation", so skip them.
             results = await self._memory.get_attack_results_async(
                 labels=labels, result_selection=AttackResultSelection.ALL_RESULTS
             )
-            labelled = sorted({result.conversation_id for result in results})
+            labelled = sorted({result.conversation_id for result in results if result.conversation_id})
             conversation_ids = [
                 labelled_id
                 for labelled_id in labelled
