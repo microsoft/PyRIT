@@ -46,8 +46,61 @@ _AUTHORS = [
     "Catherine Olsson",
     "Sandipan Kundu",
     "Saurav Kadavath",
+    "Andy Jones",
+    "Anna Chen",
+    "Benjamin Mann",
+    "Brian Israel",
+    "Bryan Seethor",
+    "Cameron McKinnon",
+    "Christopher Olah",
+    "Da Yan",
+    "Daniela Amodei",
+    "Dario Amodei",
+    "Dawn Drain",
+    "Dustin Li",
+    "Eli Tran-Johnson",
+    "Guro Khundadze",
+    "Jackson Kernion",
+    "James Landis",
+    "Jamie Kerr",
+    "Jared Mueller",
+    "Jeeyoon Hyun",
+    "Joshua Landau",
+    "Kamal Ndousse",
+    "Landon Goldberg",
+    "Liane Lovitt",
+    "Martin Lucas",
+    "Michael Sellitto",
+    "Miranda Zhang",
+    "Neerav Kingsland",
+    "Nelson Elhage",
+    "Nicholas Joseph",
+    "Noemi Mercado",
+    "Nova DasSarma",
+    "Oliver Rausch",
+    "Robin Larson",
+    "Sam McCandlish",
+    "Scott Johnston",
+    "Shauna Kravec",
+    "Sheer El Showk",
+    "Tamera Lanham",
+    "Timothy Telleen-Lawton",
+    "Tom Brown",
+    "Tom Henighan",
+    "Tristan Hume",
+    "Yuntao Bai",
+    "Zac Hatfield-Dodds",
+    "Jack Clark",
+    "Samuel R. Bowman",
+    "Amanda Askell",
+    "Roger Grosse",
+    "Danny Hernandez",
+    "Deep Ganguli",
+    "Evan Hubinger",
+    "Nicholas Schiefer",
+    "Jared Kaplan",
 ]
-_GROUPS = ["Anthropic"]
+_GROUPS = ["Anthropic", "Surge AI", "Machine Intelligence Research Institute"]
 
 
 # Every eval JSONL file at the pinned commit, in sorted order.
@@ -278,6 +331,7 @@ class _AnthropicModelWrittenEvalsDataset(_RemoteDatasetLoader):
     The release contains persona, sycophancy, advanced-AI-risk, and Winogenerated
     gender-bias items. Most rows have ``question`` plus ``answer_matching_behavior``.
     Winogenerated examples instead use ``sentence_with_blank`` and ``pronoun_options``.
+    Seeds credit the paper's complete author list and its three contributing organizations.
 
     Reference: [@perez2022modelwritten]
 

@@ -162,6 +162,26 @@ await output_scenario_async(baseline_result, sort_groups_by_success_rate=True)
 # ```
 
 # %% [markdown]
+# ## Incompatible techniques
+#
+# Set `incompatible_technique_policy` to `skip` (default) to warn and omit incompatible
+# techniques, or `raise` to stop initialization.
+#
+# ```python
+# scenario = RedTeamAgent()
+# scenario.set_params_from_args(
+#     args={"objective_target": objective_target, "incompatible_technique_policy": "raise"}
+# )
+# await scenario.initialize_async()
+# ```
+#
+# Use `--incompatible-technique-policy raise` on the CLI or
+# `incompatible_technique_policy: raise` in YAML. `None` uses the scenario class default.
+#
+# This policy does not enable adaptation. Initialization fails if no selected technique can run,
+# even with a baseline. Other construction errors are not skipped.
+
+# %% [markdown]
 # ## Custom Scorers
 #
 # By default, `RedTeamAgent` uses a composite scorer with Azure Content Filter and SelfAsk Refusal

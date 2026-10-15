@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
 from pyrit.models import Parameter
 from pyrit.models.request_limits import MAX_ITEMS
 
@@ -56,12 +56,12 @@ class CreateTechniqueRequest(BaseModel):
 
     name: TechniqueSelector
     type: str = Field(min_length=1, max_length=256)
-    params: dict[str, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
-    description: str | None = None
+    params: dict[IdentifierStr, JsonValue] = Field(default_factory=dict, max_length=MAX_ITEMS)
+    description: TextStr | None = None
     tags: list[TechniqueSelector] = Field(default_factory=list, max_length=MAX_ITEMS)
-    request_converters: list[str] | None = Field(default=None, max_length=MAX_ITEMS)
-    response_converters: list[str] | None = Field(default=None, max_length=MAX_ITEMS)
-    adversarial_chat: str | None = None
+    request_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
+    response_converters: list[IdentifierStr] | None = Field(default=None, max_length=MAX_ITEMS)
+    adversarial_chat: IdentifierStr | None = None
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None

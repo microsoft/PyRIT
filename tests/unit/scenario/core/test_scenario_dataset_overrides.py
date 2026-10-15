@@ -17,6 +17,7 @@ from pyrit.cli._cli_args import (
     parse_run_arguments,
 )
 from pyrit.cli.pyrit_scan import _build_run_request, parse_args
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     DatasetFetchPolicy,
@@ -30,7 +31,7 @@ from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios.garak.api_key import ApiKey
@@ -72,9 +73,9 @@ class _Scenario(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         return [
-            build_baseline_atomic_attack(
-                objective_target=context.objective_target,
-                objective_scorer=self._objective_scorer,
+            AtomicAttack(
+                atomic_attack_name="direct",
+                attack_technique=AttackTechnique(attack=PromptSendingAttack(objective_target=context.objective_target)),
                 seed_groups=list(context.seed_groups),
                 memory_labels=context.memory_labels,
             )
@@ -155,7 +156,7 @@ async def test_resume_replays_saved_selection_without_preparation() -> None:
             "dataset_overrides": ScenarioDatasetRequest(sources=[DatasetSourceInput(name="a")]),
         }
     )
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(ValueError, match="cannot resume: missing .* planned seed group"):
         await diverged.initialize_async()
 
 

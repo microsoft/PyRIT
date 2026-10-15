@@ -52,7 +52,7 @@ dependencies = [
     "mcp>=2.2,<3",
     "numpy>=1.26.0; python_version < '3.14'",
     "numpy>=2.3.0; python_version >= '3.14'",
-    "openai>=2.2.0",
+    "openai>=2.20.0,<4",
     "openpyxl>=3.1.5",
     "opentelemetry-sdk>=1.36,<2",
     "pillow>=12.2.0",
@@ -224,6 +224,8 @@ unused-type-ignore-comment = "ignore"
 # (typing.override is 3.12+), which adds a direct dep and ongoing import-path
 # friction. Suppressing the rule keeps the codebase consistent for now.
 missing-override-decorator = "ignore"
+# Intentional truthiness checks also reject empty values; keep that idiom without redundant bool() wrappers.
+truthiness-test-of-none-union = "ignore"
 
 [tool.ty.analysis]
 respect-type-ignore-comments = true

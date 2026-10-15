@@ -166,7 +166,7 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
         all_seeds = [seed for seeds in sources.values() for seed in seeds]
         if any(self.START_MARKER in seed.value or self.END_MARKER in seed.value for seed in all_seeds):
             raise DatasetConstraintError("LatentInjection source contains a reserved boundary marker.")
-        by_role: dict[str, dict[str, list[Seed]]] = {}
+        by_role: dict[str, dict[str, list[Seed[Any]]]] = {}
         for name, seeds in sources.items():
             by_role[name] = {}
             for seed in sorted(
@@ -195,7 +195,9 @@ class LatentInjectionDatasetConfiguration(DatasetAttackConfiguration):
             seeds=all_seeds, source_kind=self.source_kind, dataset_names=tuple(sources)
         )
 
-    def _build_family_groups(self, *, family: str, roles: dict[str, dict[str, list[Seed]]]) -> list[AttackSeedGroup]:
+    def _build_family_groups(
+        self, *, family: str, roles: dict[str, dict[str, list[Seed[Any]]]]
+    ) -> list[AttackSeedGroup]:
         context_family = "whois" if family == "whois_snippet" else family
         contexts = roles[self.CONTEXT_DATASET_NAME].get(context_family, [])
         tasks = roles[self.TASK_DATASET_NAME].get(family, [])

@@ -88,7 +88,7 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
         self._text_prompt = text_prompt or DEFAULT_TEXT_PROMPT
 
     @staticmethod
-    def _derive_objective(seed: Seed) -> str:
+    def _derive_objective(seed: Seed[Any]) -> str:
         """
         Derive a scoring objective from a seed's harm category.
 
@@ -112,7 +112,7 @@ class AudioAchillesHeelDatasetConfiguration(DatasetAttackConfiguration):
         humanized = category.replace("_", " ").strip()
         return OBJECTIVE_TEMPLATE.format(category=humanized) if humanized else GENERIC_OBJECTIVE
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Shape audio seeds into multimodal attack groups.
 

@@ -3,7 +3,7 @@
 
 """Tests for Scenario custom parameter declaration, coercion, and validation (Stage 1b)."""
 
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,6 +57,9 @@ def _make_scenario(
             return {}
 
         async def _build_atomic_attacks_async(self, *, context):
+            return []
+
+        def _resolve_scenario_techniques(self, *, scenario_techniques: Any) -> list[ScenarioTechnique]:
             return []
 
     mock_scorer = MagicMock(spec=Scorer)
