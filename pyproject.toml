@@ -52,7 +52,7 @@ dependencies = [
     "mcp>=2.2,<3",
     "numpy>=1.26.0; python_version < '3.14'",
     "numpy>=2.3.0; python_version >= '3.14'",
-    "openai>=2.2.0",
+    "openai>=2.20.0,<4",
     "openpyxl>=3.1.5",
     "opentelemetry-sdk>=1.36,<2",
     "pillow>=12.2.0",
@@ -139,7 +139,8 @@ speech = [
 ]
 
 litellm = [
-    "litellm>=1.84.0",
+    # Replace this prerelease with a stable SDK 3-compatible release before releasing PyRIT.
+    "litellm==1.107.0.dev1",
 ]
 
 github-copilot = [
@@ -159,7 +160,7 @@ all = [
     "github-copilot-sdk>=1.0.11",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
-    "litellm>=1.84.0",
+    "litellm==1.107.0.dev1",
     "ollama>=0.5.1",
     "opencv-python>=4.11.0.86",
     "playwright>=1.49.0",
