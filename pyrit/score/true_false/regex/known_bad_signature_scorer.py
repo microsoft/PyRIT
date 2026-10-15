@@ -40,5 +40,5 @@ class KnownBadSignatureScorer(_FixedRegexScorerMixin, RegexScorer):
     it is not, a hit only says the model will emit that string.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {name: re.escape(sig) for name, sig in _SIGNATURES.items()}
+    _DEFAULT_PATTERNS: dict[str, str] | None = {name: re.escape(sig) for name, sig in _SIGNATURES.items()}
     _DEFAULT_CATEGORIES: tuple[str, ...] = ("known_bad_signature",)

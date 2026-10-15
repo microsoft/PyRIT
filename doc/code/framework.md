@@ -394,6 +394,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 - Score and observation models own their validation rules. Persistence and replay share observation evidence checks; models do no I/O.
 - models should never depend on anything except lightweight Python (the standard library and pydantic) and pyrit.common
 - Store metadata on the narrowest model that owns it (for example, request or response data belongs on `MessagePiece`, not `Message`). Use explicit typed fields for stable, core, or independently queried data.
+- `Message`, `AttackResult`, and `Seed` support typed specialization for their piece, score, and data-type fields. API views specialize these types rather than narrowing writable inherited fields. Unparameterized models retain their existing defaults and schemas; shared loaders and storage accept heterogeneous `Seed[Any]` instances.
 - For shared metadata, define a lightweight value object in `pyrit.models` that owns its keys and provides symmetric `to_metadata()` and `from_metadata()` methods. Use `JsonResponseConfig` as the pattern for data stored in `MessagePiece.prompt_metadata`.
 
 ## [Normalizers](./targets/11_message_normalizer)
