@@ -492,12 +492,13 @@ poll_file=$(mktemp)
 list_file=$(mktemp)
 trap 'rm -f "$poll_file" "$list_file"' EXIT
 sleep() { echo poll >> "$poll_file"; }
+wc() { printf '%8d\\n' "$(command wc "$@")"; }
 az() {
   case "$2 $3" in
     "revision list")
       [[ "$*" == *"--all"* ]] || exit 96
       echo list >> "$list_file"
-      if [[ $(wc -l < "$list_file") == 1 ]]; then
+      if [[ $(wc -l < "$list_file") -eq 1 ]]; then
         echo '[{"name":"app--old","properties":{"active":true,"replicas":1}},
           {"name":"app--failed","properties":{"active":false,"replicas":1}}]'
       elif [[ -s "$poll_file" ]]; then
@@ -511,7 +512,7 @@ az() {
   esac
 }
 stop_app
-echo "revision-lists $(wc -l < "$list_file")"
+echo "revision-lists $(($(wc -l < "$list_file")))"
 echo stopped""",
         )
         assert result.returncode == 0, result.stdout + result.stderr

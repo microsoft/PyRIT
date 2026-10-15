@@ -183,10 +183,10 @@ prepare_database_migration() {
 
 run_database_job() {
   local mode="$1" action="migration"
-  local job_args=()
+  local job_args=(--container-name pyrit-migrate)
   if [[ "$mode" == check ]]; then
     action="schema check"
-    job_args=(--container-name pyrit-migrate --args=--check-only)
+    job_args+=(--args=--check-only)
   fi
   local job_name="$PYRIT_APP_NAME-migrate"
   local execution status="" attempt
