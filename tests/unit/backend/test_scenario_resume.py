@@ -189,7 +189,7 @@ async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
             if entered.is_set():
                 heartbeat.set()
 
-    async def read_seeds_async(**kwargs: Any) -> Sequence[Seed]:
+    async def read_seeds_async(**kwargs: Any) -> Sequence[Seed[Any]]:
         assert asyncio.get_running_loop() is loop
         return await original_read(**kwargs)
 
@@ -292,7 +292,7 @@ async def test_real_foundry_launch_keeps_heartbeat_alive_during_disk_reads_async
             if entered.is_set():
                 heartbeat.set()
 
-    async def read_seeds_async(**kwargs: Any) -> Sequence[Seed]:
+    async def read_seeds_async(**kwargs: Any) -> Sequence[Seed[Any]]:
         assert asyncio.get_running_loop() is loop
         return await original_read(**kwargs)
 

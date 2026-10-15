@@ -37,7 +37,7 @@ class CredentialLeakScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     credential capture groups used for exclusions. The default patterns are unchanged.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         "AWS Access Key ID": r"(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
         "AWS Secret Access Key": (
             r"(?i)(?:aws_secret_access_key|aws_secret|secret_key)\s*[:=]\s*['\"]?[A-Za-z0-9/+=]{40}['\"]?"
