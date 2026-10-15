@@ -717,22 +717,22 @@ export default function MessageList({
                       </MenuTrigger>
                       <MenuPopover><MenuList>
                         <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)}
-                          aria-label="Copy to prompt" aria-describedby={`${copyMenuId}-${index}-prompt`}
+                          aria-label="Copy to next message" aria-describedby={`${copyMenuId}-${index}-prompt`}
                           subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
-                          Copy to prompt
+                          Copy to next message
                         </MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(newConversationDisabledReason)}
                           aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
                           subText={{ id: `${copyMenuId}-${index}-conversation`,
-                            children: `Copy history through this turn into the same attack.${newConversationDisabledReason ? ` ${newConversationDisabledReason}` : ''}` }}
+                            children: `Copy history including this turn into the same attack.${newConversationDisabledReason ? ` ${newConversationDisabledReason}` : ''}` }}
                           onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
                         <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
                           aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}
-                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history through this turn into a new attack.' }}
+                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
                           onClick={() => onCopyToNewAttack?.(index)}>Branch attack</MenuItem>
                         {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
                           aria-label="Use in scan" aria-describedby={`${copyMenuId}-${index}-scan`}
-                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Open Technique.execute with history through this turn.' }}
+                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Apply a PyRIT attack technique after prepending history including this turn.' }}
                           onClick={() => onUseInTechnique(index)}>Use in scan</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>

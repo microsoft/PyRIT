@@ -5491,7 +5491,7 @@ describe("ChatWindow Integration", () => {
     // Click copy-to-input on assistant message (index 1)
     const copyBtn = screen.getByTestId("copy-to-input-btn-1");
     await userEvent.click(copyBtn);
-    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     // The text should appear in the input area
     await waitFor(() => {
@@ -6087,7 +6087,7 @@ describe("ChatWindow Integration", () => {
 
     const copyBtn = screen.getByTestId("copy-to-input-btn-1");
     await user.click(copyBtn);
-    await user.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     await waitFor(() => {
       const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -6160,7 +6160,7 @@ describe("ChatWindow Integration", () => {
     });
 
     await userEvent.click(screen.getByTestId("copy-to-input-btn-1"));
-    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     await waitFor(() => {
       const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;

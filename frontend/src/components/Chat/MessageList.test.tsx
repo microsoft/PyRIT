@@ -48,7 +48,7 @@ describe("MessageList", () => {
     ).toBeInTheDocument();
   });
 
-  it.each(["Copy to prompt", "Branch conversation", "Branch attack"])("copies through one menu to %s", async (destination: string) => {
+  it.each(["Copy to next message", "Branch conversation", "Branch attack"])("copies through one menu to %s", async (destination: string) => {
     const user = userEvent.setup();
     const onCopyToInput = jest.fn();
     const onCopyToNewConversation = jest.fn();
@@ -59,7 +59,7 @@ describe("MessageList", () => {
     await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[1]);
     expect(screen.getAllByRole("menuitem")).toHaveLength(3);
     await user.click(screen.getByRole("menuitem", { name: destination }));
-    const handler = destination === "Copy to prompt" ? onCopyToInput
+    const handler = destination === "Copy to next message" ? onCopyToInput
       : destination === "Branch conversation" ? onCopyToNewConversation : onCopyToNewAttack;
     expect(handler).toHaveBeenCalledWith(1);
     expect(onCopyToInput.mock.calls.length + onCopyToNewConversation.mock.calls.length + onCopyToNewAttack.mock.calls.length).toBe(1);
@@ -73,9 +73,9 @@ describe("MessageList", () => {
     await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
     const branch = screen.getByRole("menuitem", { name: "Branch conversation" });
     expect(branch).toHaveAttribute("aria-disabled", "true");
-    expect(branch).toHaveAccessibleDescription("Copy history through this turn into the same attack. This attack is read-only.");
+    expect(branch).toHaveAccessibleDescription("Copy history including this turn into the same attack. This attack is read-only.");
     expect(within(branch).getByText(/This attack is read-only/)).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Copy to prompt" })).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Copy to next message" })).not.toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("menuitem", { name: "Branch attack" })).not.toHaveAttribute("aria-disabled", "true");
   });
 
@@ -88,10 +88,10 @@ describe("MessageList", () => {
     screen.getByRole("button", { name: "Copy or Branch" }).focus();
     await user.keyboard("{Enter}");
     const descriptions = [
-      ["Copy to prompt", "Copy only this message to the prompt box."],
-      ["Branch conversation", "Copy history through this turn into the same attack."],
-      ["Branch attack", "Copy history through this turn into a new attack."],
-      ["Use in scan", "Open Technique.execute with history through this turn."],
+      ["Copy to next message", "Copy only this message to the prompt box."],
+      ["Branch conversation", "Copy history including this turn into the same attack."],
+      ["Branch attack", "Copy history including this turn into a new attack (i.e., separate group of conversations)."],
+      ["Use in scan", "Apply a PyRIT attack technique after prepending history including this turn."],
     ];
     for (const [index, [name, description]] of descriptions.entries()) {
       const item = screen.getByRole("menuitem", { name, exact: true });
@@ -1123,7 +1123,7 @@ describe("MessageList", () => {
     expect(screen.queryByTestId("download-btn-0-0")).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId("copy-to-input-btn-0"));
-    await user.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
     expect(onCopyToInput).toHaveBeenCalledWith(0);
   });
 
@@ -1755,7 +1755,7 @@ describe("MessageList", () => {
     );
 
     await user.click(screen.getByTestId("copy-to-input-btn-0"));
-    await user.click(screen.getByRole("menuitem", { name: "Copy to prompt" }));
+    await user.click(screen.getByRole("menuitem", { name: "Copy to next message" }));
 
     expect(onCopyToInput).toHaveBeenCalledWith(0);
   });

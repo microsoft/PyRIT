@@ -726,13 +726,13 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
 
     await page.getByTestId("copy-to-input-btn-1").click();
-    for (const name of ["Copy to prompt", "Branch conversation", "Branch attack", "Use in scan"]) {
+    for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
       await expectMinimumTouchTarget(page.getByRole("menuitem", { name, exact: true }));
     }
     await expect(page.getByText("Copy only this message to the prompt box.", { exact: true })).toBeVisible();
-    await expect(page.getByText("Copy history through this turn into the same attack.", { exact: true })).toBeVisible();
-    await expect(page.getByText("Copy history through this turn into a new attack.", { exact: true })).toBeVisible();
-    await expect(page.getByText("Open Technique.execute with history through this turn.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Copy history including this turn into the same attack.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Copy history including this turn into a new attack (i.e., separate group of conversations).", { exact: true })).toBeVisible();
+    await expect(page.getByText("Apply a PyRIT attack technique after prepending history including this turn.", { exact: true })).toBeVisible();
     await expectNoDocumentOverflow(page);
     await page.keyboard.press("Escape");
 
