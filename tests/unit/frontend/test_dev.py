@@ -139,3 +139,11 @@ def test_seeded_frontend_ci_selects_local_authentication() -> None:
     )
 
     assert "--auth-mode local --host 127.0.0.1" in playwright_config
+
+
+def test_analytics_frontend_ci_selects_local_authentication() -> None:
+    analytics_fixture = (
+        Path(__file__).resolve().parents[3] / "frontend" / "e2e" / "fixtures" / "analytics_backend.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"PYRIT_AUTH_MODE": "local"' in analytics_fixture
