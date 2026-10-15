@@ -175,7 +175,7 @@ def print_initializer_list(*, items: list[RegisteredInitializer]) -> None:
         if init.supported_parameters:
             print("    Supported Parameters:")
             for p in init.supported_parameters:
-                default_str = f" [default: {p.default}]" if p.default else ""
+                default_str = f" [default: {p.default}]" if p.default is not None else ""
                 print(f"      - {p.name}{default_str}: {p.description}")
         if init.description:
             print("    Description:")

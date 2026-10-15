@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SeedPrompt(Seed):
+class SeedPrompt(Seed[PromptDataType | None]):
     """Represents a seed prompt with various attributes and metadata."""
 
     # Discriminator field for the polymorphic Seed union (see seed_group.SeedUnion).

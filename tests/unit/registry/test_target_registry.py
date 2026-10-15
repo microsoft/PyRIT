@@ -446,3 +446,15 @@ class TestRegistrationGate:
                 )
                 if looks_like_credential:
                     assert parameter.sensitive, f"{name}.{parameter.name} looks like a credential"
+
+    def test_identity_targets_accept_an_explicit_auth_mode(self, registry: TargetRegistry) -> None:
+        # Advertising identity support without accepting the explicit mode would silently
+        # fall back to inferring auth from a missing key, which is the ambiguity the
+        # explicit auth_mode contract exists to remove.
+        for name in registry.get_class_names():
+            target_cls = registry.get_class(name)
+            if "identity" not in target_cls.supported_auth_modes:
+                continue
+            assert target_cls.get_auth_mode_parameters(auth_mode="identity") == {"auth_mode": "identity"}, (
+                f"{name} advertises identity support but does not forward an explicit auth_mode"
+            )

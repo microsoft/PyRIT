@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH
 from pyrit.backend.models.message_sends import MessageSendStatus
 from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
@@ -146,3 +147,14 @@ def test_missing_handle_is_not_recreated(*, client: TestClient, sender: MagicMoc
     assert response.status_code == 404
     assert "do not resend" in response.json()["detail"]
     sender.submit_async.assert_not_awaited()
+
+
+def test_oversized_identifiers_are_rejected_before_the_services(
+    *, client: TestClient, sender: MagicMock, payload: dict[str, object]
+) -> None:
+    oversized = "a" * (MAX_IDENTIFIER_LENGTH + 1)
+
+    assert client.post(f"/api/attacks/{oversized}/message-sends", json=payload).status_code == 422
+    assert client.get(f"/api/attacks/attack/message-sends/{oversized}").status_code == 422
+    sender.submit_async.assert_not_awaited()
+    sender.get_status_async.assert_not_awaited()

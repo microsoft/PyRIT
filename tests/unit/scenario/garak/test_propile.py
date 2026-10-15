@@ -5,7 +5,7 @@
 
 from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -44,7 +44,7 @@ TEMPLATES = ProPILEDatasetConfiguration.TEMPLATE_DATASET_NAME
 
 
 @pytest.fixture
-def corpus_seeds() -> dict[str, list[Seed]]:
+def corpus_seeds() -> dict[str, list[Seed[Any]]]:
     directory = Path(__file__).parents[4] / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"
     return {
         name: list(SeedDataset.from_yaml_file(directory / f"{name.removeprefix('garak_')}.prompt").seeds)
@@ -53,7 +53,7 @@ def corpus_seeds() -> dict[str, list[Seed]]:
 
 
 @pytest.fixture
-def synthetic_seeds(corpus_seeds: dict[str, list[Seed]]) -> dict[str, list[Seed]]:
+def synthetic_seeds(corpus_seeds: dict[str, list[Seed[Any]]]) -> dict[str, list[Seed[Any]]]:
     record = SeedPrompt(
         value="Jordan Example",
         data_type="text",
@@ -72,7 +72,7 @@ def synthetic_seeds(corpus_seeds: dict[str, list[Seed]]) -> dict[str, list[Seed]
 async def _initialize_async(
     *,
     scenario: ProPILE,
-    seeds: dict[str, list[Seed]],
+    seeds: dict[str, list[Seed[Any]]],
     target: MockPromptTarget | None = None,
     techniques: list[ProPILETechnique] | None = None,
     dataset_config: DatasetAttackConfiguration | None = None,
@@ -130,7 +130,7 @@ class TestProPILE:
             ProPILETechnique.Unstructured,
         ]
 
-    async def test_twin_renders_every_bundled_record(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_twin_renders_every_bundled_record(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         scenario = ProPILE()
         await _initialize_async(scenario=scenario, seeds=corpus_seeds, dataset_config=_config())
         groups = _groups(scenario)
@@ -151,7 +151,9 @@ class TestProPILE:
             assert prompt.metadata == metadata
             assert group.objective.source == record.source
 
-    async def test_triplet_uses_only_records_with_both_attributes(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_triplet_uses_only_records_with_both_attributes(
+        self, corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
         scenario = ProPILE()
         await _initialize_async(
             scenario=scenario,
@@ -175,12 +177,14 @@ class TestProPILE:
         "technique", [ProPILETechnique.Quadruplet, ProPILETechnique.Unstructured, ProPILETechnique.ALL]
     )
     async def test_bundled_records_cannot_silently_run_unsupported_techniques(
-        self, technique: ProPILETechnique, corpus_seeds: dict[str, list[Seed]]
+        self, technique: ProPILETechnique, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         with pytest.raises(DatasetConstraintError, match="has no compatible record"):
             await _initialize_async(scenario=ProPILE(), seeds=corpus_seeds, techniques=[technique])
 
-    async def test_quadruplet_withholds_each_attribute_in_turn(self, synthetic_seeds: dict[str, list[Seed]]) -> None:
+    async def test_quadruplet_withholds_each_attribute_in_turn(
+        self, synthetic_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
         scenario = ProPILE()
         await _initialize_async(
             scenario=scenario,
@@ -199,7 +203,7 @@ class TestProPILE:
         }
 
     async def test_unstructured_covers_relationships_and_affiliations(
-        self, synthetic_seeds: dict[str, list[Seed]]
+        self, synthetic_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scenario = ProPILE()
         await _initialize_async(
@@ -219,7 +223,7 @@ class TestProPILE:
         assert relation.prompts[0].value == "The name of the father of Jordan Example is"
         assert _expected_value(relation) == "Casey Example"
 
-    async def test_every_relationship_on_a_record_is_requested(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_every_relationship_on_a_record_is_requested(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         record = SeedPrompt(value="Jordan Example", data_type="text", metadata={"mother": "Robin", "wife": "Sam"})
         scenario = ProPILE()
         await _initialize_async(
@@ -234,7 +238,7 @@ class TestProPILE:
             "The name of the wife of Jordan Example is": "Sam",
         }
 
-    async def test_one_attack_per_technique_shares_the_scorer(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_one_attack_per_technique_shares_the_scorer(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         scenario = ProPILE()
         await _initialize_async(
             scenario=scenario,
@@ -257,7 +261,7 @@ class TestProPILE:
             )
 
     async def test_scorer_without_output_matches_is_rejected_before_sending(
-        self, corpus_seeds: dict[str, list[Seed]]
+        self, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         target = MockPromptTarget()
         scenario = ProPILE(objective_scorer=SubStringScorer(substring="invented@example.test"))
@@ -268,7 +272,7 @@ class TestProPILE:
         assert scenario.atomic_attack_count == 0
 
     async def test_compatible_scorer_override_preserves_conditions_and_converters(
-        self, corpus_seeds: dict[str, list[Seed]]
+        self, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scorer = OutputMatchesScorer()
         converter = Base64Converter()
@@ -290,7 +294,7 @@ class TestProPILE:
             assert all(group.objective.conditions for group in attack.seed_groups)
             assert converters == ([converter] if attack.atomic_attack_name == "triplet" else [])
 
-    async def test_sampling_reserves_one_request_per_technique(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_sampling_reserves_one_request_per_technique(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         scenario = ProPILE()
         await _initialize_async(
             scenario=scenario,
@@ -323,12 +327,12 @@ class TestProPILE:
         ],
     )
     async def test_unsupported_dataset_configuration_raises(
-        self, config: DatasetAttackConfiguration, match: str, corpus_seeds: dict[str, list[Seed]]
+        self, config: DatasetAttackConfiguration, match: str, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         with pytest.raises(DatasetConstraintError, match=match):
             await _initialize_async(scenario=ProPILE(), seeds=corpus_seeds, dataset_config=config)
 
-    async def test_cap_must_cover_every_selected_technique(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_cap_must_cover_every_selected_technique(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         with pytest.raises(DatasetConstraintError, match="at least the number of selected techniques"):
             await _initialize_async(
                 scenario=ProPILE(),
@@ -337,7 +341,9 @@ class TestProPILE:
                 dataset_config=_config(max_total=1),
             )
 
-    async def test_custom_record_dataset_replaces_bundled_records(self, synthetic_seeds: dict[str, list[Seed]]) -> None:
+    async def test_custom_record_dataset_replaces_bundled_records(
+        self, synthetic_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
         scenario = ProPILE()
         with patch.object(ProPILEDatasetConfiguration, "prepare_async", new_callable=AsyncMock):
             await _initialize_async(
@@ -351,7 +357,7 @@ class TestProPILE:
         assert all("source_id" not in group.objective.metadata for group in _groups(scenario))
 
     async def test_duplicate_records_collapse_and_namesakes_stay_distinct(
-        self, corpus_seeds: dict[str, list[Seed]]
+        self, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         records = [
             SeedPrompt(value="Jordan Example", data_type="text", metadata={"email": "jordan@example.test"}),
@@ -372,7 +378,7 @@ class TestProPILE:
         }
         assert len({group.objective.value for group in groups}) == 6
 
-    async def test_numeric_record_values_are_used_as_text(self, corpus_seeds: dict[str, list[Seed]]) -> None:
+    async def test_numeric_record_values_are_used_as_text(self, corpus_seeds: dict[str, list[Seed[Any]]]) -> None:
         record = SeedPrompt(value="Jordan Example", data_type="text", metadata={"phone": 5550100})
         scenario = ProPILE()
         await _initialize_async(
@@ -385,7 +391,7 @@ class TestProPILE:
 
     @pytest.mark.parametrize("size", [1, 20])
     async def test_resume_replays_sample_after_corpus_order_changes(
-        self, size: int, corpus_seeds: dict[str, list[Seed]]
+        self, size: int, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         original = ProPILE()
         await _initialize_async(
@@ -410,7 +416,7 @@ class TestProPILE:
 
     @pytest.mark.parametrize("size", [1, 20, 81, None, "all"])
     async def test_launch_and_estimate_use_standard_dataset_size(
-        self, size: int | Literal["all"] | None, corpus_seeds: dict[str, list[Seed]]
+        self, size: int | Literal["all"] | None, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         target = MockPromptTarget()
         scenario = ProPILE()
@@ -453,7 +459,7 @@ class TestProPILE:
 
     @pytest.mark.parametrize("disclosed", [False, True])
     async def test_full_run_scores_each_response_against_its_withheld_value(
-        self, corpus_seeds: dict[str, list[Seed]], sqlite_instance: SQLiteMemory, disclosed: bool
+        self, corpus_seeds: dict[str, list[Seed[Any]]], sqlite_instance: SQLiteMemory, disclosed: bool
     ) -> None:
         target = MockPromptTarget()
         scenario = ProPILE()

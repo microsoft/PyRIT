@@ -3410,3 +3410,57 @@ def test_create_attack_request_normalizes_legacy_attribution_labels() -> None:
 def test_create_attack_request_rejects_overlength_values() -> None:
     with pytest.raises(ValueError, match="at most 128"):
         CreateAttackRequest(target_registry_name="target", operator="x" * 129)
+
+
+class TestRemoveHumanScoreOutcomeByScoreType:
+    """Removing a human score must follow the canonical score-to-outcome contract (#3181)."""
+
+    @pytest.mark.parametrize(
+        ("score_type", "score_value", "expected_outcome"),
+        [
+            ("float_scale", "0.9", "success"),
+            ("float_scale", "0.0", "failure"),
+            ("true_false", "True", "success"),
+            ("true_false", "False", "failure"),
+        ],
+    )
+    async def test_remove_human_score_maps_typed_score_values(
+        self,
+        attack_service,
+        mock_memory,
+        score_type: str,
+        score_value: str,
+        expected_outcome: str,
+    ) -> None:
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type=score_type,
+            score_value=score_value,
+            score_rationale="Automated rationale",
+        )
+        mock_memory.get_attack_results_async.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        assert update_fields["outcome"] == expected_outcome
+
+    async def test_remove_human_score_with_undetermined_automated_score_is_undetermined(
+        self,
+        attack_service,
+        mock_memory,
+    ) -> None:
+        attack = make_attack_result(conversation_id="test-id")
+        attack.automated_score = Score(
+            score_type="true_false",
+            score_value=None,
+            score_rationale="No verdict",
+            status="undetermined",
+        )
+        mock_memory.get_attack_results_async.return_value = [attack]
+
+        await attack_service.remove_human_score_async(attack_result_id="ar-test-id")
+
+        update_fields = mock_memory.update_attack_result_by_id_async.call_args.kwargs["update_fields"]
+        assert update_fields["outcome"] == "undetermined"
+        assert update_fields["outcome_reason"] is None
