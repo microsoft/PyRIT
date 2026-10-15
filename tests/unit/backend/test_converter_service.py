@@ -729,6 +729,22 @@ class TestPersistDataUriParams:
         assert result == {"video_path": managed}
         assert owned_paths == []
 
+    async def test_blob_results_storage_accepts_canonical_urls_when_the_container_names_port_443(
+        self, upload_service: ConverterService
+    ) -> None:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = "https://account.blob.core.windows.net:443/results"
+        memory.results_storage_io = MagicMock(spec=AzureBlobStorageIO)
+        managed = "https://account.blob.core.windows.net/results/prompt-memory-entries/videos/input.mp4"
+
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            result, owned_paths = await upload_service._persist_data_uri_params_async(
+                converter_type="AddImageVideoConverter", params={"video_path": managed}
+            )
+
+        assert result == {"video_path": managed}
+        assert owned_paths == []
+
     async def test_plain_string_does_not_enable_upload_handling(self, upload_service: ConverterService) -> None:
         value = _make_data_uri(mime_type="text/plain", content=b"literal suffix")
         result, owned_paths = await upload_service._persist_data_uri_params_async(

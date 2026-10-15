@@ -1122,6 +1122,32 @@ class TestSignBlobUrlAsync:
         assert result == url
         mock_sas.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("configured_container", "url"),
+        [
+            (
+                "https://acct.blob.core.windows.net:443/c",
+                "https://acct.blob.core.windows.net/c/prompt-memory-entries/b.png",
+            ),
+            (
+                "https://acct.blob.core.windows.net/c",
+                "https://acct.blob.core.windows.net:443/c/prompt-memory-entries/b.png",
+            ),
+        ],
+    )
+    async def test_media_is_signed_when_only_the_443_port_spelling_differs(
+        self, results_container, configured_container: str, url: str
+    ) -> None:
+        results_container.return_value = configured_container
+        with patch(
+            "pyrit.backend.mappers.attack_mappers._get_sas_for_container_async",
+            new_callable=AsyncMock,
+            return_value="sv=2024&sig=fresh",
+        ):
+            result = await _sign_blob_url_async(blob_url=url)
+
+        assert result == f"{url}?sv=2024&sig=fresh"
+
 
 class TestResolveMediaUrl:
     """Tests for _resolve_media_url helper."""

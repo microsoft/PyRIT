@@ -154,6 +154,40 @@ def test_validate_blob_media_url_rejects_other_locations(url: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("url", "container_url"),
+    [
+        (f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png", "https://account.blob.core.windows.net:443/results"),
+        ("https://account.blob.core.windows.net:443/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+    ],
+)
+def test_validate_blob_media_url_treats_an_omitted_port_as_443(url: str, container_url: str) -> None:
+    assert validate_blob_media_url(url=url, container_url=container_url) == url
+
+
+@pytest.mark.parametrize(
+    ("url", "container_url"),
+    [
+        (f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png", "https://account.blob.core.windows.net:8443/results"),
+        ("https://account.blob.core.windows.net:0/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+        ("https://account.blob.core.windows.net:abc/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+        ("https://account.blob.core.windows.net:99999/results/prompt-memory-entries/a.png", RESULTS_CONTAINER),
+        (f"{RESULTS_CONTAINER}/prompt-memory-entries/a.png", "https://account.blob.core.windows.net:abc/results"),
+        (
+            "https://account.blob.core.windows.net:abc/results/prompt-memory-entries/a.png",
+            "https://account.blob.core.windows.net:abc/results",
+        ),
+        (
+            "https://user@account.blob.core.windows.net:443/results/prompt-memory-entries/a.png",
+            "https://account.blob.core.windows.net:443/results",
+        ),
+    ],
+)
+def test_validate_blob_media_url_rejects_other_ports_and_user_info(url: str, container_url: str) -> None:
+    with pytest.raises(MediaAccessDeniedError, match="results container"):
+        validate_blob_media_url(url=url, container_url=container_url)
+
+
+@pytest.mark.parametrize(
     "url",
     [
         f"{RESULTS_CONTAINER}///prompt-memory-entries/a.png",

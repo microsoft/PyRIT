@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, data_serializer_factory
@@ -122,6 +122,34 @@ def results_container_url() -> str | None:
     return str(memory.results_path)
 
 
+def _has_container_origin(*, url: ParseResult, container: ParseResult) -> bool:
+    """
+    Return whether a media URL has the results container's host and port, and no user info.
+
+    An omitted HTTPS port is 443, so ``host`` and ``host:443`` match. A port that does not
+    parse on either URL never matches.
+
+    Args:
+        url (ParseResult): The parsed media URL.
+        container (ParseResult): The parsed results container URL.
+
+    Returns:
+        bool: True when both URLs name the same host and port and the media URL has no user info.
+    """
+    try:
+        url_port = 443 if url.port is None else url.port
+        container_port = 443 if container.port is None else container.port
+    except ValueError:
+        return False
+    return (
+        url.username is None
+        and url.password is None
+        and url.hostname is not None
+        and url.hostname == container.hostname
+        and url_port == container_port
+    )
+
+
 def validate_blob_media_url(*, url: str, container_url: str) -> str:
     """
     Check that a media URL names a file in a media subdirectory of the results container.
@@ -148,7 +176,7 @@ def validate_blob_media_url(*, url: str, container_url: str) -> str:
     segments = [unquote(segment) for segment in relative_path.split("/")]
     if not (
         parsed.scheme == "https"
-        and parsed.netloc.lower() == container.netloc.lower()
+        and _has_container_origin(url=parsed, container=container)
         and parsed.path.startswith(container_path)
         and len(segments) > 1
         and segments[0] in _ALLOWED_MEDIA_SUBDIRECTORIES
