@@ -66,7 +66,7 @@ class BinAsciiConverter(WordLevelConverter):
         elif encoding_func == "quoted-printable":
             self._encoded_separator = binascii.b2a_qp(separator.encode("utf-8")).decode("ascii")
         else:
-            self._encoded_separator = ""
+            self._encoded_separator = self._uuencode_chunk(separator)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -136,5 +136,8 @@ class BinAsciiConverter(WordLevelConverter):
         if all_words_selected:
             if self._encoding_func in ("hex", "quoted-printable"):
                 return self._encoded_separator.join(words)
-            return "".join(words)  # UUencode handles spaces within encoding
+            if words == [""]:
+                return ""
+            empty_line = binascii.b2a_uu(b"").decode("ascii").rstrip("\n")
+            return f"\n{self._encoded_separator}\n".join(word or empty_line for word in words)
         return super().join_words(words=words)
