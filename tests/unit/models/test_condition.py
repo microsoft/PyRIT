@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from pyrit.models import (
     Condition,
+    DecisionMatches,
     DivergesFromRepetition,
     MatchesObjective,
     ScoringExpectation,
@@ -197,3 +198,48 @@ def test_diverges_from_repetition_registered_without_scorer_import() -> None:
 def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         DivergesFromRepetition.model_validate(value)
+
+
+@pytest.mark.parametrize("answer", [True, False, "refund", "true"])
+def test_decision_matches_round_trip_keeps_answer_type(answer: bool | str) -> None:
+    condition = DecisionMatches(question_name="route", answer=answer)
+    assert condition.model_dump() == {"condition_type": "decision_matches", "question_name": "route", "answer": answer}
+    restored = Condition.model_validate(condition.model_dump(mode="json"))
+    assert restored == condition
+    assert type(restored.answer) is type(answer)  # type: ignore[attr-defined]
+    with pytest.raises(ValidationError, match="frozen"):
+        condition.answer = "deny"
+
+
+def test_decision_matches_expectation_round_trip() -> None:
+    expectation = ScoringExpectation(conditions=(DecisionMatches(question_name="is_phishing", answer=False),))
+    restored = ScoringExpectation.model_validate_json(expectation.model_dump_json())
+    persisted = ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json"))
+    assert restored == persisted == expectation
+    other = ScoringExpectation(conditions=(DecisionMatches(question_name="is_phishing", answer=True),))
+    assert scoring_expectation_fingerprint(restored) != scoring_expectation_fingerprint(other)
+
+
+def test_decision_matches_registered_without_scorer_import() -> None:
+    assert _CONDITION_TYPES["decision_matches"] is DecisionMatches
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"question_name": "q"},
+        {"answer": True},
+        {"question_name": "", "answer": True},
+        {"question_name": "  ", "answer": True},
+        {"question_name": "q", "answer": ""},
+        {"question_name": "q", "answer": " \t"},
+        {"question_name": "q", "answer": 1},
+        {"question_name": "q", "answer": 0},
+        {"question_name": "q", "answer": 0.5},
+        {"question_name": "q", "answer": None},
+        {"question_name": "q", "answer": True, "extra": 1},
+    ],
+)
+def test_decision_matches_rejects_invalid_fields(value: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        DecisionMatches.model_validate(value)
