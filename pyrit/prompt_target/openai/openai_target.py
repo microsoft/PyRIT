@@ -116,8 +116,9 @@ class OpenAITarget(PromptTarget):
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
-            httpx_client_kwargs (dict, Optional): Additional kwargs to be passed to the
-                `httpx.AsyncClient()` constructor.
+            httpx_client_kwargs (dict, Optional): Additional ``AsyncOpenAI`` constructor options,
+                such as ``timeout`` or ``http_client``. SDK 2 uses HTTPX by default; SDK 3 uses
+                HTTPX2. Existing HTTPX clients remain supported by SDK 3's compatibility layer.
             underlying_model (str, Optional): The underlying model name (e.g., "gpt-4o") used solely for
                 target identifier purposes. This is useful when the deployment name in Azure differs
                 from the actual model. If not provided, the identifier will use the model_name.
