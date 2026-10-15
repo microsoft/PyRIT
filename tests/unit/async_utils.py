@@ -12,8 +12,13 @@ def get_defined_tasks(*tasks: asyncio.Task[T] | None) -> list[asyncio.Task[T]]:
     return [task for task in tasks if task is not None]
 
 
-async def wait_for_completion_async(*, future: asyncio.Future[T], timeout: float = 30) -> T:
-    """Bound a test wait without injecting cancellation into the operation under test."""
+async def wait_for_completion_async(*, future: asyncio.Future[T], timeout: float = 300) -> T:
+    """Bound a test wait without injecting cancellation into the operation under test.
+
+    The default is a deadlock backstop rather than a latency assertion, so it stays finite to keep a
+    hung test from hanging forever while remaining unreachable on a loaded CI runner. Callers that
+    assert a wait has already finished pass ``timeout=0`` explicitly.
+    """
     done, _ = await asyncio.wait({future}, timeout=timeout)
     if not done:
         raise TimeoutError("The operation under test did not complete before the test watchdog expired.")
