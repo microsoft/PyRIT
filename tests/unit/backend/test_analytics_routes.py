@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pyrit import _compatibility
 from pyrit.analytics import AttackResultAnalytics
 from pyrit.analytics._execution import AnalyticsExecution
+from pyrit.backend.authentication_policy import resolve_authentication_policy
 from pyrit.backend.main import app as backend_app
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI
@@ -51,11 +52,13 @@ def analytics_app(*, tmp_path: Path, compatibility_id: str) -> Iterator[Compatib
     with patch.dict(
         os.environ,
         {
+            "PYRIT_AUTH_MODE": "entra",
             "ENTRA_CLIENT_ID": "test-client",
             "ENTRA_TENANT_ID": "test-tenant",
             "ENTRA_ALLOWED_GROUP_IDS": "test-group",
             "ENTRA_ADMIN_GROUP_ID": "test-admin-group",
         },
+        clear=True,
     ):
         app = CompatibilityAPI(
             routes=list(backend_app.router.routes),
@@ -63,6 +66,7 @@ def analytics_app(*, tmp_path: Path, compatibility_id: str) -> Iterator[Compatib
             exception_handlers=backend_app.exception_handlers,
         )
         app.state.compatibility_id = compatibility_id
+        app.state.authentication_policy = resolve_authentication_policy()
         runtime = RuntimeLifecycle(
             app=app, source=ConfigurationFileService(config_file_value=str(tmp_path / "config.yaml"))
         )

@@ -208,6 +208,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: requireCurrentSchema ? 'true' : 'false'
             }
             {
+              name: 'PYRIT_AUTH_MODE'
+              value: 'entra'
+            }
+            {
               name: 'AZURE_SQL_SERVER'
               value: sqlServerFqdn
             }
