@@ -16,8 +16,9 @@ pyrit_backend
 
 Then open `http://localhost:8000` in your browser.
 
-Authentication-disabled local servers deny administrator operations by default. To enable configuration and initializer
-administration for a trusted local development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
+Authentication-disabled local servers deny administrator operations by default. To enable administrator operations
+(configuration, initializer administration, and creating targets that run model repository code) for a trusted local
+development server, set `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Never use this
 setting on a network-accessible deployment.
 
 ### Docker

@@ -216,6 +216,11 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     # for ad-hoc/direct attack execution outside any orchestrator.
     _attribution: AttackResultAttribution | None = None
 
+    _atomic_attack_identifier: AtomicAttackIdentifier | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _result_metadata: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
+
     # ID of the AttackResult this execution produces. Allocated when execution starts.
     _attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
 
@@ -489,6 +494,9 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         """
         attribution = context._attribution
         result.operation_id = context.params.operation_id
+        if context._atomic_attack_identifier is not None:
+            result.atomic_attack_identifier = context._atomic_attack_identifier
+        result.metadata.update(context._result_metadata)
         attribution_data = AttackResultMetadata(
             result_role=context._result_role,
             attempt_index=attribution.attempt_index if attribution is not None else None,

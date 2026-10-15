@@ -33,15 +33,21 @@ from pyrit.models import (
     MessagePiece,
     RequestTraceContext,
     Score,
+    SeedGroupRequirements,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
-from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
+from pyrit.scenario import (
+    AttackTechniqueFactory,
+    DatasetAttackConfiguration,
+    IncompatibleTechniqueError,
+    TechniqueRequirements,
+)
 from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
 from pyrit.scenario.scenarios.technique.execute import Execute, _build_execute_technique
-from pyrit.score import TrueFalseScorer
+from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -621,8 +627,11 @@ class TestExecute:
             not in AttackTechniqueRegistry.get_registry_singleton().get_factories()["red_teaming"]._attack_kwargs
         )
 
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
     @pytest.mark.parametrize("retries", [0, 2])
-    async def test_incompatible_simulated_technique_rejected_async(self, *, scorer: MagicMock, retries: int) -> None:
+    async def test_incompatible_simulated_technique_rejected_async(
+        self, *, scorer: MagicMock, retries: int, policy: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
         history_id = await _save_history_async(memory=CentralMemory.get_memory_instance(), roles=["user", "assistant"])
         scenario = _scenario(
             scorer=scorer,
@@ -630,9 +639,87 @@ class TestExecute:
             prepended_conversation_id=history_id,
             retries_on_objective_failure=retries,
             include_baseline=True,
+            incompatible_technique_policy=policy,
         )
-        with pytest.raises(ValueError, match="no compatible seed group"):
+        error = "accepts only an objective" if policy == "raise" else "no compatible seed group"
+        with pytest.raises(IncompatibleTechniqueError, match=error):
             await scenario.initialize_async()
+        if policy == "skip":
+            assert "accepts only an objective" in caplog.text
+        assert not await CentralMemory.get_memory_instance().get_scenario_results_async()
+
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_incompatible_target_rejected_before_creation_async(self, *, scorer: MagicMock, policy: str) -> None:
+        factory = AttackTechniqueFactory(
+            name="unsupported_target",
+            attack_class=PromptSendingAttack,
+            requirements=TechniqueRequirements(
+                objective_target=TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN}))
+            ),
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_multi_turn=False))
+        )
+        scenario = _scenario(
+            scorer=scorer,
+            target=target,
+            scenario_techniques=["unsupported_target"],
+            incompatible_technique_policy=policy,
+        )
+        with patch.object(factory, "create", side_effect=AssertionError("Constructed incompatible technique")):
+            with pytest.raises(IncompatibleTechniqueError, match="objective target"):
+                await scenario.initialize_async()
+
+    @pytest.mark.parametrize("retries", [0, 2])
+    async def test_permitted_history_adaptation_is_applied_to_each_attempt_async(self, *, retries: int) -> None:
+        scorer = SubStringScorer(substring="not in the target response")
+        memory = CentralMemory.get_memory_instance()
+        factory = AttackTechniqueFactory(
+            name="adapt_history",
+            attack_class=PromptSendingAttack,
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt("Answer briefly."),
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        history_id = await _save_history_async(memory=memory, roles=["user", "assistant"])
+        source_messages = [
+            message.model_dump() for message in await memory.get_conversation_messages_async(conversation_id=history_id)
+        ]
+        target = MockPromptTarget()
+        scenario = _scenario(
+            scorer=scorer,
+            target=target,
+            scenario_techniques=["adapt_history"],
+            prepended_conversation_id=history_id,
+            retries_on_objective_failure=retries,
+        )
+        await scenario.initialize_async()
+        atomic = scenario._atomic_attacks[0]
+        source = atomic.seed_groups[0]
+        assert source.prepended_conversation
+        if retries:
+            children = atomic.attack_technique.attack._child_attacks
+            assert all(
+                [prompt.value for prompt in child.seed_group.prompts] == ["Answer briefly."] for child in children
+            )
+        await scenario.run_async()
+        expected_hash = AtomicAttackEvaluationIdentifier(
+            AtomicAttackIdentifier.build(
+                technique_identifier=factory.create(
+                    objective_target=target, attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
+                ).get_identifier()
+            )
+        ).eval_hash
+        results = await memory.get_attack_results_async(atomic_attack_eval_hashes=[expected_hash])
+        assert len(results) == retries + 1
+        assert all(
+            result.metadata["seed_group_adaptation"]["source_seed_group_id"] == source.logical_id for result in results
+        )
+        assert all(result.metadata["seed_group_adaptation"]["adaptation"] == "objective_only" for result in results)
+        assert [
+            message.model_dump() for message in await memory.get_conversation_messages_async(conversation_id=history_id)
+        ] == source_messages
 
     async def test_missing_history_rejected_async(self, scorer: MagicMock) -> None:
         scenario = _scenario(scorer=scorer, prepended_conversation_id=str(uuid.uuid4()))
@@ -807,7 +894,9 @@ class TestExecute:
                         conversation_id=history_id,
                     ).to_message()
                 )
-                with pytest.raises(ValueError, match="does not match the saved history"):
+                with pytest.raises(
+                    ValueError, match="does not match the saved history|cannot resume: missing 1 planned seed group"
+                ):
                     await service._prepare_run_async(request=restored)
         finally:
             await service.close_async()
@@ -967,7 +1056,7 @@ class TestExecute:
             retries_on_objective_failure=retries,
             objective="Changed objective",
         )
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match="cannot resume: missing 1 planned seed group"):
             await changed.initialize_async()
 
     @pytest.mark.parametrize("change", ["append", "metadata"])
@@ -991,7 +1080,8 @@ class TestExecute:
             await memory.update_prompt_metadata_by_conversation_id_async(
                 conversation_id=history_id, prompt_metadata={"custom": "new metadata"}
             )
-        with pytest.raises(ValueError, match="does not match"):
+        expected_error = "cannot resume: missing 1 planned seed group" if change == "append" else "does not match"
+        with pytest.raises(ValueError, match=expected_error):
             await resumed.initialize_async()
 
     def test_alias_and_dynamic_cache_reset(self) -> None:
