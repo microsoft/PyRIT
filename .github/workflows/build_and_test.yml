@@ -23,6 +23,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  openai-compatibility:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.14"]
+        openai: ["2.20.0", "2.54.0", "3.0.0", "3.29.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.9.17"
+          enable-cache: true
+      - name: Install default dependencies without LiteLLM
+        run: uv sync --frozen
+      - name: Test the selected OpenAI SDK without LiteLLM
+        env:
+          OPENAI_VERSION: ${{ matrix.openai }}
+          LITELLM_LOCAL_MODEL_COST_MAP: "True"
+          LITELLM_TELEMETRY: "False"
+        run: |
+          uv run --frozen --no-sync --with "openai==$OPENAI_VERSION" python -c '
+          import importlib.util, os, openai, pytest
+          assert openai.__version__ == os.environ["OPENAI_VERSION"]
+          assert importlib.util.find_spec("litellm") is None
+          raise SystemExit(pytest.main([
+              "-q",
+              "tests/unit/prompt_target/target/test_openai_sdk_compatibility.py",
+              "tests/unit/prompt_target/target/test_openai_url_warnings.py",
+              "tests/unit/prompt_target/target/test_openai_error_handling.py",
+              "tests/unit/prompt_target/target/test_openai_target_auth.py",
+              "tests/unit/embedding/test_azure_text_embedding.py",
+              "tests/unit/prompt_target/target/test_litellm_chat_target.py",
+          ]))
+          '
+      - name: Install LiteLLM compatibility extra
+        if: startsWith(matrix.openai, '2.')
+        run: uv sync --frozen --extra litellm
+      - name: Test LiteLLM with the selected OpenAI SDK
+        if: startsWith(matrix.openai, '2.')
+        env:
+          OPENAI_VERSION: ${{ matrix.openai }}
+          LITELLM_LOCAL_MODEL_COST_MAP: "True"
+          LITELLM_TELEMETRY: "False"
+        run: |
+          uv run --frozen --no-sync --with "openai==$OPENAI_VERSION" python -c '
+          import importlib.metadata, os, openai, pytest
+          from packaging.version import Version
+          assert openai.__version__ == os.environ["OPENAI_VERSION"]
+          assert not Version(importlib.metadata.version("litellm")).is_prerelease
+          raise SystemExit(pytest.main([
+              "-q",
+              "tests/unit/prompt_target/target/test_openai_sdk_compatibility.py",
+              "tests/unit/prompt_target/target/test_litellm_chat_target.py",
+              "-k", "litellm",
+          ]))
+          '
+
   pre-commit:
     strategy:
       fail-fast: true
@@ -136,7 +199,7 @@ jobs:
         run: make unit-test-junit
 
       - name: Upload JUnit results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() || failure()
         with:
           name: junit-results-${{ runner.os }}-${{ matrix.python }}-${{ matrix.package_extras }}

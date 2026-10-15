@@ -196,9 +196,6 @@ class HTTPTarget(PromptTarget):
         header_dict, http_body, url, http_method, http_version = self.parse_raw_http_request(http_request_w_prompt)
         self._validate_destination(url)
 
-        if "Content-Length" in header_dict:
-            header_dict["Content-Length"] = str(len(http_body))
-
         http2_version = False
         if http_version and "HTTP/2" in http_version:
             http2_version = True
@@ -284,8 +281,8 @@ class HTTPTarget(PromptTarget):
             key, value = line.split(":", 1)
             headers_dict[key.strip().lower()] = value.strip()
 
-        if "content-length" in headers_dict:
-            del headers_dict["content-length"]
+        for framing_header in ("content-length", "transfer-encoding"):
+            headers_dict.pop(framing_header, None)
 
         if len(request_parts) > 1:
             # Parse as JSON object if it can be parsed that way

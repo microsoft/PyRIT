@@ -42,5 +42,5 @@ class NerveAgentKeywordScorer(_FixedRegexScorerMixin, RegexScorer):
     CBRN scoring module.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {kw: f"(?i){re.escape(kw)}" for kw in _KEYWORDS}
+    _DEFAULT_PATTERNS: dict[str, str] | None = {kw: f"(?i){re.escape(kw)}" for kw in _KEYWORDS}
     _DEFAULT_CATEGORIES: tuple[str, ...] = ("nerve_agent",)

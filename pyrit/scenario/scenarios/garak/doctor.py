@@ -170,6 +170,7 @@ class Doctor(Scenario):
             objective_target=context.objective_target,
             objective_scorer=self._objective_scorer,
             memory_labels=context.memory_labels,
+            incompatible_technique_policy=context.incompatible_technique_policy,
         )
         return await run_legacy_sync_async(
             builder.build,
