@@ -8,6 +8,7 @@ import pytest
 from pyrit.prompt_target import (
     CHAT_TARGET_REQUIREMENTS,
     CapabilityName,
+    PromptTarget,
     TargetRequirements,
 )
 from pyrit.prompt_target.common.target_capabilities import (
@@ -19,13 +20,91 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 def _make_target(*, configuration: TargetConfiguration) -> MagicMock:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target.configuration = configuration
+    target.capabilities = configuration.capabilities
     return target
 
 
 def test_default_requirements_require_nothing():
     assert TargetRequirements().required == frozenset()
+
+
+def test_check_retains_all_validation_reasons() -> None:
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=False, supports_editable_history=False)
+        )
+    )
+    requirements = TargetRequirements(
+        native_required=frozenset({CapabilityName.MULTI_TURN}),
+        required=frozenset({CapabilityName.EDITABLE_HISTORY}),
+        required_input_modalities=frozenset({frozenset({"image_path"})}),
+        required_output_modalities=frozenset({frozenset({"audio_path"})}),
+    )
+
+    with pytest.raises(ValueError) as raised:
+        requirements.validate(target=target)
+
+    assert requirements.check(target=target) == [str(raised.value)]
+    assert "4 required capability" in str(raised.value)
+
+
+def test_check_accepts_real_adaptation_but_not_policy_without_adapter() -> None:
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=False, supports_editable_history=False),
+            policy=CapabilityHandlingPolicy(
+                behaviors={
+                    CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.ADAPT,
+                    CapabilityName.EDITABLE_HISTORY: UnsupportedCapabilityBehavior.ADAPT,
+                }
+            ),
+        )
+    )
+    capabilities = target.configuration.capabilities
+    policy = target.configuration.policy
+
+    assert TargetRequirements(required=frozenset({CapabilityName.MULTI_TURN})).check(target=target) == []
+    assert TargetRequirements(required=frozenset({CapabilityName.EDITABLE_HISTORY})).check(target=target)
+    assert target.configuration.capabilities is capabilities
+    assert target.configuration.policy is policy
+
+
+@pytest.mark.parametrize(
+    "editable,system,compatible", [(True, False, True), (False, True, True), (False, False, False)]
+)
+def test_check_preserves_self_contained_judge_rules(*, editable: bool, system: bool, compatible: bool) -> None:
+    from pyrit.score.scorer import _SelfContainedJudgeTargetRequirements
+
+    target = _make_target(
+        configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_editable_history=editable, supports_system_prompt=system, supports_multi_turn=True
+            )
+        )
+    )
+    requirements = _SelfContainedJudgeTargetRequirements()
+
+    if compatible:
+        requirements.validate(target=target)
+        assert requirements.check(target=target) == []
+    else:
+        with pytest.raises(ValueError) as raised:
+            requirements.validate(target=target)
+        assert requirements.check(target=target) == [str(raised.value)]
+        assert "system_prompt" in str(raised.value)
+
+
+def test_check_propagates_unexpected_validation_errors() -> None:
+    class BrokenRequirements(TargetRequirements):
+        def validate(self, *, target: PromptTarget) -> None:
+            raise RuntimeError("unexpected failure")
+
+    with pytest.raises(RuntimeError, match="unexpected failure"):
+        BrokenRequirements().check(
+            target=_make_target(configuration=TargetConfiguration(capabilities=TargetCapabilities()))
+        )
 
 
 def test_construction_from_frozenset():
