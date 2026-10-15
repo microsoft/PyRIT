@@ -661,3 +661,79 @@ def test_scorer_eval_csv_loads_with_human_labeled_dataset(csv_file, metrics_type
     # - Invalid data formats
     dataset = HumanLabeledDataset.from_csv(csv_path=csv_file, metrics_type=metrics_type)
     assert len(dataset.entries) > 0, f"Dataset {csv_file.name} has no entries"
+
+
+def test_from_csv_preserves_hash_characters_in_cells(tmp_path):
+    """A literal '#' inside an unquoted cell must not truncate the row (#2974)."""
+    csv_file = tmp_path / "hash_cells.csv"
+    csv_file.write_text(
+        "# dataset_version=1.0\n"
+        "assistant_response,human_score,objective\n"
+        "# Heading,1,respond to the prompt\n"
+        "ordinary response,0,mentions C#\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert len(dataset.entries) == 2
+    assert dataset.entries[0].objective == "respond to the prompt"
+    assert dataset.entries[1].objective == "mentions C#"
+
+
+def test_from_csv_reads_metadata_comment_after_byte_order_mark(tmp_path):
+    """A UTF-8 BOM (what Excel writes) must not hide the metadata comment line."""
+    csv_file = tmp_path / "bom_cells.csv"
+    csv_file.write_text(
+        "# dataset_version=1.0\nassistant_response,human_score,objective\nordinary response,0,mentions C#\n",
+        encoding="utf-8-sig",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].objective == "mentions C#"
+
+
+def test_from_csv_skips_blank_line_before_metadata_comment(tmp_path):
+    """A blank line before the metadata comment must not hide it from the scan."""
+    csv_file = tmp_path / "blank_first.csv"
+    csv_file.write_text(
+        "\n"
+        "# dataset_version=1.0\n"
+        "assistant_response,human_score,objective\n"
+        "ordinary response,0,respond to the prompt\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert dataset.version == "1.0"
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].objective == "respond to the prompt"
+
+
+def test_from_csv_reads_metadata_comment_after_leading_comment_line(tmp_path):
+    """Metadata must be found on any leading comment line, not just the first."""
+    csv_file = tmp_path / "note_first.csv"
+    csv_file.write_text(
+        "# notes on how this dataset was collected\n"
+        "# dataset_version=2.5\n"
+        "assistant_response,human_score,objective\n"
+        "ordinary response,0,mentions C#\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=MetricsType.OBJECTIVE,
+    )
+    assert dataset.version == "2.5"
+    assert len(dataset.entries) == 1
+    assert dataset.entries[0].objective == "mentions C#"
