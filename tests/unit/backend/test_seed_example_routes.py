@@ -4,6 +4,7 @@
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from pyrit.backend.main import app
+from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface
@@ -40,7 +42,7 @@ async def client(patch_central_database, compatibility_headers: dict[str, str]) 
     get_dataset_service.cache_clear()
 
 
-async def _store(memory: MemoryInterface, *seeds: Seed) -> None:
+async def _store(memory: MemoryInterface, *seeds: Seed[Any]) -> None:
     async with await memory.get_session_async() as session:
         session.add_all(SeedEntry(entry=seed) for seed in seeds)
         await session.commit()
@@ -84,6 +86,9 @@ async def test_list_seed_examples_pages_with_a_filter_bound_cursor(client: Async
         ("", {"selection_key": DATASET}, 400),
         ("", {"selection_key": "dataset:named:"}, 400),
         ("", {"selection_key": NAMED, "limit": 0}, 422),
+        ("", {"selection_key": "k" * (MAX_CURSOR_LENGTH + 1)}, 422),
+        ("", {"selection_key": NAMED, "harm_category": "h" * (MAX_LABEL_VALUE_LENGTH + 1)}, 422),
+        (f"/{MISSING_ID}", {"selection_key": "k" * (MAX_CURSOR_LENGTH + 1)}, 422),
         (f"/{MISSING_ID}", {"selection_key": "dataset:other"}, 400),
         (f"/{MISSING_ID}", {"selection_key": NAMED}, 404),
         ("/not-a-uuid", {"selection_key": NAMED}, 422),

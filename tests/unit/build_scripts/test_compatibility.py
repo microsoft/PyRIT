@@ -287,6 +287,65 @@ def test_version_sources_must_match(source, monkeypatch):
         _stamp(source, monkeypatch)
 
 
+@pytest.mark.parametrize(
+    "project_toml",
+    [
+        '[project]\nversion = "1.2.0.dev0"\n',
+        "[project]\nversion = '1.2.0.dev0'\n",
+        '[tool.example]\nversion = "9.9.9"\n[project]\nversion = "1.2.0.dev0"\n',
+        '# version = "9.9.9"\n[project]\nversion = "1.2.0.dev0"\n',
+    ],
+    ids=["matching", "single-quotes", "unrelated-version-first", "commented-version"],
+)
+def test_project_version_parsing_accepts_matching_version(*, source: Path, project_toml: str) -> None:
+    (source / "pyproject.toml").write_text(project_toml, encoding="utf-8")
+    with patch.dict(os.environ, {"PYRIT_SOURCE_COMMIT": COMMIT, "PYRIT_SOURCE_DIRTY": "false"}):
+        stamp = stamp_source(source)
+    assert stamp["version"] == "1.2.0.dev0"
+    assert stamp["compatibility_id"] == f"1.2.0.dev0+g{COMMIT}"
+    assert read_stamp(source) == stamp
+
+
+@pytest.mark.parametrize(
+    "project_toml",
+    [
+        '[project]\nversion = "1.1.0"\n',
+        '[project]\nname = "pyrit"\n',
+        '[tool.example]\nversion = "1.2.0.dev0"\n',
+        "[project]\nversion = 12\n",
+        "[project]\nversion = true\n",
+        "[project]\nversion = []\n",
+        'project = "invalid"\n',
+        '[[project]]\nversion = "1.2.0.dev0"\n',
+        '[project]\nversion = "1.2.0.dev0"\nbroken = [\n',
+    ],
+    ids=[
+        "mismatch",
+        "missing-version",
+        "unrelated-version-only",
+        "numeric-version",
+        "boolean-version",
+        "array-version",
+        "scalar-project",
+        "array-project",
+        "invalid-toml",
+    ],
+)
+def test_project_version_parsing_rejects_invalid_metadata(*, source: Path, project_toml: str) -> None:
+    stamp_path = source / "pyrit/_compatibility.json"
+    with patch.dict(os.environ, {"PYRIT_SOURCE_COMMIT": COMMIT, "PYRIT_SOURCE_DIRTY": "false"}):
+        stamp = stamp_source(source)
+        original = stamp_path.read_text(encoding="utf-8")
+        (source / "pyproject.toml").write_text(project_toml, encoding="utf-8")
+        with pytest.raises(ValueError):
+            stamp_source(source)
+    assert stamp_path.read_text(encoding="utf-8") == original
+    with pytest.raises(ValueError, match="Missing or malformed PyRIT build provenance"):
+        read_stamp(source)
+    (source / "pyproject.toml").unlink()
+    assert read_stamp(source) == stamp
+
+
 def test_package_preparation_embeds_one_identity(source, monkeypatch):
     stamp = _stamp(source, monkeypatch)
     (source / "frontend").mkdir()

@@ -14,6 +14,7 @@ from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset i
     _AnthropicModelWrittenEvalsDataset,
 )
 from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.memory import SQLiteMemory
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
 
 _MODULE = "pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset"
@@ -98,6 +99,32 @@ def _rows_for_source(source: str, **_kwargs: object) -> list[dict]:
             }
         ]
     raise AssertionError(f"unexpected fetch: {source}")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_complete_paper_attribution_survives_seed_storage(sqlite_instance: SQLiteMemory) -> None:
+    loader = _AnthropicModelWrittenEvalsDataset()
+    with patch.object(loader, "_fetch_from_url", side_effect=_rows_for_source):
+        dataset = await loader.fetch_dataset_async(cache=False)
+
+    groups = ["Anthropic", "Surge AI", "Machine Intelligence Research Institute"]
+    assert len(dataset.seeds) == 6
+    authors = list(dataset.seeds[0].authors)
+    assert len(authors) == 63
+    assert len(set(authors)) == 63
+    assert authors[0] == "Ethan Perez"
+    assert authors[-1] == "Jared Kaplan"
+    for seed in dataset.seeds:
+        assert seed.authors == authors
+        assert seed.groups == groups
+
+    await sqlite_instance.add_seeds_to_memory_async(seeds=dataset.seeds, added_by="paper-attribution-test")
+    stored = await sqlite_instance.get_seeds_async(dataset_name=loader.dataset_name)
+    assert len(stored) == len(dataset.seeds)
+    for seed in stored:
+        assert seed.authors == authors
+        assert seed.groups == groups
+        assert seed.source == "https://github.com/anthropics/evals"
 
 
 class TestAnthropicModelWrittenEvalsDataset:

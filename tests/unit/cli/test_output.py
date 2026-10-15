@@ -272,6 +272,26 @@ def test_print_initializer_list_full(capsys):
     assert "Total initializers: 2" in captured.out
 
 
+def test_print_initializer_list_shows_falsy_defaults(capsys):
+    items = [
+        _make_initializer(
+            initializer_name="flags",
+            initializer_type="FlagsInitializer",
+            supported_parameters=[
+                Parameter(name="verbose", default=False, param_type=bool, description="Chatty output."),
+                Parameter(name="retries", default=0, param_type=int, description="Retry count."),
+                Parameter(name="label", default=None, param_type=str, description="Optional label."),
+            ],
+        ),
+    ]
+    _output.print_initializer_list(items=items)
+    captured = capsys.readouterr()
+    assert "[default: False]" in captured.out
+    assert "[default: 0]" in captured.out
+    label_line = next(line for line in captured.out.splitlines() if "label" in line)
+    assert "[default:" not in label_line
+
+
 # ---------------------------------------------------------------------------
 # print_target_list
 # ---------------------------------------------------------------------------
