@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import PromptDataType, SeedRecord, SeedType
+from pyrit.models.scenario_dataset import ScenarioDatasetSettings
 
 
 class DatasetInfo(BaseModel):
@@ -30,6 +31,7 @@ class DatasetInfo(BaseModel):
     )
     loaded: bool = Field(..., description="Whether this dataset currently has seeds in memory")
     provider_available: bool = Field(..., description="Whether a registered provider can load this dataset")
+    origins: list[str] = Field(default_factory=list, description="Distinct origins of stored seeds, not providers")
     logical_examples: int | None = Field(
         None, description="Number of logical examples represented by stored seed groups"
     )
@@ -46,6 +48,13 @@ class DatasetListResponse(BaseModel):
     """Response for listing available datasets."""
 
     items: list[DatasetInfo] = Field(..., description="List of available datasets")
+
+
+class ScenarioDatasetLoadResponse(BaseModel):
+    """Selected dataset settings and metadata after an explicit load."""
+
+    settings: ScenarioDatasetSettings
+    items: list[DatasetInfo]
 
 
 class SeedExampleSummary(BaseModel):

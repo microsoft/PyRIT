@@ -24,11 +24,14 @@ from pyrit.models import (
     ComponentIdentifier,
     ScenarioRunSizeEstimateStatus,
     SeedObjective,
+    SeedPrompt,
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
-from pyrit.prompt_target import PromptTarget
+from pyrit.models.scenario_dataset import ScenarioDatasetRequest
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import TargetRegistry
+from pyrit.scenario import IncompatibleTechniqueError
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
@@ -44,6 +47,7 @@ from pyrit.scenario.scenarios.airt.psychosocial import (
     _converter_for_technique,
 )
 from pyrit.score import TrueFalseScorer
+from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_id(name: str) -> ComponentIdentifier:
@@ -241,7 +245,9 @@ async def test_total_estimate_uses_initialization_cap_async(
         return list(seeds_by_dataset[dataset_name])
 
     config = DatasetAttackConfiguration(
-        sources=[DatasetSource(name=name) for name in seeds_by_dataset],
+        sources=[
+            DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS if sub_harm == "all" or harm.name == sub_harm
+        ],
         max_per_dataset="all",
         max_total=outer_limit,
     )
@@ -306,9 +312,9 @@ async def test_backend_total_one_rejects_both_sub_harms_before_reads_async(
         scenario_name="airt.psychosocial",
         scenario_class=MagicMock(return_value=scenario),
         objective_target=mock_objective_target,
-        max_dataset_size=1,
+        datasets=ScenarioDatasetRequest(max_total=1),
     )
-    assert args["dataset_config"].max_total == 1
+    assert args["dataset_overrides"].max_total == 1
     scenario.set_params_from_args(args=args)
     with (
         patch.object(DatasetAttackConfiguration, "prepare_async", side_effect=AssertionError("No preparation")),
@@ -363,7 +369,7 @@ async def test_backend_total_one_allows_one_selected_sub_harm_async(mock_objecti
         scenario_name="airt.psychosocial",
         scenario_class=MagicMock(return_value=scenario),
         objective_target=mock_objective_target,
-        max_dataset_size=1,
+        datasets=ScenarioDatasetRequest(max_total=1),
     )
     scenario.set_params_from_args(
         args={**args, "sub_harm": "imminent_crisis", "scenario_techniques": [PsychosocialTechnique.NoConverter]}
@@ -617,6 +623,72 @@ class TestSubHarmSelection:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+class TestPsychosocialCompatibilityPolicy:
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_live_crescendo_target_mismatch_follows_policy_async(self, *, policy: str) -> None:
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=False, supports_editable_history=True)
+            )
+        )
+        scenario = _scenario_with_mock_scorers()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": target,
+                "scenario_techniques": [PsychosocialTechnique.Crescendo, PsychosocialTechnique.NoConverter],
+                "incompatible_technique_policy": policy,
+            }
+        )
+        with (
+            _patch_base_seed_groups(_make_seed_groups()),
+            patch.object(
+                scenario,
+                "_build_crescendo_technique",
+                side_effect=AssertionError("An incompatible attack must not be constructed"),
+            ) as build_live,
+        ):
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="supports_multi_turn"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert len(_baselines(scenario)) == 2
+                assert all(atomic.atomic_attack_name.endswith("_none") for atomic in _non_baseline(scenario))
+            build_live.assert_not_called()
+
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_simulated_dataset_mismatch_preserves_live_and_baseline_populations_async(
+        self, *, policy: str
+    ) -> None:
+        groups = {
+            harm.dataset_name: [
+                AttackSeedGroup(seeds=[SeedObjective(value=harm.name), SeedPrompt(value="context", sequence=99)])
+            ]
+            for harm in _SUB_HARMS
+        }
+        original = {name: [group.model_dump() for group in values] for name, values in groups.items()}
+        scenario = _scenario_with_mock_scorers()
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [PsychosocialTechnique.NoConverter, PsychosocialTechnique.Crescendo],
+                "incompatible_technique_policy": policy,
+            }
+        )
+        with _patch_base_seed_groups(groups):
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="only an objective"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert len(_baselines(scenario)) == 2
+                assert len(_non_baseline(scenario)) == 2
+                assert all(atomic.atomic_attack_name.endswith("_crescendo") for atomic in _non_baseline(scenario))
+                assert all(len(atomic.seed_groups[0].seeds) == 2 for atomic in scenario._atomic_attacks)
+        assert {name: [group.model_dump() for group in values] for name, values in groups.items()} == original
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestPsychosocialCrossProduct:
     async def test_default_yields_6_attacks_plus_2_baselines(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
@@ -707,7 +779,7 @@ class TestPsychosocialCrossProduct:
 
     async def test_unrelated_source_is_rejected(self, mock_objective_target):
         scenario = _scenario_with_mock_scorers()
-        with pytest.raises(DatasetConstraintError, match="sub-harm datasets"):
+        with pytest.raises(DatasetConstraintError, match="Psychosocial sub_harm 'all' needs"):
             scenario.set_params_from_args(
                 args={
                     "objective_target": mock_objective_target,

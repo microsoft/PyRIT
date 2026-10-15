@@ -226,12 +226,18 @@ class ContentWritten(Condition):
     ``uri`` and ``match`` and judges only the content criterion against what its source
     acquired. ``SurfaceMatch.GLOB`` asks whether any selected location holds such content.
     With no matcher, any nonempty content counts, including binary content.
+
+    ``require_content_change`` additionally requires a different content state from the
+    attempt's baseline. This is a state comparison, not a write-event claim: an unrelated
+    edit can leave matching content in place, and identical rewrites or writes followed by
+    restoration are not detected. Without a baseline, this comparison is undetermined.
     """
 
     condition_type: Literal["content_written"] = "content_written"
     uri: str = Field(min_length=1, pattern=r"^[^\x00]+$")
     match: SurfaceMatch = SurfaceMatch.EXACT
     matcher: TextMatcher | None = None
+    require_content_change: bool = False
 
 
 def _parse_conditions(value: Any) -> Any:

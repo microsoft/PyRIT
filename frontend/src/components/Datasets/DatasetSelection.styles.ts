@@ -53,10 +53,9 @@ export const useDatasetSelectionStyles = makeStyles({
     width: '100%',
     maxWidth: '40rem',
   },
-  note: {
-    maxWidth: '65ch',
-    margin: 0,
-    color: tokens.colorNeutralForeground2,
+  browser: {
+    width: '100%',
+    minWidth: 0,
   },
   selectionKey: {
     margin: 0,

@@ -8,11 +8,19 @@ Lists available seed datasets and browses the stored seed examples of one datase
 discovered from registered ``SeedDatasetProvider`` subclasses and from memory.
 """
 
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import Field
 
-from pyrit.backend.models.common import MAX_ITEMS, CursorStr, ProblemDetail
+from pyrit.backend.models.common import (
+    MAX_CURSOR_LENGTH,
+    MAX_ITEMS,
+    MAX_LABEL_VALUE_LENGTH,
+    CursorStr,
+    ProblemDetail,
+)
 from pyrit.backend.models.datasets import (
     DatasetListResponse,
     SeedExampleDetailResponse,
@@ -55,7 +63,7 @@ async def list_datasets(loaded_only: bool = False) -> DatasetListResponse:  # py
     },
 )
 async def list_seed_examples(  # pyrit-async-suffix-exempt
-    selection_key: str = Query(..., description=_SELECTION_KEY_DESCRIPTION),
+    selection_key: str = Query(..., max_length=MAX_CURSOR_LENGTH, description=_SELECTION_KEY_DESCRIPTION),
     limit: int = Query(20, ge=1, le=100, description="Maximum examples per page"),
     cursor: CursorStr | None = Query(
         None,
@@ -68,7 +76,7 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
         description="Case-insensitive literal text to find in text prompt and objective values",
     ),
     modality: list[PromptDataType] | None = Query(None, max_length=MAX_ITEMS, description="Data types, OR-matched"),
-    harm_category: list[str] | None = Query(
+    harm_category: list[Annotated[str, Field(max_length=MAX_LABEL_VALUE_LENGTH)]] | None = Query(
         None, max_length=MAX_ITEMS, description="Whole harm categories, case-insensitive, OR-matched"
     ),
     seed_type: list[SeedType] | None = Query(None, max_length=MAX_ITEMS, description="Seed types, OR-matched"),
@@ -103,7 +111,7 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
 )
 async def get_seed_example(  # pyrit-async-suffix-exempt
     example_id: UUID,
-    selection_key: str = Query(..., description=_SELECTION_KEY_DESCRIPTION),
+    selection_key: str = Query(..., max_length=MAX_CURSOR_LENGTH, description=_SELECTION_KEY_DESCRIPTION),
 ) -> SeedExampleDetailResponse:
     """
     Get one stored logical seed example with all of its members.

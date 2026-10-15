@@ -72,7 +72,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
       )}
       {linked && (
         <span id={descriptionId} className={styles.visuallyHidden}>
-          Opens this dataset. Individual examples are not yet listed in this view. We are still building this experience.
+          Opens this dataset and lists its stored examples.
         </span>
       )}
       <dl className={styles.counts} aria-label="Counts">

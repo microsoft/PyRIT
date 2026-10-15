@@ -58,6 +58,7 @@ class TestListDatasets:
                     modalities=("image_path", "text"),
                     harm_categories=("hate", "violence"),
                     has_unlabeled_harm_categories=True,
+                    origins=("local", "unknown"),
                 ),
                 SeedDatasetSummary(
                     dataset_name=None,
@@ -87,11 +88,13 @@ class TestListDatasets:
         assert loaded.modalities == ["image_path", "text"]
         assert loaded.harm_categories == ["hate", "violence"]
         assert loaded.has_unlabeled_harm_categories is True
+        assert loaded.origins == ["local", "unknown"]
 
         provider_only = next(item for item in result.items if item.name == "provider_only")
         assert provider_only.loaded is False
         assert provider_only.provider_available is True
         assert provider_only.logical_examples is None
+        assert provider_only.origins == []
 
         unnamed = next(item for item in result.items if item.name == "(unnamed)")
         assert unnamed.selection_key == "dataset:unnamed"

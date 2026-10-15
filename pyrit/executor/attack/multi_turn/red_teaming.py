@@ -417,10 +417,16 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[Any], Atta
             # Increment the executed turns
             context.executed_turns += 1
 
-        return self._create_attack_result(
-            context=context,
-            outcome=attack_outcome_from_score(context.last_score) if context.last_score else AttackOutcome.FAILURE,
-        )
+        if context.last_score is not None:
+            return self._create_attack_result(context=context, outcome=attack_outcome_from_score(context.last_score))
+        if context.last_response is not None:
+            # The last response was scored but the scorer produced nothing, so nothing was measured
+            return self._create_attack_result(
+                context=context,
+                outcome=AttackOutcome.UNDETERMINED,
+                outcome_reason="Objective scorer returned no score",
+            )
+        return self._create_attack_result(context=context, outcome=AttackOutcome.FAILURE)
 
     def _create_attack_result(
         self,

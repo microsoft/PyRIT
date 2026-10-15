@@ -6,7 +6,7 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import ScenarioRunPlan, ScenarioRunPlanAtomicGroup, ScenarioRunPlanSeedGroup
+from pyrit.models import ScenarioRunPlan, ScenarioRunPlanAtomicGroup, ScenarioRunPlanGroupKind, ScenarioRunPlanSeedGroup
 
 
 def _seed(*, seed_id: str = "seed-1") -> ScenarioRunPlanSeedGroup:
@@ -39,3 +39,34 @@ def test_run_plan_rejects_ambiguous_or_invalid_normalized_ids(
 ) -> None:
     with pytest.raises(ValidationError, match=match):
         ScenarioRunPlan(atomic_groups=atomic_groups, seed_groups=seed_groups)
+
+
+def test_run_plan_preserves_ordered_adaptive_choices() -> None:
+    group = _group().model_copy(
+        update={
+            "kind": ScenarioRunPlanGroupKind.ADAPTIVE,
+            "selected_technique_eval_hashes": ["second", "first"],
+        }
+    )
+    plan = ScenarioRunPlan(atomic_groups=[group], seed_groups=[_seed()])
+
+    restored = ScenarioRunPlan.model_validate_json(plan.model_dump_json(exclude_none=True))
+
+    assert restored.atomic_groups[0].selected_technique_eval_hashes == ["second", "first"]
+
+
+def test_run_plan_without_adaptive_choices_round_trips_unchanged() -> None:
+    plan = ScenarioRunPlan(atomic_groups=[_group()], seed_groups=[_seed()])
+    payload = plan.model_dump(mode="json", exclude_none=True)
+
+    assert "selected_technique_eval_hashes" not in payload["atomic_groups"][0]
+    restored = ScenarioRunPlan.model_validate(payload)
+    assert restored.model_dump(mode="json", exclude_none=True) == payload
+
+
+def test_run_plan_rejects_empty_adaptive_choices() -> None:
+    payload = _group().model_dump()
+    payload["selected_technique_eval_hashes"] = []
+
+    with pytest.raises(ValidationError, match="selected_technique_eval_hashes"):
+        ScenarioRunPlanAtomicGroup.model_validate(payload)
