@@ -110,7 +110,7 @@ class TestEncodingInitialization:
             )
 
             assert scenario.name == "Encoding"
-            assert scenario.VERSION == 2
+            assert scenario.VERSION == 3
 
     def test_init_with_custom_scorer(self, mock_objective_target, mock_objective_scorer, mock_memory_seeds):
         """Test initialization with custom objective scorer."""

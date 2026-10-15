@@ -153,7 +153,7 @@ class ApiKeyDatasetConfiguration(DatasetAttackConfiguration):
             seeds=seeds, source_kind=self.source_kind, dataset_names=tuple(self.dataset_names)
         )
 
-    def _build_technique_populations(self, seeds: list[Seed]) -> dict[str, list[AttackSeedGroup]]:
+    def _build_technique_populations(self, seeds: list[Seed[Any]]) -> dict[str, list[AttackSeedGroup]]:
         """
         Render one request for each selected service and technique input.
 

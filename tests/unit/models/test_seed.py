@@ -5,6 +5,7 @@ import os
 import pathlib
 import tempfile
 import uuid
+from typing import assert_type
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -77,6 +78,22 @@ def test_seed_prompt_initialization(seed_prompt_fixture):
     assert seed_prompt_fixture.value == "Test prompt"
     assert seed_prompt_fixture.data_type == "text"
     assert seed_prompt_fixture.parameters == ["param1"]
+
+
+def test_from_yaml_file_preserves_seed_subclass(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "seed.yaml"
+    path.write_text("value: Test seed\ndata_type: text\n", encoding="utf-8")
+
+    prompt = SeedPrompt.from_yaml_file(path)
+    objective = SeedObjective.from_yaml_file(path)
+
+    assert_type(prompt, SeedPrompt)
+    assert_type(objective, SeedObjective)
+    assert type(prompt) is SeedPrompt
+    assert type(objective) is SeedObjective
+    assert prompt.value == objective.value == "Test seed"
+    assert prompt.is_jinja_template
+    assert objective.is_jinja_template
 
 
 @pytest.mark.parametrize(

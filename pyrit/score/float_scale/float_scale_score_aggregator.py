@@ -333,7 +333,8 @@ def _create_aggregator_by_category(
 
         return results
 
-    aggregator.__name__ = f"{name}_by_category_"
+    # The all-categories variants return one result, so they need a name (and identity) of their own.
+    aggregator.__name__ = f"{name}_by_category_" if group_by_category else f"{name}_all_categories_"
     return aggregator
 
 

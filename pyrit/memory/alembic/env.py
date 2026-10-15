@@ -27,7 +27,7 @@ def _include_object(
     """
     if isinstance(obj, Index) and not reflected:
         dialect = obj.info.get("dialect")
-        return dialect is None or dialect == context.get_context().dialect.name
+        return dialect is None or bool(dialect == context.get_context().dialect.name)
     return True
 
 

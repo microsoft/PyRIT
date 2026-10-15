@@ -5,7 +5,8 @@
 
 from collections.abc import AsyncGenerator, Iterator
 from functools import partial
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -30,6 +31,16 @@ async def analytics_service(sqlite_instance: SQLiteMemory) -> AsyncGenerator[Att
             yield get_analytics_service()
         finally:
             await close_analytics_service_async()
+
+
+@pytest.fixture
+def managed_media_path(*, sqlite_instance: SQLiteMemory, patch_central_database: MagicMock) -> Path:
+    """Create a file in the isolated memory's media directory."""
+    assert sqlite_instance.results_path is not None
+    path = Path(sqlite_instance.results_path) / "prompt-memory-entries" / "image.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"image")
+    return path.resolve()
 
 
 @pytest.fixture(autouse=True)

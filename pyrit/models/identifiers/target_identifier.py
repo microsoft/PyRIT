@@ -36,7 +36,7 @@ class TargetIdentifier(ComponentIdentifier):
     unwrapped so a multi-target hashes the same as its inner target.
     """
 
-    component_type: ClassVar[ComponentType] = ComponentType.TARGET
+    component_type: ClassVar[ComponentType | None] = ComponentType.TARGET
 
     #: Target endpoint URL.
     endpoint: Annotated[str | None, Evaluate.Exclude()] = None

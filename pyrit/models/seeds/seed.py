@@ -14,11 +14,12 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, Annotated, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Self, cast
 
 from jinja2 import StrictUndefined, Undefined, meta
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field
+from typing_extensions import TypeVar
 
 from pyrit.common.template_binding import bind_template_path_operations
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
@@ -29,9 +30,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-# TypeVar for generic return type in class methods
-T = TypeVar("T", bound="Seed")
 
 
 def _ensure_aware_utc(value: Any) -> Any:
@@ -232,7 +230,10 @@ def _template_environment(undefined: type[Undefined]) -> SandboxedEnvironment:
     return env
 
 
-class Seed(BaseModel):
+_SeedDataTypeT = TypeVar("_SeedDataTypeT", bound=PromptDataType | None, default=PromptDataType)
+
+
+class Seed(BaseModel, Generic[_SeedDataTypeT]):
     """Represents seed data with various attributes and metadata."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -295,7 +296,8 @@ class Seed(BaseModel):
     # The type of data this seed represents (e.g., text, image_path, audio_path, video_path).
     # SeedPrompt overrides the default to None and infers it from the value; other seed types
     # narrow it to Literal["text"].
-    data_type: PromptDataType = "text"
+    # Pydantic resolves the generic field and validates its default at construction.
+    data_type: Annotated[_SeedDataTypeT, Field(validate_default=True)] = cast("_SeedDataTypeT", "text")
 
     def render_template_value(self, **kwargs: Any) -> str:
         """
@@ -405,7 +407,7 @@ class Seed(BaseModel):
         return f"{{% raw %}}{value}{{% endraw %}}"
 
     @classmethod
-    def from_yaml_file(cls: type[T], file: str | Path) -> T:
+    def from_yaml_file(cls, file: str | Path) -> Self:
         """
         Create a new Seed from a YAML file, marking it as a trusted Jinja2 template.
 

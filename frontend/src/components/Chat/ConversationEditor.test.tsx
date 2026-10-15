@@ -289,3 +289,18 @@ describe('ConversationEditor', () => {
     expect(onSaved).not.toHaveBeenCalled()
   })
 })
+
+it('revokes the blob URL when an attachment is removed from the editor', async () => {
+  const user = userEvent.setup()
+  const mockObjectUrl = 'blob:http://localhost/attach-1'
+  global.URL.createObjectURL = jest.fn().mockReturnValue(mockObjectUrl)
+  global.URL.revokeObjectURL = jest.fn()
+  setupEditor()
+
+  const first = screen.getByRole('region', { name: 'Message 1' })
+  await user.upload(within(first).getAllByTestId('file-input')[0], new File(['x'], 'photo.png', { type: 'image/png' }))
+
+  await user.click(await screen.findByRole('button', { name: 'Remove photo.png' }))
+
+  expect(global.URL.revokeObjectURL).toHaveBeenCalledWith(mockObjectUrl)
+})

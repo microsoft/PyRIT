@@ -68,14 +68,15 @@ function appendScenarioRunProvenance(path: string, scenarioResultId?: string | n
 /** Catalog route. Dataset identity is never a path segment. */
 export const DATASETS_PATH = '/datasets'
 
-/** Selection contract for the prompt table (#2745). The key stays in the query. */
+/** Selection route. The opaque key stays in the query and is sent back to the seed API. */
 export const DATASET_DETAIL_PATH = '/datasets/detail'
 
 const SELECTION_KEY_PARAM = 'selection_key'
 
 /**
- * Reads the opaque selection key. A missing or repeated key is not a selection.
- * The returned string is for catalog lookup only and is not sent back to the server.
+ * Reads the opaque selection key. A missing or repeated key is not a selection
+ * and must not be replaced with another dataset. Callers send this value back
+ * on seed list and detail requests; they do not look up an arbitrary dataset.
  */
 export function selectionKeyFromSearchParams(params: URLSearchParams): string | null {
   const values = params.getAll(SELECTION_KEY_PARAM)

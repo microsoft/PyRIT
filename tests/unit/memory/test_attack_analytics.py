@@ -25,7 +25,9 @@ from sqlalchemy.sql import Select, visitors
 from sqlalchemy.sql.functions import Function
 from sqlalchemy.sql.selectable import CTE
 
+from pyrit.converter import Base64Converter
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
+from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_sql import (
     JsonArrayEmpty,
@@ -53,6 +55,8 @@ from pyrit.models import (
     ConverterIdentifier,
     TargetIdentifier,
 )
+from pyrit.prompt_normalizer import ConverterConfiguration
+from unit.mocks import MockPromptTarget
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -398,6 +402,44 @@ async def test_known_empty_converters_differ_from_missing_identifier(sqlite_inst
         query=AttackAnalyticsQuery(group_by=AttackAnalyticsDimension(name="converter_type")), control=control()
     )
     assert {group.option.key.kind.value for group in report.groups} == {"missing", "no_converters"}
+
+
+@pytest.mark.parametrize("direction", ["request", "response"])
+async def test_real_attacks_without_converters_are_no_converters_async(
+    *, direction: str, sqlite_instance: SQLiteMemory
+) -> None:
+    """Identifiers omit an empty converter list, so a real attack must still land in no_converters."""
+    plain = await PromptSendingAttack(objective_target=MockPromptTarget()).execute_async(objective="plain")
+    converted = await PromptSendingAttack(
+        objective_target=MockPromptTarget(),
+        attack_converter_config=AttackConverterConfig(
+            request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()]),
+            response_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()]),
+        ),
+    ).execute_async(objective="converted")
+    unidentified = make_result(index=3)
+    unidentified.atomic_attack_identifier = None
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[unidentified])
+    dimension = AttackAnalyticsDimension(name="converter_type", converter_direction=direction)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+
+    report = await reader.report_async(query=AttackAnalyticsQuery(group_by=dimension), control=control())
+    filtered = await reader.report_async(
+        query=AttackAnalyticsQuery(
+            filters=AttackAnalyticsFilters.model_validate(
+                {"dimensions": [{"dimension": dimension.model_dump(), "values": [{"kind": "no_converters"}]}]}
+            )
+        ),
+        control=control(),
+    )
+    without_converters = await sqlite_instance.get_attack_results_async(has_converters=False)
+
+    assert {
+        (group.option.key.kind.value, group.option.key.value): sum(group.counts.values()) for group in report.groups
+    } == {("no_converters", None): 1, ("value", "base64converter"): 1, ("missing", None): 1}
+    assert sum(filtered.counts.values()) == 1
+    assert plain.attack_result_id in {result.attack_result_id for result in without_converters}
+    assert converted.attack_result_id not in {result.attack_result_id for result in without_converters}
 
 
 async def test_literal_label_paths_and_facet_search(sqlite_instance: SQLiteMemory) -> None:
@@ -1747,3 +1789,25 @@ async def test_sqlite_group_query_uses_the_computed_identifier_index(sqlite_inst
     async with sqlite_instance._get_async_engine().connect() as connection:
         plan = (await connection.exec_driver_sql(f"EXPLAIN QUERY PLAN {sql}")).all()
     assert any("ix_AttackResultEntries_analytics_facts_sqlite" in row[-1] for row in plan)
+
+
+def test_mssql_filter_source_lateral_is_added_once_per_compiler() -> None:
+    """Reusing one compiler for several statements must not duplicate the filter lateral (#3177)."""
+    filters = AttackAnalyticsFilters(
+        dimensions=[
+            AttackAnalyticsFilter(
+                dimension=AttackAnalyticsDimension(name="converter_type"),
+                values=[AttackAnalyticsValue(kind="missing")],
+            )
+        ]
+    )
+    query = AttackAnalyticsQuery(filters=filters, group_by=AttackAnalyticsDimension(name="operation"))
+    compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=filters)
+    dialect = mssql.dialect(deprecate_large_types=True)
+
+    totals_sql = str(compiler.totals().compile(dialect=dialect))
+    groups_sql = str(compiler.groups(query).compile(dialect=dialect))
+
+    lateral = re.compile(r"OUTER APPLY \(SELECT.*?\) AS (filter_source_\d+)", re.DOTALL)
+    assert lateral.findall(totals_sql) == ["filter_source_0"]
+    assert lateral.findall(groups_sql) == ["filter_source_0"]
