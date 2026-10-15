@@ -152,7 +152,7 @@ class PromptInjectDatasetConfiguration(DatasetAttackConfiguration):
                 f"({len(self._goal_texts)})."
             )
 
-    def _build_attack_groups(self, seeds: list[Seed]) -> list[AttackSeedGroup]:
+    def _build_attack_groups(self, seeds: list[Seed[Any]]) -> list[AttackSeedGroup]:
         """
         Create attack groups from the context templates.
 
@@ -394,7 +394,10 @@ class PromptInject(Scenario):
             DatasetConstraintError: If a selected technique has no template.
         """
         seeds = await self._dataset_config._collect_seeds_for_dataset_async(dataset_name=self.TECHNIQUE_DATASET_NAME)
-        templates = {seed.name: seed for seed in seeds if isinstance(seed, SeedPrompt) and seed.name}
+        templates: dict[str, SeedPrompt] = {}
+        for seed in seeds:
+            if isinstance(seed, SeedPrompt) and seed.name:
+                templates[seed.name] = seed
         selected = {technique.value for technique in self._scenario_techniques}
         missing = selected - templates.keys()
         if missing:

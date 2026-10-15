@@ -11,6 +11,7 @@ from openai.types.chat.chat_completion import Choice
 from openai.types.responses import Response, ResponseOutputMessage, ResponseOutputRefusal, ResponseOutputText
 
 from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
@@ -23,8 +24,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, PromptTarget
 from pyrit.scenario import DatasetConfiguration
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
+from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import MessageTrueFalseScorer, ScorerPromptValidator, TrueFalseScorer
 
@@ -188,10 +188,14 @@ def _build_scenario(
     scorer = _RecordingObjectiveScorer()
     objectives = [f"{response_kind} objective {index}" for index, response_kind in enumerate(response_kinds)]
     seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value=objective)]) for objective in objectives]
-    atomic_attack = build_baseline_atomic_attack(
-        objective_target=target,
-        objective_scorer=scorer,
+    atomic_attack = AtomicAttack(
+        attack_technique=AttackTechnique(
+            attack=PromptSendingAttack(
+                objective_target=target, attack_scoring_config=AttackScoringConfig(objective_scorer=scorer)
+            )
+        ),
         seed_groups=seed_groups,
+        objective_scorer=scorer,
         atomic_attack_name=_ATOMIC_ATTACK_NAME,
     )
     scenario = _RefusalScenario(atomic_attacks=[atomic_attack], objective_scorer=scorer)

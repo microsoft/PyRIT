@@ -1269,6 +1269,63 @@ class TestTargetRoutes:
 
             assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
+    def test_target_routes_pass_server_upload_folder(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch.object(client.app.state, "target_upload_directory", "/srv/uploads", create=True),
+        ):
+            mock_service = MagicMock()
+            mock_service.list_target_types_async = AsyncMock(return_value=TargetTypeResponse(items=[]))
+            mock_service.create_target_async = AsyncMock(side_effect=ValueError("Set target_upload_directory"))
+            mock_get_service.return_value = mock_service
+
+            types_response = client.get("/api/targets/types")
+            create_response = client.post("/api/targets", json={"type": "HTTPXAPITarget", "params": {}})
+
+        assert types_response.status_code == status.HTTP_200_OK
+        assert create_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert mock_service.list_target_types_async.call_args.kwargs["upload_directory"] == "/srv/uploads"
+        assert mock_service.create_target_async.call_args.kwargs["upload_directory"] == "/srv/uploads"
+
+    def test_create_target_forbids_code_execution_for_non_admin(self, client: TestClient) -> None:
+        """A PermissionError from the service maps to 403, not 400 or 500."""
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_target_async = AsyncMock(
+                side_effect=PermissionError("Creating 'HuggingFaceChatTarget' ... requires administrator access.")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/targets",
+                json={"type": "HuggingFaceChatTarget", "params": {"trust_remote_code": True}},
+            )
+
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "administrator access" in response.json()["detail"]
+
+    def test_create_target_passes_admin_flag_from_request(self, client: TestClient) -> None:
+        """The route resolves administrator access and forwards it to the service."""
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets.has_admin_access", return_value=True) as mock_has_admin,
+        ):
+            mock_service = MagicMock()
+            mock_service.create_target_async = AsyncMock(
+                return_value=TargetInstance(
+                    target_registry_name="target-1",
+                    identifier=TargetIdentifier(class_name="TextTarget"),
+                    capabilities=TargetCapabilities(),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post("/api/targets", json={"type": "TextTarget", "params": {}})
+
+            assert response.status_code == status.HTTP_201_CREATED
+            mock_has_admin.assert_called_once()
+            assert mock_service.create_target_async.call_args.kwargs["is_admin"] is True
+
     def test_get_target_success(self, client: TestClient) -> None:
         """Test getting a target by ID."""
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:

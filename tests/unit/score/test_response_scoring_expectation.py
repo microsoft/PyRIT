@@ -140,6 +140,10 @@ class _ConfiguredGenericScorer(_GenericRecordingScorer):
     CONDITION_TYPE = None
 
 
+class _FirstConditionGenericScorer(_GenericRecordingScorer):
+    CONDITION_TYPE = _FirstCondition
+
+
 @pytest.mark.usefixtures("patch_central_database")
 class TestConditionCapabilities:
     @pytest.mark.parametrize(
@@ -464,8 +468,7 @@ class TestResponseScoringExpectation:
             conversation_id=str(uuid.uuid4()),
         ).to_message()
         (await sqlite_instance.add_message_to_memory_async(request=response))
-        objective, auxiliary = _MessageRecordingScorer(), _GenericRecordingScorer()
-        auxiliary.CONDITION_TYPE = _FirstCondition
+        objective, auxiliary = _MessageRecordingScorer(), _FirstConditionGenericScorer()
         expectation = ScoringExpectation(conditions=(_FirstCondition(),))
 
         with pytest.warns(DeprecationWarning, match="skip_on_error_result") if skip_on_error else nullcontext():
@@ -550,9 +553,7 @@ class TestGenericScoringGroup:
     ) -> None:
         scorable = ContentScorable(value="combined response content")
         objective = _MessageRecordingScorer() if expectation else _ConfiguredMessageScorer()
-        auxiliary = _GenericRecordingScorer() if expectation else _ConfiguredGenericScorer()
-        if expectation:
-            auxiliary.CONDITION_TYPE = _FirstCondition
+        auxiliary = _FirstConditionGenericScorer() if expectation else _ConfiguredGenericScorer()
         roots = (objective, auxiliary)
         with (
             patch.object(objective, "score_async", wraps=objective.score_async) as objective_spy,

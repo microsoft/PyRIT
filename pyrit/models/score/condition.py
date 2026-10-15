@@ -60,7 +60,7 @@ class Condition(BaseModel):
         literal_values = (
             get_args(field.annotation) if field is not None and get_origin(field.annotation) is Literal else ()
         )
-        if len(literal_values) != 1 or not isinstance(literal_values[0], str) or not literal_values[0]:
+        if field is None or len(literal_values) != 1 or not isinstance(literal_values[0], str) or not literal_values[0]:
             raise TypeError(
                 f"{cls.__name__}.condition_type must be a single non-empty string Literal with a matching default."
             )

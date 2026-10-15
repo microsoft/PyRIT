@@ -19,7 +19,7 @@ class XXEOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         # External general entity declaration pointing at a file/URL.
         "External Entity Declaration": (
             r"(?i)<!ENTITY\s+\S+\s+(?:SYSTEM|PUBLIC)\b[^>]*[\"'](?:file|https?|ftp|php|expect|jar):"

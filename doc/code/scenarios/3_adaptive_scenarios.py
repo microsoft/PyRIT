@@ -114,9 +114,10 @@ await printer.write_async(configured_result)  # type: ignore
 # %% [markdown]
 # ## Resuming a run
 #
-# Adaptive scenarios are resumable — pass `scenario_result_id=...` to the `TextAdaptive`
-# constructor and the run picks up where it left off. Resume must use the same
-# configuration as the original run.
+# Pass `scenario_result_id` to resume with the original run configuration.
+# The saved technique order is restored; the selector is not called again.
+# Resume fails if a saved technique or seed group cannot be restored.
+# Older runs without saved choices must start a new run.
 
 # %%
 resumed_scenario = TextAdaptive(

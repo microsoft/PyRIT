@@ -188,6 +188,40 @@ class HumanLabeledDataset:
 
         return self._harm_definition_obj
 
+    @staticmethod
+    def _read_leading_comment_block(csv_path: str | Path) -> tuple[list[str], int]:
+        """
+        Scan the leading "#" comment and blank lines of a CSV file.
+
+        Reading the comment text and the skip count from a single scan keeps metadata
+        parsing and the pandas ``skiprows`` count from disagreeing about where the
+        header row starts. "utf-8-sig" drops a byte-order mark, which does not start a
+        "#" line but would otherwise leave the metadata line looking like data.
+
+        Args:
+            csv_path (str | Path): The path to the CSV file.
+
+        Returns:
+            tuple[list[str], int]: The comment lines with their leading "#" removed, and
+                the number of physical lines pandas must skip to reach the header row.
+        """
+        for encoding in ("utf-8-sig", "latin-1"):
+            comments: list[str] = []
+            skiprows = 0
+            try:
+                with open(csv_path, encoding=encoding) as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if stripped.startswith("#"):
+                            comments.append(stripped[1:].strip())
+                        elif stripped:
+                            break
+                        skiprows += 1
+            except UnicodeDecodeError:
+                continue
+            return comments, skiprows
+        return [], 0
+
     @classmethod
     def from_csv(
         cls,
@@ -208,8 +242,10 @@ class HumanLabeledDataset:
         - 'objective': For OBJECTIVE datasets, the objective being evaluated
         - 'data_type': Optional data type (defaults to 'text' if not present)
 
-        You can optionally include a # comment line at the top of the CSV file to specify
-        the dataset version and harm definition path. The format is:
+        You can optionally include # comment lines at the top of the CSV file to specify
+        the dataset version and harm definition path; the metadata may appear on any of
+        them. Only leading # lines are treated as comments; a # anywhere else is
+        preserved as literal data. The format is:
         - For harm datasets: # dataset_version=x.y, harm_definition=path/to/definition.yaml, harm_definition_version=x.y
         - For objective datasets: # dataset_version=x.y
 
@@ -233,31 +269,28 @@ class HumanLabeledDataset:
             ValueError: If version is not provided and not found in the CSV file.
         """
         csv_path = verify_and_resolve_path(csv_path)
-        # Read the first line to check for version and harm_definition info
+        # One scan of the leading block yields both the metadata comments and the number
+        # of rows pandas must skip, so the two can never disagree.
+        comment_lines, skiprows = cls._read_leading_comment_block(csv_path)
         parsed_version = None
         parsed_harm_definition = None
         parsed_harm_definition_version = None
-        try:
-            with open(csv_path, encoding="utf-8") as f:
-                first_line = f.readline().strip()
-        except UnicodeDecodeError:
-            with open(csv_path, encoding="latin-1") as f:
-                first_line = f.readline().strip()
-        if first_line.startswith("#"):
+        for content in comment_lines:
             # Parse key=value pairs from the comment line
             # Format: # dataset_version=x.y, harm_definition=path/to/file.yaml, harm_definition_version=x.y
-            content = first_line[1:].strip()  # Remove leading #
+            # The first occurrence of a key wins, so a later prose comment that happens to
+            # contain "key=value" cannot override metadata declared above it.
             for part in content.split(","):
                 part = part.strip()
                 if "=" in part:
                     key, value = part.split("=", 1)
                     key = key.strip()
                     value = value.strip()
-                    if key == "dataset_version":
+                    if key == "dataset_version" and parsed_version is None:
                         parsed_version = value
-                    elif key == "harm_definition":
+                    elif key == "harm_definition" and parsed_harm_definition is None:
                         parsed_harm_definition = value
-                    elif key == "harm_definition_version":
+                    elif key == "harm_definition_version" and parsed_harm_definition_version is None:
                         parsed_harm_definition_version = value
 
         # Use provided values or fall back to parsed values
@@ -273,6 +306,8 @@ class HumanLabeledDataset:
         if not harm_definition_version and parsed_harm_definition_version:
             harm_definition_version = parsed_harm_definition_version
 
+        # Skipping the counted leading rows, rather than passing comment="#", keeps a
+        # literal "#" inside an unquoted cell from truncating the rest of the row (#2974).
         # Preserve text before pandas can infer numeric or boolean values.
         text_dtypes: dict[Hashable, type[str]] = dict.fromkeys(
             (
@@ -285,9 +320,9 @@ class HumanLabeledDataset:
         )
         # Try UTF-8 first, fall back to latin-1 for files with special characters
         try:
-            eval_df = pd.read_csv(csv_path, comment="#", encoding="utf-8", dtype=text_dtypes)
+            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="utf-8", dtype=text_dtypes)
         except UnicodeDecodeError:
-            eval_df = pd.read_csv(csv_path, comment="#", encoding="latin-1", dtype=text_dtypes)
+            eval_df = pd.read_csv(csv_path, skiprows=skiprows or None, encoding="latin-1", dtype=text_dtypes)
 
         # Drop rows where every column is NaN (e.g. trailing blank lines in the CSV)
         eval_df = eval_df.dropna(how="all")

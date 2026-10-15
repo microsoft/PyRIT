@@ -38,7 +38,7 @@ def _sent_request(target: MagicMock) -> str:
     _, send_kwargs = target.send_prompt_async.call_args
     message = send_kwargs["message"]
     assert isinstance(message, Message)
-    return message.message_pieces[-1].converted_value
+    return message.get_piece(-1).converted_value
 
 
 def test_render_prompt_only_matches_googles_instruction() -> None:

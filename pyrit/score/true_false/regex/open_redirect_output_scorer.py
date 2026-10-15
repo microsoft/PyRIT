@@ -19,7 +19,7 @@ class OpenRedirectOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     Returns True if any pattern matches.
     """
 
-    _DEFAULT_PATTERNS: dict[str, str] = {
+    _DEFAULT_PATTERNS: dict[str, str] | None = {
         # Redirect parameter pointing at a protocol-relative //host (classic open-redirect).
         "Protocol-Relative Redirect Param": (
             r"(?i)\b(?:redirect(?:_?(?:uri|url|to))?|return_?url|returnto|next|continue|dest(?:ination)?|"

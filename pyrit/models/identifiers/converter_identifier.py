@@ -35,7 +35,7 @@ class ConverterIdentifier(ComponentIdentifier):
     make them references resolved from the target and converter registries.
     """
 
-    component_type: ClassVar[ComponentType] = ComponentType.CONVERTER
+    component_type: ClassVar[ComponentType | None] = ComponentType.CONVERTER
 
     supported_input_types: Annotated[list[PromptDataType] | None, Evaluate.Include(), Param.ClassAttr()] = Field(
         default=None,
