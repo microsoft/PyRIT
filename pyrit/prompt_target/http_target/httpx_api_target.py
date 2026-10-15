@@ -6,7 +6,7 @@ import logging
 import mimetypes
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import aiofiles
 import httpx
@@ -37,6 +37,7 @@ class HTTPXAPITarget(HTTPTarget):
     """
 
     _PATH_TYPES: frozenset[str] = frozenset({"image_path", "audio_path", "video_path", "binary_path"})
+    upload_directory_parameter: ClassVar[str | None] = "allowed_upload_directory"
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,

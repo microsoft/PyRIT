@@ -118,6 +118,8 @@ class ConfigurationLoader(YamlLoadable):
         operation: Name for the current operation.
         enable_live_reinitialization: Whether administrators may replace the live
             single-process backend runtime from the GUI.
+        target_upload_directory: Folder that targets created through the backend API may
+            upload local files from. When unset, those targets cannot be created through the API.
 
     Example YAML configuration:
         memory_db_type: sqlite
@@ -163,6 +165,7 @@ class ConfigurationLoader(YamlLoadable):
     enable_live_reinitialization: bool = False
     allow_custom_initializers: bool = False
     custom_initializers_source: str | None = None
+    target_upload_directory: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
 
@@ -189,6 +192,7 @@ class ConfigurationLoader(YamlLoadable):
         self._normalize_initializers()
         self._validate_env_akv_ref()
         self._validate_custom_initializers_source()
+        self._validate_target_upload_directory()
         self._normalize_server()
 
     def _validate_allow_custom_initializers(self) -> None:
@@ -212,6 +216,16 @@ class ConfigurationLoader(YamlLoadable):
             not isinstance(self.custom_initializers_source, str) or not self.custom_initializers_source.strip()
         ):
             raise ValueError("custom_initializers_source must be a non-empty local directory or container URI.")
+
+    def _validate_target_upload_directory(self) -> None:
+        """
+        Validate the optional folder that API-created targets may upload files from.
+
+        Raises:
+            ValueError: If the folder is not a non-empty string.
+        """
+        if self.target_upload_directory is not None and not is_non_empty_string(self.target_upload_directory):
+            raise ValueError("target_upload_directory must be a non-empty local directory.")
 
     def _validate_env_akv_ref(self) -> None:
         """

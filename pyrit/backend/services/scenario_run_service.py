@@ -82,7 +82,7 @@ from pyrit.models.catalog.scenario import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
-from pyrit.scenario import Scenario
+from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import override_default_adversarial_target
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,7 @@ _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
         "num_jailbreak_attempts",
         "num_jailbreaks",
         "sub_harm",
+        "incompatible_technique_policy",
         "version",
     }
 )
@@ -370,6 +371,16 @@ class ScenarioRunService:
             for name, value in identifier.params.items()
             if name not in {"version", "techniques", "datasets"}
         }
+        saved_policy = raw_request.get(
+            "incompatible_technique_policy", stored.metadata.get("incompatible_technique_policy")
+        )
+        if saved_policy is not None:
+            try:
+                custom_params["incompatible_technique_policy"] = IncompatibleTechniquePolicy(saved_policy).value
+            except ValueError as exc:
+                raise ScenarioRunConflictError(
+                    "The saved incompatible-technique policy is invalid; resume was not started."
+                ) from exc
         # Dataset names are not copied from the identity: the saved request reproduces them, and the
         # stored-identity check on initialization rejects any difference.
         return request.model_copy(
@@ -1217,6 +1228,27 @@ class ScenarioRunService:
         declared = scenario_class.supported_parameters()
         declared_names = {parameter.name for parameter in declared}
         launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
+        policy_parameter = next(
+            (parameter for parameter in declared if parameter.name == "incompatible_technique_policy"),
+            None,
+        )
+        policy = (
+            resolve_declared_params(
+                declared=[policy_parameter],
+                raw_args={
+                    "incompatible_technique_policy": (request.scenario_params or {}).get(
+                        "incompatible_technique_policy"
+                    )
+                },
+                owner=f"Scenario '{request.scenario_name}'",
+            )["incompatible_technique_policy"]
+            if policy_parameter is not None
+            else None
+        )
+        if policy_parameter is not None:
+            launch_request["incompatible_technique_policy"] = (
+                policy or scenario_class.INCOMPATIBLE_TECHNIQUE_POLICY
+            ).value
         numeric_parameters = [
             parameter for parameter in declared if parameter.name in {"max_concurrency", "max_retries"}
         ]

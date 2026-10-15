@@ -16,6 +16,8 @@ from pyrit.executor.attack.compound.sequential_attack import (
     SequentialChildAttack,
 )
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
     AttackSeedGroup,
     BoundedDatasetSize,
     ScenarioRunSizeComponent,
@@ -37,8 +39,13 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     build_baseline_atomic_attack,
-    filter_compatible_seed_groups,
     resolve_technique_factories,
+)
+from pyrit.scenario.core.technique_requirements import (
+    IncompatibleTechniqueError,
+    check_target_compatibility,
+    filter_seed_groups,
+    prepare_seed_group,
 )
 
 if TYPE_CHECKING:
@@ -228,11 +235,27 @@ class Execute(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         name, factory = next(iter(resolve_technique_factories(context=context).items()))
-        groups = filter_compatible_seed_groups(factory=factory, seed_groups=context.seed_groups)
+        if not check_target_compatibility(
+            target=context.objective_target,
+            attack_class=factory.attack_class,
+            requirements=factory.requirements,
+            technique_name=name,
+            policy=context.incompatible_technique_policy,
+        ):
+            raise IncompatibleTechniqueError(f"Technique '{name}' is incompatible with the objective target")
+        groups = filter_seed_groups(
+            seed_groups=context.seed_groups,
+            requirements=factory.requirements.seed_group,
+            seed_technique=factory.seed_technique,
+            technique_name=name,
+            dataset_name="objective",
+            policy=context.incompatible_technique_policy,
+        )
         if not groups:
-            raise ValueError(f"Technique '{name}' has no compatible seed group")
-        factory = factory.with_extra_turns(turns=get_prepended_turn_count(groups[0].prepended_conversation))
-        if groups[0].prepended_conversation:
+            raise IncompatibleTechniqueError(f"Technique '{name}' has no compatible seed group")
+        prepared = prepare_seed_group(seed_group=groups[0], requirements=factory.requirements.seed_group)
+        factory = factory.with_extra_turns(turns=get_prepended_turn_count(prepared.seed_group.prepended_conversation))
+        if prepared.seed_group.prepended_conversation:
             factory = factory.with_prepended_history_converters(
                 enabled=self.params["apply_converters_to_prepended_history"]
             )
@@ -283,18 +306,28 @@ class Execute(Scenario):
         retries = self.params["retries_on_objective_failure"]
         if not retries:
             return technique
-        execution_group = (
-            group.with_technique(technique=technique.seed_technique) if technique.seed_technique is not None else group
+        prepared = prepare_seed_group(
+            seed_group=group, requirements=technique.requirements.seed_group, seed_technique=technique.seed_technique
         )
+        metadata: dict[str, Any] = {}
+        if prepared.adaptation is not None:
+            metadata["seed_group_adaptation"] = {
+                "source_seed_group_id": group.logical_id,
+                "technique_eval_hash": AtomicAttackEvaluationIdentifier(
+                    AtomicAttackIdentifier.build(technique_identifier=technique.get_identifier())
+                ).eval_hash,
+                "adaptation": prepared.adaptation,
+            }
         children = [
             SequentialChildAttack(
                 strategy=technique.attack,
-                seed_group=execution_group,
+                seed_group=prepared.seed_group,
                 adversarial_chat=adversarial_chat,
                 objective_scorer=self._objective_scorer,
                 memory_labels={"_objective_attempt": str(attempt + 1)},
                 technique_identifier=technique.get_identifier(),
                 identity_seed_group=group,
+                result_metadata=metadata,
             )
             for attempt in range(retries + 1)
         ]
@@ -303,5 +336,6 @@ class Execute(Scenario):
                 objective_target=context.objective_target,
                 child_attacks=children,
                 completion_policy=SequenceCompletionPolicy.FIRST_SUCCESS,
-            )
+            ),
+            requirements=technique.requirements,
         )
