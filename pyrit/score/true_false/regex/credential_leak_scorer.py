@@ -16,7 +16,7 @@ import hashlib
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.models import ComponentIdentifier, MessagePiece, Score
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
+from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin, _patterns_digest
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
     TrueFalseScoreAggregator,
@@ -217,9 +217,7 @@ class CredentialLeakScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         if not self._excluded_values and self._patterns == self._DEFAULT_PATTERNS:
             return super()._build_identifier()
         exclusion_digest = hashlib.sha256("\0".join(sorted(self._excluded_values)).encode()).hexdigest()
-        patterns_digest = hashlib.sha256(
-            "\0".join(f"{name}\0{self._patterns[name]}" for name in sorted(self._patterns)).encode()
-        ).hexdigest()
+        patterns_digest = _patterns_digest(self._patterns)
         return self._create_identifier(
             params={
                 "pattern_count": len(self._patterns),
