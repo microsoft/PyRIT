@@ -97,9 +97,10 @@ function getUnsupportedConverterOutputTypes(converterOutputDataTypes: string[], 
 export interface ChatInputAreaHandle {
   addAttachment: (attachment: MessageAttachment) => void
   setText: (text: string) => void
-  restoreDraft: (text: string, attachments: MessageAttachment[]) => void
+  restoreDraft: (text: string, attachments: MessageAttachment[], textMetadata?: Record<string, unknown>) => void
   focus: () => void
   getDraftRevision: () => number
+  getTextMetadata: () => Record<string, unknown> | undefined
 }
 
 interface ChatInputAreaProps {
@@ -161,12 +162,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const disabledOverlayRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef(input)
   const attachmentsRef = useRef(attachments)
+  const textMetadataRef = useRef<Record<string, unknown> | undefined>(undefined)
   const draftRevisionRef = useRef(0)
   const previousConversionRevisionKeyRef = useRef(conversionRevisionKey)
   const inputDisabledReasons = [...disabledReasons]
-  if (!activeTarget && disabled) {
-    inputDisabledReasons.push('No target is selected. Select a target to enter a prompt.')
-  }
   if (disabled && inputDisabledReasons.length === 0) {
     inputDisabledReasons.push('The prompt box is temporarily unavailable. Wait for the current operation to finish.')
   }
@@ -181,6 +180,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   useLayoutEffect(() => { attachmentsRef.current = attachments; onAttachmentsChange(attachments) }, [attachments, onAttachmentsChange])
 
   const changeText = (text: string): void => {
+    if (!text) textMetadataRef.current = undefined
     inputRef.current = text
     draftRevisionRef.current += 1
     setInput(text)
@@ -197,13 +197,18 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     addAttachment: (attachment: MessageAttachment): void => {
       changeAttachments([...attachmentsRef.current, withDraftIdentity({ ...attachment, draftId: undefined })])
     },
-    setText: changeText,
-    restoreDraft: (text: string, draftAttachments: MessageAttachment[]): void => {
+    setText: (text: string): void => {
+      textMetadataRef.current = undefined
       changeText(text)
+    },
+    restoreDraft: (text: string, draftAttachments: MessageAttachment[], textMetadata?: Record<string, unknown>): void => {
+      changeText(text)
+      textMetadataRef.current = textMetadata
       changeAttachments(draftAttachments.map(withDraftIdentity))
     },
     focus: (): void => { textareaRef.current?.focus() },
     getDraftRevision: (): number => draftRevisionRef.current,
+    getTextMetadata: (): Record<string, unknown> | undefined => textMetadataRef.current,
   }))
 
   const unsupportedAttachmentTypes = getUnsupportedAttachmentTypes(attachments, activeTarget)

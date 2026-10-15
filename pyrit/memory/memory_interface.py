@@ -2972,6 +2972,45 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(self._get_conversation, conversation_id=conversation_id)
 
+    def _get_attack_result_for_conversation(self, *, conversation_id: str) -> AttackResult | None:
+        """
+        Read the newest result that names this main or pruned conversation.
+
+        Returns:
+            AttackResult | None: The newest referring result, or None if none exists.
+        """
+        entries = self._query_entries(
+            AttackResultEntry,
+            conditions=or_(
+                AttackResultEntry.conversation_id == conversation_id,
+                self._get_condition_json_array_match(
+                    json_column=AttackResultEntry.pruned_conversation_ids,
+                    property_path="$",
+                    array_to_match=[conversation_id],
+                ),
+            ),
+            order_by=self._attack_results_recency_order_by(),
+            limit=1,
+        )
+        return entries[0].get_attack_result() if entries else None
+
+    async def get_attack_result_for_conversation_async(self, *, conversation_id: str) -> AttackResult | None:
+        """
+        Read the newest result that references a main or pruned conversation.
+
+        This also works for upgraded history without a conversation-to-attack link.
+        Internal conversation references are not included.
+
+        Args:
+            conversation_id (str): The conversation ID to resolve.
+
+        Returns:
+            AttackResult | None: The newest referring result, or None if none exists.
+        """
+        return await self._run_database_operation_async(
+            self._get_attack_result_for_conversation, conversation_id=conversation_id
+        )
+
     def _get_attack_result_conversations(self, *, attack_result_id: str) -> list[Conversation]:
         """
         Return the conversations owned by the attack execution that produced ``attack_result_id``.

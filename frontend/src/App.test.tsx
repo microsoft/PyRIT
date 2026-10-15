@@ -1265,7 +1265,8 @@ describe("App", () => {
       mockCreatedAttackRender = null;
       finishRender();
     });
-    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-123");
+    expect(screen.getByTestId("route-location").textContent).toBe("/attacks/ar-123/conversations/conv-123");
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-123");
     expect(screen.getByRole("button", { name: "Set Conv" })).toBeEnabled();
     expect(mockGetAttack).not.toHaveBeenCalled();
   });

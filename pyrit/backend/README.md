@@ -38,6 +38,16 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Saved conversations
+
+`GET /api/attacks/conversations/{conversation_id}` returns the saved chat history
+and its owning attack. The scanner uses this read-only lookup to open its
+conversation editor. For upgraded history without an ownership link, the lookup
+uses a verified main or pruned attack reference without changing stored rows.
+Missing IDs, standalone conversations, and internal conversations return 404.
+Saving from the scanner creates a copy through `POST /api/attacks/save-conversation`;
+it does not change the source or send to a target.
+
 ### Techniques
 
 | Endpoint | Result |

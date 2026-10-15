@@ -21,6 +21,34 @@ refreshes do not override your open/closed choice. Creating, copying, or repeati
 conversations still opens the desktop drawer. On narrow screens the drawer opens
 only when requested and closes after selecting a conversation.
 
+Each saved turn, including a system turn, has a **Copy or Branch** menu with
+visible descriptions for each action. **Copy to next message** copies only that message
+to the prompt box. **Branch conversation** and **Branch attack** copy history
+including that turn into the same attack or a new attack (a separate group of
+conversations), open the
+conversation panel, and select the copy at its full
+`/attacks/{attack_id}/conversations/{conversation_id}` URL. Copying
+within a target-free attack keeps it target-free until you send a prompt.
+When you save an edited conversation, its final user turn moves to the prompt
+box instead of saved history. Text and attachments retain their metadata,
+including text-only video remix IDs. You can enter and edit prompts without a target.
+Send stays disabled until you select a target; no target-warning box is shown.
+
+**Use in scan** opens the configuration to apply a PyRIT attack technique after
+prepending history including the selected turn. It saves a target-free copy
+and opens `/scanner/technique.execute?prepended_conversation_id={conversation_id}`.
+The scanner configuration fills **prepended_conversation_id** from this URL.
+There is no clipboard step, and opening the configuration does not launch a scan.
+Select **Add new conversation** beside that field to build simulated history,
+or **Edit conversation** to load its current history. **Add to attack** saves all
+turns to a new conversation and updates the field. It does not change the source
+history, send prompts, or launch a scan. These controls are not in Registry.
+Scan launch is disabled while a conversation loads or its editor is open.
+The **Apply converters to conversation** toggle beside **Edit conversation** is
+off by default and disabled when the conversation ID is empty. When enabled,
+request converters run on the stored history during the scan, without changing
+the source conversation. New outgoing turns are always converted.
+
 ## Dataset catalog
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's

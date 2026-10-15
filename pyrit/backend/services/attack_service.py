@@ -388,6 +388,30 @@ class AttackService:
             target_response_status=_get_latest_target_response_status(backend_messages),
         )
 
+    async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:
+        """
+        Resolve a saved chat conversation by ID without changing its history.
+
+        Returns:
+            The stored attack and conversation, or None if no saved chat owns the ID.
+        """
+        conversation = await self._memory.get_conversation_metadata_async(conversation_id=conversation_id)
+        attack_result_id = conversation.attack_result_id if conversation else None
+        if attack_result_id is None:
+            legacy_attack = await self._memory.get_attack_result_for_conversation_async(conversation_id=conversation_id)
+            if legacy_attack is None:
+                return None
+            attack_result_id = legacy_attack.attack_result_id
+        attack = await self.get_attack_async(attack_result_id=attack_result_id)
+        if attack is None or conversation_id not in attack.get_active_conversation_ids():
+            return None
+        messages = await self.get_conversation_messages_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+        if messages is None:
+            return None
+        return AddMessageResponse(attack=attack, messages=messages)
+
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:
         """
         Create a new attack.
