@@ -3038,7 +3038,12 @@ class MemoryInterface(abc.ABC):
             self._execute_get_conversation_messages,
             conversation_id=response.conversation_id,
         )
-        return conversation[response.sequence - 1]
+        preceding_messages = [msg for msg in conversation if msg.sequence < response.sequence]
+        if not preceding_messages:
+            raise ValueError(
+                f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
+            )
+        return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
         self, *, identifier_filters: Sequence[IdentifierFilter]
@@ -3712,7 +3717,7 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> Sequence[Seed[Any]]:
         """
         Retrieve a list of seed prompts based on the specified filters.
 
@@ -4045,7 +4050,7 @@ class MemoryInterface(abc.ABC):
                 for value in values
             )
 
-    async def _serialize_seed_value_async(self, prompt: Seed) -> str:
+    async def _serialize_seed_value_async(self, prompt: Seed[Any]) -> str:
         """
         Serialize the value of a seed prompt based on its data type.
 
@@ -4078,7 +4083,7 @@ class MemoryInterface(abc.ABC):
         return serialized_prompt_value or ""
 
     async def _prepare_seed_for_storage_async(
-        self, *, prompt: Seed, added_by: str | None, current_time: datetime
+        self, *, prompt: Seed[Any], added_by: str | None, current_time: datetime
     ) -> None:
         """
         Prepare a seed in place for persistence.
@@ -4115,7 +4120,7 @@ class MemoryInterface(abc.ABC):
 
         await set_seed_sha256_async(prompt)
 
-    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed], added_by: str | None = None) -> None:
+    async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
 
@@ -4139,7 +4144,7 @@ class MemoryInterface(abc.ABC):
 
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
-    def _insert_prepared_seeds(self, *, seeds: Sequence[Seed]) -> None:
+    def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
         existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
         new_condition_group_ids = self._get_new_condition_group_ids(
@@ -4158,7 +4163,7 @@ class MemoryInterface(abc.ABC):
         )
 
         entries: MutableSequence[SeedEntry] = []
-        copied_seed_ids: list[tuple[Seed, uuid.UUID]] = []
+        copied_seed_ids: list[tuple[Seed[Any], uuid.UUID]] = []
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
@@ -4186,7 +4191,7 @@ class MemoryInterface(abc.ABC):
             prompt.id = new_id
 
     @staticmethod
-    def _seed_conditions_key(seed: Seed) -> str:
+    def _seed_conditions_key(seed: Seed[Any]) -> str:
         """
         Serialize criteria canonically, preserving condition order.
 
@@ -4201,7 +4206,7 @@ class MemoryInterface(abc.ABC):
     def _get_new_condition_group_ids(
         self,
         *,
-        seeds: Sequence[Seed],
+        seeds: Sequence[Seed[Any]],
         existing_pairs: set[tuple[str, str, str]],
         existing_hashes: set[tuple[str, str]],
     ) -> set[uuid.UUID]:
@@ -4233,7 +4238,7 @@ class MemoryInterface(abc.ABC):
         return group_ids
 
     def _get_existing_seed_keys(
-        self, *, seeds: Sequence[Seed]
+        self, *, seeds: Sequence[Seed[Any]]
     ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
         """
         Look up which value hashes and canonical conditions are already stored.
@@ -4614,7 +4619,7 @@ class MemoryInterface(abc.ABC):
             raise
 
     async def replace_seeds_for_dataset_async(
-        self, *, dataset_name: str, seeds: Sequence[Seed], added_by: str | None = None
+        self, *, dataset_name: str, seeds: Sequence[Seed[Any]], added_by: str | None = None
     ) -> int:
         """
         Atomically replace all stored seeds for a dataset with a new set.
@@ -4720,7 +4725,7 @@ class MemoryInterface(abc.ABC):
             raise ValueError("At least one prompt group must be provided.")
         # Validates the prompt group IDs and sets them if possible before leveraging
         # the add_seeds_to_memory_async method.
-        all_seeds: MutableSequence[Seed] = []
+        all_seeds: MutableSequence[Seed[Any]] = []
         for prompt_group in prompt_groups:
             if not prompt_group.seeds:
                 raise ValueError("Seed group must have at least one seed.")
@@ -8467,7 +8472,7 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> Sequence[Seed[Any]]:
         """
         Use ``get_seeds_async``.
 
@@ -8516,7 +8521,7 @@ class MemoryInterface(abc.ABC):
         parameters: Sequence[str] | None = None,
         metadata: dict[str, str | int] | None = None,
         prompt_group_ids: Sequence[uuid.UUID] | None = None,
-    ) -> Sequence[Seed]:
+    ) -> Sequence[Seed[Any]]:
         """
         Retrieve a list of seed prompts based on the specified filters.
 

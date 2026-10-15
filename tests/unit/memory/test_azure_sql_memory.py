@@ -1068,3 +1068,53 @@ def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guar
     compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
     assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql
+
+
+def test_get_metadata_conditions_binds_special_character_keys(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """Metadata keys are bound literally instead of becoming JSON paths or bind names."""
+    conditions = uninitialized_memory_interface._get_metadata_conditions(
+        prompt_metadata={"a.b": "v1", "prompt-type": "v2"}
+    )
+
+    compiled = conditions[0].compile(dialect=mssql.dialect())
+    sql = str(compiled)
+    assert sql.count("FROM OPENJSON(prompt_metadata)") == 2
+    assert "ISJSON(prompt_metadata) = 1" in sql
+    assert "JSON_VALUE" not in sql
+    assert compiled.params == {
+        "md_key_0": "a.b",
+        "md_value_0": "v1",
+        "md_key_1": "prompt-type",
+        "md_value_1": "v2",
+    }
+
+
+@pytest.mark.parametrize("key", ['a"."b', 'a"b', r"a\b", "", " ", "\u00e9 "])
+@pytest.mark.parametrize("value", ["1", 1])
+def test_metadata_conditions_match_literal_keys_in_all_wrappers(
+    *, uninitialized_memory_interface: AzureSQLMemory, key: str, value: str | int
+) -> None:
+    metadata = {key: value, "selected": 1}
+    direct = uninitialized_memory_interface._get_metadata_conditions(prompt_metadata=metadata)[0]
+    seed = uninitialized_memory_interface._get_seed_metadata_conditions(metadata=metadata)
+    message = uninitialized_memory_interface._get_message_pieces_prompt_metadata_conditions(prompt_metadata=metadata)[0]
+
+    for condition in (direct, seed, message):
+        compiled = condition.compile(dialect=mssql.pyodbc.dialect(paramstyle="qmark"))
+        sql = str(compiled)
+        assert sql.count("FROM OPENJSON(prompt_metadata)") == 2
+        assert "JSON_VALUE" not in sql
+        for index in range(2):
+            assert f"[metadata_{index}].[key] = ?" in sql
+            assert f"DATALENGTH([metadata_{index}].[key]) = DATALENGTH(CAST(? AS NVARCHAR(MAX)))" in sql
+            assert f"[metadata_{index}].[type] IN (1, 2, 3)" in sql
+            assert f"[metadata_{index}].[value] = ?" in sql
+        assert compiled.params == {
+            "md_key_0": key,
+            "md_value_0": str(value),
+            "md_key_1": "selected",
+            "md_value_1": "1",
+        }
+        assert compiled.positiontup == ["md_key_0", "md_key_0", "md_value_0", "md_key_1", "md_key_1", "md_value_1"]

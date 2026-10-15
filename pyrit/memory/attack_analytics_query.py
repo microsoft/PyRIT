@@ -870,7 +870,9 @@ class AttackAnalyticsQueryCompiler:
         A retained converter list takes precedence: migration backfills can have
         fewer edges than recorded members when a child has no usable hash.
         Edges remain a fallback for identifiers without a retained converter list.
-        A recorded [] means no converters, unlike absent identifier metadata.
+        A recorded [] means no converters, unlike absent identifier metadata. A recorded
+        attack identifier with no list or edges also means no converters, because
+        identifiers omit an empty converter list.
 
         Args:
             direction (AttackAnalyticsConverterDirection): Request or response pipeline;
@@ -931,6 +933,11 @@ class AttackAnalyticsQueryCompiler:
             self._from = self._from.outerjoin(arrays, arrays.c.attack_identifier_hash == self.attack.c.hash)
             path = f"children.{direction.value}_converters"
             retained = JsonContainer(self.attack.c.identifier_json, f"$.{path}")
+            # Identifiers leave out an empty converter list, so a recorded attack with no
+            # converter list or edges ran without converters, which is not missing metadata.
+            recorded_without_converters = case(
+                (self.attack.c.hash.isnot(None), literal("[]", UnicodeText())), else_=null()
+            )
             self._converter_arrays[direction] = (
                 func.coalesce(
                     retained,
@@ -940,8 +947,9 @@ class AttackAnalyticsQueryCompiler:
                     ),
                     JsonContainer(self.root.c.atomic_attack_identifier, f"$.children.attack.{path}"),
                     arrays.c.names,
+                    recorded_without_converters,
                 ),
-                func.coalesce(retained, arrays.c.names),
+                func.coalesce(retained, arrays.c.names, recorded_without_converters),
             )
         value = self._converter_arrays[direction][0 if embedded else 1]
         return _Source(value=value, label=value, array=True, converters=True, insensitive=True)

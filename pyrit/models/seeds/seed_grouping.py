@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed_objective import SeedObjective
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.seed_group import SeedUnion
 
 
-def group_seeds_into_attack_groups(seeds: Sequence[Seed]) -> list[AttackSeedGroup]:
+def group_seeds_into_attack_groups(seeds: Sequence[Seed[Any]]) -> list[AttackSeedGroup]:
     """
     Group flat seeds by ``prompt_group_id`` into ``AttackSeedGroup`` instances.
 

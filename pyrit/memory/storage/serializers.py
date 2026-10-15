@@ -12,7 +12,7 @@ import uuid
 import wave
 from mimetypes import guess_type
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 from urllib.parse import urlparse
 
 import aiofiles
@@ -675,7 +675,7 @@ async def set_message_piece_sha256_async(message_piece: MessagePiece) -> None:
     message_piece.converted_value_sha256 = await converted_serializer.get_sha256_async()
 
 
-async def set_seed_sha256_async(seed: Seed) -> None:
+async def set_seed_sha256_async(seed: Seed[Any]) -> None:
     """
     Compute and assign the SHA256 hash value for a seed's value.
 

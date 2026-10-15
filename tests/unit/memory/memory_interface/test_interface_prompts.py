@@ -1693,6 +1693,106 @@ async def test_get_request_from_response_raises_error_for_sequence_less_than_one
         (await sqlite_instance.get_request_from_response_async(response=response_without_request))
 
 
+async def test_get_request_from_response_with_non_zero_starting_sequence(sqlite_instance: MemoryInterface):
+    """Test get_request_from_response when conversation starts at a non-zero sequence number."""
+    conversation_id = str(uuid4())
+
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="Starting question at sequence 10",
+            converted_value="Starting question at sequence 10",
+            conversation_id=conversation_id,
+            sequence=10,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Starting answer at sequence 11",
+            converted_value="Starting answer at sequence 11",
+            conversation_id=conversation_id,
+            sequence=11,
+        ),
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    response = conversation[1]
+
+    request = await sqlite_instance.get_request_from_response_async(response=response)
+
+    assert request.api_role == "user"
+    assert request.sequence == 10
+    assert request.get_value() == "Starting question at sequence 10"
+
+
+async def test_get_request_from_response_with_sequence_gaps(sqlite_instance: MemoryInterface):
+    """Test get_request_from_response when conversation contains gaps in sequence numbers."""
+    conversation_id = str(uuid4())
+
+    pieces = [
+        MessagePiece(
+            role="user",
+            original_value="First question",
+            converted_value="First question",
+            conversation_id=conversation_id,
+            sequence=0,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="First answer",
+            converted_value="First answer",
+            conversation_id=conversation_id,
+            sequence=1,
+        ),
+        MessagePiece(
+            role="user",
+            original_value="Question after gap",
+            converted_value="Question after gap",
+            conversation_id=conversation_id,
+            sequence=5,
+        ),
+        MessagePiece(
+            role="assistant",
+            original_value="Answer after gap",
+            converted_value="Answer after gap",
+            conversation_id=conversation_id,
+            sequence=8,
+        ),
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    response = conversation[3]
+
+    request = await sqlite_instance.get_request_from_response_async(response=response)
+
+    assert request.api_role == "user"
+    assert request.sequence == 5
+    assert request.get_value() == "Question after gap"
+
+
+async def test_get_request_from_response_raises_error_when_no_preceding_messages(sqlite_instance: MemoryInterface):
+    """Test get_request_from_response raises ValueError when no preceding messages exist even if sequence >= 1."""
+    conversation_id = str(uuid4())
+
+    pieces = [
+        MessagePiece(
+            role="assistant",
+            original_value="Orphaned response",
+            converted_value="Orphaned response",
+            conversation_id=conversation_id,
+            sequence=5,
+        ),
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+
+    conversation = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    response = conversation[0]
+
+    with pytest.raises(ValueError, match="does not have a preceding request"):
+        await sqlite_instance.get_request_from_response_async(response=response)
+
+
 async def test_get_message_pieces_by_attack_identifier_filter(sqlite_instance: MemoryInterface):
     attack1 = PromptSendingAttack(objective_target=get_mock_target())
 

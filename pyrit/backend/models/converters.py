@@ -11,7 +11,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr
+from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_ITEMS,
+    REGISTRY_INSTANCE_NAME_PATTERN,
+    IdentifierStr,
+)
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
 
 __all__ = [
@@ -119,8 +124,18 @@ class ConverterPreviewRequest(BaseModel):
     original_value: str = Field(..., description="Text to convert")
     original_value_data_type: PromptDataType = Field(default="text", description="Data type of original value")
     converter_ids: list[IdentifierStr] = Field(..., max_length=MAX_ITEMS, description="Converter instance IDs to apply")
-    start_token: str = Field(default="⟪", min_length=1, description="Opening marker for selected text regions")
-    end_token: str = Field(default="⟫", min_length=1, description="Closing marker for selected text regions")
+    start_token: str = Field(
+        default="⟪",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Opening marker for selected text regions",
+    )
+    end_token: str = Field(
+        default="⟫",
+        min_length=1,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Closing marker for selected text regions",
+    )
 
 
 class ConverterPreviewResponse(BaseModel):

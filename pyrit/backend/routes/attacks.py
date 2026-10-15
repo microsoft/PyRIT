@@ -33,6 +33,7 @@ from pyrit.backend.models.attacks import (
     UpdateMainConversationResponse,
 )
 from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
     MAX_ITEMS,
     CursorStr,
     IdentifierStr,
@@ -355,7 +356,9 @@ async def remove_human_score(attack_result_id: IdentifierStr) -> AttackSummary: 
 )
 async def get_conversation_messages(  # pyrit-async-suffix-exempt
     attack_result_id: IdentifierStr,
-    conversation_id: IdentifierStr = Query(..., description="The conversation_id whose messages to return"),
+    conversation_id: str = Query(
+        ..., max_length=MAX_IDENTIFIER_LENGTH, description="The conversation_id whose messages to return"
+    ),
 ) -> ConversationMessagesResponse:
     """
     Get all messages for a conversation belonging to an attack.

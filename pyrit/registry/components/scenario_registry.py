@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from pyrit.models import Parameter
     from pyrit.models.identifiers.component_identifier import ComponentIdentifier
     from pyrit.scenario.core import Scenario
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,11 @@ class ScenarioMetadata(RegistryMetadata):
 
     # All available technique names for this scenario.
     all_techniques: tuple[str, ...] = field(kw_only=True)
+
+    # The scenario's technique catalog itself, so a caller can resolve a technique token
+    # without instantiating the scenario. The name tuples above are a projection of it
+    # and cannot expand an aggregate selector or produce the member a run needs.
+    technique_class: type[ScenarioTechnique] = field(kw_only=True)
 
     # Descriptions and tags for each available concrete technique.
     technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
@@ -239,6 +245,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             default_techniques=default_techniques,
             description_markdown=description_markdown,
             all_techniques=all_techniques,
+            technique_class=technique_class,
             technique_summaries=technique_summaries,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
