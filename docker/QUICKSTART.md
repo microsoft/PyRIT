@@ -52,6 +52,11 @@ GUI mode (port 8000):
 python docker/run_pyrit_docker.py gui
 ```
 
+The GUI helper explicitly selects local unauthenticated mode and publishes port
+8000 only on `127.0.0.1`. It is available from the Docker host, but not through
+the host's LAN address. The API keys in `~/.pyrit/.env` authenticate PyRIT to
+configured targets; they do not authenticate incoming GUI users.
+
 The run script automatically mounts these files from `~/.pyrit/`:
 - `.env` — API keys (required)
 - `.env.local` — Additional environment overrides (optional)
@@ -89,6 +94,11 @@ docker compose --profile jupyter up --build
 # GUI mode
 docker compose --profile gui up --build
 ```
+
+The shipped GUI Compose profile likewise combines `PYRIT_AUTH_MODE=local` with
+the loopback-only `127.0.0.1:8000:8000` publication. Shared deployments must
+instead select `PYRIT_AUTH_MODE=entra` and provide complete `ENTRA_*`
+configuration.
 
 Both profiles publish ports on `127.0.0.1` only by default. Open the GUI at
 `http://127.0.0.1:8000` or Jupyter at `http://127.0.0.1:8888` on the Docker host.

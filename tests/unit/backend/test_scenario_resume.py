@@ -6,7 +6,7 @@
 import asyncio
 import pathlib
 import threading
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -629,6 +629,18 @@ async def test_resume_without_launch_metadata_is_rejected_without_initialization
     assert target.prompt_sent == []
 
 
+async def _wait_for_run_completion_async(*, service: ScenarioRunService, scenario_result_id: str) -> None:
+    active = service._active_tasks.get(scenario_result_id)
+    if active is not None:
+        assert active.task is not None
+        # Task completion includes persistence and terminal scheduler handoff.
+        await active.task
+    snapshot = service.get_queue_snapshot()
+    assert snapshot.active is None
+    assert snapshot.queued == []
+
+
+@pytest.mark.timeout(60)
 @pytest.mark.parametrize("failure", ["initialization", "execution"])
 async def test_resume_failure_preserves_saved_results_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget], failure: str
@@ -645,7 +657,7 @@ async def test_resume_failure_preserves_saved_results_async(
     else:
         with patch.object(target, "_send_prompt_to_target_async", side_effect=RuntimeError("Still unavailable")):
             await service.resume_run_async(scenario_result_id=run_id)
-            await _wait_for_idle_async(service)
+            await _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
     after = (await CentralMemory.get_memory_instance().get_scenario_results_async(scenario_result_ids=[run_id]))[0]
     results = await CentralMemory.get_memory_instance().get_attack_results_async(scenario_result_id=run_id)
     assert after.scenario_run_state == ScenarioRunState.FAILED
@@ -655,9 +667,53 @@ async def test_resume_failure_preserves_saved_results_async(
     assert service.get_queue_snapshot().queued == []
 
     response = await service.resume_run_async(scenario_result_id=run_id)
-    await _wait_for_idle_async(service)
+    await _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
     assert response.scenario_result_id == run_id
     assert target.prompt_sent == [_SECOND_OBJECTIVE]
+
+
+@pytest.mark.timeout(60)
+async def test_resume_completion_waits_for_terminal_handoff_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    stored = await _create_failed_run_async(target=target, legacy=False)
+    run_id = str(stored.id)
+    target.prompt_sent.clear()
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_handoff = service._complete_handoff_async
+    original_wait_for = asyncio.wait_for
+
+    async def handoff_async(*, scenario_result_id: str) -> None:
+        entered.set()
+        await release.wait()
+        await original_handoff(scenario_result_id=scenario_result_id)
+
+    async def expire_poll_async(awaitable: Awaitable[None], *, timeout: float) -> None:
+        # Expire the old polling wait without adding a real delay.
+        await original_wait_for(awaitable, timeout=0)
+
+    with patch.object(service, "_complete_handoff_async", side_effect=handoff_async):
+        await service.resume_run_async(scenario_result_id=run_id)
+        await entered.wait()
+        active = service._active_tasks[run_id]
+        assert active.task is not None
+        with patch.object(asyncio, "wait_for", side_effect=expire_poll_async) as polling_wait:
+            observer = asyncio.create_task(_wait_for_run_completion_async(service=service, scenario_result_id=run_id))
+            try:
+                await asyncio.sleep(0)
+                assert not observer.done()
+                assert not active.task.done()
+                assert active.task.cancelling() == 0
+                assert service.get_queue_snapshot().active is not None
+                assert target.prompt_sent == [_SECOND_OBJECTIVE]
+            finally:
+                release.set()
+                await observer
+            polling_wait.assert_not_awaited()
+        assert active.task.done()
+        after = await CentralMemory.get_memory_instance().get_scenario_result_header_async(scenario_result_id=run_id)
+        assert after is not None and after.scenario_run_state == ScenarioRunState.COMPLETED
 
 
 @pytest.mark.parametrize(
