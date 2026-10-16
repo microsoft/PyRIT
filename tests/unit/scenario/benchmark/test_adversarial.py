@@ -58,10 +58,12 @@ from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
+    AttackResultSelection,
     AttackSeedGroup,
     ComponentIdentifier,
     MessagePiece,
     ObjectiveTargetEvaluationIdentifier,
+    Operation,
     ScenarioIdentifier,
     ScenarioResult,
     ScenarioRunPlanGroupKind,
@@ -1978,6 +1980,22 @@ class TestCollectCachedCompletionPairsWithRealMemory:
 @pytest.mark.usefixtures("patch_central_database")
 class TestRunAsyncCachePersistence:
     """Tests that cache persistence happens before normal scenario execution."""
+
+    @pytest.mark.parametrize("assigned", [False, True])
+    async def test_cached_copy_uses_current_operation_not_source_async(self, sqlite_instance, assigned: bool) -> None:
+        old = await sqlite_instance.add_operation_async(Operation(name="Prior"))
+        current = await sqlite_instance.add_operation_async(Operation(name="Current"))
+        original = AttackResult(conversation_id=str(uuid.uuid4()), objective="cached", operation_id=old.id)
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[original])
+        bench = AdversarialBenchmark(objective_scorer=MagicMock(spec=TrueFalseScorer))
+        bench._scenario_result_id = str(uuid.uuid4())
+        bench._operation_id = current.id if assigned else None
+        bench._precomputed_cached_results = {"attack_a": [original]}
+        await bench._persist_precomputed_cached_results_async()
+        rows = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        copied = next(row for row in rows if row.attack_result_id != original.attack_result_id)
+        assert copied.operation_id == (current.id if assigned else None)
+        assert next(row for row in rows if row.attack_result_id == original.attack_result_id).operation_id == old.id
 
     async def test_precomputed_results_are_persisted_before_base_run(self):
         bench = AdversarialBenchmark(

@@ -329,6 +329,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 attribution=attribution,
                 expectation=context.params.expectation,
                 child_result_ids=child_ids,
+                operation_id=context.params.operation_id,
             )
             results.append(result)
             child_ids.append(result.attack_result_id)
@@ -369,6 +370,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
         child_result_ids: list[str],
         attribution: AttackResultAttribution | None = None,
         expectation: ScoringExpectation | None = None,
+        operation_id: uuid.UUID | None = None,
     ) -> AttackResult:
         """
         Execute one child attack via ``AttackExecutor`` and return its result.
@@ -389,6 +391,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
                 parent linkage.
             expectation (ScoringExpectation | None): Explicit scoring input forwarded unchanged.
                 Omission leaves the child's seed preparation and objective fallback in control.
+            operation_id (uuid.UUID | None): Run-owned saved Operation reference.
             child_result_ids (list[str]): This execution's ordered child links. A confirmed
                 persisted result from a failed dispatch is appended before its exception is re-raised.
 
@@ -416,6 +419,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             adversarial_chat=child_attack.adversarial_chat,
             objective_scorer=child_attack.objective_scorer,
             memory_labels=memory_labels,
+            operation_id=operation_id,
             return_partial_on_failure=True,
             attribution=attribution,
             **executor_kwargs,

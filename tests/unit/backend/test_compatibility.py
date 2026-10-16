@@ -338,6 +338,7 @@ def test_version_is_neutral_but_authenticated(
         "display",
         "database_info",
         "default_labels",
+        "default_operation",
     }
     assert "compatibility_id" in VersionResponse.model_json_schema()["required"]
 

@@ -14,6 +14,9 @@ param vnetAddressPrefix string = '10.0.0.0/16'
 @description('Dedicated ACA infrastructure subnet prefix')
 param infrastructureSubnetAddressPrefix string = '10.0.1.0/26'
 
+@description('Existing dedicated SQL private endpoint subnet prefix. Empty before the administrator cutover.')
+param sqlSubnetAddressPrefix string = ''
+
 @description('Existing Azure Policy IP tags to preserve when adopting a reserved egress public IP')
 param egressPublicIpTags array = []
 
@@ -87,6 +90,7 @@ module acaNatNetwork './modules/aca_nat_network.bicep' = {
     tags: tags
     vnetAddressPrefix: vnetAddressPrefix
     infrastructureSubnetAddressPrefix: infrastructureSubnetAddressPrefix
+    sqlSubnetAddressPrefix: sqlSubnetAddressPrefix
     egressPublicIpTags: egressPublicIpTags
     protectEgressPublicIp: protectEgressPublicIp
   }

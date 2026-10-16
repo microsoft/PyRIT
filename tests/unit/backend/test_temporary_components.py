@@ -37,7 +37,7 @@ from pyrit.common.apply_defaults import reset_default_values, set_default_value
 from pyrit.common.brick_contract import forward_init_parameters
 from pyrit.converter import CaesarConverter, Converter, ConverterResult, LLMGenericTextConverter, TranslationConverter
 from pyrit.memory import SQLiteMemory
-from pyrit.models import JSONValue, PromptDataType
+from pyrit.models import JSONValue, Operation, PromptDataType
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
@@ -539,7 +539,10 @@ class TestTemporaryComponents:
         finally:
             await source.cleanup_target_async()
 
-    async def test_repeated_send_owns_each_temperature_target_async(self, sqlite_instance: SQLiteMemory) -> None:
+    @pytest.mark.parametrize("operation_by_id", [False, True])
+    async def test_repeated_send_owns_each_temperature_target_async(
+        self, sqlite_instance: SQLiteMemory, operation_by_id: bool
+    ) -> None:
         source = source_target()
         TargetRegistry.get_registry_singleton().instances.register(source, name="source")
         built = await TargetService().build_from_source_async(
@@ -554,11 +557,20 @@ class TestTemporaryComponents:
             effective_hash=built.get_identifier().hash,
         )
         await built.cleanup_target_async()
+        operation = await sqlite_instance.add_operation_async(Operation(name="Temporary target operation"))
         sender = MessageSendService(scheduler=ManualSendScheduler())
         try:
             created = await AttackService(message_send_service=sender).create_attack_async(
-                request=CreateAttackRequest(target_registry_name="source", target_binding=binding)
+                request=CreateAttackRequest(
+                    target_registry_name="source",
+                    target_binding=binding,
+                    operation_id=operation.id if operation_by_id else None,
+                    operation=None if operation_by_id else operation.name,
+                )
             )
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+            assert saved.operation_id == operation.id
+            assert TargetBinding.from_metadata(saved.metadata) == binding
             with patch.object(sender, "_execute_message_async", new_callable=AsyncMock) as execute:
                 status = await sender.submit_async(
                     attack_result_id=created.attack_result_id,

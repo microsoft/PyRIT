@@ -717,8 +717,9 @@ test.describe("Target Config ↔ Chat Navigation", () => {
 
     await page.goto("/");
     await page.getByTitle("Technique.execute").click();
-    await expect(page.getByRole("textbox")).toBeEnabled();
-    await page.getByRole("textbox").fill("Draft without a target");
+    const draft = page.getByRole("textbox", { name: "Type prompt here", exact: true });
+    await expect(draft).toBeEnabled();
+    await draft.fill("Draft without a target");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     // Go to targets, set a target
@@ -728,7 +729,7 @@ test.describe("Target Config ↔ Chat Navigation", () => {
 
     // Return to chat — send should be enabled when there's text
     await page.getByTitle("Technique.execute").click();
-    const input = page.getByRole("textbox");
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await input.fill("Hello");
     await expect(page.getByRole("button", { name: /send/i })).toBeEnabled();
   });

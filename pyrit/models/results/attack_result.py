@@ -70,7 +70,8 @@ def normalize_legacy_attack_attribution(
                 raise ValueError(f"{field} conflicts with legacy labels.{field}: {current!r} != {legacy_value!r}")
             print_deprecation_message(
                 old_item=f"labels.{field}",
-                new_item=field,
+                # The dedicated operation name is itself deprecated in favor of a saved Operation's ID.
+                new_item="operation_id" if field == "operation" else field,
                 removed_in="1.4.0",
             )
             resolved[field] = legacy_value
@@ -176,7 +177,9 @@ class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     # First-class attribution fields. These are deliberately separate from
     # arbitrary labels so they can be indexed and queried efficiently.
     operator: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    # TODO(PyRIT 1.4): Remove this name with Operation name attribution; use operation_id.
     operation: str | None = Field(default=None, max_length=ATTRIBUTION_VALUE_MAX_LENGTH)
+    operation_id: uuid.UUID | None = None
 
     # labels associated with this attack result
     labels: dict[str, str] = Field(default_factory=dict)

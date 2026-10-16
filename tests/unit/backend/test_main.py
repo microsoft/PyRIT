@@ -305,10 +305,8 @@ class TestLifespan:
         shared_memory.get_scenario_run_state_page_async.assert_not_awaited()
         shared_memory.update_scenario_run_state_async.assert_not_awaited()
 
-    async def test_lifespan_populates_default_labels_from_operator_and_operation(
-        self, mock_scenario_run_lifecycle
-    ) -> None:
-        """Test that operator and operation are exposed as default_labels."""
+    async def test_lifespan_exposes_default_operator_and_operation_proposal(self, mock_scenario_run_lifecycle) -> None:
+        """Test that the operator is a default label and the operation is a separate, uncreated proposal."""
         fake_config = ConfigurationLoader(operator="alice", operation="op-42")
         with (
             patch.object(ConfigurationLoader, "load_with_overrides", return_value=fake_config),
@@ -318,7 +316,8 @@ class TestLifespan:
             async with lifespan(app):
                 pass
 
-            assert app.state.default_labels == {"operator": "alice", "operation": "op-42"}
+            assert app.state.default_labels == {"operator": "alice"}
+            assert app.state.default_operation == "op-42"
 
     async def test_lifespan_exposes_configured_initializers(self, mock_scenario_run_lifecycle) -> None:
         """Test that the active config initializer sequence is exposed to API routes."""

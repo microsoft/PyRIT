@@ -207,6 +207,45 @@ async def test_success_preflights_then_replaces_idle_runtime(runtime: RuntimeLif
     assert runtime.version == (await runtime.source.read_with_version_async())[1]
 
 
+async def test_startup_publishes_default_operation_without_creating_it_async(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("memory_db_type: in_memory\noperation: ' op_trash_panda '\n", encoding="utf-8")
+    source = ConfigurationFileService(config_file_value=str(config_path))
+    app = FastAPI()
+    lifecycle = RuntimeLifecycle(app=app, source=source)
+    config = ConfigurationLoader(
+        memory_db_type="in_memory", env_files=[], operator="roakey", operation=" op_trash_panda "
+    )
+    memory = MagicMock(spec=MemoryInterface)
+
+    with (
+        patch.object(lifecycle, "_load_async", AsyncMock(return_value=config)),
+        patch.object(lifecycle, "_management_async", AsyncMock()),
+        patch.object(config, "initialize_pyrit_async", AsyncMock()),
+        patch.object(lifecycle_module, "get_scenario_run_service", return_value=MagicMock(spec=ScenarioRunService)),
+        patch.object(CentralMemory, "_memory_instance", memory),
+    ):
+        await lifecycle.startup_async()
+
+    assert lifecycle.state == "ready"
+    assert app.state.default_operation == "op_trash_panda"
+    assert app.state.default_labels == {"operator": "roakey"}
+    memory.add_operation_async.assert_not_called()
+
+
+async def test_live_apply_publishes_default_operation_without_creating_it_async(runtime: RuntimeLifecycle) -> None:
+    config = await runtime._load_async()
+    config.operation = "configured_operation"
+    memory = MagicMock(spec=MemoryInterface)
+
+    with patch.object(CentralMemory, "_memory_instance", memory):
+        await apply_async(runtime)
+
+    assert runtime.app.state.default_operation == "configured_operation"
+    assert "operation" not in runtime.app.state.default_labels
+    memory.add_operation_async.assert_not_called()
+
+
 async def test_saved_opt_in_is_required(runtime: RuntimeLifecycle) -> None:
     config = await runtime._load_async()
     config.enable_live_reinitialization = False

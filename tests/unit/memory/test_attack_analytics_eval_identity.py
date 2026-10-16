@@ -43,6 +43,7 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_target import GandalfLevel, GandalfTarget, HTTPTarget
+from unit.mocks import add_legacy_attack_results_async
 
 if TYPE_CHECKING:
     from pyrit.memory import SQLiteMemory
@@ -195,7 +196,7 @@ async def test_evaluation_groups_filters_facets_and_pages_share_result_identity(
         _result(index=2, target=second, outcome=AttackOutcome.FAILURE, operation="day"),
         _result(index=3, target=different, outcome=AttackOutcome.UNDETERMINED, operation="night"),
     ]
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=results)
 
     shared = ObjectiveTargetAnalyticsIdentityV1.hash(identifier=first)
     distinct = ObjectiveTargetAnalyticsIdentityV1.hash(identifier=different)
@@ -263,7 +264,7 @@ async def test_replacing_atomic_identifier_updates_evaluation_groups_and_graph(
         update={"conversation_id": "updated-conversation"}
     )
     other_result = _result(index=2, target=equivalent, outcome=AttackOutcome.FAILURE, operation="day")
-    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[changed_result, other_result])
+    await add_legacy_attack_results_async(sqlite_instance, attack_results=[changed_result, other_result])
 
     replacement = AtomicAttackIdentifier.build(
         attack_identifier=AttackIdentifier(
@@ -374,8 +375,9 @@ async def test_replacing_atomic_identifier_updates_evaluation_groups_and_graph(
 
 async def test_evaluation_filter_uses_a_bounded_indexed_result_key(sqlite_instance: SQLiteMemory) -> None:
     target = _target(deployment="deploy-a", endpoint="https://one.example")
-    await sqlite_instance.add_attack_results_to_memory_async(
-        attack_results=[_result(index=1, target=target, outcome=AttackOutcome.SUCCESS, operation="night")]
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[_result(index=1, target=target, outcome=AttackOutcome.SUCCESS, operation="night")],
     )
     eval_hash = ObjectiveTargetAnalyticsIdentityV1.hash(identifier=target)
     axis = AttackAnalyticsDimension(name="objective_target")
