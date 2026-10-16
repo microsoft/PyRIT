@@ -41,7 +41,7 @@ class TestAzureSpeechAudioToTextConverter:
         import azure.cognitiveservices.speech as speechsdk  # type: ignore[ty:unresolved-import]
 
         # Create a mock event
-        mock_event = MagicMock()
+        mock_event = MagicMock(spec=speechsdk.SpeechRecognitionCanceledEventArgs)
         mock_event.result.reason = speechsdk.ResultReason.Canceled
         mock_event.result.cancellation_details.reason = speechsdk.CancellationReason.EndOfStream
         mock_event.result.cancellation_details.error_details = "Mock error details"

@@ -258,9 +258,8 @@ class AzureSpeechAudioToTextConverter(Converter):
         logger.info(f"CLOSING on {evt}")
         recognizer.stop_continuous_recognition_async()
         self.done = True
-        result = getattr(evt, "result", None)
-        if result is not None and result.reason == speechsdk.ResultReason.Canceled:
-            cancellation_details = result.cancellation_details
+        if isinstance(evt, speechsdk.SpeechRecognitionCanceledEventArgs):
+            cancellation_details = evt.result.cancellation_details
             logger.info(f"Speech recognition canceled: {cancellation_details.reason}")
             if cancellation_details.reason == speechsdk.CancellationReason.Error:
                 logger.error(f"Error details: {cancellation_details.error_details}")
