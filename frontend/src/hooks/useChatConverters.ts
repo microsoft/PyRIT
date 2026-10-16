@@ -93,6 +93,7 @@ function changePipeline(state: ConversionState, pieceType: string, stages: Conve
     prefixLength < previous.length && prefixLength < stages.length
     && previous[prefixLength].id === stages[prefixLength].id
     && previous[prefixLength].converterId === stages[prefixLength].converterId
+    && previous[prefixLength].temporary === stages[prefixLength].temporary
   ) prefixLength++
   if (prefixLength === previous.length && prefixLength === stages.length) return state
 
@@ -186,6 +187,9 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
   if (state.scopeKey !== scopeKey) {
     setState({
       ...reconcileInputs(state, inputs), scopeKey, generation, stageResults: {}, errors: {}, applied: {},
+      pipelines: Object.fromEntries(Object.entries(state.pipelines).map(([pieceType, stages]) => [
+        pieceType, stages.map((stage: ConverterPipelineStage) => ({ id: stage.id, converterId: stage.converterId })),
+      ])),
       workingInputs: {}, runId: state.runId + 1, isConverting: false,
       runOwners: {}, activeRuns: [],
     })
@@ -198,6 +202,9 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     setState({
       ...next,
       generation,
+      pipelines: Object.fromEntries(Object.entries(next.pipelines).map(([pieceType, stages]) => [
+        pieceType, stages.map((stage: ConverterPipelineStage) => ({ id: stage.id, converterId: stage.converterId })),
+      ])),
       stageResults: {},
       errors: {},
       applied: {},
@@ -232,6 +239,21 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
         ))
       }
       return next
+    })
+  }, [])
+
+  const discardTemporarySettings = useCallback((): void => {
+    setState((current: ConversionState) => {
+      let next = current
+      for (const [pieceType, stages] of Object.entries(current.pipelines)) {
+        next = changePipeline(next, pieceType, stages.map((stage: ConverterPipelineStage) => ({
+          id: stage.id, converterId: stage.converterId,
+        })))
+      }
+      return {
+        ...next, applied: current.applied, runId: current.runId + 1, isConverting: false,
+        runOwners: {}, activeRuns: [],
+      }
     })
   }, [])
 
@@ -323,6 +345,9 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
           original_value: requestValue,
           original_value_data_type: dataType,
           converter_ids: remaining.map((stage: ConverterPipelineStage) => stage.converterId),
+          ...(remaining.some((stage: ConverterPipelineStage) => stage.temporary) ? {
+            converter_specs: remaining.map((stage: ConverterPipelineStage) => stage.temporary ?? null),
+          } : {}),
         })
         if (response.steps.length !== remaining.length || response.steps.some(
           (step: ConverterPreviewStep, index: number) => step.converter_id !== remaining[index].converterId,
@@ -428,6 +453,7 @@ export function usePieceConverters(inputs: ConverterInputPiece[], scopeKey?: str
     addConverter,
     setPipeline,
     retainConverters,
+    discardTemporarySettings,
     convert: (pieceType: string) => runConversion({ pieceType, includeIncomplete: true }),
     convertRemaining: (pieceId: string, stageId: string) => runConversion({ pieceId, afterStageId: stageId }),
     editInput,

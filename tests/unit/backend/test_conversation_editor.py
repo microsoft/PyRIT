@@ -42,9 +42,10 @@ from pyrit.models import (
     Score,
 )
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.component_spec import TargetBinding
 from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.models.target.target_capabilities import TargetCapabilities
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import OpenAIResponseTarget, TargetConfiguration
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from unit.backend.mocks import _settle_send_async, message_send_lifecycle_async
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, run_memory_session_async
@@ -982,6 +983,62 @@ class TestConversationEditor:
             with pytest.raises(AttackStateConflictError):
                 await service.save_conversation_async(request=request)
         assert not list(Path(sqlite_instance.results_path).rglob("*.txt"))
+        assert (await sqlite_instance.get_attack_results_async()) == []
+
+    @pytest.mark.parametrize("rollback_fails", [False, True])
+    async def test_media_rollback_preserves_save_error_when_target_close_fails_async(
+        self, sqlite_instance: SQLiteMemory, caplog: pytest.LogCaptureFixture, rollback_fails: bool
+    ) -> None:
+        request = draft()
+        request.target_binding = TargetBinding(
+            source_name="source", source_hash="source-hash", temperature=0.8, effective_hash="private-hash"
+        )
+        request.messages[0].pieces = [
+            ConversationPieceRequest(
+                data_type="binary_path",
+                original_value=base64.b64encode(b"draft media").decode(),
+                mime_type="text/plain",
+            )
+        ]
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(
+                    supports_editable_history=True,
+                    input_modalities=frozenset({frozenset({"binary_path"})}),
+                )
+            )
+        )
+        service = AttackService()
+        failure = AttackStateConflictError("primary save conflict")
+        staged: list[Path] = []
+
+        async def fail_save_async(**kwargs: Any) -> None:
+            staged.extend(Path(sqlite_instance.results_path).rglob("*.txt"))
+            assert staged
+            raise failure
+
+        async def rollback_async(paths: list[str]) -> None:
+            await AttackService._cleanup_saved_media_async(service, paths)
+            if rollback_fails:
+                raise RuntimeError("rollback failure")
+
+        with (
+            patch.object(service, "_get_save_target_async", return_value=target.get_identifier()),
+            patch.object(service, "_validate_editor_target_async", return_value=target),
+            patch.object(
+                target, "cleanup_target_async", new=AsyncMock(side_effect=RuntimeError("close failure")), create=True
+            ),
+            patch.object(sqlite_instance, "add_conversation_branches_to_attack_async", side_effect=fail_save_async),
+            patch.object(service, "_cleanup_saved_media_async", side_effect=rollback_async) as rollback,
+        ):
+            with pytest.raises(AttackStateConflictError) as caught:
+                await service.save_conversation_async(request=request)
+            assert caught.value is failure
+            rollback.assert_awaited_once()
+        assert all(not path.exists() for path in staged)
+        assert "close failure" in caplog.text
+        if rollback_fails:
+            assert "rollback failure" in caplog.text
         assert (await sqlite_instance.get_attack_results_async()) == []
 
     async def test_message_only_save_keeps_current_objective_async(self, *, sqlite_instance: SQLiteMemory) -> None:

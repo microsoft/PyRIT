@@ -44,6 +44,9 @@ class TargetInstance(BaseModel):
     """
 
     target_registry_name: str = Field(..., description="Target registry key (e.g., 'azure_openai_chat')")
+    reconstructable: bool = False
+    reconstruction_error: str | None = None
+    supports_temperature_override: bool = False
     identifier: TargetIdentifier = Field(
         ...,
         description=(

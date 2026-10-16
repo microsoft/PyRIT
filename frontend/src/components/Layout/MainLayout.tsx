@@ -137,9 +137,9 @@ export default function MainLayout({
               <div className={styles.labelsControls}>
                 <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly} />
               </div>
-              <div ref={toolbarRef} className={styles.toolbarSlot} />
             </div>
           </section>
+          <div ref={toolbarRef} className={styles.toolbarSlot} />
           {children}
         </main>
       </div>
