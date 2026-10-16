@@ -53,6 +53,7 @@ from pyrit.memory.analytics_sql import (
     JsonObjectAggregate,
     JsonScalar,
     UnicodeLower,
+    UnicodeStrip,
 )
 from pyrit.memory.memory_models import (
     AtomicAttackIdentifierEntry,
@@ -762,8 +763,8 @@ class AttackAnalyticsQueryCompiler:
             # Model-less targets record a blank model name; fall through to the class name so
             # the SDK's short-hash suffix makes the label readable without endpoint details.
             label = func.coalesce(
-                func.nullif(func.trim(self.target.c.model_name), ""),
-                func.nullif(func.trim(self._target_property(path="params.model_name", embedded=embedded)), ""),
+                func.nullif(UnicodeStrip(self.target.c.model_name), ""),
+                func.nullif(UnicodeStrip(self._target_property(path="params.model_name", embedded=embedded)), ""),
                 self.target.c.class_name,
                 self._target_property(path="class_name", embedded=embedded),
                 value,

@@ -11,10 +11,11 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.schema import CreateIndex
 
+from pyrit.analytics import AttackResultAnalytics
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.attack_analytics import AttackAnalyticsReader
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
@@ -184,6 +185,52 @@ async def test_model_less_targets_group_filter_facet_and_label_apart_async(sqlit
         hr_key: "HTTPTarget",
         model_key: "deploy-a",
     }
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("model_name", ["", "   ", "\t", "\r\n", "\xa0", "\u2003", " \t\xa0"])
+@pytest.mark.parametrize("embedded", [False, True], ids=["normalized", "embedded"])
+async def test_blank_target_labels_keep_distinct_sdk_identities_async(
+    sqlite_instance: SQLiteMemory, model_name: str, embedded: bool
+) -> None:
+    targets = [
+        HTTPTarget(
+            http_request=f"POST /chat HTTP/1.1\nHost: {host}.example\n\n{{PROMPT}}",
+            model_name=model_name,
+        ).get_identifier()
+        for host in ("bank", "hr")
+    ]
+    results = [
+        _result(
+            index=index,
+            target=TargetIdentifier.from_component_identifier(target),
+            outcome=AttackOutcome.SUCCESS,
+            operation="day",
+        )
+        for index, target in enumerate(targets, 1)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=results)
+    if embedded:
+        async with await sqlite_instance.get_session_async() as session:
+            await session.execute(update(TargetIdentifierEntry).values(model_name=None, identifier_json=None))
+            await session.commit()
+    axis = AttackAnalyticsDimension(name="objective_target")
+    expected = {target.hash: f"HTTPTarget ({target.hash[-8:]})" for target in targets}
+    async with AttackResultAnalytics(memory=sqlite_instance) as analytics:
+        report = await analytics.query_async(query=AttackAnalyticsQuery(group_by=axis))
+        facets = await analytics.facets_async(query=AttackAnalyticsFacetQuery(dimension=axis, search="HTTPTarget"))
+        matrix = await analytics.query_async(
+            query=AttackAnalyticsQuery(group_by=axis, compare_by=AttackAnalyticsDimension(name="operation"))
+        )
+        assert {group.key.value: group.label for group in report.groups} == expected
+        assert {item.key.value: item.label for item in facets.items} == expected
+        assert {row.key.value: row.label for row in matrix.rows} == expected
+        for group in report.groups:
+            page = await analytics.results_async(
+                query=AttackAnalyticsResultsQuery(filters=AttackAnalyticsFilters(dimensions=group.drilldown_filters))
+            )
+            assert len(page.items) == group.statistics.total_results == 1
+            assert page.items[0].target_identifier_hash == group.key.value
 
 
 async def test_evaluation_groups_filters_facets_and_pages_share_result_identity(sqlite_instance: SQLiteMemory) -> None:

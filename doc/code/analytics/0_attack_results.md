@@ -260,6 +260,8 @@ content hash instead, so different endpoints or levels stay separate. The
 inspection. Neither key is recomputed from current registry state. Scenario keys
 identify saved runs, not potentially repeated scenario names. The SDK adds short
 identity suffixes to target/scenario display labels and forwards reader warnings.
+Whitespace-only model labels use the target class name and short identity suffix;
+SQLite and SQL Server recognize the same Unicode whitespace as Python `str.strip`.
 
 ## Freshness and projection limits
 
