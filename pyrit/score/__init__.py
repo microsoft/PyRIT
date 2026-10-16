@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
     from pyrit.score.message_scorer import MessageScorer
     from pyrit.score.observation.execution import NonReplayableObservationError
+    from pyrit.score.observation.lifecycle import AttemptObserver, SurfaceLifecycleSource
     from pyrit.score.observation.local_file_surface_source import LocalFileSurfaceSource
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
@@ -202,6 +203,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "InMemoryTraceExporter": "pyrit.score.observation.otel_span_exporter",
     "FileWriteScorer": "pyrit.score.true_false.file_write_scorer",
     "LocalFileSurfaceSource": "pyrit.score.observation.local_file_surface_source",
+    "AttemptObserver": "pyrit.score.observation.lifecycle",
+    "SurfaceLifecycleSource": "pyrit.score.observation.lifecycle",
     "ObservationSource": "pyrit.score.observation.observation_source",
     "OtelTraceSource": "pyrit.score.observation.otel_trace_source",
     "OtelToolCallScorer": "pyrit.score.true_false.otel_tool_call_scorer",

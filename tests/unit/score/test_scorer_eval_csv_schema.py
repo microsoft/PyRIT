@@ -66,11 +66,13 @@ def refusal_csv_files() -> list[Path]:
 
 
 def _skip_comment_lines(f) -> None:
-    """Advance the file cursor past all leading ``#`` comment lines."""
+    """Advance the file cursor past all leading ``#`` comment and blank lines."""
     while True:
         pos = f.tell()
         line = f.readline()
-        if not line.startswith("#"):
+        if not line:
+            return
+        if not line.startswith("#") and line.strip():
             f.seek(pos)
             return
 
@@ -80,8 +82,9 @@ def _read_csv_as_dataframe(csv_file: Path) -> pd.DataFrame:
     Read a CSV file into a DataFrame, skipping the comment/version line.
 
     This helper mirrors the production code's read logic in
-    HumanLabeledDataset.from_csv: try UTF-8 first, fall back to latin-1,
-    then drop all-NaN rows (blank separator lines).
+    HumanLabeledDataset.from_csv: skip the leading comment block using the same
+    scan production uses, try UTF-8 first, fall back to latin-1, then drop
+    all-NaN rows (blank separator lines).
 
     Args:
         csv_file (Path): Path to the CSV file.
@@ -89,10 +92,11 @@ def _read_csv_as_dataframe(csv_file: Path) -> pd.DataFrame:
     Returns:
         pd.DataFrame: The parsed DataFrame with comment lines skipped.
     """
+    _, skiprows = HumanLabeledDataset._read_leading_comment_block(csv_file)
     try:
-        df = pd.read_csv(csv_file, comment="#", encoding="utf-8")
+        df = pd.read_csv(csv_file, skiprows=skiprows or None, encoding="utf-8")
     except UnicodeDecodeError:
-        df = pd.read_csv(csv_file, comment="#", encoding="latin-1")
+        df = pd.read_csv(csv_file, skiprows=skiprows or None, encoding="latin-1")
     # Drop rows where every column is NaN (blank separator rows), mirroring
     # the logic in HumanLabeledDataset.from_csv.
     return df.dropna(how="all").reset_index(drop=True)

@@ -5,11 +5,10 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
@@ -17,11 +16,13 @@ from pyrit.models import (
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    Seed,
     SeedObjective,
     SeedPrompt,
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, normalize_dataset_limit
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -98,6 +99,7 @@ class SystemPromptExtraction(Scenario):
     """
 
     VERSION: int = 1
+    DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     # Template-dominated like the Doctor/Jailbreak scenarios: the bare system prompt with no
@@ -155,6 +157,7 @@ class SystemPromptExtraction(Scenario):
             technique_class=SystemPromptExtractionTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 max_per_dataset="all",
+                max_total=self._prompt_cap,
                 sources=[
                     DatasetSource(name=name)
                     for name in [
@@ -177,7 +180,7 @@ class SystemPromptExtraction(Scenario):
 
     def _get_run_size_budget(self) -> ScenarioDatasetSizeEstimate:
         """Return the shared cap on system-prompt and template combinations."""
-        return scenario_dataset_size_from_limit(self._prompt_cap)
+        return scenario_dataset_size_from_limit(self._dataset_config.max_total)
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
         """
@@ -192,36 +195,35 @@ class SystemPromptExtraction(Scenario):
             components=[ScenarioRunSizeComponent(label="System-prompt/template combinations", count=count)],
             datasets=[ScenarioDatasetSummary(name="System-prompt/template combinations", kind="synthesized")],
             effective_parameters={"prompt_cap": budget.value},
-            note="The prompt cap is shared across all selected categories. Dataset size limits do not apply.",
+            note="The objective limit is shared across all selected categories.",
         )
 
-    async def _load_system_prompts_async(self) -> list[str]:
+    def _sample_system_prompts(self, seeds_by_dataset: dict[str, list[Seed[Any]]]) -> list[str]:
         """
-        Load the real system prompts (the *what*) from the configured datasets in memory.
+        Select system prompts from the filtered seed populations.
 
         Returns:
             list[str]: The system-prompt strings, subsampled per dataset to ``system_prompt_subsample``.
         """
-        memory = CentralMemory.get_memory_instance()
         rng = random.Random(self._random_seed)
         system_prompts: list[str] = []
         for name in (DATASET_DRH_SYSTEM_PROMPTS, DATASET_TM_SYSTEM_PROMPTS):
-            values = [seed.value for seed in (await memory.get_seeds_async(dataset_name=name))]
+            values = [seed.value for seed in seeds_by_dataset[name]]
             if len(values) > self._system_prompt_subsample:
                 values = rng.sample(values, self._system_prompt_subsample)
             system_prompts.extend(values)
         return system_prompts
 
-    async def _load_templates_by_category_async(self) -> dict[str, list[str]]:
+    @staticmethod
+    def _group_templates(seeds: list[Seed[Any]]) -> dict[str, list[str]]:
         """
-        Load the extraction templates (the *how*) from memory, grouped by ``technique`` metadata.
+        Group filtered extraction templates by ``technique`` metadata.
 
         Returns:
             dict[str, list[str]]: Mapping of technique category to its extraction request templates.
         """
-        memory = CentralMemory.get_memory_instance()
         templates_by_category: dict[str, list[str]] = {}
-        for seed in await memory.get_seeds_async(dataset_name=DATASET_EXTRACTION_TEMPLATES):
+        for seed in seeds:
             category = (seed.metadata or {}).get("technique")
             if not category:
                 continue
@@ -235,15 +237,14 @@ class SystemPromptExtraction(Scenario):
         Build the (system prompt x template) seed groups, keyed by technique category.
 
         Mirrors garak: every selected (system prompt x template) combination is enumerated across
-        all selected categories, then randomly sampled down to ``prompt_cap`` when it is set.
+        all selected categories, then sampled down to the configured objective limit.
         Surviving combinations are grouped by category so each becomes one atomic attack. Resolving
         them here (rather than via the dataset config) means the base owns the single seed sample
         shared across the atomic attacks.
 
         Args:
-            apply_sampling (bool): Accepted for base-class compatibility but unused — the prompt-cap
-                sampling is already deterministic (``random.Random(self._random_seed)``), so resume
-                reproduces the same set without a ``max_dataset_size`` sampling path.
+            apply_sampling (bool): Apply the objective limit on fresh runs. Resume resolves
+                the full population so the stored run plan can restore its selected objectives.
 
         Returns:
             dict[str, list[AttackSeedGroup]]: Seed groups keyed by technique category value.
@@ -251,9 +252,9 @@ class SystemPromptExtraction(Scenario):
         Raises:
             ValueError: If no system prompts or templates were found in memory.
         """
-        await self._dataset_config._collect_named_seeds_async()
-        system_prompts = await self._load_system_prompts_async()
-        templates_by_category = await self._load_templates_by_category_async()
+        seeds_by_dataset = await self._dataset_config._collect_named_seeds_async()
+        system_prompts = self._sample_system_prompts(seeds_by_dataset)
+        templates_by_category = self._group_templates(seeds_by_dataset[DATASET_EXTRACTION_TEMPLATES])
 
         selected_categories = {technique.value for technique in self._scenario_techniques}
 
@@ -272,8 +273,9 @@ class SystemPromptExtraction(Scenario):
                 f"{DATASET_EXTRACTION_TEMPLATES}) are loaded into CentralMemory before running."
             )
 
-        if self._prompt_cap != "all" and len(combinations) > self._prompt_cap:
-            combinations = random.Random(self._random_seed).sample(combinations, self._prompt_cap)
+        cap = self._dataset_config.max_total
+        if apply_sampling and cap != "all" and len(combinations) > cap:
+            combinations = random.Random(self._random_seed).sample(combinations, cap)
 
         seed_groups_by_category: dict[str, list[AttackSeedGroup]] = {}
         for category, system_prompt, template in combinations:

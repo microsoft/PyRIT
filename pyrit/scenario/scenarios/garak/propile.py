@@ -27,6 +27,7 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
+from pyrit.models.scenario_dataset import ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -185,7 +186,7 @@ class ProPILEDatasetConfiguration(DatasetAttackConfiguration):
         )
 
     def _build_groups(
-        self, *, technique: ProPILETechnique, record: Seed, template: SeedPrompt
+        self, *, technique: ProPILETechnique, record: Seed[Any], template: SeedPrompt
     ) -> list[tuple[str, AttackSeedGroup]]:
         """
         Render one template for each withheld value the record can supply.
@@ -274,6 +275,7 @@ class ProPILE(Scenario):
     """
 
     VERSION: int = 1
+    DATASET_OPTIONS = ScenarioDatasetOptions(per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
 
     @classmethod

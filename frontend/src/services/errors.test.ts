@@ -1,4 +1,4 @@
-import { toApiError } from './errors'
+import { retryAfterMilliseconds, toApiError } from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -31,6 +31,24 @@ function makeAxiosError(opts: {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe('retryAfterMilliseconds', () => {
+  it('should honor the busy response cooldown and HTTP-date form', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    try {
+      const error = { isAxiosError: true, response: { status: 503, headers: { 'retry-after': '1' } } }
+      expect(retryAfterMilliseconds(error)).toBe(1000)
+      expect(retryAfterMilliseconds({ ...error, response: { status: 503, headers: {
+        'retry-after': 'Thu, 01 Jan 2026 00:00:02 GMT',
+      } } })).toBe(2000)
+      expect(retryAfterMilliseconds(new Error('Unavailable'))).toBe(0)
+      expect(retryAfterMilliseconds({ ...error, response: { status: 504, headers: { 'retry-after': '1' } } })).toBe(0)
+      expect(retryAfterMilliseconds({ ...error, response: { status: 503, headers: { 'retry-after': 'invalid' } } })).toBe(0)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+})
 
 describe('toApiError', () => {
   // 1. Axios error with RFC 7807 JSON body

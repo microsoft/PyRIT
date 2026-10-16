@@ -525,8 +525,11 @@ class TestExecutionExpectationTransport:
             else nullcontext()
         ):
             result = await attack.execute_async(objective="attack objective", expectation=_expectation())
-        assert result.outcome == AttackOutcome.FAILURE
-        if objective_kind != "negative":
+        if objective_kind == "negative":
+            assert result.outcome == AttackOutcome.FAILURE
+        else:
+            # The auxiliary verdict never stands in for a missing objective score.
+            assert result.outcome == AttackOutcome.UNDETERMINED
             assert result.automated_score is None
         assert len(auxiliary.calls) == 1
         [context] = auxiliary.contexts

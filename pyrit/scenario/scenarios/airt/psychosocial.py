@@ -41,11 +41,13 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.models.parameter import Parameter
+from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
+    CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetConstraintError,
     DatasetSource,
@@ -55,6 +57,11 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atom
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target, get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+from pyrit.scenario.core.technique_requirements import (
+    TechniqueRequirements,
+    check_target_compatibility,
+    filter_seed_groups,
+)
 from pyrit.score import (
     FloatScaleThresholdScorer,
     NumericRange,
@@ -491,25 +498,43 @@ class Psychosocial(Scenario):
             )
         return selected
 
-    def _validate_runtime_configuration(self) -> None:
-        config = self._dataset_config
-        allowed = {harm.dataset_name for harm in _SUB_HARMS}
-        if set(config.dataset_names) - allowed:
-            raise DatasetConstraintError("Psychosocial sources must match its sub-harm datasets.")
+    def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
+        config = self._default_dataset_config
         by_name = {source.name: source for source in config.sources}
-        self._dataset_config = config.with_overrides(
+        return config.with_overrides(
             sources=[
                 by_name.get(harm.dataset_name, DatasetSource(name=harm.dataset_name))
                 for harm in self._selected_sub_harms()
             ]
         )
+
+    def get_dataset_options(self) -> ScenarioDatasetOptions:
+        """
+        Describe named datasets allowed for the selected sub-harm parameter.
+
+        Returns:
+            ScenarioDatasetOptions: Parameter-aware source selection capabilities.
+        """
+        return ScenarioDatasetOptions(
+            mode=DatasetSelectionMode.SUBSET,
+            allowed_names=[harm.dataset_name for harm in self._selected_sub_harms()],
+        )
+
+    def _effective_sub_harms(self) -> list[_SubHarm]:
+        return [harm for harm in self._selected_sub_harms() if harm.dataset_name in self._dataset_config.dataset_names]
+
+    def _validate_runtime_configuration(self) -> None:
+        if isinstance(self._dataset_config, CompoundDatasetAttackConfiguration):
+            raise DatasetConstraintError("Psychosocial requires flat sources, not compound children.")
+        if set(self._dataset_config.dataset_names) - set(self.get_dataset_options().allowed_names):
+            raise DatasetConstraintError("Psychosocial sources must match the selected sub-harm datasets.")
         super()._validate_runtime_configuration()
         cap = self._dataset_config.max_total
-        if cap != "all" and cap < len(self._selected_sub_harms()):
+        if cap != "all" and cap < len(self._effective_sub_harms()):
             raise DatasetConstraintError(
                 f"Psychosocial max_total ({cap}) must cover every selected sub-harm "
-                f"({len(self._selected_sub_harms())}). Increase the total limit to at least "
-                f"{len(self._selected_sub_harms())}, or select one sub-harm."
+                f"({len(self._effective_sub_harms())}). Increase the total limit to at least "
+                f"{len(self._effective_sub_harms())}, or select one sub-harm."
             )
 
     async def _resolve_seed_groups_by_dataset_async(
@@ -528,7 +553,7 @@ class Psychosocial(Scenario):
             harm.dataset_name: self._dataset_config._sample_source_groups(
                 name=harm.dataset_name, groups=populations.get(harm.dataset_name, [])
             )
-            for harm in self._selected_sub_harms()
+            for harm in self._effective_sub_harms()
         }
         return sample_with_coverage(
             groups_by_dataset=selected,
@@ -604,7 +629,7 @@ class Psychosocial(Scenario):
         # Resolved lazily so a no-arg ``Psychosocial()`` works for registry metadata introspection.
         adversarial_chat = self._adversarial_chat or get_default_adversarial_target()
 
-        sub_harms = self._selected_sub_harms()
+        sub_harms = self._effective_sub_harms()
         techniques = [t for t in context.scenario_techniques if isinstance(t, PsychosocialTechnique)]
         max_turns = int(self.params.get("max_turns", 5))
         seed_groups_by_dataset = context.seed_groups_by_dataset
@@ -643,6 +668,26 @@ class Psychosocial(Scenario):
             base_factory = await asyncio.to_thread(_build_simulated_base_factory, harm=harm, max_turns=max_turns)
 
             for technique in techniques:
+                live = technique is PsychosocialTechnique.Crescendo
+                requirements = TechniqueRequirements() if live else base_factory.requirements
+                if not check_target_compatibility(
+                    target=context.objective_target,
+                    attack_class=CrescendoAttack if live else base_factory.attack_class,
+                    requirements=requirements,
+                    technique_name=technique.value,
+                    policy=context.incompatible_technique_policy,
+                ):
+                    continue
+                compatible_groups = filter_seed_groups(
+                    seed_groups=seed_groups,
+                    requirements=requirements.seed_group,
+                    seed_technique=None if live else base_factory.seed_technique,
+                    technique_name=technique.value,
+                    dataset_name=harm.dataset_name,
+                    policy=context.incompatible_technique_policy,
+                )
+                if not compatible_groups:
+                    continue
                 if technique is PsychosocialTechnique.Crescendo:
                     attack_technique = await asyncio.to_thread(
                         self._build_crescendo_technique,
@@ -671,7 +716,7 @@ class Psychosocial(Scenario):
                     AtomicAttack(
                         atomic_attack_name=f"{harm.name}_{technique.value}",
                         attack_technique=attack_technique,
-                        seed_groups=list(seed_groups),
+                        seed_groups=compatible_groups,
                         adversarial_chat=adversarial_chat,
                         objective_scorer=scorer,
                         memory_labels=context.memory_labels,

@@ -4,7 +4,7 @@
 """Tests for the Garak API-key scenario."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +12,7 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import ComponentIdentifier, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
+from pyrit.models import ComponentIdentifier, ScenarioDatasetRequest, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
 from pyrit.scenario.core.scenario import BaselineAttackPolicy
@@ -33,7 +33,7 @@ def mock_objective_target() -> MagicMock:
 
 
 @pytest.fixture
-def corpus_seeds() -> dict[str, list[Seed]]:
+def corpus_seeds() -> dict[str, list[Seed[Any]]]:
     directory = Path(__file__).parents[4] / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"
     return {
         name: list(SeedDataset.from_yaml_file(directory / f"{name.removeprefix('garak_')}.prompt").seeds)
@@ -45,7 +45,7 @@ async def _initialize_async(
     *,
     scenario: ApiKey,
     target: PromptTarget,
-    corpus_seeds: dict[str, list[Seed]],
+    corpus_seeds: dict[str, list[Seed[Any]]],
     techniques: list[ApiKeyTechnique] | None = None,
     dataset_config: DatasetAttackConfiguration | None = None,
     technique_converters: dict[str, list[Converter]] | None = None,
@@ -90,7 +90,7 @@ class TestApiKey:
 
     @pytest.mark.parametrize("technique", [ApiKeyTechnique.GetKey, ApiKeyTechnique.CompleteKey])
     async def test_single_technique_uses_entire_sample(
-        self, technique: ApiKeyTechnique, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, technique: ApiKeyTechnique, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scenario = ApiKey()
         await _initialize_async(
@@ -101,7 +101,7 @@ class TestApiKey:
         assert len(scenario._atomic_attacks[0].seed_groups) == 20
 
     async def test_uncapped_configuration_renders_full_corpus(
-        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scenario = ApiKey()
         await _initialize_async(
@@ -123,7 +123,7 @@ class TestApiKey:
                 assert group.objective.metadata["technique"] == attack.atomic_attack_name
 
     async def test_standard_sampling_can_select_rows_beyond_the_prefix(
-        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scenario = ApiKey()
         with patch(
@@ -143,7 +143,7 @@ class TestApiKey:
 
     @pytest.mark.parametrize("size", [1, 20])
     async def test_resume_replays_sample_after_corpus_order_changes(
-        self, size: int, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, size: int, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         original = ApiKey()
         config = ApiKeyDatasetConfiguration(dataset_names=ApiKey.required_datasets(), max_dataset_size=size)
@@ -165,7 +165,7 @@ class TestApiKey:
         assert _objectives(resumed) == _objectives(original)
 
     async def test_default_scorer_receives_all_exclusions(
-        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scenario = ApiKey()
         await _initialize_async(scenario=scenario, target=mock_objective_target, corpus_seeds=corpus_seeds)
@@ -181,7 +181,7 @@ class TestApiKey:
         assert all(attack.attack_technique.attack._objective_scorer is scorer for attack in scenario._atomic_attacks)
 
     async def test_custom_scorer_and_converters_are_preserved(
-        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         scorer = MagicMock(spec=TrueFalseScorer)
         scorer.get_identifier.return_value = ComponentIdentifier(class_name="CustomScorer", class_module="test")
@@ -202,7 +202,7 @@ class TestApiKey:
             assert converters == ([converter] if attack.atomic_attack_name == "get_key" else [])
 
     async def test_custom_validator_is_preserved(
-        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed]]
+        self, mock_objective_target: PromptTarget, corpus_seeds: dict[str, list[Seed[Any]]]
     ) -> None:
         validator = MagicMock(side_effect=DatasetConstraintError("custom validator"))
         with pytest.raises(DatasetConstraintError, match="custom validator"):
@@ -228,7 +228,7 @@ class TestApiKey:
         self,
         config: DatasetAttackConfiguration,
         mock_objective_target: PromptTarget,
-        corpus_seeds: dict[str, list[Seed]],
+        corpus_seeds: dict[str, list[Seed[Any]]],
     ) -> None:
         with pytest.raises(DatasetConstraintError, match="ApiKey"):
             await _initialize_async(
@@ -240,14 +240,14 @@ class TestApiKey:
         self,
         size: int | Literal["all"] | None,
         mock_objective_target: PromptTarget,
-        corpus_seeds: dict[str, list[Seed]],
+        corpus_seeds: dict[str, list[Seed[Any]]],
     ) -> None:
         scenario = ApiKey()
         args = ScenarioConfigurationResolver.resolve_configuration(
             scenario_name="garak.api_key",
             scenario_class=ApiKey,
             objective_target=mock_objective_target,
-            max_dataset_size=size,
+            datasets=ScenarioDatasetRequest(max_total=size),
         )
         scenario.set_params_from_args(args=args)
         with patch.object(
@@ -295,7 +295,7 @@ class TestApiKey:
         size: int | None,
         technique: ApiKeyTechnique,
         mock_objective_target: PromptTarget,
-        corpus_seeds: dict[str, list[Seed]],
+        corpus_seeds: dict[str, list[Seed[Any]]],
     ) -> None:
         scenario = ApiKey()
         scenario.set_params_from_args(

@@ -65,12 +65,23 @@ def test_surface_scorable_rejects_unusable_locators(uri: str) -> None:
 
 
 @pytest.mark.parametrize("matcher", [None, Contains(value="secret"), Equals(value="answer"), Regex(value=r"key=\d+")])
-def test_content_written_round_trips_through_condition_registry(matcher: TextMatcher | None) -> None:
-    condition = ContentWritten(uri="/data/*", match=SurfaceMatch.GLOB, matcher=matcher)
+@pytest.mark.parametrize("require_content_change", [False, True])
+def test_content_written_round_trips_through_condition_registry(
+    *, matcher: TextMatcher | None, require_content_change: bool
+) -> None:
+    condition = ContentWritten(
+        uri="/data/*", match=SurfaceMatch.GLOB, matcher=matcher, require_content_change=require_content_change
+    )
 
     assert Condition.model_validate(condition.model_dump(mode="json")) == condition
     expectation = ScoringExpectation(conditions=(condition,))
     assert ScoringExpectation.model_validate_json(expectation.model_dump_json()) == expectation
+
+
+def test_legacy_content_written_defaults_to_presence() -> None:
+    condition = Condition.model_validate({"condition_type": "content_written", "uri": "/data/out.txt"})
+    assert isinstance(condition, ContentWritten)
+    assert condition.require_content_change is False
 
 
 @pytest.mark.parametrize("match", ["exact", "glob"])

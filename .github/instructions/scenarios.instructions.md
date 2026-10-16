@@ -92,7 +92,12 @@ scenario.set_params_from_args(args={"objective_target": target, "max_concurrency
 await scenario.initialize_async()
 ```
 
-The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_techniques` / `technique_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline`.
+The base `Scenario` declares the common run inputs once in `_common_scenario_parameters()`: `objective_target` (a `RegistryReference` — resolved by name or supplied as an instance), the `opaque` live objects `scenario_techniques` / `technique_converters` / `dataset_config` / `memory_labels` (passed by identity, never coerced or deep-copied), and the scalars `max_concurrency` / `max_retries` / `include_baseline` / `incompatible_technique_policy`.
+
+`incompatible_technique_policy` accepts `skip` (default) or `raise`; `None` uses
+`INCOMPATIBLE_TECHNIQUE_POLICY`. Forward `context.incompatible_technique_policy` to matrix
+builders and apply shared requirement helpers in manual builders. Skip only known incompatibility,
+with one summary per technique/dataset. Raise if no selected technique can run, even with a baseline.
 
 ### Declaring custom parameters — add via `additional_parameters`
 
@@ -169,8 +174,24 @@ Options:
 - Ingredients must remain complete. Use `max_per_dataset="all"` and no finite source
   `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.
 - Use `with_overrides()` instead of reconstructing a subclass or mutating its defaults.
+- Clients and Python use `ScenarioDatasetRequest` through the common `dataset_overrides`
+  parameter. `dataset_config` still replaces the default; overrides apply on top.
+- Resolve parameter/technique-dependent names in `_resolve_default_dataset_config()`,
+  before overrides, validation, and preparation. Do not rewrite user selections in validators.
+- Declare `DATASET_OPTIONS` (or parameter-aware `get_dataset_options()`): `ANY` only for
+  generic named populations, `SUBSET` for approved alternatives, `FIXED` for ingredients.
+  Disable limits that would truncate ingredients. Compound source edits are ambiguous;
+  preserve child shaping/caps and allow only supported global edits.
+- Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
+  These are response projections, not incoming edit state. Never read seeds for projections.
+  The catalog reads options and defaults from registry metadata, never from an estimate.
+- Resume replays the saved launch request; the stored run plan fixes the selected seed groups,
+  so caps and fetch policies cannot change a resumed run. Dataset names are checked by the
+  stored scenario identity. Resume never prepares datasets.
 - Keep custom shaping in `_build_attack_groups()` or `_build_groups_by_dataset_async()`.
   Reads use `_collect_seeds_for_dataset_async()` and must not fetch.
+- Build synthesized prompts from those filtered seeds, not a second unfiltered memory query.
+  Scenario code must not call memory seed-read methods directly; the scenario contract test enforces this.
 - `dataset_names`, `max_dataset_size`, `auto_fetch`, and `per_dataset()` are deprecated.
 
 `max_dataset_size` is an exact alias for `max_total`; it does not disable source caps.
@@ -257,6 +278,11 @@ config, memory labels, baseline flag, and seed groups), snapshots them into an i
 `_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
 half-initialized `self._*` state to build attacks — read everything from `context`.
 
+On resume, `context.stored_run_plan` carries the original plan. Restore committed
+per-input technique choices from it instead of selecting again. The base restores
+the planned source population before builders check compatibility. Saved adaptive
+choices must identify the full technique, including its prompts, not only its inner attack.
+
 ### Zero-boilerplate matrix scenarios
 
 Scenarios whose construction is the plain technique × dataset cross-product delegate to the
@@ -323,6 +349,9 @@ Key points:
   `True` to force opt-in.
 - `kwargs` are validated against the attack class constructor signature at
   factory-construction time, so typos fail loudly and early.
+- Check factory and attack-class requirements through `TargetRequirements.check` to retain custom validation.
+- Use shared seed preparation before adding technique seeds. Keep source groups unchanged and record adaptation.
+- Reject saved plans whose technique identity or accepted inputs cannot be restored.
 
 The canonical catalog factories live in `pyrit/setup/initializers/techniques/`; see
 [setup-techniques.instructions.md](setup-techniques.instructions.md) for how to add one

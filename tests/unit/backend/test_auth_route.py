@@ -3,23 +3,30 @@
 
 """Tests for the public authentication configuration route."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+from fastapi import FastAPI
 from starlette.requests import Request
 
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import AuthenticatedUser
 from pyrit.backend.routes.auth import get_auth_access_async, get_auth_config_async
 
 
-async def test_get_auth_config_returns_enabled_graph_contract() -> None:
-    environment = {
-        "ENTRA_TENANT_ID": " tenant-id ",
-        "ENTRA_CLIENT_ID": " client-id ",
-        "ENTRA_ALLOWED_GROUP_IDS": " group-1,group-2 ",
-    }
+def _request_with_policy(policy: AuthenticationPolicy) -> Request:
+    app = FastAPI()
+    app.state.authentication_policy = policy
+    return Request({"type": "http", "app": app})
 
-    with patch.dict("os.environ", environment, clear=False):
-        result = await get_auth_config_async(Request({"type": "http"}))
+
+async def test_get_auth_config_returns_enabled_graph_contract() -> None:
+    policy = AuthenticationPolicy(
+        mode="entra",
+        tenant_id="tenant-id",
+        client_id="client-id",
+        allowed_group_ids=("group-1", "group-2"),
+    )
+    result = await get_auth_config_async(_request_with_policy(policy))
 
     assert result == {
         "enabled": True,
@@ -31,14 +38,7 @@ async def test_get_auth_config_returns_enabled_graph_contract() -> None:
 
 
 async def test_get_auth_config_returns_disabled_contract_when_configuration_is_absent() -> None:
-    environment = {
-        "ENTRA_TENANT_ID": "",
-        "ENTRA_CLIENT_ID": "",
-        "ENTRA_ALLOWED_GROUP_IDS": "",
-    }
-
-    with patch.dict("os.environ", environment, clear=False):
-        result = await get_auth_config_async(Request({"type": "http"}))
+    result = await get_auth_config_async(_request_with_policy(AuthenticationPolicy(mode="local")))
 
     assert result == {
         "enabled": False,
@@ -47,20 +47,6 @@ async def test_get_auth_config_returns_disabled_contract_when_configuration_is_a
         "allowedGroupIds": "",
         "scopes": [],
     }
-
-
-async def test_get_auth_config_does_not_enable_incomplete_configuration() -> None:
-    environment = {
-        "ENTRA_TENANT_ID": "tenant-id",
-        "ENTRA_CLIENT_ID": "",
-        "ENTRA_ALLOWED_GROUP_IDS": "group-1",
-    }
-
-    with patch.dict("os.environ", environment, clear=False):
-        result = await get_auth_config_async(Request({"type": "http"}))
-
-    assert result["enabled"] is False
-    assert result["scopes"] == []
 
 
 async def test_get_auth_access_returns_authenticated_admin_state() -> None:
@@ -77,8 +63,7 @@ async def test_get_auth_access_returns_authenticated_admin_state() -> None:
 
 
 async def test_get_auth_access_uses_explicit_local_admin_override() -> None:
-    request = Request({"type": "http"})
+    request = _request_with_policy(AuthenticationPolicy(mode="local", allow_unauthenticated_admin=True))
     request.state.user = None
 
-    with patch.dict("os.environ", {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}, clear=False):
-        assert await get_auth_access_async(request) == {"isAdmin": True}
+    assert await get_auth_access_async(request) == {"isAdmin": True}

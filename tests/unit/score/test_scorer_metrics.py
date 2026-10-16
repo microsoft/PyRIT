@@ -4,6 +4,7 @@
 import dataclasses
 import json
 from pathlib import Path
+from typing import assert_type
 from unittest.mock import patch
 
 import numpy as np
@@ -46,6 +47,7 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = HarmScorerMetrics.from_json_file(str(file_path))
+        assert_type(loaded, HarmScorerMetrics)
         assert loaded == metrics
 
     def test_objective_metrics_to_json_and_from_json_file(self, tmp_path):
@@ -66,6 +68,7 @@ class TestScorerMetricsSerialization:
         with open(file_path, "w") as f:
             f.write(json_str)
         loaded = ObjectiveScorerMetrics.from_json_file(str(file_path))
+        assert_type(loaded, ObjectiveScorerMetrics)
         assert loaded == metrics
 
     def test_harm_metrics_to_json_serializes_trial_scores(self, tmp_path):
@@ -167,6 +170,8 @@ class TestScorerMetricsWithIdentity:
             metrics=metrics,
         )
 
+        assert_type(result, ScorerMetricsWithIdentity[ObjectiveScorerMetrics])
+        assert_type(result.metrics, ObjectiveScorerMetrics)
         assert result.scorer_identifier.class_name == "TestScorer"
         assert result.metrics.accuracy == 0.9
         assert result.metrics.f1_score == 0.85
@@ -192,6 +197,8 @@ class TestScorerMetricsWithIdentity:
             metrics=metrics,
         )
 
+        assert_type(result, ScorerMetricsWithIdentity[HarmScorerMetrics])
+        assert_type(result.metrics, HarmScorerMetrics)
         assert result.scorer_identifier.class_name == "HarmScorer"
         assert result.metrics.mean_absolute_error == 0.15
         assert result.metrics.harm_category == "hate_speech"

@@ -6,9 +6,10 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from pydantic import AwareDatetime, Field, field_serializer, model_validator
+from typing_extensions import TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
@@ -22,6 +23,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 AttackResultT = TypeVar("AttackResultT", bound="AttackResult")
+_ResponsePieceT = TypeVar("_ResponsePieceT", bound=MessagePiece, default=MessagePiece)
+_ScoreT = TypeVar("_ScoreT", bound=Score, default=Score)
 
 ATTRIBUTION_FIELDS: tuple[str, str] = ("operator", "operation")
 ATTRIBUTION_VALUE_MAX_LENGTH: int = 128
@@ -116,7 +119,7 @@ class AttackResultRole(str, Enum):
     UNKNOWN = "unknown"
 
 
-class AttackResult(StrategyResult):
+class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     """Base class for all attack results."""
 
     ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
@@ -139,13 +142,13 @@ class AttackResult(StrategyResult):
 
     # Evidence
     # Model response generated in the final turn of the attack
-    last_response: MessagePiece | None = None
+    last_response: _ResponsePieceT | None = None
 
     # Score assigned to the final response by an automated scorer component
-    automated_score: Score | None = None
+    automated_score: _ScoreT | None = None
 
     # Score assigned to the final response by a human
-    human_score: Score | None = None
+    human_score: _ScoreT | None = None
 
     # Metrics
     # Total number of turns that were executed

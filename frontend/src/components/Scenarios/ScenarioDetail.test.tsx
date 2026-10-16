@@ -1,12 +1,14 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
-import { scenariosApi, targetsApi } from '@/services/api'
+import { attacksApi, scenariosApi, targetsApi } from '@/services/api'
 import { useRuntime } from '@/hooks/useRuntime'
 import type {
+  AddMessageResponse,
   RegisteredScenario,
+  ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
@@ -16,6 +18,12 @@ import ScenarioDetail from './ScenarioDetail'
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
 jest.mock('@/services/api', () => ({
+  attacksApi: { getConversation: jest.fn(), saveConversation: jest.fn() },
+  datasetsApi: { listDatasets: jest.fn().mockResolvedValue({ items: ['harmbench', 'ds_a', 'ds_b', 'remote', 'stale-dataset'].map((name) => ({
+    name, selection_key: `dataset:named:${name}`, loaded: true, provider_available: true,
+    logical_examples: 8, seed_pieces: null, objectives: null, modalities: ['text', 'image_path', 'audio_path'],
+    harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
+  })) }) },
   scenariosApi: {
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
@@ -31,6 +39,7 @@ const mockEstimateRun = scenariosApi.estimateRun as jest.Mock
 const mockStartRun = scenariosApi.startRun as jest.Mock
 const mockListTargets = targetsApi.listTargets as jest.Mock
 const mockUseRuntime = jest.mocked(useRuntime)
+const mockAttacks = jest.mocked(attacksApi)
 
 const mockNavigate = jest.fn()
 const RAW_IMAGE_HTML = ['<', 'img src=x onerror="alert(1)">'].join('')
@@ -162,9 +171,24 @@ async function confirmRunPreview(user: ReturnType<typeof userEvent.setup>): Prom
   await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
 }
 
+async function openObjectiveLimit(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: 'Edit Maximum objectives' }))
+}
+
+async function setObjectiveLimit(user: ReturnType<typeof userEvent.setup>, value: string): Promise<void> {
+  await openObjectiveLimit(user)
+  const all = screen.getByRole('checkbox', { name: 'All available for Maximum objectives' })
+  if (all instanceof HTMLInputElement && all.checked) await user.click(all)
+  const input = screen.getByRole('textbox', { name: 'Maximum objectives' })
+  await user.clear(input)
+  await user.type(input, value)
+  await user.keyboard('{Escape}')
+}
+
 function renderDetail(
   path: string,
   props: Partial<React.ComponentProps<typeof ScenarioDetail>> = {},
+  dataRouter = false,
 ) {
   const defaultProps = {
     targets: [makeTarget('target-a'), makeTarget('target-b')],
@@ -177,14 +201,16 @@ function renderDetail(
   const merged = { ...defaultProps, ...props }
   const renderPage = (pageProps: React.ComponentProps<typeof ScenarioDetail>): React.ReactElement => (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[path]}>
+      {dataRouter ? <RouterProvider router={createMemoryRouter([{
+        path: '/:catalog/:scenarioName', element: <ScenarioDetail {...pageProps} />,
+      }], { initialEntries: [path] })} /> : <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route
             path="/:catalog/:scenarioName"
             element={<ScenarioDetail {...pageProps} />}
           />
         </Routes>
-      </MemoryRouter>
+      </MemoryRouter>}
     </FluentProvider>
   )
   const view = render(renderPage(merged))
@@ -211,6 +237,302 @@ describe('ScenarioDetail', () => {
 
   afterEach(() => {
     jest.useRealTimers()
+  })
+
+  describe('scanner conversation configuration', () => {
+    const saved: AddMessageResponse = {
+      attack: {
+        attack_result_id: 'history-attack', conversation_id: 'history-conversation', attack_type: 'ManualAttack',
+        objective: '', converters: [], message_count: 1, related_conversation_ids: [],
+        labels: {}, created_at: '', updated_at: '', target_unbound: true,
+      },
+      messages: {
+        conversation_id: 'history-conversation', target_response_status: null,
+        messages: [{
+          role: 'system', turn_number: 0, created_at: '',
+          message_pieces: [{
+            id: 'history-piece', original_value_data_type: 'text', original_value: 'Saved context',
+            converted_value_data_type: 'text', converted_value: 'Saved context', scores: [], response_error: 'none',
+          }],
+        }],
+      },
+    }
+
+    beforeEach(() => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'prepended_conversation_id', type_name: 'str', required: false },
+          { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: 'False' },
+          { name: 'max_turns', type_name: 'int', required: false },
+        ],
+      }))
+      mockAttacks.getConversation.mockReset()
+      mockAttacks.saveConversation.mockReset()
+      mockAttacks.getConversation.mockResolvedValue(saved)
+      mockAttacks.saveConversation.mockResolvedValue({
+        ...saved, messages: { ...saved.messages, conversation_id: 'edited-conversation' },
+      })
+    })
+
+    it('should save all builder turns into the scanner field without losing configuration or sending', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('spinbutton', { name: 'max_turns' }), '3')
+      expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeDisabled()
+      await user.click(screen.getByRole('button', { name: 'Add new conversation' }))
+      const first = screen.getByRole('region', { name: 'Message 1' })
+      await user.selectOptions(within(first).getByRole('combobox'), 'system')
+      await user.type(within(first).getByRole('textbox'), 'Simulated context')
+      await user.click(screen.getByRole('button', { name: 'Insert message after message 1' }))
+      await user.type(within(screen.getByRole('region', { name: 'Message 2' })).getByRole('textbox'), 'Final user turn')
+      expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(screen.getByRole('spinbutton', { name: 'max_turns' })).toHaveValue(3)
+      expect(mockAttacks.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+        destination: 'new_attack', target_registry_name: undefined, operator: 'roakey',
+        messages: [
+          expect.objectContaining({ role: 'system', pieces: [expect.objectContaining({ original_value: 'Simulated context' })] }),
+          expect.objectContaining({ role: 'user', pieces: [expect.objectContaining({ original_value: 'Final user turn' })] }),
+        ],
+      }))
+      expect(mockAttacks.getConversation).not.toHaveBeenCalled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { max_turns: 3, prepended_conversation_id: 'edited-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      expect(screen.getByRole('switch', { name: 'Apply converters to conversation' })).toBeEnabled()
+    })
+
+    it('should enable the converters toggle only with a conversation ID and submit its boolean choice', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute')
+      const toggle = await screen.findByRole('switch', { name: 'Apply converters to conversation' })
+      const id = screen.getByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(toggle).not.toBeChecked()
+      expect(toggle).toBeDisabled()
+      expect(screen.queryByRole('combobox', { name: 'apply_converters_to_prepended_history' })).not.toBeInTheDocument()
+      await user.type(id, '   ')
+      expect(toggle).toBeDisabled()
+      await user.clear(id)
+      await user.type(id, 'history-conversation')
+      expect(toggle).toBeEnabled()
+      await user.click(toggle)
+      expect(toggle).toBeChecked()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'history-conversation', apply_converters_to_prepended_history: true },
+      }), expect.any(Object)))
+      await user.click(toggle)
+      expect(toggle).not.toBeChecked()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'history-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      await user.clear(id)
+      expect(toggle).toBeDisabled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should fill the conversation from the URL without opening an editor or launching a scan', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation')
+      const id = await screen.findByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(id).toHaveValue('history-conversation')
+      expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeEnabled()
+      expect(screen.getByRole('switch', { name: 'Apply converters to conversation' })).toBeEnabled()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockAttacks.getConversation).not.toHaveBeenCalled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'history-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      await user.clear(id)
+      await user.type(id, 'another-conversation')
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { prepended_conversation_id: 'another-conversation', apply_converters_to_prepended_history: false },
+      }), expect.any(Object)))
+      expect(id).toHaveValue('another-conversation')
+    })
+
+    it('should fill a new conversation when the same scanner is opened with a different URL parameter', async () => {
+      const user = userEvent.setup()
+      render(<FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/scanner/technique.execute?prepended_conversation_id=first-conversation']}>
+          <Link to="/scanner/technique.execute?prepended_conversation_id=second-conversation">Use another conversation</Link>
+          <Routes><Route path="/scanner/:scenarioName" element={
+            <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
+              labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
+          } /></Routes>
+        </MemoryRouter>
+      </FluentProvider>)
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('first-conversation')
+      await user.click(screen.getByRole('link', { name: 'Use another conversation' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('second-conversation')
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      '?prepended_conversation_id=%20%20',
+      '?prepended_conversation_id=first&prepended_conversation_id=second',
+    ])('should leave the conversation unset for an empty or ambiguous URL parameter: %s', async (query: string) => {
+      renderDetail(`/scanner/technique.execute${query}`)
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Edit conversation' })).toBeDisabled()
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should decode the conversation URL parameter', async () => {
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=saved%2Fhistory%20%26%20context')
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('saved/history & context')
+    })
+
+    it('should preserve defaults and ignore conversation IDs that the scanner does not support', async () => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [{ name: 'max_turns', type_name: 'int', required: false, default: '7' }],
+      }))
+      renderDetail('/scanner/foundry.red_team_agent?prepended_conversation_id=history-conversation')
+      expect(await screen.findByRole('spinbutton', { name: 'max_turns' })).toHaveValue(7)
+      expect(screen.queryByRole('textbox', { name: 'prepended_conversation_id' })).not.toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith('foundry.red_team_agent', expect.objectContaining({
+        scenario_params: { max_turns: 7 },
+      }), expect.any(Object)))
+    })
+
+    it.each(['False', 'True'])('should use the declared %s converters default', async (defaultValue: string) => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'prepended_conversation_id', type_name: 'str', required: false, default: 'history-conversation' },
+          { name: 'apply_converters_to_prepended_history', type_name: 'bool', required: false, default: defaultValue },
+        ],
+      }))
+      renderDetail('/scanner/technique.execute')
+      const toggle = await screen.findByRole('switch', { name: 'Apply converters to conversation' })
+      expect(toggle).toBeEnabled()
+      if (defaultValue === 'True') expect(toggle).toBeChecked()
+      else expect(toggle).not.toBeChecked()
+    })
+
+    it('should load the field history for editing and replace its ID with a saved copy', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), ' history-conversation ')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      const first = await screen.findByRole('region', { name: 'Message 1' })
+      expect(within(first).getByRole('textbox')).toHaveValue('Saved context')
+      await user.type(within(first).getByRole('textbox'), ' changed')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(mockAttacks.getConversation).toHaveBeenCalledWith('history-conversation')
+      expect(mockAttacks.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+        destination: 'new_attack', source_attack_result_id: 'history-attack',
+        source_conversation_id: 'history-conversation', target_registry_name: undefined,
+        messages: [expect.objectContaining({
+          role: 'system', pieces: [expect.objectContaining({ original_value: 'Saved context changed' })],
+        })],
+      }))
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should block scan preview while history loads or its editor is open', async () => {
+      let resolveConversation: (response: AddMessageResponse) => void = () => {}
+      mockAttacks.getConversation.mockReturnValue(new Promise<AddMessageResponse>((resolve) => {
+        resolveConversation = resolve
+      }))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      const form = launch.closest('form')
+      if (!form) throw new Error('Launch scan must submit the configuration form.')
+      expect(launch).toBeEnabled()
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      expect(launch).toBeDisabled()
+      await user.click(launch)
+      fireEvent.submit(form)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await act(async () => { resolveConversation(saved) })
+      await screen.findByRole('region', { name: 'Message 1' })
+      fireEvent.submit(form)
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      await screen.findByRole('textbox', { name: 'prepended_conversation_id' })
+      expect(launch).toBeEnabled()
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        scenario_params: expect.objectContaining({ prepended_conversation_id: 'history-conversation' }),
+      }))
+    })
+
+    it('should block scan preview until the edited conversation is saved and launch with its new ID', async () => {
+      let resolveSave: (response: AddMessageResponse) => void = () => {}
+      mockAttacks.saveConversation.mockReturnValue(new Promise<AddMessageResponse>((resolve) => {
+        resolveSave = resolve
+      }))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute?prepended_conversation_id=history-conversation', {}, true)
+      const launch = await screen.findByRole('button', { name: 'Launch scan' })
+      const form = launch.closest('form')
+      if (!form) throw new Error('Launch scan must submit the configuration form.')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' changed')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(mockAttacks.saveConversation).toHaveBeenCalledTimes(1)
+      expect(launch).toBeDisabled()
+      fireEvent.submit(form)
+      expect(screen.queryByText('Run preview')).not.toBeInTheDocument()
+      expect(mockStartRun).not.toHaveBeenCalled()
+
+      await act(async () => {
+        resolveSave({ ...saved, messages: { ...saved.messages, conversation_id: 'edited-conversation' } })
+      })
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('edited-conversation')
+      expect(launch).toBeEnabled()
+      await confirmRunPreview(user)
+      expect(mockStartRun).toHaveBeenCalledTimes(1)
+      expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+        scenario_params: expect.objectContaining({ prepended_conversation_id: 'edited-conversation' }),
+      }))
+    })
+
+    it('should keep the configured ID when an edited draft is discarded', async () => {
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'history-conversation')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' discarded')
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+      expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('history-conversation')
+      expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+    })
+
+    it('should report a missing conversation without opening an empty editor or changing the field', async () => {
+      mockAttacks.getConversation.mockRejectedValue(new Error('Saved chat conversation not found'))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'missing')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      expect(await screen.findByText('Saved chat conversation not found')).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('missing')
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(mockAttacks.saveConversation).not.toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+    })
+
+    it('should keep the draft and scanner ID when saving fails', async () => {
+      mockAttacks.saveConversation.mockRejectedValue(new Error('Conversation save failed'))
+      const user = userEvent.setup()
+      renderDetail('/scanner/technique.execute', {}, true)
+      await user.type(await screen.findByRole('textbox', { name: 'prepended_conversation_id' }), 'history-conversation')
+      await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
+      await user.type(within(await screen.findByRole('region', { name: 'Message 1' })).getByRole('textbox'), ' kept')
+      await user.click(screen.getByRole('button', { name: 'Add to attack' }))
+      expect(await screen.findByText('Conversation save failed')).toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'Message 1' })).getByRole('textbox')).toHaveValue('Saved context kept')
+      expect(mockStartRun).not.toHaveBeenCalled()
+    })
   })
 
   it('blocks a legacy catalog response without support names instead of guessing common support', async () => {
@@ -306,18 +628,19 @@ describe('ScenarioDetail', () => {
     await flushRenderedPromises()
     await user.type(screen.getByLabelText(/^iterations/), '1.5')
     await user.type(screen.getByLabelText(/^note/), 'Keep this value')
-    await user.type(screen.getByLabelText('Dataset override'), 'stale-dataset')
-    await user.type(screen.getByLabelText('Max dataset size'), '0')
-    await user.type(screen.getByLabelText('Harm categories'), 'stale-harm')
-    await user.type(screen.getByLabelText('Data types'), 'stale-type')
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    await user.click(screen.getByRole('option', { name: 'stale-dataset', exact: true }))
+    await setObjectiveLimit(user, '0')
+    await user.click(screen.getAllByRole('button', { name: 'Filter harm category cyber' })[0])
+    await user.click(screen.getAllByRole('button', { name: 'Filter data type Text' })[0])
     for (const label of ['Max concurrency', 'Max retries']) {
       const input = screen.getByRole('spinbutton', { name: label })
       await user.clear(input)
       await user.type(input, '500')
       await user.tab()
     }
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('iterations must be an integer.')
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Maximum objectives must be a positive integer')
 
     mockGetScenario.mockResolvedValue(makeScenario({
       supported_parameter_names: ['note'],
@@ -476,8 +799,9 @@ describe('ScenarioDetail', () => {
     expect(within(screen.getByRole('region', { name: 'Objective Target' })).queryByRole(
       'combobox', { name: 'Adversarial Target' },
     )).not.toBeInTheDocument()
-    expect(fallback.compareDocumentPosition(within(parameters).getByRole('textbox', { name: 'Dataset override' })))
-      .toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
+    expect(within(datasetsSection).getByRole('table', { name: 'Selected datasets' })).toBeInTheDocument()
+    expect(datasetsSection.compareDocumentPosition(parameters)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(fallback).toHaveAccessibleDescription('The registered target this scenario uses to generate attacks.')
     expect(fallback).toHaveValue('adversary')
     expect(within(fallback).queryByRole('option', { name: 'target-a' })).not.toBeInTheDocument()
@@ -1165,10 +1489,7 @@ describe('ScenarioDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Parameters' })).toBeInTheDocument()
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
-    expect(screen.getByTestId('max-dataset-size-input')).toHaveValue(8)
-    expect(screen.getByText(
-      'The scenario default is 8. Edit it to override the default.',
-    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 8')
     const estimate = screen.getByTestId('run-estimate')
     expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
     expect(within(estimate).getByText('8')).toBeInTheDocument()
@@ -1198,7 +1519,7 @@ describe('ScenarioDetail', () => {
 
     renderDetail('/scanner/foundry.red_team_agent')
 
-    expect(await screen.findByTestId('max-dataset-size-input')).toHaveValue(5)
+    expect(await screen.findByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 5')
     expect(await screen.findByText('Up to 10')).toBeInTheDocument()
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
   })
@@ -1212,7 +1533,7 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    expect(await screen.findByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(null)
+    expect(await screen.findByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('All available')
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
   })
@@ -1226,9 +1547,8 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
-    expect(input).toBeDisabled()
-    expect(input).toHaveValue(null)
+    await screen.findByRole('table', { name: 'Selected datasets' })
+    expect(screen.queryByRole('textbox', { name: 'Maximum objectives' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
   })
 
@@ -1242,9 +1562,10 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    const input = await screen.findByRole('spinbutton', { name: 'Max dataset size' })
-    expect(input).toHaveValue(5)
-    await user.clear(input)
+    await setObjectiveLimit(user, '2')
+    await openObjectiveLimit(user)
+    await user.click(screen.getByRole('button', { name: 'Reset to 5' }))
+    await user.keyboard('{Escape}')
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
@@ -1256,13 +1577,14 @@ describe('ScenarioDetail', () => {
   it('sends an explicit all total for both estimation and launch', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
-    const unlimited = await screen.findByRole('checkbox', { name: 'No total dataset limit' })
-    await user.click(unlimited)
-    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toBeDisabled()
-    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('max_dataset_size', 'all'))
+    await setObjectiveLimit(user, '2')
+    await openObjectiveLimit(user)
+    await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
-    expect(mockStartRun.mock.calls[0][0]).toHaveProperty('max_dataset_size', 'all')
+    expect(mockStartRun.mock.calls[0][0]).toHaveProperty('datasets.max_total', 'all')
   })
 
   it('restores the scenario default when no-total-limit is unchecked', async () => {
@@ -1274,11 +1596,11 @@ describe('ScenarioDetail', () => {
       },
     }))
     renderDetail('/scanner/foundry.red_team_agent')
-    const unlimited = await screen.findByRole('checkbox', { name: 'No total dataset limit' })
-    await user.click(unlimited)
-    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('max_dataset_size', 'all'))
-    await user.click(unlimited)
-    expect(screen.getByRole('spinbutton', { name: 'Max dataset size' })).toHaveValue(5)
+    await openObjectiveLimit(user)
+    await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
+    await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
+    await user.click(screen.getByRole('button', { name: 'Reset to 5' }))
+    await user.keyboard('{Escape}')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size'))
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
@@ -1290,17 +1612,22 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.type(screen.getByTestId('dataset-override-input'), 'ds_a, ds_b')
-    await user.type(screen.getByTestId('max-dataset-size-input'), '25')
-    await user.type(screen.getByTestId('harm-categories-filter-input'), 'cyber, violence')
-    await user.type(screen.getByTestId('data-types-filter-input'), 'text, image_path')
+    const addDataset = screen.getByRole('combobox', { name: 'Add dataset' })
+    await user.click(addDataset)
+    await user.click(screen.getByRole('option', { name: 'ds_a', exact: true }))
+    await user.click(addDataset)
+    await user.click(screen.getByRole('option', { name: 'ds_b', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Remove harmbench' }))
+    await setObjectiveLimit(user, '25')
+    await user.click(screen.getAllByRole('button', { name: 'Filter harm category other' })[0])
+    await user.click(screen.getAllByRole('button', { name: 'Filter data type Audio' })[0])
     await confirmRunPreview(user)
 
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     const request = mockStartRun.mock.calls[0][0]
-    expect(request.dataset_names).toEqual(['ds_a', 'ds_b'])
-    expect(request.max_dataset_size).toBe(25)
-    expect(request.dataset_filters).toEqual({
+    expect(request.datasets.sources).toEqual([{ name: 'ds_a' }, { name: 'ds_b' }])
+    expect(request.datasets.max_total).toBe(25)
+    expect(request.datasets.filters).toEqual({
       harm_categories: ['cyber', 'violence'],
       data_types: ['text', 'image_path'],
     })
@@ -1309,11 +1636,13 @@ describe('ScenarioDetail', () => {
       expect.objectContaining({
         target_name: 'target-a',
         techniques: ['default_technique'],
-        dataset_names: ['ds_a', 'ds_b'],
-        max_dataset_size: 25,
-        dataset_filters: {
+        datasets: {
+          sources: [{ name: 'ds_a' }, { name: 'ds_b' }],
+          max_total: 25,
+          filters: {
           harm_categories: ['cyber', 'violence'],
           data_types: ['text', 'image_path'],
+          },
         },
         include_baseline: true,
       }),
@@ -1322,17 +1651,62 @@ describe('ScenarioDetail', () => {
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('labels')
   })
 
+  it('refreshes parameter-aware defaults after invalid source edits without silently dropping them', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValueOnce(makeScenario({
+      supported_parameters: [
+        { name: 'scope', type_name: 'str', required: false, default: 'all', choices: null, is_list: false },
+      ],
+    }))
+    mockEstimateRun.mockImplementation(async (_name: string, request: ScenarioRunSizeEstimateRequest) => {
+      const narrowed = request.scenario_params?.scope === 'one'
+      if (narrowed && request.datasets?.sources) {
+        throw { isAxiosError: true, response: { status: 400, data: { detail: 'Dataset is outside the selected scope.' } } }
+      }
+      const name = narrowed ? 'remote' : 'harmbench'
+      const settings = {
+        sources: [{ name, max_size: 5, fetch: 'never', configured_provider: false }],
+        max_per_dataset: 5, max_total: 5, fetch: 'never', filters: {},
+      }
+      return {
+        ...makeEstimate(10), dataset_defaults: settings, effective_datasets: settings,
+        dataset_options: {
+          mode: 'subset', allowed_names: [name], per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true,
+        },
+      }
+    })
+    renderDetail('/scanner/foundry.red_team_agent')
+    await screen.findByRole('table', { name: 'Selected datasets' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveTextContent('Up to 5'))
+    await user.click(screen.getByRole('button', { name: 'Edit harmbench objective limit' }))
+    const all = screen.getByRole('checkbox', { name: 'All available for harmbench objective limit' })
+    if (all instanceof HTMLInputElement && all.checked) await user.click(all)
+    await user.clear(screen.getByRole('textbox', { name: 'harmbench objective limit' }))
+    await user.type(screen.getByRole('textbox', { name: 'harmbench objective limit' }), '1')
+    await user.keyboard('{Escape}')
+    await user.clear(screen.getByTestId('scenario-param-scope'))
+    await user.type(screen.getByTestId('scenario-param-scope'), 'one')
+    await screen.findByText('Select a permitted source: harmbench')
+    expect(screen.getByRole('button', { name: 'Edit harmbench objective limit' })).toHaveTextContent('Up to 1')
+    expect(mockEstimateRun.mock.calls.some((call) =>
+      call[1].scenario_params?.scope === 'one' && call[1].datasets === undefined,
+    )).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Reset datasets' }))
+    await screen.findByText('remote', { exact: true })
+  })
+
   it('rejects a non-positive-integer max dataset size', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/foundry.red_team_agent')
     await screen.findByTestId('scenario-target-select')
 
-    await user.type(screen.getByTestId('max-dataset-size-input'), '0')
+    await setObjectiveLimit(user, '0')
     await user.click(screen.getByTestId('launch-scenario-btn'))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Max dataset size must be a positive integer.',
-    )
+    expect(await screen.findAllByRole('alert')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ textContent: expect.stringContaining('Maximum objectives must be a positive integer.') }),
+    ]))
     expect(mockStartRun).not.toHaveBeenCalled()
   })
 

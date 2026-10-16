@@ -76,6 +76,61 @@ Here are some examples:
 | **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
 
+## OpenAI SDK compatibility
+
+PyRIT supports OpenAI Python SDK 2.20 and later 2.x releases, and SDK 3.x.
+The upper bound excludes SDK 4 until it has been evaluated. The compatibility
+tests exercise both SDK lines with fabricated provider responses, including
+custom HTTP clients, authentication, errors, and binary responses.
+
+SDK 2 uses `httpx` by default; SDK 3 uses `httpx2`. The
+`httpx_client_kwargs` parameter keeps its existing name and forwards options to
+`AsyncOpenAI`, not to an HTTP client constructor. Numeric timeouts keep working:
+
+```python
+target = OpenAIChatTarget(
+    model_name="my-deployment",
+    endpoint="https://my-resource.openai.azure.com/openai/v1",
+    api_key="...",
+    httpx_client_kwargs={"timeout": 180},
+)
+```
+
+For a custom transport, proxy, TLS context, or event hook, construct an async
+HTTP client and pass it as `httpx_client_kwargs={"http_client": client}`.
+An `httpx.AsyncClient` works on both SDK lines using SDK 3's legacy-client
+compatibility layer. On SDK 3, `httpx2.AsyncClient` and
+`openai.DefaultAsyncHttpxClient` use the native HTTPX2 transport. Keep custom
+transport classes, request/response objects, and hooks in the same HTTP family
+as the client, and close caller-created clients when finished.
+
+The SDK 3 default transport uses the operating-system TLS trust store rather
+than HTTPX's `certifi` bundle. Install corporate or private CA certificates in
+that trust store, set `SSL_CERT_FILE` / `SSL_CERT_DIR`, or pass a client with
+an explicit TLS context. Catch SDK exceptions such as `openai.APITimeoutError`
+and `openai.APIConnectionError`, rather than assuming their underlying cause
+is always an HTTPX exception. See the upstream
+[HTTPX2 migration guide](https://github.com/openai/openai-python/blob/v3.29.0/httpx2.md).
+
+Use base URLs without the API operation path, for example `/openai/v1` rather
+than `/openai/deployments/.../chat/completions`. Pass deployment names through
+`model_name` and additional query parameters through
+`httpx_client_kwargs={"default_query": {"api-version": "..."}}`.
+The SDK owns trailing-slash normalization and appending the operation path.
+
+`OpenAIVideoTarget` retains the deprecated videos API for compatible endpoints.
+This does not restore availability of OpenAI's retired Sora service. SDK 3's
+deprecation warnings remain visible; type-check exceptions are limited to the
+specific SDK calls in that adapter.
+
+The default installation does not require LiteLLM and can resolve to SDK 3.
+The optional `litellm` and `all` extras retain stable LiteLLM releases. A stable
+LiteLLM release that requires `openai<3` selects SDK 2, which PyRIT also supports;
+there is no need to install a development build to use these extras.
+The shared `uv.lock` therefore retains SDK 2 to satisfy all extras. CI tests
+SDK 2 and 3 without LiteLLM, and stable LiteLLM with SDK 2. Ordinary package
+installations resolve the selected extras independently of this development lock.
+
 ## A2A agents
 
 Install the optional client with `pip install "pyrit[a2a]"` (also included in

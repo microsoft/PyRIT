@@ -68,6 +68,7 @@ from pyrit.backend.services.pagination import (
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
+from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import (
     AttackResultKeysetCursor,
     CentralMemory,
@@ -386,6 +387,30 @@ class AttackService:
             messages=backend_messages,
             target_response_status=_get_latest_target_response_status(backend_messages),
         )
+
+    async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:
+        """
+        Resolve a saved chat conversation by ID without changing its history.
+
+        Returns:
+            The stored attack and conversation, or None if no saved chat owns the ID.
+        """
+        conversation = await self._memory.get_conversation_metadata_async(conversation_id=conversation_id)
+        attack_result_id = conversation.attack_result_id if conversation else None
+        if attack_result_id is None:
+            legacy_attack = await self._memory.get_attack_result_for_conversation_async(conversation_id=conversation_id)
+            if legacy_attack is None:
+                return None
+            attack_result_id = legacy_attack.attack_result_id
+        attack = await self.get_attack_async(attack_result_id=attack_result_id)
+        if attack is None or conversation_id not in attack.get_active_conversation_ids():
+            return None
+        messages = await self.get_conversation_messages_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+        if messages is None:
+            return None
+        return AddMessageResponse(attack=attack, messages=messages)
 
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:
         """
@@ -867,13 +892,13 @@ class AttackService:
             return None
 
         automated_score = results[0].automated_score
-        if automated_score is None or automated_score.score_value is None:
-            outcome = AttackOutcome.UNDETERMINED
+        # Follow the attack-side contract of attack_outcome_from_score (#3181): read the
+        # typed score value instead of comparing the raw string, and treat an undetermined
+        # score as neither achievement nor refutation.
+        outcome = AttackOutcome.UNDETERMINED if automated_score is None else attack_outcome_from_score(automated_score)
+        if outcome is AttackOutcome.UNDETERMINED or automated_score is None:
             outcome_reason = None
         else:
-            outcome = (
-                AttackOutcome.SUCCESS if automated_score.score_value.casefold() == "true" else AttackOutcome.FAILURE
-            )
             outcome_reason = automated_score.score_rationale
 
         await self._memory.update_attack_result_by_id_async(

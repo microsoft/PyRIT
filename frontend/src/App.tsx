@@ -16,6 +16,7 @@ import TechniqueRegistry from './components/Registry/TechniqueRegistry'
 import RegistryLayout from './components/Registry/RegistryLayout'
 import Configuration from './components/Configuration/Configuration'
 import AttackHistory from './components/History/AttackHistory'
+import AnalyticsPage from './components/Analytics/AnalyticsPage'
 import HistoryPage from './components/History/HistoryPage'
 import type { HistoryTab } from './components/History/HistoryPage'
 import ScenarioHistory from './components/History/ScenarioHistory'
@@ -72,6 +73,7 @@ const VIEW_PATHS: Record<ViewName, string> = {
   home: '/',
   chat: '/chat',
   history: HISTORY_ATTACKS_PATH,
+  analytics: '/analytics',
   registry: '/registry/targets',
   scenarios: '/scanner',
   datasets: DATASETS_PATH,
@@ -277,6 +279,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   )
   const lastHistorySearch = useRef('')
   const lastScenarioHistorySearch = useRef('')
+  const lastAnalyticsLocation = useRef('')
   useEffect(() => {
     if (location.pathname === HISTORY_ATTACKS_PATH) {
       lastHistorySearch.current = location.search
@@ -284,7 +287,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     if (location.pathname === HISTORY_SCANNER_PATH) {
       lastScenarioHistorySearch.current = location.search
     }
-  }, [location.pathname, location.search])
+    if (location.pathname === VIEW_PATHS.analytics) {
+      lastAnalyticsLocation.current = location.search + location.hash
+    }
+  }, [location.pathname, location.search, location.hash])
 
   const handleFiltersChange = useCallback((filters: HistoryFilters) => {
     setSearchParams(filtersToSearchParams(filters), { replace: true })
@@ -488,6 +494,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       navigate(VIEW_PATHS.history + lastHistorySearch.current)
       return
     }
+    if (view === 'analytics') {
+      navigate(VIEW_PATHS.analytics + lastAnalyticsLocation.current)
+      return
+    }
     navigate(VIEW_PATHS[view])
   }, [navigate])
 
@@ -536,11 +546,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       lastResponseMessagePieceId: null,
       status: 'success',
     })
-    // Replace when promoting an empty /chat to its attack url (first message);
+    // Replace when promoting an empty /chat to its conversation URL (first message);
     // push when branching from an existing attack so Back returns to the source.
     // Keep sends blocked until the new route exposes the created attack's identity.
     startCreatedAttackTransition(() => {
-      navigate(attackRoutePath(arId), { replace: routeAttackId === null })
+      navigate(attackConversationRoutePath(arId, convId), { replace: routeAttackId === null })
     })
   }, [activeTarget, generation, routeAttackId, navigate, startCreatedAttackTransition])
 
@@ -774,6 +784,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route path="/scenario-history" element={<LegacyScenarioHistoryRedirect />} />
               <Route path="/scenario-history/:scenarioResultId" element={<LegacyScenarioRunRedirect />} />
               <Route path="/config" element={<Configuration />} />
+              <Route path="/analytics" element={<AnalyticsPage onOpenAttack={handleOpenAttack} />} />
               <Route path="/history" element={<LegacyAttackHistoryRedirect />} />
               <Route
                 path={HISTORY_ATTACKS_PATH}

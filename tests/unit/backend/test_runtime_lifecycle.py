@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health
@@ -42,6 +43,7 @@ def runtime(tmp_path: Path) -> Generator[RuntimeLifecycle, None, None]:
     )
     source = ConfigurationFileService(config_file_value=str(config_path))
     app = FastAPI()
+    app.state.authentication_policy = AuthenticationPolicy(mode="local")
     with patch.dict(os.environ, {}, clear=True):
         service = RuntimeLifecycle(app=app, source=source)
     assert service.topology_supported
@@ -529,6 +531,17 @@ def test_multiple_workers_disable_apply(worker_setting: str) -> None:
     assert not service.topology_supported
 
 
+async def test_management_publishes_target_upload_directory(tmp_path: Path) -> None:
+    app = FastAPI()
+    with patch.dict(os.environ, {}, clear=True):
+        service = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=None))
+    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=str(tmp_path))
+
+    await service._management_async(config)
+
+    assert app.state.target_upload_directory == str(tmp_path)
+
+
 async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repair(tmp_path: Path) -> None:
     path = tmp_path / "broken.yaml"
     path.write_text("broken: [", encoding="utf-8")
@@ -538,6 +551,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
     await service.startup_async()
     assert service.state == "restart-required"
     assert not app.state.allow_custom_initializers
+    assert app.state.target_upload_directory is None
     assert app.state.environment_file_service is None
     content, version = await source.read_with_version_async()
     assert content == "broken: ["
@@ -546,7 +560,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
 
 
 def test_authorization_policy_does_not_change_with_environment(runtime: RuntimeLifecycle) -> None:
-    runtime.app.state.auth_environment["PYRIT_ALLOW_UNAUTHENTICATED_ADMIN"] = ""
+    runtime.app.state.authentication_policy = AuthenticationPolicy(mode="local")
     request = Request({"type": "http", "app": runtime.app})
     with patch.dict(os.environ, {"PYRIT_ALLOW_UNAUTHENTICATED_ADMIN": "true"}):
         with pytest.raises(Exception) as error:

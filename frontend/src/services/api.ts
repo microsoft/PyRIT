@@ -29,6 +29,9 @@ import type {
   AttackSummary,
   AttackListResponse,
   DatasetListResponse,
+  SeedExampleDetailResponse,
+  SeedExampleListParams,
+  SeedExampleListResponse,
   ConversationMessagesResponse,
   AddMessageRequest,
   AddMessageResponse,
@@ -43,6 +46,7 @@ import type {
   RunScenarioRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
+  ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
@@ -58,6 +62,12 @@ import type {
   ManualScoreRequest,
   UpdateAttackRequest,
   SaveConversationRequest,
+  AttackAnalyticsQuery,
+  AttackAnalyticsReport,
+  AttackAnalyticsResultsQuery,
+  AttackAnalyticsResults,
+  AttackAnalyticsFacetQuery,
+  AttackAnalyticsFacets,
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -172,6 +182,30 @@ apiClient.interceptors.response.use(
 )
 
 export { apiClient }
+
+export const analyticsApi = {
+  query: async (
+    query: AttackAnalyticsQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsReport> => {
+    const response = await apiClient.post<AttackAnalyticsReport>('/analytics/attacks/query', query, { signal })
+    return response.data
+  },
+  results: async (
+    query: AttackAnalyticsResultsQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsResults> => {
+    const response = await apiClient.post<AttackAnalyticsResults>('/analytics/attacks/results', query, { signal })
+    return response.data
+  },
+  facets: async (
+    query: AttackAnalyticsFacetQuery,
+    signal?: AbortSignal,
+  ): Promise<AttackAnalyticsFacets> => {
+    const response = await apiClient.post<AttackAnalyticsFacets>('/analytics/attacks/facets', query, { signal })
+    return response.data
+  },
+}
 
 export const healthApi = {
   checkHealth: async () => {
@@ -356,6 +390,11 @@ export const attacksApi = {
     return response.data
   },
 
+  getConversation: async (conversationId: string): Promise<AddMessageResponse> => {
+    const response = await apiClient.get(`/attacks/conversations/${encodeURIComponent(conversationId)}`)
+    return response.data
+  },
+
   getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
@@ -480,6 +519,14 @@ export const labelsApi = {
 }
 
 export const scenariosApi = {
+  loadDatasets: async (
+    scenarioName: string, request: ScenarioRunSizeEstimateRequest,
+  ): Promise<ScenarioDatasetLoadResponse> => {
+    const response = await apiClient.post(
+      `/scenarios/catalog/${encodeURIComponent(scenarioName)}/datasets/load`, request, { timeout: 300_000 },
+    )
+    return response.data
+  },
   /**
    * Lists one page of the scenario catalog. Callers that need the full
    * catalog should follow `pagination.next_cursor` until `has_more` is false.
@@ -577,6 +624,21 @@ export const scenariosApi = {
   },
 }
 
+const MAX_SEED_SEARCH_LENGTH = 1_000
+
+function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
+  const query: Record<string, string | number | readonly string[]> = {
+    selection_key: params.selection_key,
+  }
+  if (params.limit != null) query.limit = params.limit
+  if (params.cursor) query.cursor = params.cursor
+  if (params.search) query.search = params.search.slice(0, MAX_SEED_SEARCH_LENGTH)
+  if (params.modality && params.modality.length > 0) query.modality = params.modality
+  if (params.seed_type && params.seed_type.length > 0) query.seed_type = params.seed_type
+  if (params.harm_category && params.harm_category.length > 0) query.harm_category = params.harm_category
+  return query
+}
+
 export const datasetsApi = {
   /**
    * Lists dataset summaries. Counts, modalities, and harm categories on the
@@ -588,6 +650,44 @@ export const datasetsApi = {
   ): Promise<DatasetListResponse> => {
     const response = await apiClient.get('/datasets', {
       params: { loaded_only },
+      signal,
+    })
+    return response.data
+  },
+
+  /**
+   * Lists one page of logical examples for a dataset.
+   * Requires the opaque selection key; an empty key is not sent.
+   */
+  listSeedExamples: async (
+    params: SeedExampleListParams,
+    signal?: AbortSignal,
+  ): Promise<SeedExampleListResponse> => {
+    if (!params.selection_key) {
+      throw new Error('A dataset selection key is required to list seed examples.')
+    }
+    const response = await apiClient.get('/datasets/seeds', {
+      params: seedListQuery(params),
+      paramsSerializer: { indexes: null },
+      signal,
+    })
+    return response.data
+  },
+
+  /**
+   * Loads every stored member of one logical example in that dataset.
+   * The example id alone is not enough: the selection key keeps the group scoped.
+   */
+  getSeedExample: async (
+    exampleId: string,
+    selectionKey: string,
+    signal?: AbortSignal,
+  ): Promise<SeedExampleDetailResponse> => {
+    if (!selectionKey) {
+      throw new Error('A dataset selection key is required to read a seed example.')
+    }
+    const response = await apiClient.get(`/datasets/seeds/${encodeURIComponent(exampleId)}`, {
+      params: { selection_key: selectionKey },
       signal,
     })
     return response.data

@@ -12,7 +12,7 @@ import pytest
 from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import Registry, TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario import ScenarioTechnique
@@ -22,6 +22,8 @@ from pyrit.setup.initializers.techniques import build_technique_factories
 
 class _StubAttack:
     """Minimal stub for testing the registry without real AttackStrategy weight."""
+
+    TARGET_REQUIREMENTS: TargetRequirements = TargetRequirements()
 
     def __init__(self, *, objective_target, attack_scoring_config=None, max_turns: int = 5):
         self.objective_target = objective_target
@@ -38,6 +40,8 @@ class _StubAttack:
 
 class _StubAttackNoScorer:
     """Stub attack that does NOT accept attack_scoring_config."""
+
+    TARGET_REQUIREMENTS: TargetRequirements = TargetRequirements()
 
     def __init__(self, *, objective_target):
         self.objective_target = objective_target

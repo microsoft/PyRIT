@@ -82,7 +82,7 @@ from pyrit.models.catalog.scenario import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
-from pyrit.scenario import Scenario
+from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import override_default_adversarial_target
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "target_name",
     "adversarial_target_name",
     "techniques",
+    "datasets",
     "dataset_names",
     "max_dataset_size",
     "dataset_filters",
@@ -115,6 +116,8 @@ _LAUNCH_REQUEST_FIELDS = (
     "max_retries",
     "include_baseline",
 )
+# Fields added after the first saved launch records; older records omit them.
+_OPTIONAL_LAUNCH_FIELDS = frozenset({"adversarial_target_name", "datasets", "max_dataset_size"})
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
     {
@@ -125,6 +128,7 @@ _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
         "num_jailbreak_attempts",
         "num_jailbreaks",
         "sub_harm",
+        "incompatible_technique_policy",
         "version",
     }
 )
@@ -330,12 +334,14 @@ class ScenarioRunService:
             # Launch records from before per-run target selection used the server default.
             raw_request = {"adversarial_target_name": None, **raw_request}
         if not isinstance(raw_request, dict) or any(
-            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name != "max_dataset_size"
+            name not in raw_request for name in _LAUNCH_REQUEST_FIELDS if name not in _OPTIONAL_LAUNCH_FIELDS
         ):
             raise ScenarioRunConflictError("The saved launch configuration is incomplete; resume was not started.")
         try:
-            request = RunScenarioRequest.model_validate(
-                {name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}, strict=True
+            # JSON validation accepts saved enum values as strings while keeping strict type checks.
+            request = RunScenarioRequest.model_validate_json(
+                json.dumps({name: raw_request[name] for name in _LAUNCH_REQUEST_FIELDS if name in raw_request}),
+                strict=True,
             )
         except ValidationError as exc:
             raise ScenarioRunConflictError(
@@ -358,13 +364,25 @@ class ScenarioRunService:
         identifier = stored.scenario_identifier
         if (
             "scenario_techniques" in declared_names and request.techniques is None and identifier.techniques is None
-        ) or ("dataset_config" in declared_names and request.dataset_names is None and identifier.datasets is None):
+        ) or ("dataset_config" in declared_names and request.dataset_request is None and identifier.datasets is None):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
             for name, value in identifier.params.items()
             if name not in {"version", "techniques", "datasets"}
         }
+        saved_policy = raw_request.get(
+            "incompatible_technique_policy", stored.metadata.get("incompatible_technique_policy")
+        )
+        if saved_policy is not None:
+            try:
+                custom_params["incompatible_technique_policy"] = IncompatibleTechniquePolicy(saved_policy).value
+            except ValueError as exc:
+                raise ScenarioRunConflictError(
+                    "The saved incompatible-technique policy is invalid; resume was not started."
+                ) from exc
+        # Dataset names are not copied from the identity: the saved request reproduces them, and the
+        # stored-identity check on initialization rejects any difference.
         return request.model_copy(
             update={
                 "scenario_result_id": str(stored.id),
@@ -374,9 +392,6 @@ class ScenarioRunService:
                 "techniques": request.techniques
                 if request.techniques is not None or "scenario_techniques" not in declared_names
                 else identifier.techniques,
-                "dataset_names": request.dataset_names
-                if request.dataset_names is not None or "dataset_config" not in declared_names
-                else identifier.datasets,
                 "labels": dict(stored.labels) if "memory_labels" in declared_names else None,
             },
             deep=True,
@@ -609,9 +624,7 @@ class ScenarioRunService:
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
-                dataset_names=request.dataset_names,
-                max_dataset_size=request.max_dataset_size,
-                dataset_filters=request.dataset_filters,
+                datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
                 if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
@@ -1214,7 +1227,28 @@ class ScenarioRunService:
         scenario_class = scenario_registry.get_class(request.scenario_name)
         declared = scenario_class.supported_parameters()
         declared_names = {parameter.name for parameter in declared}
-        launch_request = {name: getattr(request, name) for name in _LAUNCH_REQUEST_FIELDS}
+        launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
+        policy_parameter = next(
+            (parameter for parameter in declared if parameter.name == "incompatible_technique_policy"),
+            None,
+        )
+        policy = (
+            resolve_declared_params(
+                declared=[policy_parameter],
+                raw_args={
+                    "incompatible_technique_policy": (request.scenario_params or {}).get(
+                        "incompatible_technique_policy"
+                    )
+                },
+                owner=f"Scenario '{request.scenario_name}'",
+            )["incompatible_technique_policy"]
+            if policy_parameter is not None
+            else None
+        )
+        if policy_parameter is not None:
+            launch_request["incompatible_technique_policy"] = (
+                policy or scenario_class.INCOMPATIBLE_TECHNIQUE_POLICY
+            ).value
         numeric_parameters = [
             parameter for parameter in declared if parameter.name in {"max_concurrency", "max_retries"}
         ]
