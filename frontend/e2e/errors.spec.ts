@@ -352,8 +352,8 @@ test.describe("Error: accepted send with target processing failure", () => {
 
     await page.getByTestId(/^message-bubble-/)
       .filter({ hasText: "Preserve this draft" })
-      .getByRole("button", { name: "Copy conversation", exact: true }).click();
-    await page.getByRole("menuitem", { name: "New conversation", exact: true }).click();
+      .getByRole("button", { name: "Copy or Branch", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Branch conversation", exact: true }).click();
     await expect.poll(() => recoveryRequest).toEqual({
       source_conversation_id: MOCK_CONV_ID,
       cutoff_index: 1,

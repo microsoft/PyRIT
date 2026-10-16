@@ -26,7 +26,7 @@ from pyrit.memory.memory_models import (
 )
 from pyrit.memory.migration import check_schema_migrations
 
-PREVIOUS_REVISION = "901e6c7bf9d4"
+PREVIOUS_REVISION = "3f6a9d2c8b1e"
 REVISION = "c8d3e5f7a901"
 TABLES = {"OperationEntries", "FindingEntries", "FindingEvidenceEntries"}
 ACTIVITY_TABLES = ("AttackResultEntries", "ScenarioResultEntries")

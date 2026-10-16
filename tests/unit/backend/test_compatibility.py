@@ -16,6 +16,7 @@ from uvicorn.lifespan.on import LifespanOn
 
 import pyrit
 from pyrit import _compatibility
+from pyrit.backend.authentication_policy import resolve_authentication_policy
 from pyrit.backend.main import app, lifespan
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware
 from pyrit.backend.middleware.compatibility import CompatibilityAPI, CompatibilityMiddleware
@@ -35,6 +36,7 @@ def guarded_app(*, monkeypatch: pytest.MonkeyPatch, compatibility_id: str) -> Fa
     monkeypatch.setenv("ENTRA_ADMIN_GROUP_ID", "admin-group")
     test_app = FastAPI(routes=list(app.router.routes), middleware=app.user_middleware)
     test_app.state.compatibility_id = compatibility_id
+    test_app.state.authentication_policy = resolve_authentication_policy()
     test_app.state.effects = []
 
     def stateful_dependency() -> None:

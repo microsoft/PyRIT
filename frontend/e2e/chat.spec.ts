@@ -372,12 +372,17 @@ test.describe("Multiple Messages", () => {
 });
 
 test.describe("Chat without target", () => {
-  test("should disable input when no target is selected", async ({ page }) => {
+  test("should allow drafting but block sending when no target is selected", async ({ page }) => {
     await page.goto("/");
     await page.getByTitle("Technique.execute").click();
 
-    await expect(page.getByTestId("chat-input")).toBeDisabled();
+    const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
+    await expect(input).toBeEnabled();
+    await input.fill("Unsent draft");
     await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await input.press("Enter");
+    await expect(input).toHaveValue("Unsent draft");
+    await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
   });
 });
 

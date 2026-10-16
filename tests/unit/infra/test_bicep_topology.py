@@ -174,6 +174,7 @@ class TestBicepTopology(unittest.TestCase):
         assert "Microsoft.ManagedIdentity/userAssignedIdentities" in identity
         container_env = container_app["properties"]["template"]["containers"][0]["env"]
         environment = {value["name"]: value["value"] for value in container_env if isinstance(value, dict)}
+        assert environment["PYRIT_AUTH_MODE"] == "entra"
         assert "validatedAllowedGroupObjectIds" in environment["ENTRA_ALLOWED_GROUP_IDS"]
         assert "validatedAdminGroupObjectId" in environment["ENTRA_ADMIN_GROUP_ID"]
         assert "Microsoft.ManagedIdentity/userAssignedIdentities" in environment["AZURE_CLIENT_ID"]

@@ -11,7 +11,7 @@ and adds nullable ``operation_id`` references to ``AttackResultEntries`` and
 reference. Downgrading removes all of it only while no operations exist.
 
 Revision ID: c8d3e5f7a901
-Revises: 901e6c7bf9d4
+Revises: 3f6a9d2c8b1e
 Create Date: 2026-10-09 12:00:00.000000
 """
 
@@ -28,7 +28,7 @@ from pyrit.memory.memory_models import CustomUUID, UTCDateTime
 
 # revision identifiers, used by Alembic.
 revision: str = "c8d3e5f7a901"
-down_revision: str | None = "901e6c7bf9d4"
+down_revision: str | None = "3f6a9d2c8b1e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

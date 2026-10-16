@@ -842,7 +842,7 @@ for (const variant of TARGET_VARIANTS) {
         }
 
         await page.getByTestId("copy-to-input-btn-1").click();
-        await page.getByRole("menuitem", { name: "New conversation", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Branch conversation", exact: true }).click();
       } else {
         // Single-turn targets disable branch buttons in the UI.
         // Branch via the API instead to test the backend operation.
