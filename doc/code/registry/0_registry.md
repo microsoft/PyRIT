@@ -114,11 +114,6 @@ The response contains an `identifier` and, for targets, `capabilities`. It does
 not contain a registry name or a reusable object handle. The backend discards
 the built object after returning its descriptor.
 
-For scorers, this is a construction check and an identity preview only. No
-scoring or scenario endpoint accepts the returned descriptor. Register the
-scorer to use it in those operations, or construct and use an unregistered
-scorer directly in Python.
-
 Targets and converters can also use a registered source that supports
 reconstruction:
 
