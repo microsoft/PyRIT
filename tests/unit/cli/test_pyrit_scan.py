@@ -9,13 +9,14 @@ import logging
 from argparse import Namespace
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from pyrit.cli import _config_reader as pyrit_scan_config_reader
 from pyrit.cli import pyrit_scan
 from pyrit.cli._cli_args import parse_run_arguments
-from pyrit.models import Parameter
+from pyrit.models import Operation, Parameter
 from unit.mocks import make_scenario_result
 
 # A valid UTF-8 initializer whose text is not pure ASCII. Decoded with a Windows ANSI code page
@@ -24,6 +25,26 @@ UTF8_INITIALIZER_SOURCE = (
     "from pyrit.setup.pyrit_initializer import PyRITInitializer\n"
     'SYSTEM_PROMPT = "Réponds en français, café. 日本語でも回答してください。"\n'
 )
+
+
+def test_run_operation_id_reaches_typed_request() -> None:
+    operation_id = uuid4()
+    parsed = pyrit_scan._build_parser().parse_args(
+        ["run", "test", "--target", "target", "--operation-id", str(operation_id)]
+    )
+    request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+    assert request.operation_id == operation_id
+    assert request.labels is None
+
+
+async def test_list_operations_prints_names_and_ids_async(capsys) -> None:
+    operation = Operation(name="Directory")
+    client = MagicMock(list_operations_async=AsyncMock(return_value=[operation]))
+    parsed = pyrit_scan._build_parser().parse_args(["list-operations"])
+    assert await pyrit_scan._handle_list_commands_async(client=client, parsed_args=parsed) == 0
+    output = capsys.readouterr().out
+    assert operation.name in output
+    assert str(operation.id) in output
 
 
 def _sp(*, name, description="", default=None, param_type="str", choices=None, is_list=False) -> Parameter:

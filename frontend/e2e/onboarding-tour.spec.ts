@@ -194,7 +194,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
-    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
       "Toggle converter panel"
@@ -249,7 +249,7 @@ test.describe("Onboarding tour", () => {
     await expect(page).toHaveURL(/\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
-    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
       "Toggle converter panel"

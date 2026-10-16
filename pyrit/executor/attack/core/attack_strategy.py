@@ -493,6 +493,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
             result: The AttackResult that is about to be persisted.
         """
         attribution = context._attribution
+        result.operation_id = context.params.operation_id
         if context._atomic_attack_identifier is not None:
             result.atomic_attack_identifier = context._atomic_attack_identifier
         result.metadata.update(context._result_metadata)
@@ -719,6 +720,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             logger=logger,
         )
         self._default_event_handler = event_handler
+        # TODO(PyRIT 1.4): Remove with Operation name attribution from GLOBAL_MEMORY_LABELS.
+        self._global_operation_name = self._memory_labels.pop("operation", None)
         # Local import avoids the component package's import cycle through attack config.
         from pyrit.executor.attack.component.prepended_conversation_config import (
             PrependedConversationConfig,
@@ -954,6 +957,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
         context._persisted_attack_result_id = None
+        await self._resolve_operation_async(context=context)
         self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(
             attack_identifier=self.get_identifier()
@@ -992,6 +996,38 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
                 raise
             context._persisted_attack_result_id = result.attack_result_id
         return result
+
+    async def _resolve_operation_async(self, *, context: AttackStrategyContextT) -> None:
+        """
+        Resolve the execution's saved Operation before setup, accepting deprecated Operation names.
+
+        An explicit ID wins, and a ``memory_labels["operation"]`` name is then removed. Otherwise the name,
+        or one from ``GLOBAL_MEMORY_LABELS``, stays in the labels so prompts and the result keep it, and
+        links the execution to the saved Operation with that name when one exists. Executions attributed
+        by a parent, such as a scenario, keep the labels and ID the parent resolved.
+
+        Raises:
+            ValueError: If the ID is malformed.
+            LookupError: If the ID does not belong to a saved Operation.
+        """
+        labels = context.memory_labels
+        # TODO(PyRIT 1.4): Remove name handling with Operation name attribution; keep only the ID check.
+        operation_name = labels.get("operation")
+        operation_id = context.params.operation_id
+        if context._attribution is not None:
+            if operation_id is not None:
+                operation_name = None
+        elif operation_id is not None:
+            if operation_name is not None:
+                context.memory_labels = {key: value for key, value in labels.items() if key != "operation"}
+        elif operation_name is None and self._global_operation_name is not None:
+            operation_name = self._global_operation_name
+            context.memory_labels = {**labels, "operation": operation_name}
+        resolved = await CentralMemory.get_memory_instance().resolve_operation_id_async(
+            operation_id=operation_id, operation_name=operation_name
+        )
+        if resolved != operation_id:
+            context.params = dataclasses.replace(context.params, operation_id=resolved)
 
     @asynccontextmanager
     async def _execution_context_async(self, context: AttackStrategyContextT) -> AsyncGenerator[None, None]:
@@ -1118,6 +1154,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         next_message: Message | None = None,
         prepended_conversation: list[Message] | None = None,
         memory_labels: dict[str, str] | None = None,
+        operation_id: uuid.UUID | None = None,
         persist_attack_result: bool = True,
         **kwargs: Any,
     ) -> AttackStrategyResultT: ...
