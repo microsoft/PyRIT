@@ -294,6 +294,28 @@ class Seed(BaseModel):
     # narrow it to Literal["text"].
     data_type: PromptDataType = "text"
 
+    def bind_template_parameters(self, **parameters: Any) -> Self:
+        """
+        Bind literal parameter values for a later template render.
+
+        Args:
+            **parameters (Any): Values retained as template data, not template source.
+
+        Returns:
+            Self: A copy with the supplied values bound and remaining parameters unchanged.
+        """
+        environment = _template_environment(StrictUndefined)
+        used = meta.find_undeclared_variables(environment.parse(self.value))
+        bindings = "".join(
+            f"{{% set {name} = {_serialize_template_binding(parameters[name])} %}}"
+            for name in sorted(used & parameters.keys())
+        )
+        updates: dict[str, Any] = {"value": bindings + self.value, "is_jinja_template": False}
+        declared = getattr(self, "parameters", None)
+        if declared is not None:
+            updates["parameters"] = [name for name in declared if name not in parameters]
+        return self.model_copy(update=updates, deep=True)
+
     def render_template_value(self, **kwargs: Any) -> str:
         """
         Render self.value as a template with provided parameters.

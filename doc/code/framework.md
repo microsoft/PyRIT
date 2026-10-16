@@ -148,6 +148,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   own model interaction and validation; memory stores the seeds, and scenarios select them.
 - `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
   identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
+- `AttackSeedGroup.adversarial_prompts` associates named adversarial-chat `SeedPrompt`
+  inputs with the objective. They are not application messages. Attack techniques bind
+  them when constructing attacks; memory preserves the association.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
   - selecting or combining which seeds an attack uses (that's a scenario / attack technique)
   - rendering or parameterizing prompts at send time (converters / normalizers)

@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 
     from pyrit.converter import Converter
     from pyrit.executor.attack import AttackStrategy
+    from pyrit.models import AttackSeedGroup
     from pyrit.prompt_normalizer import ConverterConfiguration
     from pyrit.prompt_target import PromptTarget
 
@@ -799,6 +800,7 @@ class AttackTechniqueFactory(Identifiable):
         *,
         objective_target: PromptTarget,
         attack_scoring_config: AttackScoringConfig,
+        seed_group: AttackSeedGroup | None = None,
         adversarial_chat: PromptTarget | None = None,
         adversarial_system_prompt: str | SeedPrompt | None = None,
         adversarial_seed_prompt: SeedPrompt | str | None = None,
@@ -833,6 +835,8 @@ class AttackTechniqueFactory(Identifiable):
             attack_scoring_config: The scoring config to use for the attack. This is important
                 for attacks like TAP that may need a more specific scorer than the
                 scorer the scenario provides.
+            seed_group: Optional group whose named adversarial prompts configure this
+                attack instance. Target messages remain execution inputs.
             adversarial_chat: Optional adversarial chat target to use for this
                 attack. Only valid when the factory did not bake one. Only
                 forwarded if the attack class constructor accepts
@@ -869,6 +873,21 @@ class AttackTechniqueFactory(Identifiable):
                 accept ``attack_converter_config``.
         """
         create_time_target: PromptTarget | None = adversarial_chat
+        if seed_group is not None and seed_group.adversarial_prompts is not None:
+            if (
+                not self._uses_adversarial
+                or "attack_adversarial_config" not in self._compatibility_helper.accepted_params
+            ):
+                raise ValueError(f"Factory '{self._name}' does not accept group adversarial prompts.")
+            if any(
+                prompt is not None
+                for prompt in (adversarial_system_prompt, adversarial_seed_prompt, adversarial_prompt_template)
+            ):
+                raise ValueError("Supply group adversarial prompts or explicit create-time prompts, not both.")
+            prompts = seed_group.adversarial_prompts.model_copy(deep=True)
+            adversarial_system_prompt = prompts.system_prompt
+            adversarial_seed_prompt = prompts.first_message
+            adversarial_prompt_template = prompts.feedback_template
 
         if extra_request_converters and "attack_converter_config" not in self._compatibility_helper.accepted_params:
             # These come from the caller's technique_converters, so dropping them would run a different setup.
