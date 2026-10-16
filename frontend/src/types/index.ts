@@ -1697,14 +1697,26 @@ export interface OperationCreate {
   description?: string
 }
 
-/** The editable fields of a saved Operation; renaming is not supported yet. */
+/** The editable fields of a saved Operation. Omitted fields are unchanged. */
 export interface OperationUpdate {
-  description: string
+  name?: string
+  description?: string
 }
 
 export interface Operation extends OperationCreate {
   id: string
   created_at: string
+}
+
+/** What refers to an Operation by ID. Only an Operation with no usage can be deleted. */
+export interface OperationUsage {
+  findings: number
+  attacks: number
+  scenario_runs: number
+}
+
+export interface OperationDetail extends Operation {
+  usage: OperationUsage
 }
 
 export interface OperationListItem extends Operation {

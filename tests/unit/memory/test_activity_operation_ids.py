@@ -2,16 +2,29 @@
 # Licensed under the MIT license.
 
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from pyrit.memory import MemoryInterface
+from pyrit.memory.memory_interface import OperationInUseError
 from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
-from pyrit.models import AttackResult, ComponentIdentifier, Operation, ScenarioResult
+from pyrit.models import (
+    AttackResult,
+    ComponentIdentifier,
+    Conversation,
+    Finding,
+    Operation,
+    OperationUsage,
+    ScenarioResult,
+)
 from unit.mocks import make_scenario_result
 
 REVISION = "c8d3e5f7a901"
@@ -295,3 +308,96 @@ def test_upgrade_registers_legacy_names_without_changing_activity() -> None:
                 command.downgrade(config, PARENT)
     finally:
         engine.dispose()
+
+
+async def _refer_to_operation_async(memory: MemoryInterface, *, operation_id: UUID, reference: str) -> None:
+    if reference == "finding":
+        await memory.add_finding_async(finding=Finding(operation_id=operation_id, title="Assessment", severity="low"))
+    elif reference == "attack":
+        await memory.add_attack_results_to_memory_async(
+            attack_results=[AttackResult(conversation_id="linked", objective="objective", operation_id=operation_id)]
+        )
+    else:
+        scenario = _scenario()
+        scenario.operation_id = operation_id
+        await memory.add_scenario_results_to_memory_async(scenario_results=[scenario])
+
+
+@pytest.mark.parametrize("reference", ["finding", "attack", "scenario"])
+async def test_delete_operation_refuses_any_id_reference_async(
+    sqlite_instance: MemoryInterface, reference: str
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    await _refer_to_operation_async(sqlite_instance, operation_id=operation.id, reference=reference)
+    usage = OperationUsage(
+        findings=int(reference == "finding"),
+        attacks=int(reference == "attack"),
+        scenario_runs=int(reference == "scenario"),
+    )
+    assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == usage
+    with pytest.raises(OperationInUseError) as raised:
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+    assert raised.value.usage == usage
+    assert await sqlite_instance.require_operation_async(operation_id=operation.id) == operation
+
+
+async def test_delete_operation_keeps_name_only_activity_and_other_operations_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    await _refer_to_operation_async(sqlite_instance, operation_id=other.id, reference="attack")
+    legacy = AttackResult(conversation_id="legacy", objective="objective", operation=operation.name)
+    with pytest.warns(DeprecationWarning, match="operation_id"):
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[legacy])
+    empty = OperationUsage(findings=0, attacks=0, scenario_runs=0)
+    assert await sqlite_instance.get_operation_usage_async(operation_id=operation.id) == empty
+    await sqlite_instance.delete_operation_async(operation_id=operation.id)
+    assert await sqlite_instance.get_operations_async() == [other]
+    found = await sqlite_instance.get_attack_results_async(operation=[operation.name])
+    assert [(result.attack_result_id, result.operation_id) for result in found] == [(legacy.attack_result_id, None)]
+    with pytest.raises(LookupError, match="Operation"):
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+
+
+@pytest.mark.parametrize("path", ["attack", "new_attack", "scenario", "scenario_update"])
+async def test_activity_is_rejected_when_its_operation_is_gone_at_insert_async(
+    sqlite_instance: MemoryInterface, path: str
+) -> None:
+    # Skipping the first check stands in for a concurrent delete between that check and the insert.
+    operation_id = uuid4()
+    attack = AttackResult(conversation_id="orphan", objective="objective", operation_id=operation_id)
+    scenario = _scenario()
+    scenario.operation_id = operation_id
+    with patch.object(MemoryInterface, "_validate_activity_operation"), pytest.raises(LookupError, match="Operation"):
+        if path == "attack":
+            await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+        elif path == "new_attack":
+            await sqlite_instance.add_conversation_branches_to_attack_async(
+                attack_result_id=attack.attack_result_id,
+                conversations=[Conversation(conversation_id=attack.conversation_id)],
+                message_pieces=[],
+                new_attack=attack,
+            )
+        elif path == "scenario":
+            await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
+        else:
+            await sqlite_instance.update_scenario_result_async(scenario_result=scenario)
+    assert not await sqlite_instance.get_attack_results_async()
+    assert not await sqlite_instance.get_scenario_results_async()
+
+
+async def test_delete_rejected_by_a_foreign_key_reports_the_usage_async(sqlite_instance: MemoryInterface) -> None:
+    # SQL Server's foreign keys fail the delete when a reference commits after the NOT EXISTS checks ran.
+    operation = await sqlite_instance.add_operation_async(Operation(name="Engagement"))
+    await _refer_to_operation_async(sqlite_instance, operation_id=operation.id, reference="attack")
+    execute = AsyncSession.execute
+
+    async def reject_delete_async(self: AsyncSession, statement: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(statement, sa.Delete):
+            raise IntegrityError("DELETE", {}, Exception("REFERENCE constraint"))
+        return await execute(self, statement, *args, **kwargs)
+
+    with patch.object(AsyncSession, "execute", reject_delete_async), pytest.raises(OperationInUseError) as raised:
+        await sqlite_instance.delete_operation_async(operation_id=operation.id)
+    assert raised.value.usage == OperationUsage(findings=0, attacks=1, scenario_runs=0)

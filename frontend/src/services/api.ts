@@ -72,6 +72,7 @@ import type {
   FindingEvidenceListResponse,
   Operation,
   OperationCreate,
+  OperationDetail,
   OperationListResponse,
   OperationUpdate,
   AttackAnalyticsQuery,
@@ -93,7 +94,7 @@ export const operationsApi = {
   list: async (): Promise<OperationListResponse> => {
     return (await apiClient.get('/operations')).data
   },
-  get: async (operationId: string): Promise<Operation> => {
+  get: async (operationId: string): Promise<OperationDetail> => {
     return (await apiClient.get(operationPath(operationId))).data
   },
   create: async (request: OperationCreate): Promise<Operation> => {
@@ -101,6 +102,9 @@ export const operationsApi = {
   },
   update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
     return (await apiClient.patch(operationPath(operationId), request)).data
+  },
+  delete: async (operationId: string): Promise<void> => {
+    await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
     operationId: string, params: { limit: number; offset: number; title?: string },

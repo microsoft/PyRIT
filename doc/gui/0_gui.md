@@ -552,7 +552,7 @@ In active runs and saved scenario results, **Atomic attack groups** defaults to 
 
 Until you expand or collapse the section, its default follows the current group count as progress loads. Once you choose, the section keeps your choice during progress updates for the same run, even if the count crosses 20. Opening a different run resets to that run's count-based default.
 
-### Operations and Findings
+### Operations
 
 An operation groups related red-teaming work. Inside it you record findings:
 human assessments, whether or not an attack produced them.
@@ -564,9 +564,13 @@ scope. The **Operation** dropdown in the labels bar applies the
 selected operation to new attacks and scanner runs, and **New operation…** at the
 top of that list creates one without leaving the page.
 
-On an operation's page, **Add description** or **Edit description** changes the
-description. Saving replaces it, so if two people edit at once, the last save wins.
-Operations can't be renamed or deleted from the GUI.
+Renaming doesn't update anything that stores the old name: Analytics filters and
+links, history from before Operation IDs, and names set in configuration,
+`GLOBAL_MEMORY_LABELS`, or `--memory-labels`.
+
+**Delete** works only when no findings, attacks, or scanner runs are linked; the
+tooltip shows what's left. History from before Operation IDs doesn't count.
+Deleting can't be undone.
 
 #### Findings
 
