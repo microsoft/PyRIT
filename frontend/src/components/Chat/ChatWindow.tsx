@@ -38,7 +38,10 @@ import { generateClientId } from '@/utils/clientId'
 import ObjectiveHeader from './ObjectiveHeader'
 import ConversationEditor from './ConversationEditor'
 import type { ConversationEditorHandle } from './ConversationEditor'
-import { draftDataTypes, draftMessageToInput, editorTargetDisabledReason, toConversationDraft } from '@/utils/conversationDraft'
+import {
+  attachmentDraft, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, historyReplayDisabledReason,
+  newDraftPiece, toConversationDraft,
+} from '@/utils/conversationDraft'
 import { useConversationSave } from '@/hooks/useConversationSave'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import type { PieceConversion } from './converterTypes'
@@ -74,7 +77,9 @@ import type {
   BackendMessage,
   BackendScore,
   ChatSendOutcome,
+  ChatConverterSnapshot,
   ConversationMessagesResponse,
+  ConversationDraftPiece,
   ConverterPipelineStage,
   CreateAttackRequest,
   CreateConversationRequest,
@@ -91,14 +96,22 @@ import type {
 import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import { scenarioRunRoutePath } from '../../utils/routeParams'
 import type { ViewName } from '../Sidebar/Navigation'
-import { useChatWindowStyles } from './ChatWindow.styles'
+import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.styles'
 
 const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
+const CHAT_NOTICE_VISIBLE_DURATION_MS = 5_000
+
+interface ChatInfoNotice {
+  readonly id: string
+  readonly message: string
+  readonly fading: boolean
+}
 
 type ConversationCopyDestination = 'same_attack' | 'new_attack' | 'technique'
 
 interface RecoverableSendDraft {
+  history: Array<Pick<BackendMessage, 'role'>>
   conversationId: string
   failedRequestTurnNumber: number
   failedResponseTurnNumber: number
@@ -131,6 +144,7 @@ interface PendingSend {
   readonly initialMessages: Message[]
   readonly navigationRevision: number
   readonly converterGeneration: string
+  readonly converterSnapshot?: ChatConverterSnapshot
   readonly pipelines?: Record<string, ConverterPipelineStage[]>
   attackResultId: string | null
   conversationId: string
@@ -138,6 +152,18 @@ interface PendingSend {
   responseReadId?: number
   progress?: MessageSendStatus
   repeatGroup?: RepeatSendGroup
+}
+
+interface UndoableSend {
+  attackResultId: string
+  conversationId: string
+  historySignature: string
+  cutoffIndex: number
+  originalValue: string
+  textMetadata?: Record<string, unknown>
+  attachments: MessageAttachment[]
+  converters: ChatConverterSnapshot
+  history: Array<Pick<BackendMessage, 'role'>>
 }
 
 interface RepeatSendGroup {
@@ -165,6 +191,10 @@ function isSendFinished(progress: MessageSendConversation): boolean {
 function userPieceIds(response: ConversationMessagesResponse): Set<string> {
   return new Set(response.messages.filter((message) => message.role === 'user')
     .flatMap((message) => message.message_pieces.map((piece) => piece.id)))
+}
+
+function conversationPieceSignature(response: ConversationMessagesResponse): string {
+  return JSON.stringify(response.messages.map((message: BackendMessage) => message.message_pieces.map((piece) => piece.id)))
 }
 
 function getRecoveryHistoryCutoff(messages: BackendMessage[], failedRequestTurnNumber: number): number {
@@ -214,11 +244,14 @@ function getPersistedProcessingRecovery(
   const originalDraft = backendMessageToOriginalDraft(failedRequest)
   const textMetadata = failedRequest.message_pieces.filter((piece) => piece.original_value_data_type === 'text')
     .reduce<Record<string, unknown>>((metadata: Record<string, unknown>, piece) => ({ ...metadata, ...piece.prompt_metadata }), {})
+  const cutoffIndex = getRecoveryHistoryCutoff(response.messages, responseStatus.request_turn_number)
   return {
     conversationId,
     failedRequestTurnNumber: responseStatus.request_turn_number,
     failedResponseTurnNumber: responseStatus.response_turn_number,
-    historyCutoffIndex: getRecoveryHistoryCutoff(response.messages, responseStatus.request_turn_number),
+    historyCutoffIndex: cutoffIndex,
+    history: response.messages.filter((message: BackendMessage) => message.turn_number <= cutoffIndex)
+      .map((message: BackendMessage) => ({ role: message.role })),
     failedRequestMessageIndex: response.messages.indexOf(failedRequest),
     originalValue: originalDraft.content,
     textMetadata: Object.keys(textMetadata).length ? textMetadata : undefined,
@@ -344,7 +377,7 @@ export default function ChatWindow({
   const newAttackContext: NewAttackContext = {
     generation: runtime.generation, ready: runtime.ready && defaultsReady, labels, operationId,
   }
-  const editor = useConversationDraft(newAttackContext)
+  const editor = useConversationDraft(newAttackContext, { pendingUserMessage: true })
   const { draft: editDraft, discard: discardEditor, changeObjective: setEditorObjective } = editor
   const editorTarget = editDraft?.target ?? null
   const editorObjective = editDraft?.objective ?? ''
@@ -353,8 +386,24 @@ export default function ChatWindow({
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
   const copyingRef = useRef(false)
   const copySave = useConversationSave(newAttackContext)
-  const [editorNotice, setEditorNotice] = useState<string | null>(null)
+  const [editorNotice, setEditorNoticeState] = useState<ChatInfoNotice | null>(null)
+  const setEditorNotice = useCallback((message: string | null): void => {
+    setEditorNoticeState(message === null ? null : { id: generateClientId(), message, fading: false })
+  }, [])
+  const noticeId = editorNotice?.id
+  useEffect(() => {
+    if (!noticeId) return
+    const fade = window.setTimeout(() => {
+      setEditorNoticeState((current: ChatInfoNotice | null) => current?.id === noticeId
+        ? { ...current, fading: true } : current)
+    }, CHAT_NOTICE_VISIBLE_DURATION_MS)
+    const dismiss = window.setTimeout(() => {
+      setEditorNoticeState((current: ChatInfoNotice | null) => current?.id === noticeId ? null : current)
+    }, CHAT_NOTICE_VISIBLE_DURATION_MS + CHAT_NOTICE_FADE_DURATION_MS)
+    return () => { window.clearTimeout(fade); window.clearTimeout(dismiss) }
+  }, [noticeId])
   const [editorError, setEditorError] = useState<string | null>(null)
+  const exitSaveRef = useRef<Promise<boolean> | null>(null)
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   /** True while an async message fetch is in-flight */
@@ -383,6 +432,9 @@ export default function ChatWindow({
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
   const converters = useChatConverters(chatInputText, draftAttachments)
   const { applied: activePieceConversions, restore: restoreConversions } = converters
+  const [undoableSend, setUndoableSend] = useState<UndoableSend | null>(null)
+  const [isUndoingSend, setIsUndoingSend] = useState(false)
+  const undoInFlight = useRef(false)
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
   const [isRecoveringProcessingError, setIsRecoveringProcessingError] = useState(false)
   const [recoveredDraftWarningConversationId, setRecoveredDraftWarningConversationId] = useState<string | null>(null)
@@ -680,7 +732,11 @@ export default function ChatWindow({
 
   // Handle conversation selection from the panel
   // For a different ID the useEffect handles loading; for same ID force a refresh
-  const handlePanelSelectConversation = useCallback((convId: string) => {
+  const handlePanelSelectConversation = useCallback(async (convId: string): Promise<void> => {
+    const editing = editorRef.current
+    const previousId = viewedConvRef.current
+    if (editing && !await editing.finishEditing()) return
+    if (editing && convId === previousId) return
     forceLoadRef.current = true
     onSelectConversation(convId)
     if (isNarrowScreen) {
@@ -788,6 +844,30 @@ export default function ChatWindow({
       setMessages(backendMessages)
       markConversationLoaded(effectiveConvId)
       onAttackChange?.(response.attack)
+      const lastMessage = response.messages.messages[response.messages.messages.length - 1]
+      if (
+        status === 'sent' && operation.progress?.state === 'completed'
+        && latestSendRef.current === operation.submissionId
+        && !operation.repeatGroup && operation.converterSnapshot && operation.attackResultId
+        && typeof targetResponseStatus?.request_turn_number === 'number'
+        && targetResponseStatus.request_turn_number === operation.progress.request_turn_number
+        && lastMessage?.role === 'assistant' && lastMessage.message_pieces.length > 0
+        && lastMessage.message_pieces.every((piece) => piece.converted_value_data_type === 'text')
+      ) {
+        setUndoableSend({
+          attackResultId: operation.attackResultId,
+          conversationId: effectiveConvId,
+          historySignature: conversationPieceSignature(response.messages),
+          cutoffIndex: targetResponseStatus.request_turn_number - 1,
+          originalValue: operation.originalValue,
+          textMetadata: operation.textMetadata,
+          attachments: operation.attachments,
+          converters: operation.converterSnapshot,
+          history: response.messages.messages.filter(
+            (message: BackendMessage) => message.turn_number < targetResponseStatus.request_turn_number,
+          ).map((message: BackendMessage) => ({ role: message.role })),
+        })
+      }
     }
     return {
       status,
@@ -979,6 +1059,8 @@ export default function ChatWindow({
       || awaitingConversationLoad
       || isMutationLocked
       || sendIssue?.blocking
+      || isUndoingSend
+      || unboundHistoryError
     ) {
       return { status: 'retryable_failure', clearDraft: false }
     }
@@ -989,6 +1071,7 @@ export default function ChatWindow({
     }
 
     setEditorNotice(null)
+    setUndoableSend(null)
     invalidateConversationLoads(initialSendConvId)
     setRecoverableSends((currentRecoveries) => {
       if (!currentRecoveries[initialSendConvId]) {
@@ -1016,6 +1099,7 @@ export default function ChatWindow({
       initialMessages: [...messages],
       navigationRevision: navigationRevisionRef.current,
       converterGeneration: runtime.generation,
+      converterSnapshot: count === 1 ? converters.snapshot() : undefined,
       pipelines,
       attackResultId,
       conversationId: initialSendConvId,
@@ -1329,6 +1413,12 @@ export default function ChatWindow({
       activeTarget && activeTarget.capabilities?.supports_multi_turn !== false,
     )
     const cutoffIndex = recoverableSend.historyCutoffIndex
+    const replayError = activeTarget
+      ? historyReplayDisabledReason(activeTarget, supportsMultiTurn ? recoverableSend.history : []) : undefined
+    if (replayError) {
+      setEditorError(replayError)
+      return
+    }
     const recoveryRequest: CreateConversationRequest = supportsMultiTurn && cutoffIndex >= 0
       ? {
           source_conversation_id: recoverableSend.conversationId,
@@ -1478,7 +1568,7 @@ export default function ChatWindow({
   const beginEdit = async (
     target: TargetInstance | null = activeTarget,
   ): Promise<void> => {
-    if (isSending || isLoadingEdit || isLoadingMessages || isLoadingAttack || awaitingConversationLoad) return
+    if (editDraft || isSending || isLoadingEdit || isLoadingMessages || isLoadingAttack || awaitingConversationLoad) return
     const sourceId = viewedConversationId
     setIsLoadingEdit(true)
     setEditorError(null)
@@ -1487,8 +1577,23 @@ export default function ChatWindow({
       const source = attackResultId && sourceId ? await attacksApi.getMessages(attackResultId, sourceId) : null
       if (sourceId !== viewedConvRef.current) return
       const sourceMessages = source?.messages ?? []
+      const draftMessages = toConversationDraft(sourceMessages)
+      if (chatInputText || draftAttachments.length) {
+        const pieces: ConversationDraftPiece[] = [
+          ...(chatInputText ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+          ...draftAttachments.map(attachmentDraft),
+        ].map((piece: ConversationDraftPiece) => {
+          const conversion = activePieceConversions[piece.draftId]
+          return conversion ? {
+            ...piece, converted_value: conversion.convertedValue,
+            converted_value_data_type: conversion.convertedDataType,
+            applied_converter_ids: conversion.converterInstanceIds,
+          } : piece
+        })
+        draftMessages.push({ id: generateClientId(), role: 'user', pieces })
+      }
       editor.begin({
-        messages: toConversationDraft(sourceMessages), objective: currentObjective,
+        messages: draftMessages, objective: currentObjective,
         initialObjective: currentObjective, sourceConversationId: sourceId,
         sourceAttackId: attackResultId, target, labels,
       })
@@ -1516,12 +1621,19 @@ export default function ChatWindow({
     setPanelRefreshKey((key: number) => key + 1)
   }
 
-  const handleSaveEditor = (destination: 'same_attack' | 'new_attack'): void => {
-    if (!editDraft) return
+  const handleSaveEditor = (
+    destination: 'same_attack' | 'new_attack', reuseUnsentConversation = false,
+  ): Promise<boolean> => {
+    if (!editDraft) return Promise.resolve(false)
+    if (destination === 'same_attack' && sameAttackDisabledReason) {
+      setEditorError(sameAttackDisabledReason)
+      return Promise.resolve(false)
+    }
+    setEditorError(null)
     const lastMessage = editDraft.messages[editDraft.messages.length - 1]
     const pendingPrompt = lastMessage?.role === 'user' ? draftMessageToInput(lastMessage) : undefined
     const history = pendingPrompt ? editDraft.messages.slice(0, -1) : editDraft.messages
-    void editor.save(destination, (response: AddMessageResponse) => {
+    return editor.save(destination, (response: AddMessageResponse) => {
       const attachments = pendingPrompt?.attachments.map((attachment: MessageAttachment) => attachment.file
         ? { ...attachment, url: URL.createObjectURL(attachment.file) } : attachment) ?? []
       handleEditorSaved(response)
@@ -1532,7 +1644,27 @@ export default function ChatWindow({
         inputBoxRef.current?.restoreDraft(pendingPrompt.text, attachments, pendingPrompt.textMetadata)
         inputBoxRef.current?.focus()
       }
-    }, history)
+    }, history, reuseUnsentConversation && destination === 'same_attack'
+      && Boolean(editDraft.sourceConversationId && editDraft.sourceAttackId === attackResultId))
+  }
+
+  const handleExitEditor = (): Promise<boolean> => {
+    if (exitSaveRef.current) {
+      return exitSaveRef.current
+    }
+    if (!editor.dirty) {
+      editor.discard()
+      return Promise.resolve(true)
+    }
+    if (attackResultId && sameAttackDisabledReason) {
+      setEditorError(sameAttackDisabledReason)
+      return Promise.resolve(false)
+    }
+    const pending = handleSaveEditor(
+      attackResultId ? 'same_attack' : 'new_attack', true,
+    ).finally(() => { if (exitSaveRef.current === pending) exitSaveRef.current = null })
+    exitSaveRef.current = pending
+    return pending
   }
 
   const copyConversation = async (
@@ -1565,14 +1697,19 @@ export default function ChatWindow({
         ? source.messages.filter((message: BackendMessage) => message.turn_number <= recoverableSend.historyCutoffIndex)
         : source.messages.slice(0, messageIndex + 1)
       let copiedMessages = toConversationDraft(sourceMessages)
-      if (isFailedPrompt && activeTarget && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))) {
+      if (isFailedPrompt && activeTarget
+        && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages), copiedMessages)) {
         copiedMessages = []
+      }
+      if (destination === 'same_attack' && targetResolutionStatus !== 'unbound' && activeTarget) {
+        const reason = editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages), copiedMessages)
+        if (reason) throw new Error(reason)
       }
       let target = activeTarget
       if (destination === 'technique' || (destination === 'same_attack' && targetResolutionStatus === 'unbound')) {
         target = null
       } else if (destination === 'new_attack' && activeTarget && !isFailedPrompt
-        && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages))) {
+        && editorTargetDisabledReason(activeTarget, draftDataTypes(copiedMessages), copiedMessages)) {
         target = null
       }
       if (isFailedPrompt && copiedMessages.length === 0) {
@@ -1625,15 +1762,117 @@ export default function ChatWindow({
     : targetResolutionStatus === 'unbound' && editorTarget
       ? 'Choose New attack to select a target while editing an unbound attack.'
     : isTargetResolutionLocked ? 'The source target cannot be safely resolved. Choose New attack.'
+    : targetResolutionStatus !== 'unbound' && activeTarget ? historyReplayDisabledReason(activeTarget, editor.history)
     : undefined
   const newAttackDisabledReason = !runtime.ready || !defaultsReady
     ? newActivityBlockedReason ?? 'Default labels are not ready. Retry after default labels finish loading.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
+  const unboundHistoryError = targetResolutionStatus === 'unbound' && activeTarget
+    ? historyReplayDisabledReason(activeTarget, messages) : undefined
+  const repeatDisabledReason = converters.repeatDisabledReason
+    ?? (activeTarget ? historyReplayDisabledReason(activeTarget, messages) : undefined)
+  const undoHistory = undoableSend?.attackResultId === attackResultId
+    && undoableSend.conversationId === viewedConversationId ? undoableSend.history : messages
+  const showUndoLastSend = !activeTarget || !historyReplayDisabledReason(activeTarget, undoHistory)
+  const branchConversationDisabledReason = (index: number): string | undefined => {
+    if (targetResolutionStatus === 'unbound') return undefined
+    if (!activeTarget) return 'Configure a target before branching this conversation.'
+    if (recoverableSend?.failedRequestMessageIndex === index) {
+      return historyReplayDisabledReason(
+        activeTarget, activeTarget.capabilities?.supports_multi_turn ? recoverableSend.history : [],
+      )
+    }
+    return historyReplayDisabledReason(activeTarget, messages.slice(0, index + 1))
+  }
+
+  const undoDisabledReason = !undoableSend
+    ? 'Undo is available after a single successful send from this tab, with its converters still in memory.'
+    : !runtime.ready || undoableSend.converters.generation !== runtime.generation
+      ? 'The runtime changed. The previous converter state is no longer available.'
+    : isUndoingSend || sendingConversations.size > 0 || converters.isConverting
+      ? 'Wait for the current operation to finish before undoing a send.'
+    : editDraft !== null || isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad
+      ? 'Finish loading or editing the conversation before undoing a send.'
+    : isMutationLocked || sendIssue?.blocking
+      ? 'This conversation is currently read-only.'
+    : undoableSend.attackResultId !== attackResultId || undoableSend.conversationId !== viewedConversationId
+      ? 'Open the conversation containing the last send to undo it.'
+    : activeTarget && historyReplayDisabledReason(activeTarget, undoableSend.history)
+      ? 'This target cannot replay edited conversation history.'
+    : (chatInputText || draftAttachments.length || Object.entries(converters.workingInputs).some(
+      ([id, value]: [string, string]) => value !== converters.inputs.find((input) => input.id === id)?.value,
+    ) || Object.keys(converters.applied).length)
+      ? 'Clear the current prompt and conversion edits before undoing the previous send.'
+    : JSON.stringify(converters.pipelines) !== JSON.stringify(undoableSend.converters.pipelines)
+      ? 'The converter pipeline changed after sending. Undo is unavailable for this turn.'
+    : Object.keys(undoableSend.converters.errors).length > 0
+      ? 'The previous conversion was incomplete. Undo is unavailable for this turn.'
+    : undefined
+
+  const handleUndoLastSend = async (): Promise<void> => {
+    if (undoDisabledReason || !undoableSend || undoInFlight.current) return
+    const saved = undoableSend
+    const revision = inputBoxRef.current?.getDraftRevision()
+    let branchAttempted = false
+    undoInFlight.current = true
+    setIsUndoingSend(true)
+    setIsLoadingEdit(true)
+    setEditorError(null)
+    setEditorNotice(null)
+    try {
+      const source = await attacksApi.getMessages(saved.attackResultId, saved.conversationId)
+      if (conversationPieceSignature(source) !== saved.historySignature) {
+        setUndoableSend(null)
+        throw new Error('The conversation changed after this send. Undo is no longer available.')
+      }
+      const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
+        && viewedConvRef.current === saved.conversationId
+        && inputBoxRef.current?.getDraftRevision() === revision
+      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+        throw new Error('The view, prompt, or runtime changed. Your current draft was not replaced.')
+      }
+      branchAttempted = true
+      const branch = await attacksApi.createConversation(saved.attackResultId, saved.cutoffIndex < 0 ? {} : {
+        source_conversation_id: saved.conversationId, cutoff_index: saved.cutoffIndex,
+      })
+      const [history, attack] = await Promise.all([
+        attacksApi.getMessages(saved.attackResultId, branch.conversation_id),
+        attacksApi.getAttack(saved.attackResultId),
+      ])
+      setUndoableSend(null)
+      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+        setEditorNotice(`Undo created conversation ${branch.conversation_id} without replacing your current draft.`)
+        return
+      }
+      setMessages(backendMessagesToFrontend(history.messages))
+      markConversationLoaded(branch.conversation_id)
+      onSelectConversation(branch.conversation_id)
+      onAttackChange?.(attack)
+      setChatInputText(saved.originalValue)
+      setDraftAttachments(saved.attachments)
+      inputBoxRef.current?.restoreDraft(saved.originalValue, saved.attachments, saved.textMetadata)
+      converters.restoreSnapshot(saved.converters, saved.originalValue, saved.attachments)
+      inputBoxRef.current?.focus()
+      setEditorNotice('Last send undone. The original sent conversation remains in history.')
+    } catch (error) {
+      if (branchAttempted) setUndoableSend(null)
+      const detail = toApiError(error).detail
+      setEditorError(branchAttempted
+        ? `Undo could not finish. Check the conversation list before trying again. ${detail}`
+        : detail)
+    } finally {
+      if (branchAttempted) setPanelRefreshKey((key: number) => key + 1)
+      undoInFlight.current = false
+      setIsUndoingSend(false)
+      setIsLoadingEdit(false)
+    }
+  }
 
   const singleTurnLimitReached = activeTarget?.capabilities?.supports_multi_turn === false && messages.some(m => m.role === 'user')
   const hasProcessingError = Boolean(recoverableSend)
   const inputDisabledReasons = [
+    ...(isUndoingSend ? ['The previous send is being restored. Wait for undo to finish.'] : []),
     ...(!runtime.ready ? ['The runtime is not ready. Wait for initialization to finish.'] : []),
     ...(isSending ? ['A message is being sent. Wait for the response.'] : []),
     ...(isLoadingAttack ? ['The attack is loading. Wait for it to finish.'] : []),
@@ -1679,6 +1918,7 @@ export default function ChatWindow({
       className={toolbarContainer ? styles.sharedToolbar : styles.ribbon}
       role="group"
       aria-label="Chat controls"
+      data-conversation-editor-controls
     >
       <div className={mergeClasses(styles.conversationInfo, toolbarContainer ? styles.sharedTarget : undefined)}>
         {(!attackResultId || targetResolutionStatus === 'unbound' || editDraft !== null) && !isLoadingAttack ? (
@@ -1690,7 +1930,9 @@ export default function ChatWindow({
             disabled={isSending || isSavingEditor}
             onSelect={editDraft !== null ? editor.changeTarget : onSelectTarget}
             disabledReason={editDraft !== null
-              ? (target: TargetInstance) => editorTargetDisabledReason(target, editorDataTypes) : undefined}
+              ? (target: TargetInstance) => editorTargetDisabledReason(target, editorDataTypes, editor.history)
+              : targetResolutionStatus === 'unbound'
+                ? (target: TargetInstance) => historyReplayDisabledReason(target, messages) : undefined}
           />
         ) : activeTarget ? (
           <TargetBadge target={activeTarget} />
@@ -1762,7 +2004,9 @@ export default function ChatWindow({
             aria-controls="conversation-panel"
           />
         </Tooltip>
-        <Tooltip content={editDraft !== null ? 'Save to new attack' : 'New Attack'} relationship="label">
+        <Tooltip content={editDraft !== null
+          ? editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? 'Save to new attack'
+          : 'New Attack'} relationship="description">
           <Button
             appearance="primary"
             icon={<AddRegular />}
@@ -1774,7 +2018,9 @@ export default function ChatWindow({
                 onNewAttack()
               }
             }}
-            disabled={isSavingEditor || (editDraft !== null && Boolean(newAttackDisabledReason)) || (editDraft === null && !attackResultId)}
+            disabled={isSavingEditor
+              || (editDraft !== null && Boolean(newAttackDisabledReason || editor.targetError || editor.validationError))
+              || (editDraft === null && !attackResultId)}
             data-testid="new-attack-btn"
             aria-label={editDraft !== null ? 'Save to new attack' : 'New Attack'}
             className={styles.newAttackButton}
@@ -1857,7 +2103,13 @@ export default function ChatWindow({
           defaultOperationId={operationId} disabled={isFindingActionDisabled}
           open={isFindingDialogOpen} onOpenChange={setIsFindingDialogOpen} returnFocusRef={outcomeButtonRef} />
         {editorError && <MessageBar intent="error"><MessageBarBody>{editorError}</MessageBarBody></MessageBar>}
-        {editorNotice && <MessageBar intent="success"><MessageBarBody>{editorNotice}</MessageBarBody></MessageBar>}
+        {editorNotice && <MessageBar intent="success"
+          className={mergeClasses(styles.infoNotice, editorNotice.fading && styles.fadingInfoNotice)}>
+          <MessageBarBody>{editorNotice.message}</MessageBarBody>
+        </MessageBar>}
+        {editDraft === null && unboundHistoryError && <MessageBar intent="warning"><MessageBarBody>
+          {unboundHistoryError} Choose a target that can replay this saved conversation before sending.
+        </MessageBarBody></MessageBar>}
         {editDraft !== null && <ConversationEditor
           key={editDraft.id}
           ref={editorRef}
@@ -1866,6 +2118,9 @@ export default function ChatWindow({
           newAttackDisabledReason={newAttackDisabledReason}
           onSaved={handleEditorSaved}
           onSave={handleSaveEditor}
+          onExit={handleExitEditor}
+          saveDestination={attackResultId ? 'same_attack' : 'new_attack'}
+          saveLabel="Save"
         />}
         {editDraft === null && conversationLoadIssue?.conversationId === viewedConversationId && (
           <MessageBar intent={conversationLoadIssue.unavailable ? 'warning' : 'error'}>
@@ -1886,8 +2141,10 @@ export default function ChatWindow({
           onUseInTechnique={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'technique') }}
           copyConversationDisabled={isSending || isLoadingEdit || isRecoveringProcessingError || Boolean(sendIssue?.blocking)}
           newConversationDisabledReason={isMutationLocked ? "This attack is read-only. Copy to a new attack instead." : undefined}
+          getBranchConversationDisabledReason={branchConversationDisabledReason}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
           globalMarkdown={globalMarkdown}
+          onEditConversation={() => { void beginEdit() }}
         />}
         {repeatSends.filter((view: RepeatSendView) => view.progress.attack_result_id === attackResultId).map(
           (view: RepeatSendView) => (
@@ -1935,8 +2192,14 @@ export default function ChatWindow({
         )}
         <ChatInputArea
           ref={inputBoxRef}
+          undoLastSend={showUndoLastSend ? {
+            disabledReason: undoDisabledReason,
+            isUndoing: isUndoingSend,
+            onUndo: () => { void handleUndoLastSend() },
+          } : undefined}
           onSend={handleSend}
-          sendDisabled={!activeTarget || (!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking}
+          sendDisabled={!activeTarget || (!attackResultId && !defaultsReady) || editDraft !== null || isLoadingMessages || awaitingConversationLoad || sendIssue?.blocking || converters.isConverting || isUndoingSend || Boolean(unboundHistoryError)}
+          repeatDisabledReason={repeatDisabledReason}
           conversionRevisionKey={conversionRevisionKey}
           disabledReasons={inputDisabledReasons}
           showSystemPrompt={!attackResultId}
@@ -1951,6 +2214,7 @@ export default function ChatWindow({
             || singleTurnLimitReached
             || isMutationLocked
             || hasProcessingError
+            || isUndoingSend
           }
           activeTarget={activeTarget}
           singleTurnLimitReached={singleTurnLimitReached}

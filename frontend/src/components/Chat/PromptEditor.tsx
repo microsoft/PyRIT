@@ -1,9 +1,9 @@
 import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 
-import { Button, Caption1, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Tooltip, mergeClasses } from '@fluentui/react-components'
-import { ArrowShuffleRegular, AttachRegular, DismissRegular, OpenRegular } from '@fluentui/react-icons'
+import { Button, Caption1, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, Spinner, Tooltip, mergeClasses } from '@fluentui/react-components'
+import { ArrowShuffleRegular, ArrowUndoRegular, AttachRegular, DismissRegular, OpenRegular } from '@fluentui/react-icons'
 
-import type { ConvertedFileChip, MessageAttachment, PieceConversion } from '@/types'
+import type { ConvertedFileChip, MessageAttachment, PieceConversion, UndoLastSendAction } from '@/types'
 
 import { withDraftIdentity } from './converterTypes'
 import { usePromptEditorStyles } from './PromptEditor.styles'
@@ -24,6 +24,7 @@ interface PromptEditorProps {
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
+  undoLastSend?: UndoLastSendAction
   convertedValue?: string | null
   onConvertedValueChange: (value: string) => void
   mediaConversions?: Array<Pick<PieceConversion, 'pieceId' | 'convertedValue' | 'convertedDataType'>>
@@ -45,7 +46,7 @@ function attachmentIcon(kind: MessageAttachment['type']): string {
 export default function PromptEditor({
   text, attachments, onInputChange, onAttachmentsChange, disabled = false, header, setup, warning, actions,
   attachmentMenuItems, showTextInput = true, textareaRef: externalTextareaRef, onKeyDown,
-  onToggleConverterPanel, isConverterPanelOpen, convertedValue, onConvertedValueChange,
+  onToggleConverterPanel, isConverterPanelOpen, undoLastSend, convertedValue, onConvertedValueChange,
   mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip,
 }: PromptEditorProps) {
   const styles = usePromptEditorStyles()
@@ -81,7 +82,7 @@ export default function PromptEditor({
     event.target.value = ''
   }
 
-  return <div className={styles.inputWrapper}>
+  return <div className={styles.inputWrapper} data-testid="prompt-editor">
     {header && <div className={styles.editHeader}>{header}</div>}
     {setup}
     <input ref={fileInputRef} type="file" data-testid="file-input" multiple
@@ -107,6 +108,19 @@ export default function PromptEditor({
             icon={<ArrowShuffleRegular />} onClick={onToggleConverterPanel} disabled={disabled}
             data-testid="toggle-converter-panel-btn" data-tour="converter-toggle" aria-label="Toggle converter panel" />
         </Tooltip>
+        {undoLastSend && (
+          <Tooltip content={undoLastSend.disabledReason
+            ?? 'Undo last send: restore the prompt and converter stages in a new branch. External target actions are not reversed.'}
+            relationship="description">
+            <span className={styles.undoAction} tabIndex={undoLastSend.disabledReason ? 0 : undefined}
+              aria-label={undoLastSend.disabledReason}>
+              <Button className={styles.iconButton} appearance="subtle"
+                icon={undoLastSend.isUndoing ? <Spinner size="tiny" /> : <ArrowUndoRegular />}
+                disabled={Boolean(undoLastSend.disabledReason) || undoLastSend.isUndoing}
+                onClick={undoLastSend.onUndo} aria-label="Undo last send" data-testid="undo-last-send-btn" />
+            </span>
+          </Tooltip>
+        )}
       </div>
       <div className={styles.columnCenter}>
         {attachments.length > 0 && <div className={styles.attachmentsContainer}>

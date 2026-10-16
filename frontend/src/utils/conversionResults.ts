@@ -16,6 +16,8 @@ export function buildAppliedConversions(
       originalValue: input.value,
       convertedValue: result.converted_value,
       convertedDataType: result.converted_value_data_type,
+      ...(result.converted_value !== (result.steps[result.steps.length - 1]?.output_value ?? input.value)
+        ? { manuallyEdited: true } : {}),
     }
   }
   return applied

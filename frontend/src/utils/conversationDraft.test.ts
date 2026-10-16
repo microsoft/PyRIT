@@ -2,9 +2,53 @@ import type { ConversationDraftMessage, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
 import { buildMessagePieces } from './messageMapper'
-import { draftConverterInputs, draftDataTypes, draftMessageToInput, editorTargetDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft } from './conversationDraft'
+import {
+  draftConverterInputs, draftDataTypes, draftMessageToInput, editorTargetDisabledReason,
+  historyReplayDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft,
+} from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it.each([
+    [false, false], [true, false], [true, true],
+  ])('allows a fresh request for multi-turn=%s and editable=%s', (multiTurn: boolean, editable: boolean) => {
+    const target = makeTarget({
+      target_registry_name: 'fresh',
+      capabilities: { supports_multi_turn: multiTurn, supports_editable_history: editable, supported_input_modalities: ['text'] },
+    })
+    expect(historyReplayDisabledReason(target, [])).toBeUndefined()
+    expect(editorTargetDisabledReason(target, ['text'], [])).toBeUndefined()
+    expect(editorTargetDisabledReason(target, ['image_path'], [])).toMatch(/image_path/)
+  })
+
+  it.each(['user', 'assistant', 'simulated_assistant', 'tool', 'simulated_tool'])(
+    'rejects replayed %s history without editable history, but allows an editable target', (role: string) => {
+      const target = makeTarget({
+        target_registry_name: 'immutable',
+        capabilities: { supports_multi_turn: true, supports_editable_history: false, supported_input_modalities: ['text'] },
+      })
+      expect(historyReplayDisabledReason(target, [{ role }])).toMatch(/editable history/)
+      const editable = makeTarget({
+        target_registry_name: 'editable',
+        capabilities: { supports_multi_turn: true, supports_editable_history: true, supported_input_modalities: ['text'] },
+      })
+      expect(historyReplayDisabledReason(editable, [{ role }])).toBeUndefined()
+    },
+  )
+
+  it('allows initial system setup only with system-prompt and multi-turn support', () => {
+    const history = [{ role: 'system' }, { role: 'developer' }]
+    const target = makeTarget({
+      target_registry_name: 'system-bootstrap',
+      capabilities: { supports_multi_turn: true, supports_editable_history: false, supports_system_prompt: true },
+    })
+    expect(historyReplayDisabledReason(target, history)).toBeUndefined()
+    expect(historyReplayDisabledReason(target, [...history, { role: 'simulated_assistant' }])).toBeDefined()
+    expect(historyReplayDisabledReason(makeTarget({
+      target_registry_name: 'no-system',
+      capabilities: { supports_multi_turn: true, supports_editable_history: false, supports_system_prompt: false },
+    }), history)).toBeDefined()
+  })
+
   it('preserves text-only remix metadata through composer restoration and request construction', async () => {
     const prompt = draftMessageToInput({
       id: 'user', role: 'user', pieces: [{

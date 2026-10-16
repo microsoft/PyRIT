@@ -135,7 +135,7 @@ describe('ConversationEditor', () => {
     setupEditor(undefined, 'No saved attack exists yet.', undefined, 'Default labels are not ready.')
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     expect(screen.getByRole('radio', { name: 'New attack' })).toBeChecked()
-    expect(screen.getByText('Default labels are not ready.')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('Default labels are not ready.')).toBeInTheDocument()
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' })
     expect(confirm).toBeDisabled()
     await user.click(confirm)

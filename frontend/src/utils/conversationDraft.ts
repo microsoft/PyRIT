@@ -14,10 +14,24 @@ export function draftDataTypes(messages: ConversationDraftMessage[]): string[] {
     .map((piece: ConversationDraftPiece) => piece.converted_value_data_type ?? piece.data_type)))]
 }
 
-export function editorTargetDisabledReason(target: TargetInstance, dataTypes: string[]): string | undefined {
-  if (!target.capabilities?.supports_editable_history || !target.capabilities.supports_multi_turn) {
+export function historyReplayDisabledReason(
+  target: TargetInstance, history?: ReadonlyArray<{ readonly role: string }>,
+): string | undefined {
+  if (history?.length === 0) return undefined
+  const capabilities = target.capabilities
+  const systemSetup = history !== undefined && capabilities?.supports_multi_turn && capabilities.supports_system_prompt
+    && history.every((message: { readonly role: string }) => message.role === 'system' || message.role === 'developer')
+  if (!systemSetup && (!capabilities?.supports_editable_history || !capabilities.supports_multi_turn)) {
     return 'This target does not support editable history.'
   }
+  return undefined
+}
+
+export function editorTargetDisabledReason(
+  target: TargetInstance, dataTypes: string[], history?: ReadonlyArray<{ readonly role: string }>,
+): string | undefined {
+  const replayError = historyReplayDisabledReason(target, history)
+  if (replayError) return replayError
   const unsupported = dataTypes.filter((type: string) => !target.capabilities?.supported_input_modalities.includes(type))
   if (unsupported.length) return `This target does not support these history data types: ${unsupported.join(', ')}.`
   return undefined

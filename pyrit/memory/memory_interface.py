@@ -5374,6 +5374,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Atomically store initial or related conversations, pieces, and attack references.
@@ -5395,6 +5396,9 @@ class MemoryInterface(abc.ABC):
         conversation_ids = [conversation.conversation_id for conversation in conversations]
         if len(set(conversation_ids)) != len(conversation_ids):
             raise ValueError("Prepared branch conversation IDs must be unique")
+        replacements = replace_conversation_pieces or {}
+        if not set(replacements).issubset(conversation_ids):
+            raise ValueError("Replacement snapshots must belong to the prepared conversations")
         if source_conversation and source_conversation.conversation_id in conversation_ids:
             raise ValueError("A prepared branch cannot replace the source conversation")
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
@@ -5414,7 +5418,10 @@ class MemoryInterface(abc.ABC):
                 if (
                     request_fingerprint
                     and entry is not None
-                    and (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                    and (
+                        (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                        or (entry.attack_metadata or {}).get(f"{receipt_key}:{request_fingerprint}")
+                    )
                 ):
                     return False
                 if new_attack is not None:
@@ -5424,6 +5431,27 @@ class MemoryInterface(abc.ABC):
                 elif entry is None:
                     return False
                 self._check_attack_fields(entry=entry, expected_fields=expected_fields or {})
+                if replacements:
+                    active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                    if not set(replacements).issubset(active_ids):
+                        raise ValueError("Replacement conversations must belong to the destination attack")
+                    self._check_conversation_history(session=session, expected=replacements)
+                    piece_ids = [piece.id for pieces in replacements.values() for piece in pieces]
+                    if piece_ids:
+                        if (
+                            session.query(ScoreEntry.id)
+                            .filter(ScoreEntry.prompt_request_response_id.in_(piece_ids))
+                            .first()
+                        ):
+                            raise AttackStateConflictError(
+                                "Scored history cannot be replaced. Save a new conversation."
+                            )
+                        session.query(EmbeddingDataEntry).filter(EmbeddingDataEntry.id.in_(piece_ids)).delete(
+                            synchronize_session=False
+                        )
+                        session.query(PromptMemoryEntry).filter(PromptMemoryEntry.id.in_(piece_ids)).delete(
+                            synchronize_session=False
+                        )
                 if source_conversation is not None:
                     active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
                     if source_conversation.conversation_id not in active_ids:
@@ -5433,7 +5461,11 @@ class MemoryInterface(abc.ABC):
                         conversation=source_conversation.model_copy(update={"attack_result_id": attack_result_id}),
                     )
                 for conversation in conversations:
-                    if request_fingerprint and session.get(ConversationEntry, conversation.conversation_id) is not None:
+                    if (
+                        request_fingerprint
+                        and conversation.conversation_id not in replacements
+                        and session.get(ConversationEntry, conversation.conversation_id) is not None
+                    ):
                         raise AttackStateConflictError("The creation identity is already in use")
                     self._insert_conversation_in_session(
                         session=session,
@@ -5447,7 +5479,11 @@ class MemoryInterface(abc.ABC):
                 entry.pruned_conversation_ids = pruned_ids or None
                 self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields or {})
                 if request_fingerprint:
-                    entry.attack_metadata = {**(entry.attack_metadata or {}), receipt_key: request_fingerprint}
+                    entry.attack_metadata = {
+                        **(entry.attack_metadata or {}),
+                        receipt_key: request_fingerprint,
+                        f"{receipt_key}:{request_fingerprint}": True,
+                    }
                 entry.timestamp = datetime.now(UTC)
             return True
         except IntegrityError:
@@ -5457,7 +5493,10 @@ class MemoryInterface(abc.ABC):
                 if (
                     request_fingerprint
                     and existing is not None
-                    and (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                    and (
+                        (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                        or (existing.attack_metadata or {}).get(f"{receipt_key}:{request_fingerprint}")
+                    )
                 ):
                     return False
             raise
@@ -9680,6 +9719,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Use ``add_conversation_branches_to_attack_async``.
@@ -9703,6 +9743,7 @@ class MemoryInterface(abc.ABC):
             expected_fields=expected_fields,
             update_fields=update_fields,
             request_fingerprint=request_fingerprint,
+            replace_conversation_pieces=replace_conversation_pieces,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.add_conversation_branches_to_attack)
@@ -9717,6 +9758,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Atomically store initial or related conversations, pieces, and attack references.
@@ -9745,6 +9787,7 @@ class MemoryInterface(abc.ABC):
             expected_fields=expected_fields,
             update_fields=update_fields,
             request_fingerprint=request_fingerprint,
+            replace_conversation_pieces=replace_conversation_pieces,
         )
 
     async def update_attack_result_conditionally_async(
