@@ -256,6 +256,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_prefill?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }

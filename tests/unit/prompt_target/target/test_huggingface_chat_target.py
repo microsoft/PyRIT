@@ -671,3 +671,21 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("last_role", "continue_final_message"),
+    [("user", False), ("assistant", True)],
+)
+async def test_chat_template_continues_trailing_assistant_message(last_role: str, continue_final_message: bool):
+    """A trailing assistant message is continued rather than followed by a new generation prompt."""
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+
+    target._apply_chat_template([{"role": "user", "content": "Hi"}, {"role": last_role, "content": "text"}])
+
+    kwargs = target.tokenizer.apply_chat_template.call_args.kwargs
+    assert kwargs["continue_final_message"] is continue_final_message
+    assert kwargs["add_generation_prompt"] is (not continue_final_message)

@@ -10,6 +10,7 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.executor.attack.single_turn.many_shot_jailbreak import ManyShotJailbreakAttack
+    from pyrit.executor.attack.single_turn.prefill import PrefillAttack, PrefillAttackParameters
     from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack, PromptSendingAttackParameters
     from pyrit.executor.attack.single_turn.single_turn_attack_strategy import (
         SingleTurnAttackContext,
@@ -23,6 +24,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PromptSendingAttack": "pyrit.executor.attack.single_turn.prompt_sending",
     "PromptSendingAttackParameters": "pyrit.executor.attack.single_turn.prompt_sending",
     "ManyShotJailbreakAttack": "pyrit.executor.attack.single_turn.many_shot_jailbreak",
+    "PrefillAttack": "pyrit.executor.attack.single_turn.prefill",
+    "PrefillAttackParameters": "pyrit.executor.attack.single_turn.prefill",
     "SkeletonKeyAttack": "pyrit.executor.attack.single_turn.skeleton_key",
 }
 

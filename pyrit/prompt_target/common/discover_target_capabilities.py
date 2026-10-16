@@ -161,6 +161,7 @@ def _permissive_configuration(
         supports_editable_history=True,
         supports_system_prompt=True,
         supports_streaming_audio=True,
+        supports_prefill=True,
         input_modalities=merged_modalities | TOOL_CALL_INPUT_MODALITIES,
         output_modalities=original.capabilities.output_modalities,
     )
