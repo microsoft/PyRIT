@@ -89,7 +89,9 @@ class AddImageVideoConverter(Converter):
 
         Raises:
             ModuleNotFoundError: If OpenCV is not installed.
-            ValueError: If the image path is invalid or unsupported video format.
+            ValueError: If the image path is invalid, the input video format is unsupported, the input
+                video cannot be read, the output video cannot be written, or the overlay image cannot
+                be decoded.
         """
         try:
             import cv2  # noqa: F401
@@ -241,7 +243,10 @@ class AddImageVideoConverter(Converter):
             ConverterResult: The result containing filename of the converted video.
 
         Raises:
-            ValueError: If the input type is not supported.
+            ModuleNotFoundError: If OpenCV is not installed.
+            ValueError: If the input type is not supported, the image path is invalid, the input video
+                format is unsupported, the input video cannot be read, the output video cannot be
+                written, or the overlay image cannot be decoded.
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
