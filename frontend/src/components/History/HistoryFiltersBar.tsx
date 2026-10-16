@@ -116,6 +116,9 @@ export default function HistoryFiltersBar({
   const converterMatchesSearch = (c: string) =>
     !converterSearch || c.toLowerCase().includes(converterSearch.toLowerCase())
   const filteredConverterOptions = converterOptions.filter(converterMatchesSearch)
+  const filteredLabelOptions = otherLabelOptions.filter(
+    l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase()),
+  )
 
   return (
     <div className={styles.filters}>
@@ -177,14 +180,13 @@ export default function HistoryFiltersBar({
           data-testid="label-filter"
           freeform
         >
-          {otherLabelOptions
-            .filter(l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase()))
+          {filteredLabelOptions
             .slice(0, 50)
             .map(l => (
               <Option key={l} value={l}>{l}</Option>
             ))}
-          {otherLabelOptions.filter(l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase())).length > 50 && (
-            <Option disabled value="__more" text={`Type to search more...`}>{`Type to search ${otherLabelOptions.length - 50} more...`}</Option>
+          {filteredLabelOptions.length > 50 && (
+            <Option disabled value="__more" text={`Type to search more...`}>{`Type to search ${filteredLabelOptions.length - 50} more...`}</Option>
           )}
         </Combobox>
         <SearchableMultiCombobox

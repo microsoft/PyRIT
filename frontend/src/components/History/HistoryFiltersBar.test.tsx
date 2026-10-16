@@ -218,6 +218,30 @@ describe('HistoryFiltersBar', () => {
     )
   })
 
+  it('should count remaining hidden label options from the filtered set while searching', () => {
+    const labels = [
+      ...Array.from({ length: 60 }, (_, i) => `label:${String(i).padStart(3, '0')}`),
+      ...Array.from({ length: 40 }, (_, i) => `other:${String(i).padStart(3, '0')}`),
+    ]
+    const props = {
+      ...defaultProps,
+      otherLabelOptions: labels,
+      filters: { ...defaultProps.filters, labelSearchText: 'label:' },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    // eslint-disable-next-line no-console
+    // Options only mount once the combobox opens
+    fireEvent.click(screen.getByTestId('label-filter'))
+    // 60 of the 100 labels match the search, 50 are shown: the hint says 10 more
+    expect(document.body.textContent).toContain('Type to search 10 more...')
+  })
+
   it('should update label search text when typing in label combobox', () => {
     const onFiltersChange = jest.fn()
     const props = {
